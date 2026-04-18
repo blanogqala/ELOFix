@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum JobStatus {
+  PENDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum CategoryStep3Type {
+  measurements
+  items
+  issue
+}
+
+enum SuggestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  name         String
+  phone        String?
+  role         Role
+  createdAt    DateTime @default(now())
+
+  providerProfile   Provider?
+  jobsAsCustomer    Job[]                 @relation("JobCustomer")
+  jobsAsProvider    Job[]                 @relation("JobProvider")
+  categorySuggestions CategorySuggestion[]
+}
+
+model Provider {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills             String[]
+  location           String   @default("UNKNOWN")
+  bio                String?
+  rating             Float    @default(0)
+  approved           Boolean  @default(false)
+  profileCompleted   Boolean  @default(false)
+  onboardingStep     Int?
+  businessName       String?
+  serviceAreas       String[] @default([])
+  laborPricing       Json?
+  documents          Json?
+  settings           Json?
+  portfolioImages    String[] @default([])
+  profileImage       String?
+  blocked            Boolean  @default(false)
+  rejectionReason    String?
+  rejectedAt         DateTime?
+  deletedAt          DateTime?
+  reviewSubmittedAt  DateTime?
+
+  workPosts WorkPost[]
+}
+
+model WorkPost {
+  id          String   @id @default(uuid())
+  providerId  String
+  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  categoryId  String
+  title       String
+  description String
+  images      String[] @default([])
+  createdAt   DateTime @default(now())
+
+  @@index([providerId])
+}
+
+model CategorySuggestion {
+  id        String           @id @default(uuid())
+  name      String
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    SuggestionStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Job {
+  id              String    @id @default(uuid())
+  title           String
+  category        String    @default("GENERAL")
+  location        String    @default("UNKNOWN")
+  locationDetails Json?
+  description     String
+  status          JobStatus @default(PENDING)
+  price           Decimal   @db.Decimal(10, 2)
+  images          String[]  @default([])
+  measurements    Json?
+  materials       Json?
+  width           Float?
+  height          Float?
+  length          Float?
+  area            Float?
+  customerId      String
+  customer        User      @relation("JobCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  providerId      String?
+  provider        User?     @relation("JobProvider", fields: [providerId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+}
+
+model Category {
+  id                String            @id
+  name              String            @unique
+  icon              String
+  description       String
+  requiresMaterials Boolean           @default(false)
+  skills            String[]
+  step3Type         CategoryStep3Type
+  issueTypes        String[]
+  commonItems       Json?
+  isActive          Boolean           @default(true)
+  sortOrder         Int               @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}

@@ -1,0 +1,69 @@
+const AppError = require("../utils/AppError");
+const providerService = require("../services/provider.service");
+
+async function resolveTargetProviderUserId(req) {
+  const resolved = await providerService.resolveProviderUserIdFromRouteParam(req.params.id);
+  if (!resolved) {
+    throw new AppError("Provider not found", 404);
+  }
+  if (req.user.role !== "ADMIN" && resolved !== req.user.userId) {
+    throw new AppError("Forbidden", 403);
+  }
+  return resolved;
+}
+
+async function listProviders(req, res) {
+  const providers = await providerService.listProviders({
+    category: req.query.category,
+    forAdmin: false,
+  });
+  res.json({ success: true, providers });
+}
+
+async function getProvider(req, res) {
+  const provider = await providerService.getProviderById(req.params.id);
+  res.json({ success: true, provider });
+}
+
+async function updateProviderScoped(req, res) {
+  const userId = await resolveTargetProviderUserId(req);
+  const provider = await providerService.updateProviderForUser(userId, req.body || {});
+  res.json({ success: true, provider });
+}
+
+async function uploadDocumentScoped(req, res) {
+  const userId = await resolveTargetProviderUserId(req);
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  const docType = String(req.params.docType || "").trim();
+  const provider = await providerService.saveDocumentFromUpload(userId, docType, req.file);
+  res.json({ success: true, provider });
+}
+
+async function uploadAvatarScoped(req, res) {
+  const userId = await resolveTargetProviderUserId(req);
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  const provider = await providerService.saveAvatarFromUpload(userId, req.file);
+  res.json({ success: true, provider });
+}
+
+async function uploadWorkPostImageScoped(req, res) {
+  const userId = await resolveTargetProviderUserId(req);
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  const result = await providerService.publicUrlFromUploadedFile(userId, req.file);
+  res.json({ success: true, url: result.url });
+}
+
+module.exports = {
+  listProviders,
+  getProvider,
+  updateProviderScoped,
+  uploadDocumentScoped,
+  uploadAvatarScoped,
+  uploadWorkPostImageScoped,
+};

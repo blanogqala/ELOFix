@@ -1,0 +1,803 @@
+import { useCallback, useState, useEffect } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
+import {
+  getProviderById,
+  approveProvider,
+  rejectProvider,
+  blockProvider,
+  unblockProvider,
+  deleteProvider,
+  approveProviderDocument,
+  rejectProviderDocument,
+} from '@/lib/api/providers';
+import { getCategories } from '@/lib/api/categories';
+import { Category, Provider } from '@/types';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
+import {
+  ArrowLeft,
+  User,
+  Mail,
+  Phone,
+  MapPin,
+  Briefcase,
+  Star,
+  FileCheck,
+  Calendar,
+  Check,
+  X,
+  Ban,
+  Trash2,
+  ExternalLink,
+  Images,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog';
+
+type AdminDocType = 'idDoc' | 'companyReg' | 'proofOfSkill';
+
+const documentTypes: { id: AdminDocType; label: string }[] = [
+  { id: 'idDoc', label: 'ID Document' },
+  { id: 'companyReg', label: 'Company Registration' },
+  { id: 'proofOfSkill', label: 'Proof of Skill' },
+];
+
+function docStatusLabel(status: string | undefined, hasUrl: boolean) {
+  if (!hasUrl) return 'Not uploaded';
+  return status === 'approved' || status === 'rejected' || status === 'pending' ? status : 'pending';
+}
+
+function DocStatusBadge({ status, hasUrl }: { status: string | undefined; hasUrl: boolean }) {
+  const label = docStatusLabel(status, hasUrl);
+  if (!hasUrl) {
+    return <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{label}</span>;
+  }
+  if (label === 'approved') {
+    return <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">{label}</span>;
+  }
+  if (label === 'rejected') {
+    return <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">{label}</span>;
+  }
+  return <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-medium text-amber-950 dark:text-amber-100">{label}</span>;
+}
+
+export default function AdminProviderDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { from, jobId } = (location.state as { from?: string; jobId?: string }) || {};
+  const { toast } = useToast();
+  const [provider, setProvider] = useState<Provider | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [isMutating, setIsMutating] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [docRejectTarget, setDocRejectTarget] = useState<AdminDocType | null>(null);
+  const [docRejectFeedback, setDocRejectFeedback] = useState('');
+
+  const loadCategories = useCallback(async () => {
+    try {
+      setCategories(await getCategories());
+    } catch {
+      setCategories([]);
+    }
+  }, []);
+
+  const loadProvider = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await getProviderById(id);
+      setProvider(data || null);
+    } catch (error) {
+      console.error('Failed to load provider:', error);
+      toast({ title: 'Error', description: 'Failed to load provider.', variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [id, toast]);
+
+  useEffect(() => {
+    if (id) {
+      void loadProvider();
+    }
+    void loadCategories();
+  }, [id, loadCategories, loadProvider]);
+
+  const getCategoryNames = (skills: string[]) =>
+    skills
+      .map(s => categories.find(c => c.id === s)?.name)
+      .filter(Boolean) as string[];
+
+  const getAccountStatus = () => {
+    if (!provider) return '';
+    if (provider.blocked) return 'Blocked';
+    if (provider.approved) return 'Approved';
+    return 'Pending';
+  };
+
+  const canApproveAccount = (p: Provider) => {
+    if (p.approved || p.blocked) return false;
+    const profileOk = p.profileCompleted === true;
+    const idOk = p.documents?.idDoc?.status === 'approved';
+    const skillOk = p.documents?.proofOfSkill?.status === 'approved';
+    return profileOk && idOk && skillOk;
+  };
+
+  const openImagePreview = (url: string) => {
+    const abs = resolveUploadUrl(url);
+    if (abs) setImagePreviewUrl(abs);
+  };
+
+  const handleApproveDocument = async (docType: AdminDocType) => {
+    if (!provider || isMutating) return;
+    try {
+      setIsMutating(true);
+      const updated = await approveProviderDocument(provider.id, docType);
+      setProvider(updated);
+      toast({ title: 'Document approved', description: `${documentTypes.find((d) => d.id === docType)?.label ?? docType} marked approved.` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to approve document.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleRejectDocumentSubmit = async () => {
+    if (!provider || !docRejectTarget || isMutating) return;
+    try {
+      setIsMutating(true);
+      const updated = await rejectProviderDocument(provider.id, docRejectTarget, docRejectFeedback);
+      setProvider(updated);
+      toast({
+        title: 'Document rejected',
+        description: 'The provider will see the updated status and any feedback.',
+      });
+      setDocRejectTarget(null);
+      setDocRejectFeedback('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to reject document.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!provider || isMutating) return;
+    try {
+      setIsMutating(true);
+      await approveProvider(provider.id);
+      toast({ title: 'Provider approved', description: 'The provider can now receive job requests.' });
+      await loadProvider();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to approve provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!provider || !rejectReason.trim() || isMutating) {
+      toast({ title: 'Reason required', description: 'Please provide a reason for rejection.', variant: 'destructive' });
+      return;
+    }
+    try {
+      setIsMutating(true);
+      await rejectProvider(provider.id, rejectReason.trim());
+      toast({ title: 'Provider rejected', description: 'The provider has been notified.' });
+      setRejectModalOpen(false);
+      setRejectReason('');
+      await loadProvider();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to reject provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleBlock = async () => {
+    if (!provider || isMutating) return;
+    try {
+      setIsMutating(true);
+      await blockProvider(provider.id);
+      toast({ title: 'Provider blocked', description: 'The provider cannot log in or accept jobs.' });
+      setBlockModalOpen(false);
+      await loadProvider();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to block provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleUnblock = async () => {
+    if (!provider || isMutating) return;
+    try {
+      setIsMutating(true);
+      await unblockProvider(provider.id);
+      toast({ title: 'Provider unblocked', description: 'The provider can now access the platform again.' });
+      await loadProvider();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to unblock provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!provider || isMutating) return;
+    try {
+      setIsMutating(true);
+      await deleteProvider(provider.id);
+      toast({ title: 'Provider deleted', description: 'Provider has been soft removed.' });
+      setDeleteModalOpen(false);
+      navigate('/admin/providers');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="space-y-6 animate-fade-in">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 w-48 bg-muted rounded" />
+            <div className="h-64 bg-muted rounded" />
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!provider) {
+    return (
+      <DashboardLayout>
+        <div className="space-y-6">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (from === 'job-details' && jobId) {
+                navigate(`/admin/jobs/${jobId}`);
+              } else {
+                navigate('/admin/providers');
+              }
+            }}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            {from === 'job-details' && jobId ? 'Back to Job Details' : 'Back to Providers'}
+          </Button>
+          <div className="card-elevated p-12 text-center">
+            <p className="text-muted-foreground">Provider not found</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const serviceNames = getCategoryNames(provider.skills);
+  const statusClass = provider.blocked
+    ? 'status-cancelled'
+    : provider.approved
+      ? 'status-completed'
+      : 'status-assigned';
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6 animate-fade-in">
+        <div className="flex items-center justify-between">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (from === 'job-details' && jobId) {
+                navigate(`/admin/jobs/${jobId}`);
+              } else {
+                navigate('/admin/providers');
+              }
+            }}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            {from === 'job-details' && jobId ? 'Back to Job Details' : 'Back to Providers'}
+          </Button>
+        </div>
+
+        <div className="card-elevated overflow-hidden">
+          <div className="p-6 border-b border-border">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-primary/10">
+                  {provider.profileImage?.trim() ? (
+                    <img
+                      src={resolveUploadUrl(provider.profileImage)}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold text-primary">{provider.name.charAt(0)}</span>
+                  )}
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold">{provider.name}</h1>
+                  <p className="text-muted-foreground">{provider.email}</p>
+                  <span className={cn('status-badge mt-2 inline-block', statusClass)}>
+                    {getAccountStatus()}
+                  </span>
+                  {provider.reviewSubmittedAt && (
+                    <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      Submitted for review:{' '}
+                      {new Date(provider.reviewSubmittedAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
+                {!provider.approved && !provider.blocked && (
+                  <Button
+                    size="sm"
+                    className="h-8 px-3 text-xs font-medium"
+                    onClick={() => void handleApprove()}
+                    disabled={isMutating || !canApproveAccount(provider)}
+                    title={
+                      !canApproveAccount(provider)
+                        ? 'Requires complete profile and approved ID + proof of skill documents'
+                        : undefined
+                    }
+                  >
+                    <Check className="mr-1 h-3 w-3" />
+                    Approve
+                  </Button>
+                )}
+                {!provider.approved && !provider.blocked && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => setRejectModalOpen(true)}
+                    disabled={isMutating}
+                  >
+                    <X className="mr-1 h-3 w-3" />
+                    Reject
+                  </Button>
+                )}
+                {provider.blocked ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => void handleUnblock()}
+                    disabled={isMutating}
+                  >
+                    Unblock
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => setBlockModalOpen(true)}
+                    disabled={isMutating}
+                  >
+                    <Ban className="mr-1 h-3 w-3" />
+                    Block
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-3 text-xs text-destructive"
+                  onClick={() => setDeleteModalOpen(true)}
+                  disabled={isMutating}
+                >
+                  <Trash2 className="mr-1 h-3 w-3" />
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 grid md:grid-cols-2 gap-6">
+            <div className="space-y-4 border-2 border-primary rounded-lg p-4">
+              <div className="border-b-2 border-primary/20 pb-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Contact Details
+                </h3>
+                <div className="space-y-1 text-sm">
+                  <p className="flex items-center gap-2">
+                    <Mail className="h-3 w-3 text-muted-foreground" />
+                    {provider.email}
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Phone className="h-3 w-3 text-muted-foreground" />
+                    {provider.phone || '—'}
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <MapPin className="h-3 w-3 text-muted-foreground" />
+                    {provider.city || '—'}
+                    {provider.serviceAreas?.length ? ` • ${provider.serviceAreas.join(', ')}` : ''}
+                  </p>
+                </div>
+              </div>
+
+              <div className="border-b-2 border-primary/20 pb-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Briefcase className="h-4 w-4" />
+                  Services Offered
+                </h3>
+                <div className="flex flex-wrap gap-1">
+                  {serviceNames.map(s => (
+                    <span key={s} className="px-2 py-0.5 bg-muted rounded-full text-xs">
+                      {s}
+                    </span>
+                  ))}
+                  {serviceNames.length === 0 && <span className="text-muted-foreground text-sm">None</span>}
+                </div>
+              </div>
+
+              <div className="border-b-2 border-primary/20 pb-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  Registration Date
+                </h3>
+                <p className="text-sm">{new Date(provider.createdAt).toLocaleDateString()}</p>
+              </div>
+
+              <div className="pb-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Star className="h-4 w-4" />
+                  Ratings
+                </h3>
+                <p className="text-sm">
+                  {provider.rating > 0 ? `${provider.rating.toFixed(1)} / 5` : 'N/A'}{' '}
+                  ({provider.completedJobs} completed jobs)
+                </p>
+                {provider.reviews && provider.reviews.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {provider.reviews.slice(0, 3).map(r => (
+                      <div key={r.id} className="p-2 bg-muted/50 rounded text-xs">
+                        <p className="font-medium">{r.userName} — {r.rating}★</p>
+                        <p className="text-muted-foreground">{r.comment}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Images className="h-4 w-4" />
+                  Work posts
+                </h3>
+                {(provider.workPosts?.length ?? 0) > 0 ? (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {provider.workPosts!.map((post) => {
+                      const cat = categories.find((c) => c.id === post.categoryId);
+                      const imgs = Array.isArray(post.images) ? post.images.filter(Boolean) : [];
+                      return (
+                        <div
+                          key={post.id}
+                          className="space-y-3 rounded-xl border border-border bg-background p-4 shadow-sm transition hover:shadow-md"
+                        >
+                          <div className="space-y-1">
+                            <p className="text-base font-semibold leading-tight">{post.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {cat ? `${cat.icon} ${cat.name}` : post.categoryId}
+                            </p>
+                          </div>
+                          {imgs.length > 0 ? (
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              {imgs.map((url, idx) => (
+                                <button
+                                  key={`${post.id}-${idx}`}
+                                  type="button"
+                                  onClick={() => openImagePreview(url)}
+                                  className="relative aspect-square overflow-hidden rounded-md border border-border bg-muted hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  <img
+                                    src={resolveUploadUrl(url)}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">No images for this post</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-6 text-center text-sm text-muted-foreground">No work uploaded yet</div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <FileCheck className="h-4 w-4" />
+                  Uploaded Documents
+                </h3>
+                <div className="space-y-3">
+                  {documentTypes.map(({ id: docId, label }) => {
+                    const doc = provider.documents[docId];
+                    const hasUrl = Boolean(doc?.url?.trim());
+                    return (
+                      <div
+                        key={docId}
+                        className="flex flex-col gap-3 rounded-lg border-2 border-primary p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0 flex-1 space-y-3">
+                          <div className="flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
+                            <p className="font-medium text-sm">{label}</p>
+                            <DocStatusBadge status={doc?.status} hasUrl={hasUrl} />
+                          </div>
+                          {doc?.feedback ? (
+                            <p className="text-xs text-muted-foreground">Feedback: {doc.feedback}</p>
+                          ) : null}
+                          
+                        </div>
+                        {hasUrl && !provider.blocked ? (
+                          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 overflow-hidden">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 px-3 text-xs font-medium"
+                              disabled={isMutating || doc?.status === 'approved'}
+                              onClick={() => void handleApproveDocument(docId)}
+                            >
+                              <Check className="mr-1 h-3 w-3" />
+                              
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 border-destructive/40 px-3 text-xs text-destructive"
+                              disabled={isMutating}
+                              onClick={() => {
+                                setDocRejectTarget(docId);
+                                setDocRejectFeedback('');
+                              }}
+                            >
+                              <X className="mr-1 h-3 w-3" />
+                            </Button>
+                            <div className="flex max-w-full flex-wrap items-center gap-2 overflow-hidden pt-0">
+                            {hasUrl ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 px-3 text-xs"
+                                  asChild
+                                >
+                                  <a
+                                    href={resolveUploadUrl(doc!.url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </Button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No file uploaded</span>
+                            )}
+                          </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {provider.rejectionReason && (
+                <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+                  <p className="font-medium text-sm text-destructive">Rejection Reason</p>
+                  <p className="text-sm mt-1">{provider.rejectionReason}</p>
+                  {provider.rejectedAt && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Rejected on {new Date(provider.rejectedAt).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <Dialog
+          open={!!imagePreviewUrl}
+          onOpenChange={(open) => {
+            if (!open) setImagePreviewUrl(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Preview</DialogTitle>
+              <DialogDescription>
+                For PDFs, use &quot;Open in new tab&quot; if the preview does not render.
+              </DialogDescription>
+            </DialogHeader>
+            {imagePreviewUrl ? (
+              <div className="max-h-[70vh] overflow-auto rounded-md border border-border bg-muted/30 p-2">
+                <img
+                  src={imagePreviewUrl}
+                  alt=""
+                  className="mx-auto max-h-[65vh] w-auto max-w-full object-contain"
+                />
+              </div>
+            ) : null}
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (imagePreviewUrl) window.open(imagePreviewUrl, '_blank', 'noopener,noreferrer');
+                }}
+              >
+                Open in new tab
+              </Button>
+              <Button type="button" onClick={() => setImagePreviewUrl(null)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={!!docRejectTarget}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDocRejectTarget(null);
+              setDocRejectFeedback('');
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Reject document</DialogTitle>
+              <DialogDescription>
+                Optional feedback for the provider (e.g. what to fix before re-uploading).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="doc-reject-feedback">Feedback</Label>
+              <Textarea
+                id="doc-reject-feedback"
+                value={docRejectFeedback}
+                onChange={(e) => setDocRejectFeedback(e.target.value)}
+                rows={3}
+                placeholder="e.g. ID photo is blurry — please upload a clearer image."
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDocRejectTarget(null);
+                  setDocRejectFeedback('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isMutating}
+                onClick={() => void handleRejectDocumentSubmit()}
+              >
+                Reject document
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Reject Modal */}
+        <Dialog open={rejectModalOpen} onOpenChange={setRejectModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Reject Provider</DialogTitle>
+              <DialogDescription>
+                Provide a reason for rejection. The provider will see this and can upload new documents.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label htmlFor="reject-reason">Reason (required)</Label>
+                <Textarea
+                  id="reject-reason"
+                  placeholder="e.g. Document quality is unclear. Please upload a clearer copy."
+                  value={rejectReason}
+                  onChange={e => setRejectReason(e.target.value)}
+                  className="mt-2"
+                  rows={4}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRejectModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={() => void handleReject()} disabled={!rejectReason.trim() || isMutating}>
+                Reject Provider
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Block Modal */}
+        <Dialog open={blockModalOpen} onOpenChange={setBlockModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Block Provider</DialogTitle>
+              <DialogDescription>
+                Blocked providers cannot log in, accept jobs, or interact with the system. You can unblock them later.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setBlockModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={() => void handleBlock()} disabled={isMutating}>
+                Block Provider
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Modal */}
+        <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Provider</DialogTitle>
+              <DialogDescription>
+                This will soft delete the provider. They will no longer appear in the active list. This action can be reversed by re-adding the provider.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={() => void handleDelete()} disabled={isMutating}>
+                Delete Provider
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </DashboardLayout>
+  );
+}

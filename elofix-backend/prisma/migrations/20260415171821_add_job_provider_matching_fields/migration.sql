@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Job" ADD COLUMN     "category" TEXT NOT NULL DEFAULT 'GENERAL',
+ADD COLUMN     "location" TEXT NOT NULL DEFAULT 'UNKNOWN';
+
+-- AlterTable
+ALTER TABLE "Provider" ADD COLUMN     "location" TEXT NOT NULL DEFAULT 'UNKNOWN';

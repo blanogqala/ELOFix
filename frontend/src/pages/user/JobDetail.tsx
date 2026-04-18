@@ -1,0 +1,1088 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/hooks/use-toast';
+import { 
+  getJobById, 
+  addChatMessage, 
+  cancelJob,
+  confirmJobCompletion,
+  payForStoreMaterials,
+  payLabor,
+  setStoreDeliveryOption,
+  approveStoreDeliveryRequest,
+  acceptProviderSuggestion,
+  rejectProviderSuggestion,
+  deleteJob,
+  addUserMaterialSuggestion,
+  getLaborInvoiceByJobId,
+} from '@/lib/api/jobs';
+import { getSavedCards } from '@/lib/api/payments';
+import { getSuppliers } from '@/lib/api/suppliers';
+import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
+import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
+import { JobCompletionDialog } from '@/components/jobs/JobCompletionDialog';
+import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection';
+import { SuggestAlternativeMaterialsModal } from '@/components/jobs/SuggestAlternativeMaterialsModal';
+import { PaymentModal } from '@/components/payments/PaymentModal';
+import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
+import { getProviderById } from '@/lib/api/providers';
+import { Provider } from '@/types';
+import { getDeliveryProviders } from '@/lib/api/specials';
+import { 
+  ArrowLeft, 
+  Send, 
+  MessageSquare, 
+  FileText, 
+  Clock, 
+  CheckCircle,
+  User,
+  XCircle,
+  Lightbulb,
+  Check,
+  X,
+  Ban,
+  Trash2
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
+import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
+import { getStandardizedStatusLabel, getUnifiedTimelineStepIndex } from '@/lib/jobStatusMapping';
+import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
+
+export default function JobDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [job, setJob] = useState<Job | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [newMessage, setNewMessage] = useState('');
+  const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>('details');
+  const [suggestMaterialsOpen, setSuggestMaterialsOpen] = useState(false);
+  const [payLaborModalOpen, setPayLaborModalOpen] = useState(false);
+  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
+  const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [completionDialogOpen, setCompletionDialogOpen] = useState(false);
+  const [providerModalOpen, setProviderModalOpen] = useState(false);
+  const [provider, setProvider] = useState<Provider | null>(null);
+  const [addMaterialsOpen, setAddMaterialsOpen] = useState(false);
+  const [deleteMaterialOpen, setDeleteMaterialOpen] = useState(false);
+  const [materialToDelete, setMaterialToDelete] = useState<MaterialLine | null>(null);
+  const [deleteJobOpen, setDeleteJobOpen] = useState(false);
+  const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
+  const [hoveredTimelineStep, setHoveredTimelineStep] = useState<number | null>(null);
+  const [serviceInvoiceOpen, setServiceInvoiceOpen] = useState(false);
+  const [legacyInvoice, setLegacyInvoice] = useState<{ paidAt: string; cardLast4?: string } | null>(null);
+  const [isActionPending, setIsActionPending] = useState(false);
+  const [isMessageSending, setIsMessageSending] = useState(false);
+
+  useEffect(() => {
+    if (serviceInvoiceOpen && job?.laborPaid && !job.servicePayment) {
+      getLaborInvoiceByJobId(job.id).then(invoice => {
+        if (invoice) setLegacyInvoice({ paidAt: invoice.paidAt, cardLast4: invoice.cardLast4 });
+      });
+    } else {
+      setLegacyInvoice(null);
+    }
+  }, [serviceInvoiceOpen, job?.id, job?.laborPaid, job?.servicePayment]);
+
+  const loadSuppliers = useCallback(async () => {
+    try {
+      const supplierData = await getSuppliers();
+      setSuppliers(supplierData);
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to load suppliers.',
+        variant: 'destructive',
+      });
+    }
+  }, [toast]);
+
+  const loadDeliveryProviders = useCallback(async () => {
+    try {
+      const providers = await getDeliveryProviders();
+      setDeliveryProviders(providers);
+      setDeliveryProvidersError(null);
+    } catch (error) {
+      setDeliveryProviders([]);
+      setDeliveryProvidersError(
+        error instanceof Error ? error.message : 'Delivery providers are unavailable.'
+      );
+    }
+  }, []);
+
+  const loadJob = useCallback(async () => {
+    if (!id) return;
+    try {
+      const jobData = await getJobById(id);
+      setJob(jobData);
+      
+      // Load provider details
+      if (jobData?.providerId) {
+        try {
+          const providerData = await getProviderById(jobData.providerId);
+          if (providerData) setProvider(providerData);
+        } catch (error) {
+          toast({
+            title: 'Error',
+            description: error instanceof Error ? error.message : 'Failed to load provider details.',
+            variant: 'destructive',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load job:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load job details.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [id, toast]);
+
+  const loadCards = useCallback(async () => {
+    if (!user) return;
+    try {
+      const cards = await getSavedCards(user.id);
+      setSavedCards(cards);
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to load saved cards.',
+        variant: 'destructive',
+      });
+    }
+  }, [toast, user]);
+
+  useEffect(() => {
+    if (id) {
+      void loadJob();
+      void loadCards();
+      void loadSuppliers();
+      void loadDeliveryProviders();
+    }
+  }, [id, loadCards, loadDeliveryProviders, loadJob, loadSuppliers]);
+
+  useEffect(() => {
+    const handleStorageUpdate = (event: StorageEvent) => {
+      if (event.key?.includes('jobs') && id) {
+        void loadJob();
+      }
+    };
+    window.addEventListener('storage', handleStorageUpdate);
+    return () => window.removeEventListener('storage', handleStorageUpdate);
+  }, [id, loadJob]);
+
+  const handleSendMessage = async () => {
+    if (!job || !newMessage.trim() || isMessageSending) return;
+    setIsMessageSending(true);
+    try {
+      const updatedJob = await addChatMessage(job.id, newMessage);
+      setJob(updatedJob);
+      setNewMessage('');
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to send message.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsMessageSending(false);
+    }
+  };
+
+  const handlePayLabor = async (cardId: string, cvc: string) => {
+    if (!job || !user || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const selectedCard = savedCards.find(c => c.id === cardId);
+      const updatedJob = await payLabor(job.id, user.id, cardId, selectedCard?.last4 || '****');
+      setJob(updatedJob);
+      setPayLaborModalOpen(false);
+      toast({ title: 'Service paid', description: 'Your labor payment has been processed.' });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to process payment.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleSuggestMaterial = async (suggested: MaterialLine, message: string) => {
+    if (!job) return;
+    try {
+      const updatedJob = await addUserMaterialSuggestion(job.id, suggested, message);
+      setJob(updatedJob);
+      toast({ title: 'Suggestion sent', description: 'Your alternative material suggestion has been sent to the provider.' });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to send suggestion.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleCancelJob = async (reason: string, details: string) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const { job: updatedJob, refundAmount } = await cancelJob(job.id, reason, details);
+      setJob(updatedJob);
+      setCancelDialogOpen(false);
+      toast({ 
+        title: 'Job Cancelled', 
+        description: `Your job has been cancelled. Refund of ${formatCurrency(refundAmount, { decimals: 2 })} will be processed.` 
+      });
+      navigate('/user/jobs');
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to cancel job.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleConfirmCompletion = async (rating: number, review: string) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const updatedJob = await confirmJobCompletion(job.id, rating, review);
+      setJob(updatedJob);
+      setCompletionDialogOpen(false);
+      toast({ 
+        title: 'Job Completed!', 
+        description: 'Thank you for your review. Payment has been released to the provider.' 
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to complete job.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handlePayForStore = async (
+    supplierId: string,
+    cardId: string,
+    cardLast4: string,
+    options?: {
+      deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
+      deliveryFee: number;
+      deliveryProviderId?: string;
+      orderId?: string;
+    }
+  ) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const updatedJob = await payForStoreMaterials(
+        job.id,
+        supplierId,
+        cardId,
+        cardLast4,
+        options
+      );
+      setJob(updatedJob);
+      toast({ 
+        title: 'Materials paid', 
+        description: 'Materials paid. Pay for delivery when approved in Order Details.' 
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to process payment.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleSelectDeliveryOption = async (
+    storeId: string,
+    params: {
+      deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
+      deliveryFee: number;
+      deliveryProviderId?: string;
+      orderId?: string;
+    }
+  ) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const updatedJob = await setStoreDeliveryOption(job.id, storeId, params);
+      setJob(updatedJob);
+      toast({
+        title: 'Delivery option selected',
+        description: 'Your delivery preference has been saved for this store.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to save delivery option.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleSimulateProviderApproval = async (storeId: string) => {
+    if (!job) return;
+    try {
+      const updatedJob = await approveStoreDeliveryRequest(job.id, storeId);
+      setJob(updatedJob);
+      toast({
+        title: 'Delivery approved',
+        description: 'Your delivery provider has approved the request.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to simulate provider approval.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDeleteJob = async () => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      await deleteJob(job.id);
+      toast({ 
+        title: 'Job Deleted', 
+        description: 'The job has been removed from your list.' 
+      });
+      navigate('/user/jobs');
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete job.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const openDeleteMaterialDialog = (material: MaterialLine) => {
+    setMaterialToDelete(material);
+    setDeleteMaterialOpen(true);
+  };
+
+  const handleAcceptSuggestion = async (suggestionId: string) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const updatedJob = await acceptProviderSuggestion(job.id, suggestionId);
+      setJob(updatedJob);
+      toast({ title: 'Suggestion Accepted', description: 'Your cart has been updated.' });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to accept suggestion.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleRejectSuggestion = async (suggestionId: string) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      const updatedJob = await rejectProviderSuggestion(job.id, suggestionId);
+      setJob(updatedJob);
+      toast({ title: 'Suggestion Ignored' });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to reject suggestion.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const getStatusBadge = (status: Job['status']) => {
+    const label = getStandardizedStatusLabel(status);
+    if (status === 'CANCELLED' || status === 'REJECTED') {
+      return (
+        <Badge className="inline-flex items-center gap-1 bg-red-100 text-red-800">
+          <XCircle className="h-3 w-3" />
+          {label}
+        </Badge>
+      );
+    }
+    const idx = getUnifiedTimelineStepIndex(status);
+    const stepClasses: Record<number, string> = {
+      0: 'bg-yellow-100 text-yellow-800',
+      1: 'bg-blue-100 text-blue-800',
+      2: 'bg-amber-100 text-amber-800',
+      3: 'bg-purple-100 text-purple-800',
+      4: 'bg-amber-100 text-amber-800',
+      5: 'bg-green-100 text-green-800',
+    };
+    const StepIcon =
+      idx === 0 ? Clock : idx === 3 ? Clock : CheckCircle;
+    return (
+      <Badge className={cn('inline-flex items-center gap-1', stepClasses[idx] ?? stepClasses[0])}>
+        <StepIcon className="h-3 w-3" />
+        {label}
+      </Badge>
+    );
+  };
+
+  const materialsTotal = (job?.materials || []).reduce((sum, m) => sum + (m.qty * m.unitPrice), 0) || 0;
+  const laborTotal = job?.servicePrice?.amount ?? job?.laborEstimateRange?.max ?? 0;
+  const effectiveMeasurements = job
+    ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
+    : null;
+  const hasMaterialsPaid = job?.materialPayments?.some(p => p.status === 'paid') || false;
+
+  // Infer completion readiness from provider-authored notes
+  const providerMarkedComplete = job?.status === 'IN_PROGRESS' && 
+    job?.jobNotes?.some(n => n.message.toLowerCase().includes('completed') || n.message.toLowerCase().includes('finished'));
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="animate-pulse space-y-6">
+          <div className="h-8 w-48 bg-muted rounded" />
+          <div className="h-64 bg-muted rounded-lg" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!job) {
+    return (
+      <DashboardLayout>
+        <div className="text-center py-12">
+          <h2 className="text-xl font-semibold mb-2">Job not found</h2>
+          <Button onClick={() => navigate(-1)}>Go Back</Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6 animate-fade-in p-4">
+        {/* Header */}
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div className="flex-1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-2xl font-bold">{job.categoryName}</h1>
+              {getStatusBadge(job.status)}
+            </div>
+            <p className="text-muted-foreground">Job #{job.id.slice(-8)}</p>
+          </div>
+          
+          {/* Action Buttons */}
+          <div className="flex gap-2 flex-wrap">
+            {job.status === 'CANCELLED' && (
+              <Button 
+                variant="outline" 
+                className="text-muted-foreground border-muted-foreground hover:bg-accent/70"
+                onClick={() => setDeleteJobOpen(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Job
+              </Button>
+            )}
+            {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && (
+              <Button 
+                variant="outline" 
+                className="text-muted-foreground border-muted-foreground hover:bg-accent/70"
+                onClick={() => setCancelDialogOpen(true)}
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Cancel Job
+              </Button>
+            )}
+            {providerMarkedComplete && job.status === 'IN_PROGRESS' && (
+              <Button 
+                className="btn-accent"
+                onClick={() => setCompletionDialogOpen(true)}
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Confirm Completion
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Status Timeline */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between overflow-x-auto pb-2">
+              {(() => {
+                const view = getUserTimelineViewState(job);
+                const isCancelled = view.terminal === 'cancelled';
+                const isRejected = view.terminal === 'rejected';
+                const isTerminal = isCancelled || isRejected;
+                const pinIndex = view.pinIndex;
+                const currentIdx = view.currentIdx;
+
+                return USER_TIMELINE_STEPS.map((label, index, arr) => {
+                  const insight = getTimelineStepInsight(job, index);
+                  const isTerminalStep = isTerminal && index === pinIndex;
+                  const isActive =
+                    !isTerminal &&
+                    job.status !== 'COMPLETED' &&
+                    index === currentIdx;
+                  const isPast = isTerminal
+                    ? index < pinIndex
+                    : job.status === 'COMPLETED' || index < currentIdx;
+
+                  return (
+                    <div key={label} className="flex items-center">
+                      <div className="flex flex-col items-center min-w-[50px]">
+                        <Popover
+                          open={lockedTimelineStep === index || (lockedTimelineStep === null && hoveredTimelineStep === index)}
+                          onOpenChange={(open) => {
+                            if (!open && lockedTimelineStep === index) {
+                              setLockedTimelineStep(null);
+                            }
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              onMouseEnter={() => lockedTimelineStep === null && setHoveredTimelineStep(index)}
+                              onMouseLeave={() => lockedTimelineStep === null && setHoveredTimelineStep(null)}
+                              onClick={() => {
+                                setLockedTimelineStep((current) => (current === index ? null : index));
+                                setHoveredTimelineStep(null);
+                              }}
+                              className={cn(
+                                "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold transition-transform hover:scale-105 focus:outline-none",
+                                isPast ? "bg-success text-success-foreground" :
+                                isTerminalStep ? "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2" :
+                                isActive ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2" :
+                                "bg-muted text-muted-foreground"
+                              )}
+                            >
+                              {isPast ? <Check className="h-4 w-4" /> : index + 1}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-64">
+                            <div className="space-y-1 text-xs">
+                              <p className="font-semibold">{insight.stepLabel}</p>
+                              <p className="text-muted-foreground">{insight.nextAction}</p>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                        <span className={cn(
+                          "text-[10px] mt-1 text-center leading-tight",
+                          isTerminalStep ? "font-medium text-destructive" :
+                          isActive ? "font-medium" : "text-muted-foreground"
+                        )}>
+                          {isTerminalStep
+                            ? isCancelled
+                              ? `Cancelled${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
+                              : `Rejected${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
+                            : label}
+                        </span>
+                      </div>
+                      {index < arr.length - 1 && (
+                        <div className={cn(
+                          "w-6 sm:w-10 h-0.5 mx-1",
+                          isTerminal ? (index < pinIndex ? "bg-success" : "bg-muted") :
+                          (index < currentIdx ? "bg-success" : "bg-muted")
+                        )} />
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Service Price Section */}
+        {!job.laborPaid && (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED') && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Service Price</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Provider has set the labor price after inspection. Pay to proceed.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 bg-primary/5 rounded-lg">
+                <div>
+                  <p className="text-2xl font-bold text-primary">
+                    R{(job.servicePrice?.amount ?? job.laborEstimateRange.max).toFixed(2)}
+                  </p>
+                  {job.servicePrice?.note && (
+                    <p className="text-sm text-muted-foreground mt-1">{job.servicePrice.note}</p>
+                  )}
+                </div>
+                <Button className="btn-accent" onClick={() => setPayLaborModalOpen(true)}>
+                  Pay Service
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {job.laborPaid && job.servicePrice && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Service Price</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-lg font-semibold">{formatCurrency(job.servicePrice.amount, { decimals: 2 })}</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
+                    View Invoice
+                  </Button>
+                  <Badge className="bg-success text-success-foreground">Paid</Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Provider Suggestions */}
+        {job.providerSuggestions && job.providerSuggestions.filter(s => s.status === 'pending').length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Lightbulb className="h-5 w-5 text-accent" />
+                Provider Suggestions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {job.providerSuggestions.filter(s => s.status === 'pending').map(suggestion => (
+                <div key={suggestion.id} className="p-4 border border-border rounded-lg">
+                  <p className="font-medium mb-2">{suggestion.message}</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">
+                      Suggested: {suggestion.suggested.name} (${suggestion.suggested.unitPrice})
+                    </p>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => handleRejectSuggestion(suggestion.id)}
+                      >
+                        <X className="h-3 w-3 mr-1" />
+                        Ignore
+                      </Button>
+                      <Button 
+                        size="sm"
+                        onClick={() => handleAcceptSuggestion(suggestion.id)}
+                      >
+                        <Check className="h-3 w-3 mr-1" />
+                        Accept
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Material Payment Section */}
+        <MaterialPaymentSection
+          job={job}
+          userSuggestions={job.userMaterialSuggestions || []}
+          savedCards={savedCards}
+          deliveryProviders={deliveryProviders}
+          deliveryProvidersError={deliveryProvidersError}
+          onPayForStore={handlePayForStore}
+          onSuggestAlternatives={() => setSuggestMaterialsOpen(true)}
+          suppliers={suppliers}
+          onSelectDeliveryOption={handleSelectDeliveryOption}
+          onSimulateProviderApproval={handleSimulateProviderApproval}
+          onViewStoreOrder={(orderId) => navigate(`/user/orders/${orderId}`)}
+        />
+
+        {/* Tabs */}
+        <div className="border-b border-border">
+          <div className="flex gap-4">
+            {[
+              { id: 'details', label: 'Details', icon: FileText },
+              { id: 'notes', label: 'Job Notes', icon: MessageSquare },
+              { id: 'messages', label: 'Messages', icon: MessageSquare },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as 'details' | 'notes' | 'messages')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-3 border-b-2 -mb-px transition-colors",
+                  activeTab === tab.id 
+                    ? "border-primary text-primary" 
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <tab.icon className="h-4 w-4" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === 'details' && (
+          <div className="grid lg:grid-cols-2 gap-6">
+            {/* Job Info */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Job Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Description</p>
+                  <p>{job.description}</p>
+                </div>
+                {job.location && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Location</p>
+                    <p>{job.location.address}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {job.location.city}{job.location.area ? `, ${job.location.area}` : ''}
+                    </p>
+                    {job.location.notes && (
+                      <p className="text-sm text-muted-foreground mt-1">Notes: {job.location.notes}</p>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Created</p>
+                    <p>{new Date(job.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Last Updated</p>
+                    <p>{new Date(job.updatedAt).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Provider Info */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Provider</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {job.providerName ? (
+                  <div 
+                    className="flex items-center gap-4 cursor-pointer hover:bg-muted/50 p-2 rounded-lg -m-2 transition-colors"
+                    onClick={() => setProviderModalOpen(true)}
+                  >
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                      <User className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <p className="font-medium">{job.providerName}</p>
+                      <p className="text-sm text-muted-foreground">Click to view profile</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground">No provider assigned yet</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Measurements / Requirements */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Requirements</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {effectiveMeasurements?.movingItems && effectiveMeasurements.movingItems.length > 0 ? (
+                  <div className="space-y-2">
+                    {effectiveMeasurements.movingItems.map(item => (
+                      <div key={item.id} className="flex justify-between text-sm">
+                        <span>{item.name}</span>
+                        <span className="text-muted-foreground">× {item.qty}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : effectiveMeasurements?.plumbingIssue ? (
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Issue Type</p>
+                      <p>{effectiveMeasurements.plumbingIssue.type}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Description</p>
+                      <p>{effectiveMeasurements.plumbingIssue.description}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    {Object.entries(effectiveMeasurements?.values || {}).map(([key, value]) => (
+                      <div key={key}>
+                        <p className="text-muted-foreground capitalize">{key}</p>
+                        <p className="font-medium">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {job.providerAdjustedRequirements?.requirementNotes && (
+                  <div className="mt-4 pt-4 border-t border-border">
+                    <p className="text-sm text-muted-foreground mb-1">Provider notes</p>
+                    <p className="text-sm">{job.providerAdjustedRequirements.requirementNotes}</p>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-4">
+                  Source: {effectiveMeasurements?.source ?? job.measurements.source}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Quote */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Quote</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Materials</span>
+                  <span>{formatCurrency(materialsTotal, { decimals: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Labor / Service</span>
+                  <span>
+                    {job.servicePrice
+                      ? `R${job.servicePrice.amount.toFixed(2)}`
+                      : `R${job.laborEstimateRange.min} - R${job.laborEstimateRange.max}`}
+                  </span>
+                </div>
+                <div className="border-t border-border pt-2">
+                  <div className="flex justify-between font-bold">
+                    <span>Total</span>
+                    <span className="text-primary">
+                      {formatCurrency(materialsTotal + laborTotal, { decimals: 2 })}
+                    </span>
+                  </div>
+                </div>
+                {job.laborPaid && (
+                  <p className="text-xs text-success mt-2">
+                    {hasMaterialsPaid ? 'Service & Materials Paid' : 'Service Paid'}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'notes' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Job Notes</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Inspection findings and professional notes from your provider. Read-only.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {job.jobNotes.length > 0 ? (
+                  job.jobNotes.map((note) => (
+                    <div 
+                      key={note.id}
+                      className={cn(
+                        "p-4 rounded-lg border",
+                        note.authorRole === 'provider' ? "bg-muted/50" : "bg-primary/5"
+                      )}
+                    >
+                      {note.title && <p className="font-medium text-sm mb-1">{note.title}</p>}
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-medium text-sm">{note.authorName}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(note.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="text-sm">{note.message}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-center text-muted-foreground py-8">No notes yet. Provider will add inspection notes.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'messages' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Messages</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Message your provider to arrange inspection or discuss the job
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4 max-h-96 overflow-y-auto mb-4">
+                {job.chat.length > 0 ? (
+                  job.chat.map((msg) => (
+                    <div 
+                      key={msg.id}
+                      className={cn(
+                        "p-4 rounded-lg max-w-[80%]",
+                        msg.authorRole === 'user' 
+                          ? "bg-primary text-primary-foreground ml-auto" 
+                          : "bg-muted"
+                      )}
+                    >
+                      <p className="text-xs font-medium mb-1 opacity-75">{msg.authorName}</p>
+                      <p className="text-sm">{msg.message}</p>
+                      <p className={cn(
+                        "text-xs mt-1",
+                        msg.authorRole === 'user' ? "text-primary-foreground/70" : "text-muted-foreground"
+                      )}>
+                        {new Date(msg.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-center text-muted-foreground py-8">Start a conversation with your provider</p>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-4 border-t border-border">
+                <Textarea
+                  placeholder="Type a message..."
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  className="min-h-[60px]"
+                />
+                <Button onClick={handleSendMessage} disabled={!newMessage.trim()}>
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Dialogs */}
+      <JobCancellationDialog
+        open={cancelDialogOpen}
+        onOpenChange={setCancelDialogOpen}
+        onConfirm={handleCancelJob}
+        hasMaterialsPaid={hasMaterialsPaid}
+        materialsAmount={materialsTotal}
+        laborAmount={laborTotal}
+      />
+
+      <JobCompletionDialog
+        open={completionDialogOpen}
+        onOpenChange={setCompletionDialogOpen}
+        onConfirm={handleConfirmCompletion}
+        providerName={job.providerName || 'Provider'}
+      />
+
+      {provider && (
+        <ProviderDetailModal
+          provider={provider}
+          open={providerModalOpen}
+          onOpenChange={setProviderModalOpen}
+        />
+      )}
+
+      {/* Suggest Alternative Materials Modal */}
+      <SuggestAlternativeMaterialsModal
+        open={suggestMaterialsOpen}
+        onOpenChange={setSuggestMaterialsOpen}
+        suppliers={suppliers}
+        jobCategory={job.category}
+        onSuggest={handleSuggestMaterial}
+      />
+
+      {/* Pay Labor Modal */}
+      <PaymentModal
+        open={payLaborModalOpen}
+        onOpenChange={setPayLaborModalOpen}
+        title="Pay Service / Labor"
+        description="Pay the provider's labor fee to proceed with the job."
+        amount={laborTotal}
+        breakdown={[
+          { label: 'Service / Labor', amount: laborTotal },
+          { label: 'Total Due', amount: laborTotal, isBold: true },
+        ]}
+        savedCards={savedCards}
+        onPaySuccess={handlePayLabor}
+      />
+
+      {/* Delete Job Dialog */}
+      <DeleteJobDialog
+        open={deleteJobOpen}
+        onOpenChange={setDeleteJobOpen}
+        onConfirm={handleDeleteJob}
+        jobId={job.id}
+      />
+
+      {/* Service Invoice Modal */}
+      <Dialog open={serviceInvoiceOpen} onOpenChange={setServiceInvoiceOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Service Payment Invoice</DialogTitle>
+            <DialogDescription>
+              Secure payment details. Sensitive fields are masked.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between p-3 rounded-lg bg-muted/50">
+              <span className="text-muted-foreground">Amount</span>
+              <span className="font-semibold">
+                {formatCurrency(job.servicePayment?.amount ?? job.servicePrice?.amount ?? laborTotal, { decimals: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Payment ref</span>
+              <span className="font-mono text-xs">{job.servicePayment?.paymentRef ?? 'Legacy record'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Payment method</span>
+              <span>{job.servicePayment?.maskedPaymentMethod ?? `**** **** **** ${legacyInvoice?.cardLast4 ?? '****'}`}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Paid at</span>
+              <span>{new Date(job.servicePayment?.paidAt ?? legacyInvoice?.paidAt ?? job.updatedAt).toLocaleString()}</span>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </DashboardLayout>
+  );
+}

@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+Every backend endpoint must match wvhat the frontend already expects.

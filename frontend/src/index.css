@@ -1,0 +1,290 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* EloFix Design System */
+    --background: 220 20% 97%;
+    --foreground: 220 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+
+    /* Primary - Deep Blue (Trust) */
+    --primary: 213 80% 15%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary - Light Blue */
+    --secondary: 213 40% 95%;
+    --secondary-foreground: 213 80% 15%;
+
+    /* Muted */
+    --muted: 220 15% 94%;
+    --muted-foreground: 220 10% 45%;
+
+    /* Accent - Orange (Action) */
+    --accent: 33 100% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Success - Green */
+    --success: 156 72% 44%;
+    --success-foreground: 0 0% 100%;
+
+    /* Warning */
+    --warning: 45 93% 47%;
+    --warning-foreground: 220 20% 10%;
+
+    /* Destructive */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 90%;
+    --input: 220 15% 90%;
+    --ring: 213 80% 15%;
+
+    --radius: 0.75rem;
+
+    /* Custom tokens */
+    --hero-gradient: linear-gradient(135deg, hsl(213, 80%, 15%) 0%, hsl(213, 70%, 25%) 100%);
+    --card-shadow: 0 4px 20px -4px rgba(10, 37, 64, 0.08);
+    --card-shadow-hover: 0 8px 30px -4px rgba(10, 37, 64, 0.12);
+    --button-shadow: 0 4px 14px -2px rgba(255, 159, 28, 0.4);
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 20% 10%;
+    --sidebar-primary: 213 80% 15%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 15% 96%;
+    --sidebar-accent-foreground: 213 80% 15%;
+    --sidebar-border: 220 15% 92%;
+    --sidebar-ring: 213 80% 15%;
+  }
+
+  .dark {
+    --background: 220 20% 8%;
+    --foreground: 220 15% 95%;
+
+    --card: 220 20% 12%;
+    --card-foreground: 220 15% 95%;
+
+    --popover: 220 20% 12%;
+    --popover-foreground: 220 15% 95%;
+
+    --primary: 213 70% 60%;
+    --primary-foreground: 220 20% 8%;
+
+    --secondary: 220 20% 18%;
+    --secondary-foreground: 220 15% 95%;
+
+    --muted: 220 20% 18%;
+    --muted-foreground: 220 15% 60%;
+
+    --accent: 33 100% 55%;
+    --accent-foreground: 220 20% 8%;
+
+    --success: 156 72% 44%;
+    --success-foreground: 220 20% 8%;
+
+    --warning: 45 93% 47%;
+    --warning-foreground: 220 20% 8%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 220 15% 95%;
+
+    --border: 220 20% 20%;
+    --input: 220 20% 20%;
+    --ring: 213 70% 60%;
+
+    --sidebar-background: 220 20% 10%;
+    --sidebar-foreground: 220 15% 95%;
+    --sidebar-primary: 213 70% 60%;
+    --sidebar-primary-foreground: 220 20% 8%;
+    --sidebar-accent: 220 20% 16%;
+    --sidebar-accent-foreground: 220 15% 95%;
+    --sidebar-border: 220 20% 18%;
+    --sidebar-ring: 213 70% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+}
+
+@layer components {
+  .card-elevated {
+    @apply bg-card rounded-xl border-2 border-primary;
+    box-shadow: var(--card-shadow);
+    transition: box-shadow 0.2s ease;
+  }
+
+  .card-elevated:hover {
+    box-shadow: var(--card-shadow-hover);
+  }
+
+  .btn-accent {
+    @apply bg-accent text-accent-foreground font-semibold px-6 py-3 rounded-lg;
+    box-shadow: var(--button-shadow);
+    transition: all 0.2s ease;
+  }
+
+  .btn-accent:hover {
+    @apply opacity-90;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px -2px rgba(255, 159, 28, 0.5);
+  }
+
+  .hero-section {
+    background: var(--hero-gradient);
+  }
+
+  .status-badge {
+    @apply px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .status-created {
+    @apply bg-muted text-muted-foreground;
+  }
+
+  .status-assigned {
+    @apply bg-warning/20 text-warning;
+  }
+
+  .status-in-progress {
+    @apply bg-primary/20 text-primary;
+  }
+
+  .status-completed {
+    @apply bg-success/20 text-success;
+  }
+
+  .status-cancelled {
+    @apply bg-destructive/20 text-destructive;
+  }
+
+  .wizard-step {
+    @apply flex items-center gap-2;
+  }
+
+  .wizard-step-number {
+    @apply w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium;
+  }
+
+  .wizard-step-active .wizard-step-number {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  .wizard-step-completed .wizard-step-number {
+    @apply bg-success text-success-foreground;
+  }
+
+  .wizard-step-pending .wizard-step-number {
+    @apply bg-muted text-muted-foreground;
+  }
+
+  .category-card {
+    @apply card-elevated p-6 text-center cursor-pointer;
+    transition: all 0.2s ease;
+  }
+
+  .category-card:hover {
+    @apply border-accent;
+    transform: translateY(-2px);
+  }
+
+  .category-card.selected {
+    @apply border-primary bg-accent/15;
+  }
+
+  .provider-card {
+    @apply card-elevated p-4;
+  }
+
+  .provider-card.selected {
+    @apply border-accent ring-2 ring-accent/20;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground font-medium transition-colors;
+  }
+
+  .nav-link:hover {
+    @apply bg-muted text-foreground ;
+  }
+
+  .nav-link.active {
+    @apply bg-primary/10 text-primary border border-primary/60;
+  }
+
+  .table-header {
+    @apply text-left text-sm font-medium text-muted-foreground uppercase tracking-wider;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-ring transition-colors;
+  }
+
+  .textarea-field {
+    @apply input-field min-h-[120px] resize-none;
+  }
+
+  .label-text {
+    @apply block text-sm font-medium text-foreground mb-2;
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { 
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to { 
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scaleIn {
+    from { 
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to { 
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}

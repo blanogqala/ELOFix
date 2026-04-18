@@ -1,0 +1,95 @@
+import { MaterialOrder, OrderDelivery } from '@/types';
+import type { OrderCardViewModel } from '@/components/orders/OrderCard';
+import apiClient from '@/api/client';
+
+interface OrdersResponse<T> {
+  success: boolean;
+  orders: T[];
+}
+
+interface OrderResponse {
+  success: boolean;
+  order: MaterialOrder | null;
+}
+
+export async function getMaterialOrders(userId: string): Promise<MaterialOrder[]> {
+  const { data } = await apiClient.get<OrdersResponse<MaterialOrder>>('/material-orders', {
+    params: { userId },
+  });
+  return Array.isArray(data?.orders) ? data.orders : [];
+}
+
+/**
+ * Returns all material orders for a user: standalone orders + job-attached store orders.
+ * Merged and sorted by createdAt descending. Used by Material Orders tab.
+ */
+export async function getAllMaterialOrdersForUser(userId: string): Promise<OrderCardViewModel[]> {
+  const { data } = await apiClient.get<OrdersResponse<OrderCardViewModel>>('/material-orders/all', {
+    params: { userId },
+  });
+  return Array.isArray(data?.orders) ? data.orders : [];
+}
+
+export async function getMaterialOrderById(orderId: string): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.get<OrderResponse>(`/material-orders/${orderId}`);
+  return data?.order ?? null;
+}
+
+export async function createMaterialOrder(params: {
+  userId: string;
+  storeId: string;
+  storeName: string;
+  items: MaterialOrder['items'];
+  delivery: {
+    type: 'SELF' | 'STORE' | 'PROVIDER';
+    status: 'SelfCollect' | 'PendingApproval';
+    providerId?: string;
+    fee: number;
+  };
+  materialsTotal: number;
+  cardLast4: string;
+}): Promise<MaterialOrder> {
+  const { data } = await apiClient.post<OrderResponse>('/material-orders', params);
+  if (!data?.order) throw new Error('Failed to create material order');
+  return data.order;
+}
+
+export async function updateMaterialOrderDelivery(
+  orderId: string,
+  updates: Partial<OrderDelivery>
+): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery`, updates);
+  return data?.order ?? null;
+}
+
+export async function approveMaterialOrderDelivery(orderId: string): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery/approve`);
+  return data?.order ?? null;
+}
+
+export async function rejectMaterialOrderDelivery(orderId: string): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery/reject`);
+  return data?.order ?? null;
+}
+
+export async function payMaterialOrderDelivery(
+  orderId: string,
+  cardLast4: string,
+  fee: number
+): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.post<OrderResponse>(`/material-orders/${orderId}/delivery/pay`, {
+    cardLast4,
+    fee,
+  });
+  return data?.order ?? null;
+}
+
+export async function updateMaterialOrderDeliveryStatus(
+  orderId: string,
+  status: MaterialOrder['deliveryStatus']
+): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery/status`, {
+    status,
+  });
+  return data?.order ?? null;
+}

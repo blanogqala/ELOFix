@@ -1,0 +1,7 @@
+---
+alwaysApply: true
+---
+
+Frontend can ONLY change when:
+- You explicitly approve it
+- Or backend requirement is impossible without change
