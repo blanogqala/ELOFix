@@ -1,7 +1,9 @@
 import axios from 'axios';
 import { STORAGE_KEYS } from '@/lib/api/storage';
 
-const BASE_URL = 'http://localhost:5000/api';
+const BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) ||
+  'http://localhost:5000/api';
 const AUTH_PATHS = new Set(['/login', '/register']);
 
 class ApiHttpError extends Error {

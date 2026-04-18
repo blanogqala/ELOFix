@@ -1,0 +1,14 @@
+# Netlify: Site settings > Build & deploy > use repo root; this file sets base = "frontend".
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA fallback for react-router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
