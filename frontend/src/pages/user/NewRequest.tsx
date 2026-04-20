@@ -7,23 +7,23 @@ export default function NewRequest() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-3xl mx-auto animate-fade-in py-8">
-        <div className="text-center mb-10">
-          <h1 className="text-2xl font-bold mb-2">What would you like to do?</h1>
-          <p className="text-muted-foreground">Choose an option below to get started</p>
+      <div className="mx-auto max-w-3xl animate-fade-in py-6 sm:py-8">
+        <div className="mb-8 text-center sm:mb-10">
+          <h1 className="mb-2 text-xl font-semibold sm:text-2xl md:text-3xl">What would you like to do?</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Choose an option below to get started</p>
         </div>
 
-        <div className="grid sm:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
           {/* Request a Service */}
           <div
             onClick={() => navigate('/user/request/service')}
-            className="card-elevated p-8 cursor-pointer hover:border-primary/40 transition-all group"
+            className="card-elevated group cursor-pointer p-6 transition-all hover:border-primary/40 sm:p-8"
           >
-            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6 group-hover:bg-primary/20 transition-colors">
-              <Wrench className="h-8 w-8 text-primary" />
+            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 transition-colors group-hover:bg-primary/20 sm:h-16 sm:w-16">
+              <Wrench className="h-7 w-7 text-primary sm:h-8 sm:w-8" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">Request a Service</h2>
-            <p className="text-muted-foreground text-sm mb-6">
+            <h2 className="mb-2 text-lg font-semibold sm:text-xl">Request a Service</h2>
+            <p className="mb-6 text-sm text-muted-foreground sm:text-base">
               Hire a verified professional for plumbing, tiling, construction, moving, and more.
             </p>
             <div className="flex items-center gap-2 text-primary font-medium text-sm group-hover:gap-3 transition-all">
@@ -35,13 +35,13 @@ export default function NewRequest() {
           {/* Order Materials */}
           <div
             onClick={() => navigate('/user/order-materials')}
-            className="card-elevated p-8 cursor-pointer hover:border-accent/40 transition-all group"
+            className="card-elevated group cursor-pointer p-6 transition-all hover:border-accent/40 sm:p-8"
           >
-            <div className="h-16 w-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-6 group-hover:bg-accent/20 transition-colors">
-              <ShoppingCart className="h-8 w-8 text-accent" />
+            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10 transition-colors group-hover:bg-accent/20 sm:h-16 sm:w-16">
+              <ShoppingCart className="h-7 w-7 text-accent sm:h-8 sm:w-8" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">Order Materials</h2>
-            <p className="text-muted-foreground text-sm mb-6">
+            <h2 className="mb-2 text-lg font-semibold sm:text-xl">Order Materials</h2>
+            <p className="mb-6 text-sm text-muted-foreground sm:text-base">
               Buy materials from hardware stores without requesting a service provider.
             </p>
             <div className="flex items-center gap-2 text-accent font-medium text-sm group-hover:gap-3 transition-all">

@@ -34,14 +34,13 @@ import {
 } from '@/components/ui/dialog';
 import { AddMaterialsModal } from '@/components/jobs/AddMaterialsModal';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Card, CardContent } from '@/components/ui/card';
 import {
-  UNIFIED_TIMELINE_STEPS,
   getStandardizedStatusLabel,
   getProviderStatusBadgeVariant,
   ACTIVE_WORKFLOW_JOB_STATUSES,
-  getUnifiedTimelineStepIndex,
 } from '@/lib/jobStatusMapping';
-import { getUserTimelineViewState } from '@/lib/userJobTimeline';
+import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
 
 export default function ProviderJobDetail() {
@@ -315,15 +314,6 @@ export default function ProviderJobDetail() {
     ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION'
     : false;
 
-  const timelineView = job ? getUserTimelineViewState(job) : null;
-  const isCancelled = job?.status === 'CANCELLED';
-  const isRejected = job?.status === 'REJECTED';
-  const currentIdx = job
-    ? timelineView && timelineView.terminal !== 'none'
-      ? timelineView.pinIndex
-      : getUnifiedTimelineStepIndex(job.status)
-    : -1;
-
   const getStatusBadge = (status: Job['status']) => (
     <Badge variant={getProviderStatusBadgeVariant(status)}>{getStandardizedStatusLabel(status)}</Badge>
   );
@@ -354,118 +344,132 @@ export default function ProviderJobDetail() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
+      <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/provider/jobs')}>
-            <ArrowLeft className="h-5 w-5" />
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate('/provider/jobs')}>
+            <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold">{job.categoryName}</h1>
-            <p className="text-sm text-muted-foreground">#{job.id.slice(-8)}</p>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">{job.categoryName}</h1>
+            <p className="text-xs text-muted-foreground sm:text-sm">#{job.id.slice(-8)}</p>
           </div>
-          <div className="ml-auto">{getStatusBadge(job.status)}</div>
+          <div className="shrink-0">{getStatusBadge(job.status)}</div>
         </div>
 
-        {/* Timeline */}
-        <div className="card-elevated p-6 ">
-          <h2 className="font-semibold mb-4">Progress Timeline</h2>
-          <div className="flex items-center gap-0">
-            {UNIFIED_TIMELINE_STEPS.map((label, i) => {
-              const isActive = i === currentIdx && !isCancelled && !isRejected && job.status !== 'COMPLETED';
-              const isPast = (job.status === 'COMPLETED' || i < currentIdx) && !isCancelled && !isRejected;
-              const isCurrent = i === currentIdx;
-              const isCancelledStep = isCancelled && i === currentIdx;
-              const isRejectedStep = isRejected && i === currentIdx;
-              const isTerminalStep = isCancelledStep || isRejectedStep;
-              const stepLabel = isCancelledStep
-                ? `Cancelled ${job.cancelledAt ? new Date(job.cancelledAt).toLocaleDateString() : 'today'}`
-                : isRejectedStep
-                  ? `Rejected${job.rejectedAt ? ` ${new Date(job.rejectedAt).toLocaleDateString()}` : ''}`
-                  : label;
-              const insight = getTimelineStepInsight(job, i);
-              return (
-                <div key={label} className="flex-1 flex flex-col items-center relative">
-                  <Popover
-                    open={lockedTimelineStep === i || (lockedTimelineStep === null && hoveredTimelineStep === i)}
-                    onOpenChange={(open) => {
-                      if (!open && lockedTimelineStep === i) {
-                        setLockedTimelineStep(null);
-                      }
-                    }}
-                  >
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        onMouseEnter={() => lockedTimelineStep === null && setHoveredTimelineStep(i)}
-                        onMouseLeave={() => lockedTimelineStep === null && setHoveredTimelineStep(null)}
-                        onClick={() => {
-                          setLockedTimelineStep((current) => (current === i ? null : i));
-                          setHoveredTimelineStep(null);
-                        }}
-                        className={cn(
-                          "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold z-10 transition-transform hover:scale-105 focus:outline-none",
-                          isPast && "bg-success text-success-foreground",
-                          isTerminalStep && "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2",
-                          !isTerminalStep && isActive && "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2",
-                          !isPast && !isActive && "bg-muted text-muted-foreground"
-                        )}
-                      >
-                        {isPast ? <Check className="h-4 w-4" /> : i + 1}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-64">
-                      <div className="space-y-1 text-xs">
-                        <p className="font-semibold">{insight.stepLabel}</p>
-                        <p className="text-muted-foreground">{insight.nextAction}</p>
+        {/* Status Timeline */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between overflow-x-auto pb-2">
+              {(() => {
+                const view = getUserTimelineViewState(job);
+                const isCancelled = view.terminal === 'cancelled';
+                const isRejected = view.terminal === 'rejected';
+                const isTerminal = isCancelled || isRejected;
+                const pinIndex = view.pinIndex;
+                const currentIdx = view.currentIdx;
+
+                return USER_TIMELINE_STEPS.map((label, index, arr) => {
+                  const insight = getTimelineStepInsight(job, index);
+                  const isTerminalStep = isTerminal && index === pinIndex;
+                  const isActive =
+                    !isTerminal &&
+                    job.status !== 'COMPLETED' &&
+                    index === currentIdx;
+                  const isPast = isTerminal
+                    ? index < pinIndex
+                    : job.status === 'COMPLETED' || index < currentIdx;
+
+                  return (
+                    <div key={label} className="flex items-center">
+                      <div className="flex flex-col items-center min-w-[50px]">
+                        <Popover
+                          open={lockedTimelineStep === index || (lockedTimelineStep === null && hoveredTimelineStep === index)}
+                          onOpenChange={(open) => {
+                            if (!open && lockedTimelineStep === index) {
+                              setLockedTimelineStep(null);
+                            }
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              onMouseEnter={() => lockedTimelineStep === null && setHoveredTimelineStep(index)}
+                              onMouseLeave={() => lockedTimelineStep === null && setHoveredTimelineStep(null)}
+                              onClick={() => {
+                                setLockedTimelineStep((current) => (current === index ? null : index));
+                                setHoveredTimelineStep(null);
+                              }}
+                              className={cn(
+                                "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold transition-transform hover:scale-105 focus:outline-none",
+                                isPast ? "bg-success text-success-foreground" :
+                                isTerminalStep ? "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2" :
+                                isActive ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2" :
+                                "bg-muted text-muted-foreground"
+                              )}
+                            >
+                              {isPast ? <Check className="h-4 w-4" /> : index + 1}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-64">
+                            <div className="space-y-1 text-xs">
+                              <p className="font-semibold">{insight.stepLabel}</p>
+                              <p className="text-muted-foreground">{insight.nextAction}</p>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                        <span className={cn(
+                          "text-[10px] mt-1 text-center leading-tight",
+                          isTerminalStep ? "font-medium text-destructive" :
+                          isActive ? "font-medium" : "text-muted-foreground"
+                        )}>
+                          {isTerminalStep
+                            ? isCancelled
+                              ? `Cancelled${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
+                              : `Rejected${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
+                            : label}
+                        </span>
                       </div>
-                    </PopoverContent>
-                  </Popover>
-                  <p className={cn(
-                    "text-xs mt-1 text-center",
-                    isTerminalStep && "font-medium text-destructive",
-                    !isTerminalStep && (isActive || isPast) && "font-medium",
-                    !isPast && !isActive && "text-muted-foreground"
-                  )}>
-                    {stepLabel}
-                  </p>
-                  {i < UNIFIED_TIMELINE_STEPS.length - 1 && (
-                    <div className={cn(
-                      "absolute top-4 left-1/2 w-full h-0.5",
-                      i < currentIdx ? "bg-success" : "bg-muted"
-                    )} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                      {index < arr.length - 1 && (
+                        <div className={cn(
+                          "w-6 sm:w-10 h-0.5 mx-1",
+                          isTerminal ? (index < pinIndex ? "bg-success" : "bg-muted") :
+                          (index < currentIdx ? "bg-success" : "bg-muted")
+                        )} />
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Job Overview */}
         <div className="card-elevated p-6 space-y-4">
           <h2 className="font-semibold text-lg">Job Overview</h2>
 
-          <div className="grid sm:grid-cols-2 gap-4 text-sm p-3 bg-muted/50 rounded-lg space-y-1 border border-primary/40">
-            <div>
+          <div className="grid sm:grid-cols-2 gap-4 text-sm p-4 bg-muted/50 rounded-lg space-y-1 border border-primary/40">
+            <div className="border-b-2 border-primary/20 pb-3">
             <p className="text-muted-foreground ">Customer</p>
               <span>{job.userName}</span>
             </div>
             {job.providerName && (
-              <div>
+              <div className="border-b-2 border-primary/20 pb-3">
                 <p className="text-muted-foreground">Selected Provider</p>
                 <p className="font-medium">{job.providerName}</p>
               </div>
             )}
-            <div>
+            <div className="border-b-2 border-primary/20 pb-3">
               <p className="text-muted-foreground ">Service Category</p>
               <p className="font-medium">{job.categoryName}</p>
             </div>
-            <div>
+            <div className="border-b-2 border-primary/20 pb-3">
               <p className="text-muted-foreground ">Created</p>
               <p>{new Date(job.createdAt).toLocaleDateString()}</p>
             </div>
             {job.location && (
-            <div>
+            <div className=" sm:border-b-0 border-b-2 border-primary/20 pb-3">
               <p className="text-muted-foreground text-sm">Location</p>
               {mapsUrl ? (
                 <a

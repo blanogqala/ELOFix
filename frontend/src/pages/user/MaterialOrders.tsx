@@ -30,19 +30,19 @@ export default function MaterialOrders() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">My Material Orders</h1>
-            <p className="text-muted-foreground">Track your standalone material purchases</p>
+      <div className="space-y-6 md:space-y-8 animate-fade-in">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">My Material Orders</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Track your standalone material purchases</p>
           </div>
-          <Button className="btn-accent" onClick={() => navigate('/user/order-materials')}>
-            <ShoppingCart className="h-4 w-4 mr-2" />
+          <Button className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={() => navigate('/user/order-materials')}>
+            <ShoppingCart className="mr-2 h-4 w-4" />
             New Order
           </Button>
         </div>
 
-        <div className="card-elevated">
+        <div className="card-elevated overflow-hidden">
           {isLoading ? (
             <div className="p-6 space-y-4">
               {[...Array(3)].map((_, i) => (

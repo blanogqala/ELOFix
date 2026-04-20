@@ -496,48 +496,52 @@ export default function JobDetail() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
+      <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div className="flex-1">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-bold">{job.categoryName}</h1>
-              {getStatusBadge(job.status)}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">{job.categoryName}</h1>
+                {getStatusBadge(job.status)}
+              </div>
+              <p className="text-sm text-muted-foreground sm:text-base">Job #{job.id.slice(-8)}</p>
             </div>
-            <p className="text-muted-foreground">Job #{job.id.slice(-8)}</p>
           </div>
           
           {/* Action Buttons */}
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto sm:justify-end">
             {job.status === 'CANCELLED' && (
               <Button 
                 variant="outline" 
-                className="text-muted-foreground border-muted-foreground hover:bg-accent/70"
+                size="sm"
+                className="h-9 flex-1 whitespace-nowrap text-muted-foreground border-muted-foreground hover:bg-accent/70 sm:flex-initial"
                 onClick={() => setDeleteJobOpen(true)}
               >
-                <Trash2 className="h-4 w-4 mr-2" />
+                <Trash2 className="mr-2 h-4 w-4" />
                 Delete Job
               </Button>
             )}
             {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && (
               <Button 
                 variant="outline" 
-                className="text-muted-foreground border-muted-foreground hover:bg-accent/70"
+                size="sm"
+                className="h-9 flex-1 whitespace-nowrap text-muted-foreground border-muted-foreground hover:bg-accent/70 sm:flex-initial"
                 onClick={() => setCancelDialogOpen(true)}
               >
-                <Ban className="h-4 w-4 mr-2" />
+                <Ban className="mr-2 h-4 w-4" />
                 Cancel Job
               </Button>
             )}
             {providerMarkedComplete && job.status === 'IN_PROGRESS' && (
               <Button 
-                className="btn-accent"
+                className="btn-accent h-9 flex-1 whitespace-nowrap sm:flex-initial"
                 onClick={() => setCompletionDialogOpen(true)}
               >
-                <CheckCircle className="h-4 w-4 mr-2" />
+                <CheckCircle className="mr-2 h-4 w-4" />
                 Confirm Completion
               </Button>
             )}
@@ -768,12 +772,12 @@ export default function JobDetail() {
                 <CardTitle className="text-lg">Job Details</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
+                <div className="border-b-2 border-primary/20 pb-3">
                   <p className="text-sm text-muted-foreground">Description</p>
                   <p>{job.description}</p>
                 </div>
                 {job.location && (
-                  <div>
+                  <div className="border-b-2 border-primary/20 pb-3">
                     <p className="text-sm text-muted-foreground">Location</p>
                     <p>{job.location.address}</p>
                     <p className="text-sm text-muted-foreground">
@@ -864,7 +868,7 @@ export default function JobDetail() {
                     <p className="text-sm">{job.providerAdjustedRequirements.requirementNotes}</p>
                   </div>
                 )}
-                <p className="text-xs text-muted-foreground mt-4">
+                <p className=" text-xs text-muted-foreground mt-4">
                   Source: {effectiveMeasurements?.source ?? job.measurements.source}
                 </p>
               </CardContent>

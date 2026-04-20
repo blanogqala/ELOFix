@@ -364,14 +364,14 @@ export default function OrderDetails() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={handleBack}>
-            <ArrowLeft className="h-5 w-5" />
+      <div className="mx-auto min-w-0 max-w-4xl space-y-6 md:space-y-8 animate-fade-in">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={handleBack}>
+            <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold">Order Details</h1>
-            <p className="text-sm text-muted-foreground">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Order Details</h1>
+            <p className="text-xs text-muted-foreground sm:text-sm">
               Track your material delivery in real-time.
             </p>
           </div>
@@ -420,7 +420,7 @@ export default function OrderDetails() {
             />
           </>
         ) : (
-          <div className="card-elevated p-8 text-center text-muted-foreground">
+          <div className="card-elevated p-6 text-center text-sm text-muted-foreground sm:p-8 sm:text-base">
             Order not found.
           </div>
         )}

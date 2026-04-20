@@ -65,14 +65,14 @@ export default function NotificationsPage() {
 
   const getNotificationIcon = (type: AppNotification['type']) => {
     switch (type) {
-      case 'provider_accepted': return <CheckCircle className="h-5 w-5 text-success" />;
-      case 'provider_rejected': return <XCircle className="h-5 w-5 text-destructive" />;
-      case 'material_paid': return <DollarSign className="h-5 w-5 text-primary" />;
-      case 'job_completed': return <CheckCircle className="h-5 w-5 text-success" />;
-      case 'refund_issued': return <RefreshCw className="h-5 w-5 text-primary" />;
-      case 'provider_suggestion': return <MessageSquare className="h-5 w-5 text-accent" />;
-      case 'job_cancelled': return <AlertCircle className="h-5 w-5 text-warning" />;
-      default: return <Bell className="h-5 w-5 text-muted-foreground" />;
+      case 'provider_accepted': return <CheckCircle className="h-4 w-4 text-success" />;
+      case 'provider_rejected': return <XCircle className="h-4 w-4 text-destructive" />;
+      case 'material_paid': return <DollarSign className="h-4 w-4 text-primary" />;
+      case 'job_completed': return <CheckCircle className="h-4 w-4 text-success" />;
+      case 'refund_issued': return <RefreshCw className="h-4 w-4 text-primary" />;
+      case 'provider_suggestion': return <MessageSquare className="h-4 w-4 text-accent" />;
+      case 'job_cancelled': return <AlertCircle className="h-4 w-4 text-warning" />;
+      default: return <Bell className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -95,16 +95,16 @@ export default function NotificationsPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Notifications</h1>
-            <p className="text-muted-foreground">
+      <div className="space-y-6 md:space-y-8 animate-fade-in">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Notifications</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">
               {unreadCount > 0 ? `${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}` : 'All caught up!'}
             </p>
           </div>
           {unreadCount > 0 && (
-            <Button variant="outline" onClick={handleMarkAllAsRead}>
+            <Button variant="outline" size="sm" className="h-9 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={handleMarkAllAsRead}>
               <Check className="mr-2 h-4 w-4" />
               Mark All Read
             </Button>
@@ -112,7 +112,7 @@ export default function NotificationsPage() {
         </div>
 
         {notifications.length === 0 ? (
-          <div className="card-elevated p-12 text-center">
+          <div className="card-elevated p-8 text-center sm:p-12">
             <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="font-semibold mb-2">No notifications</h3>
             <p className="text-muted-foreground text-sm">You'll see updates about your jobs here</p>

@@ -61,12 +61,12 @@ export default function ProviderRequests() {
 
   const RequestCard = ({ job, showRejection = false }: { job: Job; showRejection?: boolean }) => (
     <div
-      className="card-elevated p-6 hover:shadow-lg transition-shadow cursor-pointer"
+      className="card-elevated cursor-pointer p-4 transition-shadow hover:shadow-lg sm:p-6"
       onClick={() => navigate(`/provider/requests/${job.id}`)}
     >
-      <div className="flex flex-col sm:flex-row gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row">
         {/* Thumbnail */}
-        <div className="sm:w-24 sm:h-24 h-32 rounded-lg overflow-hidden bg-muted flex items-center justify-center shrink-0">
+        <div className="flex aspect-video w-full shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted sm:aspect-square sm:h-24 sm:w-24">
           {job.images[0] ? (
             <img src={job.images[0]} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -105,7 +105,7 @@ export default function ProviderRequests() {
         </div>
 
         {/* Estimate & Actions */}
-        <div className="text-right shrink-0 flex flex-col items-end gap-2">
+        <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
           <p className="text-lg font-bold text-primary">
             R{job.totalEstimateRange.min}
           </p>
@@ -116,13 +116,13 @@ export default function ProviderRequests() {
             <Button
               variant="outline"
               size="sm"
-              className="text-muted-foreground hover:bg-destructive"
+              className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
               onClick={e => { e.stopPropagation(); setJobToDelete(job); setDeleteDialogOpen(true); }}
             >
-              <Trash2 className="h-4 w-4 mr-1" /> Delete
+              <Trash2 className="mr-1 h-4 w-4" /> Delete
             </Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); navigate(`/provider/requests/${job.id}`); }}>
+            <Button variant="outline" size="sm" className="h-9 w-full whitespace-nowrap sm:w-auto" onClick={e => { e.stopPropagation(); navigate(`/provider/requests/${job.id}`); }}>
               View Details
             </Button>
           )}
@@ -150,14 +150,14 @@ export default function ProviderRequests() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
-        <div>
-          <h1 className="text-2xl font-bold">Requests</h1>
-          <p className="text-muted-foreground">Review and respond to job requests</p>
+      <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Requests</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Review and respond to job requests</p>
         </div>
 
-        <Tabs defaultValue="pending" className="w-full">
-          <TabsList>
+        <Tabs defaultValue="pending" className="w-full min-w-0">
+          <TabsList className="flex h-auto w-full flex-wrap gap-1 sm:gap-0">
             <TabsTrigger value="pending" className="gap-2">
               <ClipboardList className="h-4 w-4" />
               Pending Requests

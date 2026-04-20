@@ -82,7 +82,7 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
   const currentSpecial = specials[currentIndex];
 
   return (
-    <div className="card-elevated overflow-hidden relative group">
+    <div className="card-elevated group relative max-w-full min-w-0 overflow-hidden">
       {/* Main Slide */}
       <div 
         className="relative h-48 sm:h-56 cursor-pointer transition-transform duration-300"
@@ -92,8 +92,8 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
         <div className="absolute inset-0 bg-gradient-to-r from-primary via-primary/90 to-primary/70" />
         
         {/* Content */}
-        <div className="relative h-full flex items-center px-6 py-4">
-          <div className="flex-1 text-white z-10">
+        <div className="relative flex h-full min-w-0 items-center px-4 py-4 sm:px-6">
+          <div className="z-10 min-w-0 flex-1 text-white">
             {/* Store Info */}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-2xl">{currentSpecial.supplierLogo}</span>

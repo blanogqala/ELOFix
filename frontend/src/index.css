@@ -128,13 +128,11 @@
 
 @layer components {
   .card-elevated {
-    @apply bg-card rounded-xl border-2 border-primary;
-    box-shadow: var(--card-shadow);
-    transition: box-shadow 0.2s ease;
+    @apply bg-card rounded-xl border-2 border-primary shadow-sm transition-all duration-200;
   }
 
   .card-elevated:hover {
-    box-shadow: var(--card-shadow-hover);
+    @apply shadow-md;
   }
 
   .btn-accent {

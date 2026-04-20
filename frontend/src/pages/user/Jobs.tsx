@@ -70,20 +70,20 @@ export default function UserJobs() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">My Jobs</h1>
-            <p className="text-muted-foreground">Track and manage your service requests</p>
+      <div className="space-y-6 md:space-y-8 animate-fade-in">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">My Jobs</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Track and manage your service requests</p>
           </div>
-          <Button className="btn-accent" onClick={() => navigate('/user/new-request')}>
+          <Button className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={() => navigate('/user/new-request')}>
             New Request
           </Button>
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative flex-1 max-w-md">
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <div className="relative min-w-0 flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
               placeholder="Search by category or description"
@@ -92,12 +92,13 @@ export default function UserJobs() {
               className="pl-10 pr-4 h-11 rounded-lg border border-input focus-visible:ring-2 focus-visible:ring-primary/20"
             />
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex flex-wrap gap-2">
             {(['all', 'pending', 'active', 'completed', 'cancelled'] as const).map((filter) => (
               <Button
                 key={filter}
                 variant={statusFilter === filter ? 'default' : 'outline'}
                 size="sm"
+                className="whitespace-nowrap"
                 onClick={() => setStatusFilter(filter)}
               >
                 {filter.charAt(0).toUpperCase() + filter.slice(1)}
@@ -107,7 +108,7 @@ export default function UserJobs() {
         </div>
 
         {/* Jobs List */}
-        <div className="card-elevated w-[540px] sm:w-[690px] md:w-[768px] lg:w-full">
+        <div className="card-elevated w-full min-w-0 max-w-full overflow-hidden">
           {isLoading ? (
             <div className="p-6 space-y-4">
               {[...Array(5)].map((_, i) => (
@@ -171,7 +172,7 @@ export default function UserJobs() {
                         );
                       })()}
                     </div>
-                    <ArrowRight className="h-5 w-5 text-muted-foreground shrink-0" />
+                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                   </div>
                 </div>
               ))}

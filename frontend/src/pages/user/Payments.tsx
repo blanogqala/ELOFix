@@ -304,14 +304,14 @@ export default function UserPayments() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-2xl font-bold">Payments</h1>
-          <p className="text-muted-foreground">Manage your payment methods and view invoices</p>
+      <div className="space-y-6 md:space-y-8 animate-fade-in">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Payments</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Manage your payment methods and view invoices</p>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 border-b border-border">
+        <div className="flex flex-wrap gap-2 border-b border-border">
           <button
             onClick={() => setActiveTab('invoices')}
             className={cn(
@@ -343,7 +343,7 @@ export default function UserPayments() {
           <div className="space-y-4">
             <Dialog open={showAddCard} onOpenChange={setShowAddCard}>
               <DialogTrigger asChild>
-                <Button className="btn-accent">
+                <Button className="btn-accent h-10 w-full whitespace-nowrap sm:w-auto">
                   <Plus className="mr-2 h-4 w-4" />
                   Add New Card
                 </Button>
@@ -414,8 +414,8 @@ export default function UserPayments() {
               <div className="space-y-3">
                 {cards.map(card => (
                   <div key={card.id} className="card-elevated p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
+                    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                         <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center text-2xl">
                           {getCardIcon(card.brand)}
                         </div>
@@ -433,21 +433,22 @@ export default function UserPayments() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                         {!card.isDefault && (
                           <Button 
                             variant="outline" 
                             size="sm"
+                            className="h-9 flex-1 whitespace-nowrap sm:flex-initial"
                             onClick={() => handleSetDefault(card.id)}
                           >
-                            <Star className="h-4 w-4 mr-1" />
+                            <Star className="mr-1 h-4 w-4" />
                             Set Default
                           </Button>
                         )}
                         <Button 
                           variant="outline" 
                           size="icon"
-                          className="text-destructive hover:bg-destructive/10"
+                          className="h-9 shrink-0 text-destructive hover:bg-destructive/10"
                           onClick={() => handleDeleteCard(card.id)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -481,17 +482,17 @@ export default function UserPayments() {
                         className="card-elevated p-4 cursor-pointer hover:border-primary/30 transition-colors"
                         onClick={() => setSelectedInvoice(invoice)}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                               {invoice.type === 'refund' ? (
-                                <RotateCcw className="h-5 w-5 text-primary" />
+                                <RotateCcw className="h-4 w-4 text-primary" />
                               ) : (
-                                <FileText className="h-5 w-5 text-primary" />
+                                <FileText className="h-4 w-4 text-primary" />
                               )}
                             </div>
-                            <div>
-                              <p className="font-medium">
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">
                                 {getInvoiceTypeLabel(invoice)}
                               </p>
                               <p className="text-sm text-muted-foreground">
@@ -499,8 +500,8 @@ export default function UserPayments() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-4">
-                            <div className="text-right">
+                          <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+                            <div className="text-left sm:text-right">
                               <p className={cn(
                                 "font-semibold",
                                 invoice.type === 'refund' && "text-success"
@@ -512,7 +513,7 @@ export default function UserPayments() {
                                 <span>{getStatusLabel(invoice.status)}</span>
                               </div>
                             </div>
-                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                           </div>
                         </div>
                       </div>

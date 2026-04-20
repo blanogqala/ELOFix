@@ -93,10 +93,10 @@ export default function ProviderActiveJobs() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
-        <div>
-          <h1 className="text-2xl font-bold">Active Jobs</h1>
-          <p className="text-muted-foreground">Track your ongoing and completed jobs</p>
+      <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Active Jobs</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Track your ongoing and completed jobs</p>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -105,7 +105,7 @@ export default function ProviderActiveJobs() {
               key={f.value}
               onClick={() => setFilter(f.value)}
               className={cn(
-                "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                "whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4",
                 filter === f.value ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
               )}
             >
@@ -129,36 +129,36 @@ export default function ProviderActiveJobs() {
             {filtered.map(job => (
               <div
                 key={job.id}
-                className="card-elevated p-6 hover:shadow-lg transition-shadow cursor-pointer"
+                className="card-elevated cursor-pointer p-4 transition-shadow hover:shadow-lg sm:p-6"
                 onClick={() => navigate(`/provider/jobs/${job.id}`)}
               >
-                <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <Briefcase className="h-6 w-6 text-primary" />
+                <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                    <Briefcase className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
                       <p className="font-medium">{job.categoryName}</p>
                       {getStatusBadge(job.status)}
                     </div>
-                    <p className="text-sm text-muted-foreground truncate">{job.description}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Client: {job.userName}</p>
+                    <p className="truncate text-sm text-muted-foreground">{job.description}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Client: {job.userName}</p>
                   </div>
-                  <div className="text-right shrink-0 flex flex-col items-end gap-1">
-                    <p className="font-semibold">R{job.servicePrice?.amount ?? job.laborEstimateRange?.min ?? 0}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(job.createdAt).toLocaleDateString()}
-                    </p>
+                  <div className="flex shrink-0 flex-col items-stretch gap-1 sm:items-end sm:text-right">
                     {job.status === 'CANCELLED' && (
                       <Button
                         variant="outline"
                         size="sm"
-                        className="text-muted-foreground hover:bg-destructive mt-2"
+                        className="mt-2 h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:mt-0 sm:w-auto"
                         onClick={e => { e.stopPropagation(); setJobToDelete(job); setDeleteDialogOpen(true); }}
                       >
-                        <Trash2 className="h-4 w-4 mr-1" /> Delete
+                        <Trash2 className="mr-1 h-4 w-4" /> Delete
                       </Button>
                     )}
+                    <p className="font-semibold">R{job.servicePrice?.amount ?? job.laborEstimateRange?.min ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(job.createdAt).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
               </div>

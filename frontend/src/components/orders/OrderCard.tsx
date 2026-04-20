@@ -28,11 +28,11 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
       )}
       onClick={onClick}
     >
-      <div className="flex items-center gap-4">
-        <div className="h-12 w-12 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
-          <Package className="h-6 w-6 text-accent" />
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
+          <Package className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
         </div>
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <p className="font-medium">{order.storeName}</p>
             <Badge className={order.deliveryStatusClassName}>
@@ -46,7 +46,7 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
             {order.itemsCount} items • Order #{order.id.slice(-6)}
           </p>
         </div>
-        <div className="text-right shrink-0 hidden sm:block">
+        <div className="hidden shrink-0 text-right sm:block">
           <p className="font-bold">${order.total.toFixed(2)}</p>
           <p className="text-xs text-muted-foreground">
             {new Date(order.createdAt).toLocaleDateString()}
@@ -54,7 +54,12 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
         </div>
       </div>
 
-      <div className="ml-16 space-y-1 text-sm text-muted-foreground">
+      <div className="mt-1 flex justify-between text-sm font-semibold sm:hidden">
+        <span className="text-muted-foreground">Total</span>
+        <span>${order.total.toFixed(2)}</span>
+      </div>
+
+      <div className="mt-2 space-y-1 text-sm text-muted-foreground sm:ml-16 sm:mt-0">
         {order.deliveryFee && order.deliveryFee > 0 && (
           <div className="flex justify-between">
             <span>Delivery Fee</span>

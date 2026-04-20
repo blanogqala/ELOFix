@@ -99,15 +99,15 @@ export default function UserProfile() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Profile Settings</h1>
-            <p className="text-muted-foreground">Manage your account information</p>
+      <div className="mx-auto max-w-4xl space-y-6 md:space-y-8 animate-fade-in">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Profile Settings</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Manage your account information</p>
           </div>
           {hasChanges && (
             <Button 
-              className="btn-accent" 
+              className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" 
               onClick={handleSave}
               disabled={isSaving}
             >
@@ -118,7 +118,7 @@ export default function UserProfile() {
         </div>
 
         {/* Profile Header */}
-        <div className="card-elevated p-6">
+        <div className="card-elevated p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row items-center gap-6">
             <div className="relative">
               <div className="h-24 w-24 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
@@ -150,9 +150,9 @@ export default function UserProfile() {
         </div>
 
         {/* Personal Information */}
-        <div className="card-elevated p-6">
-          <h3 className="font-semibold mb-4 flex items-center gap-2">
-            <UserIcon className="h-5 w-5 text-primary" />
+        <div className="card-elevated p-4 sm:p-6">
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold sm:text-xl">
+            <UserIcon className="h-4 w-4 shrink-0 text-primary" />
             Personal Information
           </h3>
           
@@ -208,9 +208,9 @@ export default function UserProfile() {
         </div>
 
         {/* Security Section */}
-        <div className="card-elevated p-6">
-          <h3 className="font-semibold mb-4 flex items-center gap-2">
-            <Shield className="h-5 w-5 text-primary" />
+        <div className="card-elevated p-4 sm:p-6">
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold sm:text-xl">
+            <Shield className="h-4 w-4 shrink-0 text-primary" />
             Security
           </h3>
           
@@ -220,7 +220,7 @@ export default function UserProfile() {
             >
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                  <Lock className="h-5 w-5 text-muted-foreground" />
+                  <Lock className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="font-medium">Change Password</p>
@@ -235,7 +235,7 @@ export default function UserProfile() {
             >
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                  <Smartphone className="h-5 w-5 text-muted-foreground" />
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="font-medium">Two-Factor Authentication</p>
@@ -250,7 +250,7 @@ export default function UserProfile() {
             >
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                  <Eye className="h-5 w-5 text-muted-foreground" />
+                  <Eye className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="font-medium">Login Activity</p>
@@ -266,7 +266,7 @@ export default function UserProfile() {
         {hasChanges && (
           <div className="sticky bottom-4 sm:hidden">
             <Button 
-              className="btn-accent w-full" 
+              className="btn-accent h-10 w-full whitespace-nowrap" 
               onClick={handleSave}
               disabled={isSaving}
             >

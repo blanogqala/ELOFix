@@ -180,15 +180,15 @@ export default function ServiceRequest() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto animate-fade-in">
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4 ">
+      <div className="mx-auto min-w-0 max-w-4xl animate-fade-in">
+        <div className="mb-6 md:mb-8">
+          <div className="-mx-1 mb-4 flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto px-1 pb-2 sm:mx-0 sm:justify-between sm:overflow-visible sm:px-0 sm:pb-0">
             {STEPS.map((step, index) => {
               const isActive = step.id === currentStep;
               const isCompleted = step.id < currentStep;
 
               return (
-                <div key={step.id} className="flex items-center">
+                <div key={step.id} className="flex shrink-0 items-center">
                   <div
                     className={cn(
                       'wizard-step',
@@ -211,7 +211,7 @@ export default function ServiceRequest() {
           </div>
         </div>
 
-        <div className="card-elevated p-6 md:p-8">
+        <div className="card-elevated overflow-hidden p-4 sm:p-6 md:p-8">
           {currentStep === 1 && (
             <div className="space-y-6">
               <div>
@@ -219,7 +219,7 @@ export default function ServiceRequest() {
                 <p className="text-muted-foreground">Select a category that best matches your needs</p>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
                 {categories.map((category) => (
                   <div
                     key={category.id}
@@ -333,9 +333,9 @@ export default function ServiceRequest() {
                     key={provider.id}
                     className={cn('provider-card', selectedProvider === provider.id && 'selected')}
                   >
-                    <div className="flex items-start gap-4">
+                    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
                       <div
-                        className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center shrink-0 cursor-pointer"
+                        className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary/10"
                         onClick={() => setSelectedProviderForModal(provider)}
                       >
                         <span className="text-xl font-bold text-primary">{provider.name.charAt(0)}</span>
@@ -370,26 +370,27 @@ export default function ServiceRequest() {
                           </span>
                         </div>
                       </div>
-                      <div className="text-right shrink-0 flex flex-col items-end gap-2">
+                      <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
                         <div>
-                          <p className="font-semibold text-lg">${provider.laborPricing[selectedCategory]?.rate || 'N/A'}</p>
+                          <p className="text-lg font-semibold">${provider.laborPricing[selectedCategory]?.rate || 'N/A'}</p>
                           <p className="text-xs text-muted-foreground">
                             per {provider.laborPricing[selectedCategory]?.unit || 'job'} (estimate)
                           </p>
                         </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => setSelectedProviderForModal(provider)}>
-                            <Eye className="h-3 w-3 mr-1" />
+                        <div className="flex flex-wrap gap-2 sm:justify-end">
+                          <Button size="sm" variant="outline" className="w-full whitespace-nowrap sm:w-auto" onClick={() => setSelectedProviderForModal(provider)}>
+                            <Eye className="mr-1 h-4 w-4" />
                             View
                           </Button>
                           <Button
                             size="sm"
+                            className="w-full whitespace-nowrap sm:w-auto"
                             variant={selectedProvider === provider.id ? 'default' : 'outline'}
                             onClick={() => setSelectedProvider(provider.id)}
                           >
                             {selectedProvider === provider.id ? (
                               <>
-                                <Check className="h-3 w-3 mr-1" />
+                                <Check className="mr-1 h-4 w-4" />
                                 Selected
                               </>
                             ) : (
@@ -405,19 +406,19 @@ export default function ServiceRequest() {
             </div>
           )}
 
-          <div className="flex justify-between mt-8 pt-6 border-t border-border">
-            <Button variant="outline" onClick={prevStep} disabled={currentStep === 1}>
+          <div className="mt-8 flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={prevStep} disabled={currentStep === 1}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back
             </Button>
 
             {currentStep < 4 ? (
-              <Button className="btn-accent" onClick={nextStep} disabled={!canProceed()}>
+              <Button className="btn-accent h-10 w-full whitespace-nowrap sm:w-auto" onClick={nextStep} disabled={!canProceed()}>
                 Next
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
-              <Button className="btn-accent" onClick={handleSubmit} disabled={isSubmitting || !canProceed()}>
+              <Button className="btn-accent h-10 w-full whitespace-nowrap sm:w-auto" onClick={handleSubmit} disabled={isSubmitting || !canProceed()}>
                 {isSubmitting ? 'Submitting...' : 'Submit Request'}
                 <Check className="ml-2 h-4 w-4" />
               </Button>

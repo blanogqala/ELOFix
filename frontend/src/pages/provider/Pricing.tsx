@@ -105,22 +105,22 @@ export default function ProviderPricing() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Skills & Pricing</h1>
-            <p className="text-muted-foreground">Set your service rates for each skill</p>
+      <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Skills & Pricing</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Set your service rates for each skill</p>
           </div>
-          <Button onClick={handleSave} disabled={isSaving}>
+          <Button className="h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={handleSave} disabled={isSaving}>
             <Save className="mr-2 h-4 w-4" />
             {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
 
         {/* Skill Selection */}
-        <div className="card-elevated p-6">
-          <h3 className="font-semibold mb-4">Select Your Services</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="card-elevated p-4 sm:p-6">
+          <h3 className="mb-4 text-lg font-semibold sm:text-xl">Select Your Services</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">
             {categories.map((category) => (
               <button
                 key={category.id}
@@ -141,9 +141,9 @@ export default function ProviderPricing() {
 
         {/* Pricing Table */}
         {selectedSkills.length > 0 && (
-          <div className="card-elevated">
-            <div className="p-6 border-b border-border">
-              <h3 className="font-semibold">Set Your Rates</h3>
+          <div className="card-elevated overflow-hidden">
+            <div className="border-b border-border p-4 sm:p-6">
+              <h3 className="text-lg font-semibold sm:text-xl">Set Your Rates</h3>
               <p className="text-sm text-muted-foreground">
                 Define your pricing for each selected service
               </p>
@@ -155,9 +155,9 @@ export default function ProviderPricing() {
                 const skillPricing = pricing[skillId] || { unit: 'hour', rate: 0 };
 
                 return (
-                  <div key={skillId} className="p-6">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                      <div className="flex items-center gap-3 flex-1">
+                  <div key={skillId} className="p-4 sm:p-6">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
                         <span className="text-2xl">{category?.icon}</span>
                         <div>
                           <p className="font-medium">{category?.name}</p>
@@ -165,15 +165,15 @@ export default function ProviderPricing() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <div className="flex items-center gap-2">
-                          <DollarSign className="h-4 w-4 text-muted-foreground" />
+                          <DollarSign className="h-4 w-4 shrink-0 text-muted-foreground" />
                           <Input
                             type="number"
                             min="0"
                             value={skillPricing.rate || ''}
                             onChange={(e) => handleUpdateRate(skillId, parseFloat(e.target.value) || 0)}
-                            className="w-24"
+                            className="w-24 min-w-0"
                             placeholder="Rate"
                           />
                         </div>
@@ -186,7 +186,7 @@ export default function ProviderPricing() {
                               handleUpdateUnit(skillId, unit);
                             }
                           }}
-                          className="input-field w-28"
+                          className="input-field min-w-0 w-full max-w-[11rem] sm:w-28"
                         >
                           <option value="hour">per hour</option>
                           <option value="sqm">per sqm</option>

@@ -68,12 +68,12 @@ export default function ProviderDashboard() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
+      <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Provider Dashboard</h1>
-            <p className="text-muted-foreground">Manage your service requests and jobs</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Provider Dashboard</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Manage your service requests and jobs</p>
           </div>
           {!provider?.approved && (
             <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning rounded-lg">
@@ -89,7 +89,6 @@ export default function ProviderDashboard() {
             <div className="flex items-start gap-4">
               <AlertCircle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium">Complete your profile for approval</p>
                 <p className="text-sm text-muted-foreground mb-3">
                   Upload required documents and set up your pricing to start receiving job requests.
                 </p>
@@ -106,48 +105,48 @@ export default function ProviderDashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-warning/10 flex items-center justify-center">
-                <ClipboardList className="h-6 w-6 text-warning" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
+                <ClipboardList className="h-4 w-4 text-warning sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.pending}</p>
-                <p className="text-sm text-muted-foreground">Pending</p>
-              </div>
-            </div>
-          </div>
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Clock className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.active}</p>
-                <p className="text-sm text-muted-foreground">Active</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.pending}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Pending</p>
               </div>
             </div>
           </div>
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-success/10 flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-success" />
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+                <Clock className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.completed}</p>
-                <p className="text-sm text-muted-foreground">Completed</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.active}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Active</p>
               </div>
             </div>
           </div>
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-accent/10 flex items-center justify-center">
-                <DollarSign className="h-6 w-6 text-accent" />
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-4 w-4 text-success sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">R{stats.earnings}</p>
-                <p className="text-sm text-muted-foreground">Earnings</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.completed}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Completed</p>
+              </div>
+            </div>
+          </div>
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
+                <DollarSign className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">R{stats.earnings}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Earnings</p>
               </div>
             </div>
           </div>
@@ -155,15 +154,21 @@ export default function ProviderDashboard() {
 
         {/* Provider Profile Card */}
         {provider && (
-          <div className="card-elevated p-6 bg-accent/30">
-            <div className="flex items-start gap-4">
-              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                <span className="text-2xl font-bold text-primary">{provider.name.charAt(0)}</span>
+          <div className="card-elevated bg-accent/30 p-4 sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-col sm:items-start sm:pl-4">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                  <span className="text-2xl font-bold text-primary">{provider.name.charAt(0)}</span>
+                </div>
+                <div className="flex justify-end sm:justify-end sm:ml-48 sm:mt-4">
+                  <Button variant="outline" className="h-9 w-28 shrink-0 whitespace-nowrap sm:w-48" onClick={() => navigate('/provider/profile')}>Edit Profile</Button>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-lg">{provider.name}</h3>
-                <p className="text-sm text-muted-foreground mb-2">{provider.bio || 'Add a bio to attract more clients'}</p>
-                <div className="flex flex-wrap gap-4 text-sm">
+              
+              <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-semibold sm:text-xl">{provider.name}</h3>
+                <p className="mb-2 text-sm text-muted-foreground">{provider.bio || 'Add a bio to attract more clients'}</p>
+                <div className="flex flex-wrap gap-3 text-sm sm:gap-4">
                   <span className="flex items-center gap-1">
                     <Star className="h-4 w-4 fill-accent text-accent" />
                     {provider.rating > 0 ? provider.rating.toFixed(1) : 'No ratings yet'}
@@ -174,18 +179,18 @@ export default function ProviderDashboard() {
                   </span>
                 </div>
               </div>
-              <Button variant="outline" onClick={() => navigate('/provider/profile')}>Edit Profile</Button>
+              
             </div>
           </div>
         )}
 
         {/* Two-Column Grid: Pending Requests + Recent Jobs */}
-        <div className="grid lg:grid-cols-2 gap-6">
+        <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
           {/* Pending Requests Column */}
-          <div className="card-elevated">
-            <div className="p-6 border-b border-border flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold">Pending Requests</h2>
+          <div className="card-elevated overflow-hidden">
+            <div className="grid grid-cols-2 gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+              <div className="min-w-0 col-span-1">
+                <h2 className="text-lg font-semibold sm:text-xl">Pending Requests</h2>
                 <p className="text-sm text-muted-foreground">{pendingJobs.length} awaiting response</p>
               </div>
               <Button variant="ghost" size="sm" onClick={() => navigate('/provider/requests')}>
@@ -250,10 +255,10 @@ export default function ProviderDashboard() {
           </div>
 
           {/* Recent Jobs Column */}
-          <div className="card-elevated">
-            <div className="p-6 border-b border-border flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold">Recent Jobs</h2>
+          <div className="card-elevated overflow-hidden">
+            <div className="grid grid-cols-2 gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+              <div className="min-w-0 col-span-1">
+                <h2 className="text-lg font-semibold sm:text-xl">Recent Jobs</h2>
                 <p className="text-sm text-muted-foreground">{recentJobs.length} jobs</p>
               </div>
               <Button variant="ghost" size="sm" onClick={() => navigate('/provider/jobs')}>

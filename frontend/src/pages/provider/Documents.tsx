@@ -148,10 +148,10 @@ export default function ProviderDocuments() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
-        <div>
-          <h1 className="text-2xl font-bold">Documents & Portfolio</h1>
-          <p className="text-muted-foreground">Upload required documents for verification</p>
+      <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Documents & Portfolio</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Upload required documents for verification</p>
         </div>
 
         {/* Approval Status */}
@@ -170,9 +170,9 @@ export default function ProviderDocuments() {
         )}
 
         {/* Required Documents */}
-        <div className="card-elevated">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-semibold">Verification Documents</h3>
+        <div className="card-elevated overflow-hidden">
+          <div className="border-b border-border p-4 sm:p-6">
+            <h3 className="text-lg font-semibold sm:text-xl">Verification Documents</h3>
             <p className="text-sm text-muted-foreground">Upload documents for identity verification</p>
           </div>
 
@@ -183,7 +183,7 @@ export default function ProviderDocuments() {
               const StatusIcon = status?.icon;
 
               return (
-                <div key={docType.id} className="p-6">
+                <div key={docType.id} className="p-4 sm:p-6">
                   <input
                     type="file"
                     accept="application/pdf,image/*"
@@ -210,7 +210,7 @@ export default function ProviderDocuments() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                       {status && StatusIcon && (
                         <div className={cn("flex items-center gap-1", status.class)}>
                           <StatusIcon className="h-4 w-4" />
@@ -219,14 +219,14 @@ export default function ProviderDocuments() {
                       )}
                       
                       {(!doc || doc.status === 'rejected') && (
-                        <Button type="button" onClick={() => triggerDocUpload(docType.id)}>
+                        <Button type="button" size="sm" className="h-9 w-full whitespace-nowrap sm:w-auto" onClick={() => triggerDocUpload(docType.id)}>
                           <Upload className="mr-2 h-4 w-4" />
                           Upload
                         </Button>
                       )}
                       
                       {doc && doc.status !== 'rejected' && (
-                        <Button type="button" variant="outline" onClick={() => triggerDocUpload(docType.id)}>
+                        <Button type="button" size="sm" variant="outline" className="h-9 w-full whitespace-nowrap sm:w-auto" onClick={() => triggerDocUpload(docType.id)}>
                           Replace
                         </Button>
                       )}
@@ -239,15 +239,15 @@ export default function ProviderDocuments() {
         </div>
 
         {/* Portfolio */}
-        <div className="card-elevated">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-semibold">Portfolio</h3>
+        <div className="card-elevated overflow-hidden">
+          <div className="border-b border-border p-4 sm:p-6">
+            <h3 className="text-lg font-semibold sm:text-xl">Portfolio</h3>
             <p className="text-sm text-muted-foreground">
               Showcase your best work to attract clients
             </p>
           </div>
 
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             <input
               ref={portfolioInputRef}
               type="file"

@@ -178,19 +178,19 @@ export default function OrderMaterials() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto animate-fade-in">
+      <div className="mx-auto min-w-0 max-w-4xl animate-fade-in">
         {/* Header */}
-        <div className="flex items-center gap-4 mb-6">
-          <Button variant="ghost" size="icon" onClick={() => step > 1 ? setStep(step - 1) : navigate('/user/new-request')}>
-            <ArrowLeft className="h-5 w-5" />
+        <div className="mb-6 flex min-w-0 items-center gap-3 sm:gap-4">
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => step > 1 ? setStep(step - 1) : navigate('/user/new-request')}>
+            <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold">Order Materials</h1>
-            <p className="text-muted-foreground">Step {step} of 4</p>
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Order Materials</h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Step {step} of 4</p>
           </div>
         </div>
 
-        <div className="card-elevated p-6 md:p-8">
+        <div className="card-elevated overflow-hidden p-4 sm:p-6 md:p-8">
           {/* Step 1: Choose Store */}
           {step === 1 && (
             <div className="space-y-6">
@@ -199,18 +199,18 @@ export default function OrderMaterials() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Search stores..." value={storeSearch} onChange={e => setStoreSearch(e.target.value)} className="pl-10" />
               </div>
-              <div className="grid sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                 {filteredStores.map(sup => (
                   <div
                     key={sup.id}
                     onClick={() => { setSelectedSupplier(sup); setStep(2); }}
-                    className={cn("card-elevated p-5 cursor-pointer hover:border-primary/30 transition-all",
+                    className={cn("card-elevated cursor-pointer p-4 transition-all hover:border-primary/30 sm:p-5",
                       selectedSupplier?.id === sup.id && "border-primary"
                     )}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center text-2xl">
-                        {sup.logo || <Store className="h-6 w-6 text-primary" />}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-2xl">
+                        {sup.logo || <Store className="h-5 w-5 text-primary sm:h-6 sm:w-6" />}
                       </div>
                       <div>
                         <p className="font-semibold">{sup.name}</p>

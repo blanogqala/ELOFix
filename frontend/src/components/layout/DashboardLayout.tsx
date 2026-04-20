@@ -35,29 +35,29 @@ interface NavItem {
 }
 
 const userNavItems: NavItem[] = [
-  { label: 'Dashboard', path: '/user/dashboard', icon: <LayoutDashboard className="h-5 w-5" /> },
-  { label: 'New Request', path: '/user/new-request', icon: <FileText className="h-5 w-5" /> },
-  { label: 'My Jobs', path: '/user/jobs', icon: <Briefcase className="h-5 w-5" /> },
-  { label: 'Material Orders', path: '/user/material-orders', icon: <ShoppingCart className="h-5 w-5" /> },
-  { label: 'Payments', path: '/user/payments', icon: <CreditCard className="h-5 w-5" /> },
-  { label: 'Profile', path: '/user/profile', icon: <User className="h-5 w-5" /> },
+  { label: 'Dashboard', path: '/user/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'New Request', path: '/user/new-request', icon: <FileText className="h-4 w-4 shrink-0" /> },
+  { label: 'My Jobs', path: '/user/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
+  { label: 'Material Orders', path: '/user/material-orders', icon: <ShoppingCart className="h-4 w-4 shrink-0" /> },
+  { label: 'Payments', path: '/user/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
+  { label: 'Profile', path: '/user/profile', icon: <User className="h-4 w-4 shrink-0" /> },
 ];
 
 const providerNavItems: NavItem[] = [
-  { label: 'Dashboard', path: '/provider/dashboard', icon: <LayoutDashboard className="h-5 w-5" /> },
-  { label: 'Requests', path: '/provider/requests', icon: <ClipboardList className="h-5 w-5" /> },
-  { label: 'Active Jobs', path: '/provider/jobs', icon: <Briefcase className="h-5 w-5" /> },
-  { label: 'Earnings', path: '/provider/earnings', icon: <DollarSign className="h-5 w-5" /> },
-  { label: 'Profile', path: '/provider/profile', icon: <User className="h-5 w-5" /> },
+  { label: 'Dashboard', path: '/provider/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'Requests', path: '/provider/requests', icon: <ClipboardList className="h-4 w-4 shrink-0" /> },
+  { label: 'Active Jobs', path: '/provider/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
+  { label: 'Earnings', path: '/provider/earnings', icon: <DollarSign className="h-4 w-4 shrink-0" /> },
+  { label: 'Profile', path: '/provider/profile', icon: <User className="h-4 w-4 shrink-0" /> },
 ];
 
 const adminNavItems: NavItem[] = [
-  { label: 'Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard className="h-5 w-5" /> },
-  { label: 'Providers', path: '/admin/providers', icon: <Users className="h-5 w-5" /> },
-  { label: 'Suppliers', path: '/admin/suppliers', icon: <Package className="h-5 w-5" /> },
-  { label: 'Categories', path: '/admin/categories', icon: <Tags className="h-5 w-5" /> },
-  { label: 'Jobs', path: '/admin/jobs', icon: <Briefcase className="h-5 w-5" /> },
-  { label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-5 w-5" /> },
+  { label: 'Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'Providers', path: '/admin/providers', icon: <Users className="h-4 w-4 shrink-0" /> },
+  { label: 'Suppliers', path: '/admin/suppliers', icon: <Package className="h-4 w-4 shrink-0" /> },
+  { label: 'Categories', path: '/admin/categories', icon: <Tags className="h-4 w-4 shrink-0" /> },
+  { label: 'Jobs', path: '/admin/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
+  { label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
 ];
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
@@ -96,41 +96,46 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-secondary-foreground/25">
-      {/* Mobile Header */}
-      <header className="lg:hidden sticky top-0 z-50 flex items-center justify-between px-4 h-16 border-b border-border bg-card">
-        <EloFixLogo variant="dark" className="h-16 ml-4" />
-        <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
-          {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+    <div className="min-h-screen max-w-full bg-secondary-foreground/25">
+      {/* Mobile Header — shrink-0 so flex stretch doesn’t steal height; sticky needs no overflow:hidden on ancestors (overflow is on main only) */}
+      <header className="sticky top-0 z-50 flex h-16 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 sm:px-4 lg:hidden">
+        <div className="min-w-0 shrink">
+          <EloFixLogo variant="dark" className="h-12 sm:h-16" />
+        </div>
+        <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}>
+          {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
         </Button>
       </header>
 
-      <div className="flex">
-        {/* Sidebar */}
+      <div className="flex min-w-0 max-w-full">
+        {/* Sidebar — self-start fixes flex stretch: without it, aside grows to main height and sticky does nothing */}
         <aside className={cn(
-          "fixed inset-y-0 left-0 z-40 w-64 h-screen bg-card border-r border-border transform transition-transform duration-200 lg:translate-x-0 lg:sticky top-0 bottom-0 lg:z-0",
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          "relative z-40 flex h-screen w-64 shrink-0 flex-col border-r border-border bg-card transition-transform duration-200",
+          "sticky top-0 self-start",
+          "max-lg:fixed max-lg:left-0 max-lg:top-0",
+          sidebarOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full",
+          "lg:translate-x-0",
         )}>
           {/* Sidebar Header - Desktop only */}
-          <div className="hidden lg:flex items-center gap-2 px-6 h-16 border-b border-border justify-center">
+          <div className="hidden h-16 shrink-0 items-center justify-center gap-2 border-b border-border px-6 lg:flex">
             <EloFixLogo variant="dark" className="h-16" />
           </div>
 
           {/* User Info */}
-          <div className="p-4 border-b border-border mt-16 lg:mt-0">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                <User className="h-5 w-5 text-primary" />
+          <div className="mt-16 shrink-0 border-b border-border p-4 lg:mt-0">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
+                <User className="h-4 w-4 text-primary" />
               </div>
-              <div>
-                <p className="font-medium text-sm">{user?.name}</p>
+              <div className="min-w-0">
+                <p className="truncate font-medium text-sm">{user?.name}</p>
                 <p className="text-xs text-muted-foreground">{getRoleLabel()}</p>
               </div>
             </div>
           </div>
 
-          {/* Navigation */}
-          <nav className="p-4 space-y-1">
+          {/* Navigation — scrolls if many items; logout stays at bottom */}
+          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-4">
             {navItems.map((item) => {
               const showProfileWarning =
                 user?.role === 'provider' &&
@@ -163,12 +168,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </nav>
 
           {/* Logout */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border">
+          <div className="shrink-0 border-t border-border p-4">
             <button 
               onClick={handleLogout}
               className="nav-link w-full text-destructive hover:bg-destructive/10"
             >
-              <LogOut className="h-5 w-5" />
+              <LogOut className="h-4 w-4 shrink-0" />
               <span>Logout</span>
             </button>
           </div>
@@ -183,8 +188,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         )}
 
         {/* Main Content */}
-        <main className="flex-1 min-h-screen lg:min-h-[calc(100vh-4rem)]">
-          <div className="p-4 lg:p-8 relative">
+        <main className="min-h-screen min-w-0 flex-1 overflow-x-hidden lg:min-h-[calc(100vh-4rem)]">
+          <div className="relative space-y-6 p-4 md:space-y-8 lg:p-8">
             {showInactiveProviderOverlay ? (
               <div className="relative min-h-[50vh]">
                 <div className="pointer-events-none select-none opacity-[0.38]">{children}</div>

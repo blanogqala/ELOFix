@@ -543,13 +543,13 @@ export default function ProviderProfile() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-6">
+      <div className="min-w-0 space-y-6 p-4 md:space-y-8 sm:p-6 animate-fade-in">
         {smartBanner()}
 
         <div className="space-y-2">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-2xl font-bold tracking-tight">Provider Profile</h1>
-            <span className="text-sm text-muted-foreground">Manage your public profile and onboarding</span>
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl md:text-3xl">Provider Profile</h1>
+            <span className="text-xs text-muted-foreground sm:text-sm">Manage your public profile and onboarding</span>
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
@@ -561,8 +561,8 @@ export default function ProviderProfile() {
         </div>
 
         <Tabs defaultValue="info" className="space-y-6">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
-            <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 active:bg-primary">
+            <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm ">
               Profile
             </TabsTrigger>
             <TabsTrigger value="pricing" className="gap-1.5 text-xs sm:text-sm">
@@ -581,7 +581,7 @@ export default function ProviderProfile() {
 
           {/* ═══ PROFILE INFO ═══ */}
           <TabsContent value="info" className="space-y-6">
-            <div className="card-elevated p-6 space-y-6">
+            <div className="card-elevated space-y-6 p-4 sm:p-6">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
                   <input
@@ -613,7 +613,7 @@ export default function ProviderProfile() {
                     </span>
                   </button>
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-2xl font-bold leading-tight tracking-tight break-words">
+                    <h2 className="text-xl font-semibold leading-tight tracking-tight break-words sm:text-2xl">
                       {provider?.name || user?.name}
                     </h2>
                     <p className="mt-1 text-sm text-muted-foreground break-all">{provider?.email}</p>
@@ -1068,14 +1068,14 @@ export default function ProviderProfile() {
             </div>
 
             {/* Business Hours */}
-            <div className="card-elevated p-6 space-y-4">
+            <div className="card-elevated p-6 space-y-3">
               <h3 className="font-semibold flex items-center gap-2">
                 <Clock className="h-5 w-5 text-primary" />
                 Business Hours
               </h3>
               <div className="space-y-2">
                 {Object.entries(settings.businessHours).map(([day, hours]) => (
-                  <div key={day} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50">
+                  <div key={day} className="border-b border-primary/20 pb-3 flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50">
                     <Switch
                       checked={hours.enabled}
                       onCheckedChange={(checked) => setSettings(s => ({
@@ -1085,7 +1085,7 @@ export default function ProviderProfile() {
                     />
                     <span className="w-24 text-sm font-medium">{day}</span>
                     {hours.enabled ? (
-                      <div className="flex items-center gap-2 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center text-sm">
                         <Input
                           type="time"
                           value={hours.open}
@@ -1093,9 +1093,9 @@ export default function ProviderProfile() {
                             ...s,
                             businessHours: { ...s.businessHours, [day]: { ...hours, open: e.target.value } },
                           }))}
-                          className="w-28 h-8"
+                          className="w-28 h-8 sm:col-span-0 col-span-1"
                         />
-                        <span className="text-muted-foreground">to</span>
+                        <span className="text-muted-foreground sm:ml-6">to</span>
                         <Input
                           type="time"
                           value={hours.close}
@@ -1103,7 +1103,7 @@ export default function ProviderProfile() {
                             ...s,
                             businessHours: { ...s.businessHours, [day]: { ...hours, close: e.target.value } },
                           }))}
-                          className="w-28 h-8"
+                          className="w-28 h-8 sm:ml-[-48px]"
                         />
                       </div>
                     ) : (
@@ -1122,7 +1122,7 @@ export default function ProviderProfile() {
                   {new Date(provider.reviewSubmittedAt).toLocaleString()}
                 </p>
               )}
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Button
                   type="button"
                   variant="secondary"

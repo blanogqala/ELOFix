@@ -37,66 +37,66 @@ export default function ProviderEarnings() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
-        <div>
-          <h1 className="text-2xl font-bold">Earnings</h1>
-          <p className="text-muted-foreground">Track your income and payouts</p>
+      <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Earnings</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Track your income and payouts</p>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-success/10 flex items-center justify-center">
-                <DollarSign className="h-6 w-6 text-success" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
+                <DollarSign className="h-4 w-4 text-success sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">${totalEarned}</p>
-                <p className="text-sm text-muted-foreground">Total Earned</p>
-              </div>
-            </div>
-          </div>
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-warning/10 flex items-center justify-center">
-                <Clock className="h-6 w-6 text-warning" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{formatCurrency(pendingEarnings)}</p>
-                <p className="text-sm text-muted-foreground">Pending</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">${totalEarned}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Total Earned</p>
               </div>
             </div>
           </div>
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-primary" />
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
+                <Clock className="h-4 w-4 text-warning sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{completedJobs.length}</p>
-                <p className="text-sm text-muted-foreground">Completed Jobs</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{formatCurrency(pendingEarnings)}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Pending</p>
               </div>
             </div>
           </div>
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-accent/10 flex items-center justify-center">
-                <TrendingUp className="h-6 w-6 text-accent" />
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{completedJobs.length}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Completed Jobs</p>
+              </div>
+            </div>
+          </div>
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
+                <TrendingUp className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">
                   {formatCurrency(completedJobs.length > 0 ? Math.round(totalEarned / completedJobs.length) : 0)}
                 </p>
-                <p className="text-sm text-muted-foreground">Avg per Job</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Avg per Job</p>
               </div>
             </div>
           </div>
         </div>
 
         {/* Payout History */}
-        <div className="card-elevated">
-          <div className="p-6 border-b border-border">
-            <h2 className="font-semibold">Payout History</h2>
+        <div className="card-elevated overflow-hidden">
+          <div className="border-b border-border p-4 sm:p-6">
+            <h2 className="text-lg font-semibold sm:text-xl">Payout History</h2>
           </div>
 
           {isLoading ? (
@@ -114,9 +114,9 @@ export default function ProviderEarnings() {
           ) : completedJobs.length > 0 ? (
             <div className="divide-y divide-border">
               {completedJobs.map(job => (
-                <div key={job.id} className="p-4 flex items-center gap-4">
-                  <div className="h-10 w-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
-                    <DollarSign className="h-5 w-5 text-success" />
+                <div key={job.id} className="flex min-w-0 items-center gap-3 p-4 sm:gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10">
+                    <DollarSign className="h-4 w-4 text-success" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm">{job.categoryName} — {job.userName}</p>

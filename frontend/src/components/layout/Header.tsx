@@ -32,12 +32,14 @@ export function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
-      <div className="container flex h-16 items-center justify-between">
-        <EloFixLogo variant="dark" className="h-16 ml-6" />
+    <header className="sticky top-0 z-50 w-full max-w-full overflow-x-hidden border-b border-border/40 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+      <div className="container flex h-16 min-w-0 max-w-full items-center justify-between gap-2 px-3 sm:px-4">
+        <div className="min-w-0 shrink">
+          <EloFixLogo variant="dark" className="h-12 sm:h-16" />
+        </div>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center gap-6 ">
+        <nav className="hidden min-w-0 md:flex md:items-center md:gap-4 lg:gap-6">
           <Link to="/#categories" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
             Services
           </Link>
@@ -48,11 +50,11 @@ export function Header() {
           {isAuthenticated ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <Button variant="ghost" className="flex max-w-full min-w-0 items-center gap-2">
+                  <div className="h-8 w-8 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
                     <User className="h-4 w-4 text-primary" />
                   </div>
-                  <span className="font-medium">{user?.name}</span>
+                  <span className="truncate font-medium">{user?.name}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
@@ -87,10 +89,11 @@ export function Header() {
         <Button 
           variant="ghost" 
           size="icon" 
-          className="md:hidden"
+          className="shrink-0 md:hidden"
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
         >
-          <Menu className="h-5 w-5" />
+          <Menu className="h-4 w-4" />
         </Button>
       </div>
 

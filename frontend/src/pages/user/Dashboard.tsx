@@ -60,14 +60,16 @@ export default function UserDashboard() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 md:space-y-8 animate-fade-in">
         {/* Welcome Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Welcome back, {user?.name?.split(' ')[0]}!</h1>
-            <p className="text-muted-foreground">Here's an overview of your service requests</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">
+              Welcome back, {user?.name?.split(' ')[0]}!
+            </h1>
+            <p className="text-sm text-muted-foreground sm:text-base">Here&apos;s an overview of your service requests</p>
           </div>
-          <Button className="btn-accent" onClick={() => navigate('/user/new-request')}>
+          <Button className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={() => navigate('/user/new-request')}>
             <Plus className="mr-2 h-4 w-4" />
             New Request
           </Button>
@@ -77,52 +79,56 @@ export default function UserDashboard() {
         <SpecialsCarousel />
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-3 sm:grid-cols-3 gap-4">
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Clock className="h-6 w-6 text-primary" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+                <Clock className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.active}</p>
-                <p className="text-sm text-muted-foreground">Active Jobs</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-warning/10 flex items-center justify-center">
-                <FileText className="h-6 w-6 text-warning" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.pending}</p>
-                <p className="text-sm text-muted-foreground">Pending Requests</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.active}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Active Jobs</p>
               </div>
             </div>
           </div>
           
-          <div className="card-elevated p-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-success/10 flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-success" />
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
+                <FileText className="h-4 w-4 text-warning sm:h-5 sm:w-5" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.completed}</p>
-                <p className="text-sm text-muted-foreground">Completed</p>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.pending}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Pending Requests</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-4 w-4 text-success sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.completed}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Completed</p>
               </div>
             </div>
           </div>
         </div>
 
         {/* Recent Jobs */}
-        <div className="card-elevated">
-          <div className="p-6 border-b border-border flex items-center justify-between">
-            <h2 className="font-semibold">Recent Jobs</h2>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/user/jobs')}>
-              View All
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
+        <div className="card-elevated overflow-hidden">
+          <div className="grid grid-cols-2 gap-3 border-b border-border p-4 sm:grid-cols-2 sm:items-center sm:justify-between sm:p-6">
+            <div className="min-w-0 col-span-1">
+              <h2 className="text-lg font-semibold sm:text-xl">Recent Jobs</h2>
+            </div>
+            <div className="flex justify-end sm:justify-end sm:ml-48 sm:mt-4">
+              <Button variant="ghost" size="sm" onClick={() => navigate('/user/jobs')}>
+                View All
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           </div>
           
           {isLoading ? (
@@ -145,18 +151,18 @@ export default function UserDashboard() {
                   className="p-4 hover:bg-muted/50 cursor-pointer transition-colors"
                   onClick={() => navigate(`/user/jobs/${job.id}`)}
                 >
-                  <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <Briefcase className="h-6 w-6 text-primary" />
+                  <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+                      <Briefcase className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <p className="font-medium truncate">{job.categoryName}</p>
                         {getStatusBadge(job.status)}
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{job.description}</p>
                     </div>
-                    <div className="text-right hidden sm:block">
+                    <div className="hidden shrink-0 text-right sm:block">
                       {(() => {
                         const { text, isPaid } = getJobPriceDisplay(job);
                         return (
@@ -193,14 +199,14 @@ export default function UserDashboard() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           <div 
-            className="card-elevated p-6 cursor-pointer hover:border-primary/30 transition-colors"
+            className="card-elevated cursor-pointer p-4 transition-colors hover:border-primary/30 sm:p-6"
             onClick={() => navigate('/user/new-request')}
           >
-            <div className="flex items-center gap-4">
-              <div className="h-10 w-10 rounded-lg bg-accent/10 flex items-center justify-center">
-                <Plus className="h-5 w-5 text-accent" />
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10">
+                <Plus className="h-4 w-4 text-accent" />
               </div>
               <div>
                 <p className="font-medium">New Service Request</p>
@@ -210,12 +216,12 @@ export default function UserDashboard() {
           </div>
           
           <div 
-            className="card-elevated p-6 cursor-pointer hover:border-primary/30 transition-colors"
+            className="card-elevated cursor-pointer p-4 transition-colors hover:border-primary/30 sm:p-6"
             onClick={() => navigate('/user/jobs')}
           >
-            <div className="flex items-center gap-4">
-              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Briefcase className="h-5 w-5 text-primary" />
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Briefcase className="h-4 w-4 text-primary" />
               </div>
               <div>
                 <p className="font-medium">View All Jobs</p>
@@ -225,12 +231,12 @@ export default function UserDashboard() {
           </div>
           
           <div 
-            className="card-elevated p-6 cursor-pointer hover:border-primary/30 transition-colors"
+            className="card-elevated cursor-pointer p-4 transition-colors hover:border-primary/30 sm:p-6"
             onClick={() => navigate('/user/profile')}
           >
-            <div className="flex items-center gap-4">
-              <div className="h-10 w-10 rounded-lg bg-success/10 flex items-center justify-center">
-                <CheckCircle className="h-5 w-5 text-success" />
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10">
+                <CheckCircle className="h-4 w-4 text-success" />
               </div>
               <div>
                 <p className="font-medium">Profile Settings</p>

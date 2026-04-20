@@ -73,14 +73,14 @@ export default function Register() {
   return (
     <div className="min-h-screen flex">
       {/* Left side - Form */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md animate-fade-in">
+      <div className="flex flex-1 items-center justify-center p-4 sm:p-8">
+        <div className="w-full max-w-md min-w-0 animate-fade-in">
         <div className="mb-8 flex justify-center">
             <EloFixLogo variant="dark" className="h-20" />
           </div>
 
-          <h1 className="text-2xl font-bold mb-2">Create an account</h1>
-          <p className="text-muted-foreground mb-6">Join EloFix to get started</p>
+          <h1 className="mb-2 text-xl font-semibold sm:text-2xl md:text-3xl">Create an account</h1>
+          <p className="mb-6 text-sm text-muted-foreground sm:text-base">Join EloFix to get started</p>
 
           {/* Role Selection */}
           <div className="grid grid-cols-2 gap-3 mb-6">
@@ -197,7 +197,7 @@ export default function Register() {
               </label>
             </div>
 
-            <Button type="submit" className="w-full btn-accent" disabled={isLoading}>
+            <Button type="submit" className="btn-accent h-10 w-full whitespace-nowrap" disabled={isLoading}>
               {isLoading ? 'Creating account...' : 'Create Account'}
             </Button>
           </form>
@@ -215,7 +215,7 @@ export default function Register() {
 
               <Button 
                 variant="outline" 
-                className="w-full bg-accent hover:bg-accent/70" 
+                className="h-10 w-full whitespace-nowrap bg-accent hover:bg-accent/70" 
                 onClick={handleGoogleLogin}
                 disabled={isLoading}
               >

@@ -132,23 +132,23 @@ export default function ProviderRequestDetail() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in p-4">
+      <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/provider/requests')}>
-            <ArrowLeft className="h-5 w-5" />
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate('/provider/requests')}>
+            <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold">{job.categoryName} Request</h1>
-            <p className="text-sm text-muted-foreground">#{job.id.slice(-8)}</p>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">{job.categoryName} Request</h1>
+            <p className="text-xs text-muted-foreground sm:text-sm">#{job.id.slice(-8)}</p>
           </div>
-          <Badge variant={job.status === 'REJECTED' ? 'destructive' : job.status === 'PENDING' ? 'default' : 'secondary'} className="ml-auto">
+          <Badge variant={job.status === 'REJECTED' ? 'destructive' : job.status === 'PENDING' ? 'default' : 'secondary'} className="shrink-0">
             {job.status}
           </Badge>
         </div>
 
         {/* Job Overview */}
-        <div className="card-elevated p-6 space-y-4">
+        <div className="card-elevated space-y-4 p-4 sm:p-6">
           <h2 className="font-semibold text-lg">Job Overview</h2>
           <p className="text-sm">{job.description}</p>
           
@@ -218,7 +218,7 @@ export default function ProviderRequestDetail() {
 
         {/* Rejection Status - when REJECTED */}
         {job.status === 'REJECTED' && (
-          <div className="card-elevated p-6 border-destructive/50 border">
+          <div className="card-elevated border border-destructive/50 p-4 sm:p-6">
             <h2 className="font-semibold text-lg flex items-center gap-2 text-destructive mb-3">
               <XCircle className="h-5 w-5" /> Rejection Status
             </h2>
@@ -242,9 +242,9 @@ export default function ProviderRequestDetail() {
 
         {/* Materials - when present */}
         {job.materials && job.materials.length > 0 && (
-          <div className="card-elevated p-6 space-y-4">
-            <h2 className="font-semibold text-lg flex items-center gap-2">
-              <Package className="h-5 w-5" /> Materials
+          <div className="card-elevated space-y-4 p-4 sm:p-6">
+            <h2 className="flex items-center gap-2 text-lg font-semibold">
+              <Package className="h-4 w-4 sm:h-5 sm:w-5" /> Materials
             </h2>
             <div className="space-y-2">
               {job.materials.map((m, i) => (
@@ -258,9 +258,9 @@ export default function ProviderRequestDetail() {
         )}
 
         {/* Chat Section */}
-        <div className="card-elevated p-6 space-y-4">
-          <h2 className="font-semibold text-lg flex items-center gap-2">
-            <MessageSquare className="h-5 w-5" /> Messages
+        <div className="card-elevated space-y-4 p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <MessageSquare className="h-4 w-4 sm:h-5 sm:w-5" /> Messages
           </h2>
           
           <div className="max-h-64 overflow-y-auto space-y-3">
@@ -288,14 +288,15 @@ export default function ProviderRequestDetail() {
           </div>
 
           {job.status !== 'REJECTED' && (
-            <div className="flex gap-2">
+            <div className="flex min-w-0 gap-2">
               <Input
                 placeholder="Type a message..."
                 value={chatMessage}
                 onChange={e => setChatMessage(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSendChat()}
+                className="min-w-0"
               />
-              <Button size="icon" onClick={handleSendChat} disabled={!chatMessage.trim() || isSendingChat}>
+              <Button size="icon" className="shrink-0" onClick={handleSendChat} disabled={!chatMessage.trim() || isSendingChat}>
                 <Send className="h-4 w-4" />
               </Button>
             </div>
@@ -307,12 +308,12 @@ export default function ProviderRequestDetail() {
 
         {/* Action Buttons - only for PENDING */}
         {job.status === 'PENDING' && (
-          <div className="flex gap-3 sticky bottom-4">
-            <Button className="flex-1 h-12" onClick={handleAccept} disabled={isMutating}>
-              <Check className="mr-2 h-5 w-5" /> Accept Request
+          <div className="sticky bottom-4 flex flex-col gap-3 sm:flex-row">
+            <Button className="h-11 flex-1 whitespace-nowrap sm:h-12" onClick={handleAccept} disabled={isMutating}>
+              <Check className="mr-2 h-4 w-4 sm:h-5 sm:w-5" /> Accept Request
             </Button>
-            <Button variant="outline" className="flex-1 h-12" onClick={() => setRejectOpen(true)} disabled={isMutating}>
-              <X className="mr-2 h-5 w-5" /> Decline Request
+            <Button variant="outline" className="h-11 flex-1 whitespace-nowrap sm:h-12" onClick={() => setRejectOpen(true)} disabled={isMutating}>
+              <X className="mr-2 h-4 w-4 sm:h-5 sm:w-5" /> Decline Request
             </Button>
           </div>
         )}

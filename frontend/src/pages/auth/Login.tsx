@@ -94,14 +94,14 @@ export default function Login() {
   return (
     <div className="min-h-screen flex">
       {/* Left side - Form */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md animate-fade-in">
+      <div className="flex flex-1 items-center justify-center p-4 sm:p-8">
+        <div className="w-full max-w-md min-w-0 animate-fade-in">
           <div className="mb-6 flex justify-center">
             <EloFixLogo variant="dark" className="h-24" />
           </div>
 
-          <h1 className="text-2xl font-bold mb-1">Welcome back</h1>
-          <p className="text-muted-foreground mb-8">Enter your credentials to access your account</p>
+          <h1 className="mb-1 text-xl font-semibold sm:text-2xl md:text-3xl">Welcome back</h1>
+          <p className="mb-8 text-sm text-muted-foreground sm:text-base">Enter your credentials to access your account</p>
 
           <div className="bg-muted/50 border border-border rounded-lg p-4 mb-6">
             <p className="text-sm text-muted-foreground">
@@ -159,7 +159,7 @@ export default function Login() {
               </Link>
             </div>
 
-            <Button type="submit" className="w-full btn-accent" disabled={isLoading}>
+            <Button type="submit" className="btn-accent h-10 w-full whitespace-nowrap" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
           </form>
@@ -175,7 +175,7 @@ export default function Login() {
 
           <Button 
             variant="outline" 
-            className="w-full bg-accent hover:bg-accent/70" 
+            className="h-10 w-full whitespace-nowrap bg-accent hover:bg-accent/70" 
             onClick={handleGoogleLogin}
             disabled={isLoading}
           >
