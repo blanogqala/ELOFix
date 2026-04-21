@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { getAdminAnalytics, AdminAnalyticsResponse } from '@/lib/api/admin';
+import { getAdminFinancialSummary, reconcileAdminProvider, type FinancialSummary } from '@/lib/api/adminFinancial';
 import { useToast } from '@/hooks/use-toast';
 import {
   LineChart,
@@ -14,6 +15,8 @@ import {
   Bar,
 } from 'recharts';
 import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 function formatZAR(n: number) {
   return new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(n);
@@ -22,13 +25,23 @@ function formatZAR(n: number) {
 export default function AdminAnalytics() {
   const { toast } = useToast();
   const [data, setData] = useState<AdminAnalyticsResponse | null>(null);
+  const [financial, setFinancial] = useState<FinancialSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reconcileId, setReconcileId] = useState('');
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await getAdminAnalytics();
       setData(res);
+      try {
+        const fin = await getAdminFinancialSummary();
+        setFinancial(fin.summary);
+      } catch {
+        setFinancial(null);
+      }
     } catch (e) {
       toast({
         title: 'Failed to load analytics',
@@ -36,6 +49,7 @@ export default function AdminAnalytics() {
         variant: 'destructive',
       });
       setData(null);
+      setFinancial(null);
     } finally {
       setLoading(false);
     }
@@ -56,6 +70,24 @@ export default function AdminAnalytics() {
     );
   }
 
+  const runReconcile = async () => {
+    const id = reconcileId.trim();
+    if (!id) {
+      setReconcileMsg('Enter provider id (internal UUID).');
+      return;
+    }
+    setReconcileBusy(true);
+    setReconcileMsg(null);
+    try {
+      const r = await reconcileAdminProvider(id);
+      setReconcileMsg(r.ok ? 'Ledger OK' : 'Mismatch logged to audit — see details in server logs / AuditLog.');
+    } catch (e) {
+      setReconcileMsg(e instanceof Error ? e.message : 'Reconcile failed');
+    } finally {
+      setReconcileBusy(false);
+    }
+  };
+
   const { jobsByDay, revenueByDay, providersByDay, summary, from, to } = data;
 
   return (
@@ -67,6 +99,48 @@ export default function AdminAnalytics() {
             {from} — {to} (UTC days). Revenue = paid labor + paid materials (by payment date).
           </p>
         </div>
+
+        {financial && (
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold">Financial summary (ledger)</h2>
+            <p className="text-xs text-muted-foreground">
+              Volume ≈ released provider credits (available) + paid-out debits. Payouts from withdrawal requests.
+            </p>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="card-elevated p-4">
+                <p className="text-sm text-muted-foreground">Platform volume</p>
+                <p className="text-2xl font-bold">{formatZAR(financial.totalPlatformVolume)}</p>
+              </div>
+              <div className="card-elevated p-4">
+                <p className="text-sm text-muted-foreground">Pending payouts</p>
+                <p className="text-2xl font-bold">{formatZAR(financial.totalPendingPayouts)}</p>
+              </div>
+              <div className="card-elevated p-4">
+                <p className="text-sm text-muted-foreground">Completed payouts</p>
+                <p className="text-2xl font-bold">{formatZAR(financial.totalCompletedPayouts)}</p>
+              </div>
+              <div className="card-elevated p-4">
+                <p className="text-sm text-muted-foreground">Released to balance (component)</p>
+                <p className="text-2xl font-bold">{formatZAR(financial.breakdown.releasedToBalance)}</p>
+              </div>
+            </div>
+            <div className="card-elevated p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
+              <div className="flex-1">
+                <p className="text-sm font-medium mb-1">Reconcile provider</p>
+                <p className="text-xs text-muted-foreground mb-2">Use Provider.id from withdrawals list.</p>
+                <Input
+                  placeholder="Provider UUID"
+                  value={reconcileId}
+                  onChange={(e) => setReconcileId(e.target.value)}
+                />
+              </div>
+              <Button type="button" onClick={() => void runReconcile()} disabled={reconcileBusy}>
+                {reconcileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Run reconcile'}
+              </Button>
+            </div>
+            {reconcileMsg && <p className="text-sm text-muted-foreground">{reconcileMsg}</p>}
+          </div>
+        )}
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="card-elevated p-4">

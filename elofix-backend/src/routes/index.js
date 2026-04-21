@@ -13,6 +13,7 @@ const userRoutes = require("./user.routes");
 const deliveryProviderRoutes = require("./deliveryProvider.routes");
 const fileRoutes = require("./file.routes");
 const geocodeRoutes = require("./geocode.routes");
+const providerAccountRoutes = require("./providerAccount.routes");
 
 const router = express.Router();
 
@@ -30,5 +31,6 @@ router.use("/specials", specialRoutes);
 router.use("/delivery-providers", deliveryProviderRoutes);
 router.use("/users", userRoutes);
 router.use("/files", fileRoutes);
+router.use("/provider", providerAccountRoutes);
 
 module.exports = router;

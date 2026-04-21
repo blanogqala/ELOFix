@@ -14,6 +14,11 @@ import {
   getCategories,
   updateCategory,
 } from '@/lib/api/categories';
+import {
+  getAdminCategorySuggestions,
+  approveAdminCategorySuggestion,
+  type AdminCategorySuggestion,
+} from '@/lib/api/adminCategories';
 import { useToast } from '@/hooks/use-toast';
 
 const EMPTY_FORM = {
@@ -38,6 +43,8 @@ export default function AdminCategories() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
   const skipSelectNext = useRef(false);
+  const [pendingSuggestions, setPendingSuggestions] = useState<AdminCategorySuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -52,9 +59,29 @@ export default function AdminCategories() {
     }
   }, [toast]);
 
+  const loadPendingSuggestions = useCallback(async () => {
+    setSuggestionsLoading(true);
+    try {
+      const res = await getAdminCategorySuggestions('PENDING');
+      setPendingSuggestions(res.suggestions || []);
+    } catch (error) {
+      toast({
+        title: 'Failed to load suggestions',
+        description: error instanceof Error ? error.message : 'Try again later.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, [toast]);
+
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  useEffect(() => {
+    void loadPendingSuggestions();
+  }, [loadPendingSuggestions]);
 
   useEffect(() => {
     const prefill = (location.state as { prefill?: { name?: string } } | null)?.prefill;
@@ -191,6 +218,24 @@ export default function AdminCategories() {
 
   const isCreateMode = !selected;
 
+  const handleApproveSuggestion = async (id: string) => {
+    setIsSaving(true);
+    try {
+      const result = await approveAdminCategorySuggestion(id);
+      toast({ title: 'Suggestion approved', description: `Category id: ${result.categoryId}` });
+      await loadCategories();
+      await loadPendingSuggestions();
+    } catch (error) {
+      toast({
+        title: 'Approve failed',
+        description: error instanceof Error ? error.message : 'Could not approve.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -202,6 +247,45 @@ export default function AdminCategories() {
           <Button type="button" onClick={startCreateCategory}>
             Create Category
           </Button>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">Pending category suggestions</h2>
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadPendingSuggestions()}>
+              Refresh
+            </Button>
+          </div>
+          {suggestionsLoading ? (
+            <p className="text-sm text-muted-foreground mt-2">Loading…</p>
+          ) : pendingSuggestions.length === 0 ? (
+            <p className="text-sm text-muted-foreground mt-2">No pending suggestions</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {pendingSuggestions.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex flex-col gap-2 rounded-lg border border-border/80 p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="font-medium">{s.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      From {s.user?.name ?? s.userId}
+                      {s.provider?.businessName ? ` · ${s.provider.businessName}` : ''}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={isSaving}
+                    onClick={() => void handleApproveSuggestion(s.id)}
+                  >
+                    Approve &amp; create
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="relative max-w-md">

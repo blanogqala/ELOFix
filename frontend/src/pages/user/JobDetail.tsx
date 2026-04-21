@@ -725,7 +725,8 @@ export default function JobDetail() {
                   <p className="font-medium mb-2">{suggestion.message}</p>
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-muted-foreground">
-                      Suggested: {suggestion.suggested.name} (${suggestion.suggested.unitPrice})
+                      Suggested: {suggestion.suggested.name} (
+                      {formatCurrency(Number(suggestion.suggested.unitPrice) || 0, { decimals: 2 })})
                     </p>
                     <div className="flex gap-2">
                       <Button 
@@ -949,8 +950,8 @@ export default function JobDetail() {
                   <span className="text-muted-foreground">Labor / Service</span>
                   <span>
                     {job.servicePrice
-                      ? `R${job.servicePrice.amount.toFixed(2)}`
-                      : `R${job.laborEstimateRange.min} - R${job.laborEstimateRange.max}`}
+                      ? formatCurrency(job.servicePrice.amount, { decimals: 2 })
+                      : `${formatCurrency(job.laborEstimateRange.min, { decimals: 2 })} – ${formatCurrency(job.laborEstimateRange.max, { decimals: 2 })}`}
                   </span>
                 </div>
                 <div className="border-t border-border pt-2">

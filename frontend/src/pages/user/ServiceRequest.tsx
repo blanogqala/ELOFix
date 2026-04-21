@@ -26,6 +26,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
 
 const STEPS = [
   { id: 1, title: 'Category' },
@@ -408,7 +409,10 @@ export default function ServiceRequest() {
                   <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
                     No providers are available for this category yet.
                   </div>
-                ) : providers.map((provider) => (
+                ) : providers.map((provider) => {
+                  const laborForCategory = provider.laborPricing[selectedCategory];
+                  const laborRate = laborForCategory?.rate;
+                  return (
                   <div
                     key={provider.id}
                     className={cn('provider-card', selectedProvider === provider.id && 'selected')}
@@ -452,9 +456,11 @@ export default function ServiceRequest() {
                       </div>
                       <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
                         <div>
-                          <p className="text-lg font-semibold">${provider.laborPricing[selectedCategory]?.rate || 'N/A'}</p>
+                          <p className="text-lg font-semibold">
+                            {laborRate != null ? formatCurrency(laborRate) : 'N/A'}
+                          </p>
                           <p className="text-xs text-muted-foreground">
-                            per {provider.laborPricing[selectedCategory]?.unit || 'job'} (estimate)
+                            per {laborForCategory?.unit || 'job'} (estimate)
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -481,7 +487,8 @@ export default function ServiceRequest() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

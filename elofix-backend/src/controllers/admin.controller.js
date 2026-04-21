@@ -1,5 +1,10 @@
 const providerService = require("../services/provider.service");
 const adminAnalyticsService = require("../services/adminAnalytics.service");
+const categoryService = require("../services/category.service");
+const withdrawalAdminService = require("../services/withdrawalAdmin.service");
+const { reconcileProvider } = require("../services/reconciliation.service");
+const { getFinancialSummary } = require("../services/financialSummary.service");
+const AppError = require("../utils/AppError");
 
 async function listProviders(req, res) {
   const providers = await providerService.listProviders({
@@ -57,6 +62,56 @@ async function rejectProviderDocument(req, res) {
   res.json({ success: true, provider });
 }
 
+async function listCategorySuggestions(req, res) {
+  const suggestions = await categoryService.listCategorySuggestionsForAdmin({
+    status: req.query.status,
+  });
+  res.json({ success: true, suggestions });
+}
+
+async function approveCategorySuggestion(req, res) {
+  const result = await categoryService.approveCategorySuggestion(req.params.id);
+  res.json({ success: true, ...result });
+}
+
+async function listWithdrawals(req, res) {
+  const data = await withdrawalAdminService.listWithdrawals();
+  res.json({ success: true, ...data });
+}
+
+async function approveWithdrawal(req, res) {
+  const data = await withdrawalAdminService.approveWithdrawal(req.user.userId, req.params.id);
+  res.json({ success: true, ...data });
+}
+
+async function markWithdrawalPaid(req, res) {
+  const data = await withdrawalAdminService.markWithdrawalPaid(req.user.userId, req.params.id);
+  res.json({ success: true, ...data });
+}
+
+async function markWithdrawalFailed(req, res) {
+  const data = await withdrawalAdminService.markWithdrawalFailed(
+    req.user.userId,
+    req.params.id,
+    req.body?.reason
+  );
+  res.json({ success: true, ...data });
+}
+
+async function getReconcileProvider(req, res) {
+  const providerId = String(req.params.providerId || "").trim();
+  if (!providerId) {
+    throw new AppError("providerId is required", 400);
+  }
+  const result = await reconcileProvider(providerId, req.user.userId);
+  res.json({ success: true, ...result });
+}
+
+async function getFinancialSummaryEndpoint(req, res) {
+  const summary = await getFinancialSummary();
+  res.json({ success: true, summary });
+}
+
 module.exports = {
   listProviders,
   getAnalytics,
@@ -67,4 +122,12 @@ module.exports = {
   blockProvider,
   unblockProvider,
   deleteProvider,
+  listCategorySuggestions,
+  approveCategorySuggestion,
+  listWithdrawals,
+  approveWithdrawal,
+  markWithdrawalPaid,
+  markWithdrawalFailed,
+  getReconcileProvider,
+  getFinancialSummaryEndpoint,
 };

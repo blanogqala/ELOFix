@@ -78,6 +78,27 @@ async function mutateJobMeta(jobId, mutator) {
   );
 }
 
+/**
+ * Same as mutateJobMeta but uses an existing interactive transaction (no nested transaction).
+ */
+async function mutateJobMetaInTransaction(tx, jobId, mutator) {
+  const row = await tx.job.findUnique({
+    where: { id: jobId },
+    select: { id: true, meta: true },
+  });
+  if (!row) {
+    throw new AppError("Job not found", 404);
+  }
+  const current = normalizeMeta(row.meta);
+  const rawNext = mutator(current);
+  const nextMeta = normalizeMeta(rawNext !== undefined && rawNext !== null ? rawNext : current);
+  await tx.job.update({
+    where: { id: jobId },
+    data: { meta: nextMeta },
+  });
+  return nextMeta;
+}
+
 async function setJobMeta(jobId, patch) {
   return mutateJobMeta(jobId, (current) => ({ ...current, ...(patch || {}) }));
 }
@@ -112,7 +133,9 @@ function enrichJob(job, meta) {
     },
     jobNotes: safeMeta.jobNotes,
     chat: safeMeta.chat,
-    laborPaid: Boolean(safeMeta.laborPaid),
+    laborPaid:
+      typeof job.laborPaid === "boolean" ? job.laborPaid : Boolean(safeMeta.laborPaid),
+    paymentReleased: typeof job.paymentReleased === "boolean" ? job.paymentReleased : false,
     servicePrice: safeMeta.servicePrice,
     servicePayment: safeMeta.servicePayment,
     providerAdjustedRequirements: safeMeta.providerAdjustedRequirements,
@@ -168,6 +191,7 @@ module.exports = {
   getJobMeta,
   setJobMeta,
   mutateJobMeta,
+  mutateJobMetaInTransaction,
   enrichJob,
   toFrontendStatus,
   createNote,

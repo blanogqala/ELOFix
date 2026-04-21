@@ -2,12 +2,19 @@ const express = require("express");
 const paymentController = require("../controllers/payment.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
+const financialIdem = require("../middleware/financialIdempotency.middleware");
 
 const router = express.Router();
 
 router.use(authenticate);
 
-router.post("/release", authorizeRoles(["ADMIN"]), asyncHandler(paymentController.releaseEscrow));
+router.post(
+  "/release",
+  authorizeRoles(["ADMIN"]),
+  financialIdem.attachFinancialRequestFingerprint,
+  financialIdem.requireIdempotencyKey,
+  asyncHandler(paymentController.releaseEscrow)
+);
 
 router.get("/cards", asyncHandler(paymentController.getSavedCards));
 router.post("/cards", asyncHandler(paymentController.addCard));

@@ -107,7 +107,10 @@ async function payLabor(req, res) {
   const job = await jobService.payLabor(
     id,
     req.user.userId,
-    req.body?.cardLast4 || req.body?.cardId || "****"
+    req.body?.cardLast4 || req.body?.cardId || "****",
+    req.financialIdempotencyKey,
+    req.financialRequestHash,
+    req.financialIdempotencyRoute
   );
   res.json({ success: true, job });
 }
@@ -255,7 +258,14 @@ async function updateJobStatus(req, res) {
 }
 
 async function releaseEscrowPayment(req, res) {
-  const job = await jobService.releaseEscrowPayment(req.params.id, req.body?.amount);
+  const job = await jobService.releaseEscrowPayment(
+    req.params.id,
+    req.body?.amount,
+    req.financialIdempotencyKey,
+    req.financialRequestHash,
+    req.financialIdempotencyRoute,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 

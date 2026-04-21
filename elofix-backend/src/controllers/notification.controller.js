@@ -39,9 +39,34 @@ async function createSupportNotifications(req, res) {
         type: "support_contact",
         title,
         message: fullMessage,
+        senderId: sender.id,
+        senderName: sender.name,
+        senderRole: sender.role === "CUSTOMER" ? "customer" : String(sender.role || "user").toLowerCase(),
       })
     )
   );
+  res.status(201).json({ success: true });
+}
+
+async function replySupportAsAdmin(req, res) {
+  const targetUserId = String(req.body?.userId || "").trim();
+  const message = String(req.body?.message || "").trim();
+  if (!targetUserId || message.length < 1 || message.length > 2000) {
+    return res.status(400).json({ success: false, message: "userId and message (1–2000 chars) are required" });
+  }
+  const admin = await prisma.user.findUnique({ where: { id: req.user.userId } });
+  if (!admin) {
+    return res.status(404).json({ success: false, message: "Admin not found" });
+  }
+  await notificationService.addNotification({
+    userId: targetUserId,
+    type: "support_reply",
+    title: "Support",
+    message,
+    senderId: admin.id,
+    senderName: admin.name,
+    senderRole: "admin",
+  });
   res.status(201).json({ success: true });
 }
 
@@ -76,6 +101,7 @@ module.exports = {
   getNotifications,
   addNotification,
   createSupportNotifications,
+  replySupportAsAdmin,
   markAsRead,
   markAllAsRead,
   getUnreadCount,

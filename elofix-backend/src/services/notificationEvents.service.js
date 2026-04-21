@@ -97,6 +97,24 @@ async function notifyCategorySuggestion(adminId, suggestionName, suggestionId) {
   });
 }
 
+async function notifyChatMessage({ recipientId, jobId, jobTitle, message, senderId, senderName, senderRole }) {
+  if (!recipientId) return;
+  try {
+    await notificationService.addNotification({
+      userId: String(recipientId),
+      type: "job_chat",
+      title: senderName ? `Message from ${senderName}` : "New message",
+      message: String(message || "").slice(0, 500),
+      jobId,
+      senderId: senderId ? String(senderId) : undefined,
+      senderName: senderName != null ? String(senderName) : undefined,
+      senderRole: senderRole != null ? String(senderRole) : undefined,
+    });
+  } catch (err) {
+    console.error("[notifications] notifyChatMessage failed", err);
+  }
+}
+
 module.exports = {
   notifyUser,
   notifyJobRequest,
@@ -108,4 +126,5 @@ module.exports = {
   notifyDeliveryUpdate,
   notifyProviderApproved,
   notifyCategorySuggestion,
+  notifyChatMessage,
 };

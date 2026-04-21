@@ -190,7 +190,7 @@ function checkProviderProfileCompletion(profile, user, workPostCount) {
   return true;
 }
 
-function toProviderResponse(profile, user, completedJobs, workPosts) {
+function toProviderResponse(profile, user, completedJobs, workPosts, reviewRows = []) {
   const documents = normalizeDocuments(profile.documents);
   const laborPricing =
     profile.laborPricing && typeof profile.laborPricing === "object" ? profile.laborPricing : {};
@@ -231,7 +231,17 @@ function toProviderResponse(profile, user, completedJobs, workPosts) {
     bio: profile.bio || "",
     businessName: profile.businessName || "",
     certifications: [],
-    reviews: [],
+    reviews: (reviewRows || []).map((r) => ({
+      id: r.id,
+      userId: "",
+      userName: r.job?.customer?.name || "Customer",
+      rating: r.rating,
+      comment: r.comment || "",
+      jobId: r.jobId,
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+      jobTitle: r.job?.title || "",
+      jobCategory: r.job?.category || "",
+    })),
     createdAt: user.createdAt,
     rejectionReason: profile.rejectionReason || undefined,
     rejectedAt: profile.rejectedAt ? profile.rejectedAt.toISOString() : undefined,
@@ -606,7 +616,22 @@ async function getProviderById(id) {
     },
   });
 
-  return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts);
+  const reviewRows = await prisma.review.findMany({
+    where: { job: { providerId: profile.userId } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    include: {
+      job: {
+        select: {
+          title: true,
+          category: true,
+          customer: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts, reviewRows);
 }
 
 async function getProviderByUserId(userId) {

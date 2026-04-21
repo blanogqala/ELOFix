@@ -12,6 +12,14 @@ import {
 import apiClient from '@/api/client';
 import { areaSquareMetersFromAssist } from '@/lib/measurements';
 
+function idempotencyHeaders(): { 'Idempotency-Key': string } {
+  const uuid =
+    typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return { 'Idempotency-Key': uuid };
+}
+
 interface BackendJobUser {
   id: string;
   name: string;
@@ -39,6 +47,7 @@ interface BackendJob {
   jobNotes?: Job['jobNotes'];
   chat?: Job['chat'];
   laborPaid?: boolean;
+  paymentReleased?: boolean;
   servicePrice?: Job['servicePrice'];
   servicePayment?: Job['servicePayment'];
   providerAdjustedRequirements?: Job['providerAdjustedRequirements'];
@@ -83,6 +92,10 @@ interface BackendCancelResponse {
 
 function toFrontendJob(job: BackendJob): Job {
   const price = Number(job.price) || 0;
+  const serviceAmount =
+    job.servicePrice && typeof job.servicePrice.amount === 'number'
+      ? Number(job.servicePrice.amount)
+      : price;
   const backendStatus = String(job.status || '').trim().toUpperCase();
   const safeStatus: JobStatus =
     backendStatus === 'ACCEPTED' ? 'ASSIGNED' : ((backendStatus as JobStatus) || 'PENDING');
@@ -111,8 +124,8 @@ function toFrontendJob(job: BackendJob): Job {
     images,
     measurements,
     materials,
-    laborEstimateRange: { min: price, max: price, unit: 'job' },
-    totalEstimateRange: { min: price, max: price },
+    laborEstimateRange: { min: serviceAmount, max: serviceAmount, unit: 'job' },
+    totalEstimateRange: { min: serviceAmount, max: serviceAmount },
     paymentPlan: { type: 'UPFRONT' },
     escrow: job.escrow
       ? {
@@ -126,6 +139,7 @@ function toFrontendJob(job: BackendJob): Job {
     jobNotes: Array.isArray(job.jobNotes) ? job.jobNotes : [],
     chat: Array.isArray(job.chat) ? job.chat : [],
     laborPaid: Boolean(job.laborPaid),
+    paymentReleased: Boolean(job.paymentReleased),
     servicePrice: job.servicePrice,
     servicePayment: job.servicePayment,
     providerAdjustedRequirements: job.providerAdjustedRequirements,
@@ -200,19 +214,27 @@ export async function payLabor(
   cardId: string,
   cardLast4: string
 ): Promise<Job> {
-  const { data } = await apiClient.post<BackendJobResponse>(`/jobs/${jobId}/pay-labor`, {
-    userId,
-    cardId,
-    cardLast4,
-  });
+  const { data } = await apiClient.post<BackendJobResponse>(
+    `/jobs/${jobId}/pay-labor`,
+    {
+      userId,
+      cardId,
+      cardLast4,
+    },
+    { headers: idempotencyHeaders() }
+  );
   return ensureJob(data, 'pay labor');
 }
 
 export async function releaseEscrowPayment(jobId: string, amount: number): Promise<Job> {
-  const { data } = await apiClient.post<BackendJobResponse>('/payments/release', {
-    jobId,
-    amount,
-  });
+  const { data } = await apiClient.post<BackendJobResponse>(
+    '/payments/release',
+    {
+      jobId,
+      amount,
+    },
+    { headers: idempotencyHeaders() }
+  );
   return ensureJob(data, 'release escrow payment');
 }
 

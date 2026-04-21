@@ -47,6 +47,8 @@ model User {
   notifications       Notification[]
   savedCards          SavedCard[]
   invoices            Invoice[]
+  sentNotifications   Notification[]       @relation("NotificationSender")
+  auditLogs           AuditLog[]
 }
 
 model Provider {
@@ -73,7 +75,11 @@ model Provider {
   deletedAt         DateTime?
   reviewSubmittedAt DateTime?
 
-  workPosts WorkPost[]
+  workPosts              WorkPost[]
+  withdrawalProfile      ProviderWithdrawalProfile?
+  withdrawalRequests     WithdrawalRequest[]
+  categorySuggestions    CategorySuggestion[]    @relation("ProviderCategorySuggestions")
+  earnings               Earning[]
 }
 
 model WorkPost {
@@ -90,15 +96,18 @@ model WorkPost {
 }
 
 model CategorySuggestion {
-  id        String           @id @default(uuid())
-  name      String
-  userId    String
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status    SuggestionStatus @default(PENDING)
-  createdAt DateTime         @default(now())
+  id         String           @id @default(uuid())
+  name       String
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId String?
+  provider   Provider?        @relation("ProviderCategorySuggestions", fields: [providerId], references: [id], onDelete: SetNull)
+  status     SuggestionStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
 
   @@index([userId])
   @@index([status])
+  @@index([providerId])
 }
 
 model Job {
@@ -123,6 +132,44 @@ model Job {
   provider        User?     @relation("JobProvider", fields: [providerId], references: [id], onDelete: SetNull)
   createdAt       DateTime  @default(now())
   meta            Json?
+  laborPaid       Boolean   @default(false)
+  paymentReleased Boolean   @default(false)
+  review          Review?
+  earnings        Earning[]
+}
+
+model Conversation {
+  id                String         @id @default(uuid())
+  senderId          String
+  jobId             String?
+  conversationType  String         @default("job")
+  createdAt         DateTime       @default(now())
+  notifications     Notification[]
+
+  @@index([senderId])
+  @@index([jobId])
+  @@index([conversationType])
+}
+
+model Earning {
+  id                    String             @id @default(uuid())
+  providerId            String
+  provider              Provider           @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  jobId                 String?
+  job                   Job?               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  amount                Decimal            @db.Decimal(12, 2)
+  type                  String
+  status                String
+  idempotencyKey        String?            @unique
+  withdrawalRequestId   String?            @unique
+  withdrawalRequest     WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id], onDelete: SetNull)
+  createdAt             DateTime           @default(now())
+
+  @@index([providerId])
+  @@index([jobId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
 }
 
 model Category {
@@ -143,18 +190,86 @@ model Category {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  title     String
-  message   String
-  read      Boolean  @default(false)
-  jobId     String?
-  createdAt DateTime @default(now())
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderId        String?
+  sender          User?         @relation("NotificationSender", fields: [senderId], references: [id], onDelete: SetNull)
+  senderName      String?
+  senderRole      String?
+  type            String
+  title           String
+  message         String
+  read            Boolean       @default(false)
+  jobId           String?
+  conversationId  String?
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now())
 
   @@index([userId])
   @@index([userId, createdAt])
+  @@index([senderId])
+  @@index([conversationId])
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  jobId     String   @unique
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+}
+
+model ProviderWithdrawalProfile {
+  id             String   @id @default(uuid())
+  providerId     String   @unique
+  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  bankName       String
+  accountNumber  String
+  accountHolder  String
+  branchCode     String
+  updatedAt      DateTime @updatedAt
+}
+
+model WithdrawalRequest {
+  id               String    @id @default(uuid())
+  providerId       String
+  provider         Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  amount           Decimal   @db.Decimal(12, 2)
+  status           String    @default("pending")
+  idempotencyKey   String?   @unique
+  createdAt        DateTime  @default(now())
+  debitEarning     Earning?
+
+  @@index([providerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  idempotencyKey String   @unique
+  requestHash    String
+  route          String
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model SavedCard {
@@ -173,7 +288,7 @@ model SavedCard {
 model Invoice {
   id        String   @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   jobId     String?
   payload   Json
   createdAt DateTime @default(now())

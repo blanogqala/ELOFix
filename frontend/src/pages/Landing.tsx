@@ -294,7 +294,7 @@ export default function Landing() {
                 ))}
               </div>
               <p className="text-muted-foreground mb-4">
-                "The AI measurement tool saved me so much time. Got an accurate quote instantly and the tiling work was superb!"
+                "The camera assisted measurement flow saved me so much time. Got an accurate quote and the tiling work was superb!"
               </p>
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">

@@ -45,3 +45,8 @@ export async function getUnreadCount(userId: string): Promise<number> {
 export async function postSupportMessage(message: string): Promise<void> {
   await apiClient.post('/notifications/support', { message });
 }
+
+/** Admin: send a notification to a user (support reply). */
+export async function postAdminSupportReply(userId: string, message: string): Promise<void> {
+  await apiClient.post('/notifications/support/reply', { userId, message });
+}

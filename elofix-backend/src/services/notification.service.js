@@ -5,13 +5,30 @@ function toApiShape(row) {
   return {
     id: row.id,
     userId: row.userId,
+    senderId: row.senderId || undefined,
+    senderName: row.senderName || undefined,
+    senderRole: row.senderRole || undefined,
     type: row.type,
     title: row.title,
     message: row.message,
     read: row.read,
     jobId: row.jobId || undefined,
+    conversationId: row.conversationId || undefined,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
+}
+
+async function createConversationForNotification({ senderId, jobId, conversationType = "job" }) {
+  if (!senderId) return null;
+  const conv = await prisma.conversation.create({
+    data: {
+      id: randomUUID(),
+      senderId: String(senderId),
+      jobId: jobId != null && String(jobId).trim() !== "" ? String(jobId) : null,
+      conversationType: String(conversationType || "job"),
+    },
+  });
+  return conv.id;
 }
 
 async function getNotifications(userId) {
@@ -23,15 +40,28 @@ async function getNotifications(userId) {
 }
 
 async function addNotification(notification) {
+  let conversationId = null;
+  if (notification.senderId) {
+    conversationId = await createConversationForNotification({
+      senderId: notification.senderId,
+      jobId: notification.jobId,
+      conversationType: notification.conversationType || "job",
+    });
+  }
+
   const item = await prisma.notification.create({
     data: {
       id: randomUUID(),
       userId: String(notification.userId),
+      senderId: notification.senderId ? String(notification.senderId) : null,
+      senderName: notification.senderName != null ? String(notification.senderName) : null,
+      senderRole: notification.senderRole != null ? String(notification.senderRole) : null,
       type: String(notification.type || "job_completed"),
       title: String(notification.title || "Notification"),
       message: String(notification.message || ""),
       read: false,
       jobId: notification.jobId || null,
+      conversationId,
     },
   });
   return toApiShape(item);

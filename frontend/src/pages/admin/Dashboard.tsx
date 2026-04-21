@@ -17,6 +17,7 @@ import {
   CreditCard,
   Activity,
   BarChart3,
+  Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -95,7 +96,7 @@ export default function AdminDashboard() {
     ...jobs.filter(j => j.status === 'COMPLETED').slice(0, 2).map(j => ({
       id: `pay-${j.id}`,
       icon: CreditCard,
-      title: `Payment completed: $${j.totalEstimateRange.min}`,
+      title: `Payment completed: ${formatCurrency(j.totalEstimateRange.min)}`,
       description: `${j.categoryName} — ${j.userName}`,
       time: new Date(j.updatedAt).toLocaleDateString(),
       color: 'text-accent',
@@ -342,6 +343,21 @@ export default function AdminDashboard() {
               <div>
                 <p className="font-medium">Payments</p>
                 <p className="text-sm text-muted-foreground">Review escrow and transactions</p>
+              </div>
+            </div>
+          </div>
+
+          <div
+            className="card-elevated p-6 cursor-pointer hover:border-primary/30 transition-colors"
+            onClick={() => navigate('/admin/withdrawals')}
+          >
+            <div className="flex items-center gap-4">
+              <div className="h-10 w-10 rounded-lg bg-warning/10 flex items-center justify-center">
+                <Wallet className="h-5 w-5 text-warning" />
+              </div>
+              <div>
+                <p className="font-medium">Withdrawals</p>
+                <p className="text-sm text-muted-foreground">Approve and mark provider payouts</p>
               </div>
             </div>
           </div>

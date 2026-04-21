@@ -47,6 +47,7 @@ import AdminPaymentDetail from "./pages/admin/PaymentDetail";
 import AdminSuppliers from "./pages/admin/Suppliers";
 import AdminCategories from "./pages/admin/Categories.tsx";
 import AdminAnalytics from "./pages/admin/Analytics";
+import AdminWithdrawals from "./pages/admin/Withdrawals";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -110,6 +111,7 @@ const App = () => (
             <Route path="/admin/jobs/:id" element={<AuthGuard allowedRoles={['admin']}><AdminJobDetail /></AuthGuard>} />
             <Route path="/admin/payments" element={<AuthGuard allowedRoles={['admin']}><AdminPayments /></AuthGuard>} />
             <Route path="/admin/payments/:jobId" element={<AuthGuard allowedRoles={['admin']}><AdminPaymentDetail /></AuthGuard>} />
+            <Route path="/admin/withdrawals" element={<AuthGuard allowedRoles={['admin']}><AdminWithdrawals /></AuthGuard>} />
 
             {/* Catch-all */}
             <Route path="*" element={<NotFound />} />

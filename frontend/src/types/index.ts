@@ -104,6 +104,8 @@ export interface ProviderReview {
   comment: string;
   jobId: string;
   createdAt: string;
+  jobTitle?: string;
+  jobCategory?: string;
 }
 
 export interface Admin {
@@ -391,6 +393,8 @@ export interface Job {
   providerSuggestions?: ProviderSuggestion[];
   materialPayments?: MaterialPayment[];
   laborPaid: boolean;
+  /** True when escrow for this job has been fully released to the provider */
+  paymentReleased?: boolean;
   userRating?: number;
   userReview?: string;
   cancellationReason?: string;
@@ -499,7 +503,9 @@ export type AppNotificationType =
   | 'delivery_update'
   | 'provider_approved'
   | 'category_suggestion'
-  | 'support_contact';
+  | 'support_contact'
+  | 'job_chat'
+  | 'support_reply';
 
 export interface AppNotification {
   id: string;
@@ -509,7 +515,11 @@ export interface AppNotification {
   message: string;
   read: boolean;
   jobId?: string;
+  conversationId?: string;
   createdAt: string;
+  senderId?: string;
+  senderName?: string;
+  senderRole?: string;
 }
 
 // Specials Types

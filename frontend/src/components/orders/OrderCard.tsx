@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
 
 export interface OrderCardViewModel {
   id: string;
@@ -47,7 +48,7 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
           </p>
         </div>
         <div className="hidden shrink-0 text-right sm:block">
-          <p className="font-bold">${order.total.toFixed(2)}</p>
+          <p className="font-bold">{formatCurrency(order.total, { decimals: 2 })}</p>
           <p className="text-xs text-muted-foreground">
             {new Date(order.createdAt).toLocaleDateString()}
           </p>
@@ -56,14 +57,14 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
 
       <div className="mt-1 flex justify-between text-sm font-semibold sm:hidden">
         <span className="text-muted-foreground">Total</span>
-        <span>${order.total.toFixed(2)}</span>
+        <span>{formatCurrency(order.total, { decimals: 2 })}</span>
       </div>
 
       <div className="mt-2 space-y-1 text-sm text-muted-foreground sm:ml-16 sm:mt-0">
         {order.deliveryFee && order.deliveryFee > 0 && (
           <div className="flex justify-between">
             <span>Delivery Fee</span>
-            <span>${order.deliveryFee.toFixed(2)}</span>
+            <span>{formatCurrency(order.deliveryFee, { decimals: 2 })}</span>
           </div>
         )}
       </div>

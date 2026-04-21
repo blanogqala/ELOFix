@@ -25,6 +25,7 @@ import {
   AlertCircle,
   Bell,
   Activity,
+  Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -61,6 +62,7 @@ const adminNavItems: NavItem[] = [
   { label: 'Categories', path: '/admin/categories', icon: <Tags className="h-4 w-4 shrink-0" /> },
   { label: 'Jobs', path: '/admin/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
   { label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
+  { label: 'Withdrawals', path: '/admin/withdrawals', icon: <Wallet className="h-4 w-4 shrink-0" /> },
 ];
 
 function notificationsPathForRole(role: string | undefined): string {

@@ -561,7 +561,7 @@ export default function ProviderProfile() {
         </div>
 
         <Tabs defaultValue="info" className="space-y-6">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 active:bg-primary">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 ">
             <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm ">
               Profile
             </TabsTrigger>

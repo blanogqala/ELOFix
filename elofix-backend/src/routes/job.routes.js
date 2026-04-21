@@ -2,6 +2,7 @@ const express = require("express");
 const jobController = require("../controllers/job.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate } = require("../middleware/auth.middleware");
+const financialIdem = require("../middleware/financialIdempotency.middleware");
 const { uploadJobImage } = require("../middleware/upload.middleware");
 
 const router = express.Router();
@@ -37,10 +38,22 @@ router.patch(
 );
 
 router.post("/:id/service-price", authenticate, asyncHandler(jobController.submitServicePrice));
-router.post("/:id/pay-labor", authenticate, asyncHandler(jobController.payLabor));
+router.post(
+  "/:id/pay-labor",
+  authenticate,
+  financialIdem.attachFinancialRequestFingerprint,
+  financialIdem.requireIdempotencyKey,
+  asyncHandler(jobController.payLabor)
+);
 router.post("/:id/invoices/labor", authenticate, asyncHandler(jobController.createLaborInvoice));
 router.get("/:id/invoices/labor", authenticate, asyncHandler(jobController.getLaborInvoice));
-router.post("/:id/escrow/release", authenticate, asyncHandler(jobController.releaseEscrowPayment));
+router.post(
+  "/:id/escrow/release",
+  authenticate,
+  financialIdem.attachFinancialRequestFingerprint,
+  financialIdem.requireIdempotencyKey,
+  asyncHandler(jobController.releaseEscrowPayment)
+);
 
 router.post("/:id/materials/submit", authenticate, asyncHandler(jobController.submitMaterials));
 router.patch("/:id/reject", authenticate, asyncHandler(jobController.rejectJob));

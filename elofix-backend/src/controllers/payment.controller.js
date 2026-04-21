@@ -48,7 +48,14 @@ async function releaseEscrow(req, res) {
     return res.status(400).json({ success: false, message: "jobId is required" });
   }
   const amount = req.body?.amount;
-  const job = await jobService.releaseEscrowPayment(String(jobId), amount);
+  const job = await jobService.releaseEscrowPayment(
+    String(jobId),
+    amount,
+    req.financialIdempotencyKey,
+    req.financialRequestHash,
+    req.financialIdempotencyRoute,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 

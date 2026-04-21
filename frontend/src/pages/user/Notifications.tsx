@@ -1,13 +1,15 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import {
   getNotifications,
   markAsRead,
   markAllAsRead,
   postSupportMessage,
+  postAdminSupportReply,
 } from '@/lib/api/notifications';
 import { AppNotification, UserRole } from '@/types';
 import {
@@ -86,6 +88,10 @@ function getNotificationIcon(type: AppNotification['type']) {
       return <Tags className="h-4 w-4 text-accent" />;
     case 'support_contact':
       return <LifeBuoy className="h-4 w-4 text-muted-foreground" />;
+    case 'job_chat':
+      return <MessageSquare className="h-4 w-4 text-primary" />;
+    case 'support_reply':
+      return <LifeBuoy className="h-4 w-4 text-primary" />;
     default:
       return <Bell className="h-4 w-4 text-muted-foreground" />;
   }
@@ -98,6 +104,10 @@ export default function NotificationsPage() {
   const { toast } = useToast();
   const [supportText, setSupportText] = useState('');
   const [supportSending, setSupportSending] = useState(false);
+  const [adminReplyUserId, setAdminReplyUserId] = useState('');
+  const [adminReplyText, setAdminReplyText] = useState('');
+  const [adminReplySending, setAdminReplySending] = useState(false);
+  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
 
   const role = user?.role ?? 'user';
 
@@ -135,37 +145,72 @@ export default function NotificationsPage() {
     navigateForNotification(notification, role, navigate);
   };
 
-  const grouped = useMemo(() => {
+  const threadMap = useMemo(() => {
     const map = new Map<string, AppNotification[]>();
     for (const n of notifications) {
-      const key = dateGroupLabel(n.createdAt);
+      const key =
+        n.conversationId ||
+        (n.senderId && n.jobId ? `legacy:${n.senderId}:${n.jobId}` : `single:${n.id}`);
       const list = map.get(key) ?? [];
       list.push(n);
       map.set(key, list);
     }
+    for (const list of map.values()) {
+      list.sort((a, b) => parseISO(a.createdAt).getTime() - parseISO(b.createdAt).getTime());
+    }
     return map;
   }, [notifications]);
 
-  const groupOrder = useMemo(() => {
-    const labels = [...grouped.keys()];
-    const bucket = (label: string) => {
-      if (label === 'Today') return 0;
-      if (label === 'Yesterday') return 1;
-      return 2;
-    };
-    labels.sort((a, b) => {
-      const d = bucket(a) - bucket(b);
-      if (d !== 0) return d;
-      const listA = grouped.get(a) ?? [];
-      const listB = grouped.get(b) ?? [];
-      const tA = listA[0] ? parseISO(listA[0].createdAt).getTime() : 0;
-      const tB = listB[0] ? parseISO(listB[0].createdAt).getTime() : 0;
+  const threadKeys = useMemo(() => {
+    const keys = [...threadMap.keys()];
+    keys.sort((a, b) => {
+      const msgsA = threadMap.get(a) ?? [];
+      const msgsB = threadMap.get(b) ?? [];
+      const tA = Math.max(...msgsA.map((m) => parseISO(m.createdAt).getTime()), 0);
+      const tB = Math.max(...msgsB.map((m) => parseISO(m.createdAt).getTime()), 0);
       return tB - tA;
     });
-    return labels;
-  }, [grouped]);
+    return keys;
+  }, [threadMap]);
+
+  useEffect(() => {
+    if (threadKeys.length === 0) {
+      setSelectedThreadKey(null);
+      return;
+    }
+    if (selectedThreadKey == null || !threadKeys.includes(selectedThreadKey)) {
+      setSelectedThreadKey(threadKeys[0]);
+    }
+  }, [threadKeys, selectedThreadKey]);
+
+  const selectedThreadMessages = selectedThreadKey ? threadMap.get(selectedThreadKey) ?? [] : [];
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const handleAdminReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const uid = adminReplyUserId.trim();
+    const msg = adminReplyText.trim();
+    if (uid.length < 1 || msg.length < 1 || msg.length > 2000) {
+      toast({
+        title: 'Invalid input',
+        description: 'Enter a user id and message (1–2000 characters).',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setAdminReplySending(true);
+    try {
+      await postAdminSupportReply(uid, msg);
+      setAdminReplyText('');
+      toast({ title: 'Reply sent' });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user?.id] });
+    } catch {
+      toast({ title: 'Failed to send', variant: 'destructive' });
+    } finally {
+      setAdminReplySending(false);
+    }
+  };
 
   const handleSupportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -237,12 +282,55 @@ export default function NotificationsPage() {
             <p className="text-muted-foreground text-sm">You will see updates about your activity here</p>
           </div>
         ) : (
-          <div className="space-y-8">
-            {groupOrder.map((label) => (
-              <section key={label} className="space-y-3">
-                <h2 className="text-sm font-semibold text-muted-foreground">{label}</h2>
-                <div className="space-y-2">
-                  {(grouped.get(label) ?? []).map((notification) => (
+          <div className="grid min-h-[420px] gap-4 lg:grid-cols-12">
+            <div className="flex flex-col overflow-hidden rounded-lg border border-border lg:col-span-4">
+              <div className="border-b border-border px-3 py-2 text-sm font-medium text-muted-foreground">
+                Threads / users
+              </div>
+              <ul className="max-h-[min(60vh,560px)] flex-1 overflow-y-auto">
+                {threadKeys.map((key) => {
+                  const msgs = threadMap.get(key) ?? [];
+                  const last = msgs[msgs.length - 1];
+                  const unreadInThread = msgs.some((m) => !m.read);
+                  const label =
+                    last?.senderName && last.jobId
+                      ? `${last.senderName} · Job`
+                      : last?.title ?? 'Notification';
+                  return (
+                    <li key={key}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedThreadKey(key)}
+                        className={cn(
+                          'flex w-full flex-col gap-0.5 border-b border-border px-3 py-3 text-left text-sm transition-colors hover:bg-muted/60',
+                          selectedThreadKey === key && 'bg-muted/80'
+                        )}
+                      >
+                        <span className="line-clamp-1 font-medium">{label}</span>
+                        <span className="line-clamp-2 text-xs text-muted-foreground">{last?.message}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {last
+                            ? formatDistanceToNow(parseISO(last.createdAt), { addSuffix: true })
+                            : ''}
+                          {unreadInThread && (
+                            <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" />
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div className="flex flex-col overflow-hidden rounded-lg border border-border lg:col-span-8">
+              <div className="border-b border-border px-4 py-2 text-sm font-medium text-muted-foreground">
+                Messages
+              </div>
+              <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 max-h-[min(60vh,560px)]">
+                {selectedThreadMessages.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Select a thread</p>
+                ) : (
+                  selectedThreadMessages.map((notification) => (
                     <div
                       key={notification.id}
                       role="button"
@@ -255,40 +343,82 @@ export default function NotificationsPage() {
                         }
                       }}
                       className={cn(
-                        'card-elevated p-4 cursor-pointer transition-colors',
-                        !notification.read && 'bg-primary/5 border-primary/20',
+                        'rounded-lg border border-border p-3 transition-colors cursor-pointer',
+                        !notification.read && 'border-primary/25 bg-primary/5',
                         'hover:border-primary/30'
                       )}
                     >
-                      <div className="flex items-start gap-4">
+                      <div className="flex items-start gap-3">
                         <div
                           className={cn(
-                            'h-10 w-10 rounded-full flex items-center justify-center shrink-0',
+                            'h-9 w-9 flex shrink-0 items-center justify-center rounded-full',
                             !notification.read ? 'bg-primary/10' : 'bg-muted'
                           )}
                         >
                           {getNotificationIcon(notification.type)}
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className={cn('font-medium', !notification.read && 'text-primary')}>
                             {notification.title}
                           </p>
-                          <p className="text-sm text-muted-foreground line-clamp-3 whitespace-pre-wrap">
+                          {notification.senderName && (
+                            <p className="text-xs text-muted-foreground">
+                              {notification.senderName}
+                              {notification.senderRole ? ` · ${notification.senderRole}` : ''}
+                            </p>
+                          )}
+                          <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
                             {notification.message}
                           </p>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {dateGroupLabel(notification.createdAt)} ·{' '}
                             {formatDistanceToNow(parseISO(notification.createdAt), { addSuffix: true })}
                           </p>
                         </div>
                         {!notification.read && (
-                          <div className="h-2 w-2 rounded-full bg-accent shrink-0 mt-2" />
+                          <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" />
                         )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </section>
-            ))}
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {role === 'admin' && (
+          <div className="card-elevated p-6 space-y-4 border border-border">
+            <h2 className="font-semibold">Reply as support</h2>
+            <p className="text-sm text-muted-foreground">
+              Sends an in-app notification to the user&apos;s account (test endpoint from UI).
+            </p>
+            <form onSubmit={(e) => void handleAdminReply(e)} className="space-y-3">
+              <div>
+                <label className="text-sm font-medium" htmlFor="admin-reply-user">
+                  User id
+                </label>
+                <Input
+                  id="admin-reply-user"
+                  value={adminReplyUserId}
+                  onChange={(e) => setAdminReplyUserId(e.target.value)}
+                  placeholder="Customer or provider user UUID"
+                  className="mt-1"
+                />
+              </div>
+              <Textarea
+                value={adminReplyText}
+                onChange={(e) => setAdminReplyText(e.target.value)}
+                placeholder="Support reply…"
+                rows={3}
+                maxLength={2000}
+              />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={adminReplySending}>
+                  {adminReplySending ? 'Sending…' : 'Send reply'}
+                </Button>
+              </div>
+            </form>
           </div>
         )}
 

@@ -148,10 +148,16 @@ async function createCategorySuggestion(userId, name) {
     throw new AppError("Suggestion must be at least 2 characters", 400);
   }
 
+  const providerRow = await prisma.provider.findUnique({
+    where: { userId: String(userId) },
+    select: { id: true },
+  });
+
   const created = await prisma.categorySuggestion.create({
     data: {
       name: n,
       userId,
+      ...(providerRow ? { providerId: providerRow.id } : {}),
     },
   });
 
@@ -163,6 +169,66 @@ async function createCategorySuggestion(userId, name) {
   return created;
 }
 
+async function listCategorySuggestionsForAdmin({ status } = {}) {
+  const st = status ? String(status).toUpperCase() : null;
+  const where =
+    st && ["PENDING", "APPROVED", "REJECTED"].includes(st) ? { status: st } : undefined;
+  return prisma.categorySuggestion.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    include: {
+      user: { select: { id: true, name: true, email: true, role: true } },
+      provider: { select: { id: true, businessName: true } },
+    },
+  });
+}
+
+async function approveCategorySuggestion(suggestionId) {
+  const s = await prisma.categorySuggestion.findUnique({ where: { id: suggestionId } });
+  if (!s) throw new AppError("Suggestion not found", 404);
+  if (s.status !== "PENDING") {
+    throw new AppError("Suggestion is not pending", 400);
+  }
+
+  const normalized = normalizeCategoryInput(
+    {
+      name: s.name,
+      icon: "📁",
+      description: `Community-suggested category: ${s.name}`,
+      step3Type: "measurements",
+      requiresMaterials: false,
+      requiresInspection: true,
+      skills: [],
+      issueTypes: [],
+    },
+    { isCreate: true }
+  );
+
+  const id = await ensureUniqueId(slugify(normalized.name));
+  try {
+    await prisma.category.create({
+      data: {
+        id,
+        ...normalized,
+        skills: normalized.skills || [],
+        issueTypes: normalized.issueTypes || [],
+      },
+    });
+  } catch (error) {
+    if (error.code === "P2002") {
+      throw new AppError("Category with the same name already exists", 409);
+    }
+    throw error;
+  }
+
+  await prisma.categorySuggestion.update({
+    where: { id: s.id },
+    data: { status: "APPROVED" },
+  });
+
+  return { suggestionId: s.id, categoryId: id };
+}
+
 module.exports = {
   listCategories,
   getCategoryById,
@@ -171,5 +237,7 @@ module.exports = {
   deleteCategory,
   listServiceAreas,
   createCategorySuggestion,
+  listCategorySuggestionsForAdmin,
+  approveCategorySuggestion,
 };
 
