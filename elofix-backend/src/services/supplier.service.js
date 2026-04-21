@@ -1,6 +1,7 @@
 const { randomUUID } = require("crypto");
+const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
-const { readState, updateState } = require("./jsonStore.service");
+const prisma = require("../config/prisma");
 
 function normalizeProduct(product) {
   if (!product || typeof product !== "object") throw new AppError("Invalid product", 400);
@@ -34,39 +35,57 @@ function normalizeSupplier(input) {
   };
 }
 
+function rowToApi(row) {
+  const products = Array.isArray(row.products) ? row.products : [];
+  return {
+    id: row.id,
+    name: row.name,
+    logo: row.logo || undefined,
+    hasDelivery: row.hasDelivery,
+    deliveryFee: Number(row.deliveryFee),
+    products,
+  };
+}
+
 async function listSuppliers() {
-  const state = await readState();
-  return state.suppliers || [];
+  const rows = await prisma.supplier.findMany({ orderBy: { name: "asc" } });
+  return rows.map(rowToApi);
 }
 
 async function getSupplierById(id) {
-  const suppliers = await listSuppliers();
-  return suppliers.find((s) => s.id === id) || null;
+  const row = await prisma.supplier.findUnique({ where: { id } });
+  return row ? rowToApi(row) : null;
 }
 
 async function createSupplier(name) {
   const supplier = normalizeSupplier({ name, products: [] });
-  await updateState((state) => {
-    state.suppliers = [...(state.suppliers || []), supplier];
-    return state;
+  await prisma.supplier.create({
+    data: {
+      id: supplier.id,
+      name: supplier.name,
+      logo: supplier.logo || null,
+      hasDelivery: supplier.hasDelivery,
+      deliveryFee: supplier.deliveryFee,
+      products: supplier.products,
+    },
   });
-  return supplier;
+  return getSupplierById(supplier.id);
 }
 
 async function addProduct(supplierId, product) {
-  let created = null;
-  await updateState((state) => {
-    const suppliers = state.suppliers || [];
-    const idx = suppliers.findIndex((s) => s.id === supplierId);
-    if (idx < 0) throw new AppError("Supplier not found", 404);
-    created = normalizeProduct(product);
-    suppliers[idx] = {
-      ...suppliers[idx],
-      products: [...(suppliers[idx].products || []), created],
-    };
-    state.suppliers = suppliers;
-    return state;
-  });
+  await prisma.$transaction(
+    async (tx) => {
+      const row = await tx.supplier.findUnique({ where: { id: supplierId } });
+      if (!row) throw new AppError("Supplier not found", 404);
+      const created = normalizeProduct(product);
+      const products = Array.isArray(row.products) ? [...row.products, created] : [created];
+      await tx.supplier.update({
+        where: { id: supplierId },
+        data: { products },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
+  );
   return getSupplierById(supplierId);
 }
 
@@ -75,18 +94,21 @@ async function updateProductPrice(supplierId, productId, newPrice) {
   if (Number.isNaN(numericPrice) || numericPrice < 0) {
     throw new AppError("newPrice must be a non-negative number", 400);
   }
-  await updateState((state) => {
-    const suppliers = state.suppliers || [];
-    const idx = suppliers.findIndex((s) => s.id === supplierId);
-    if (idx < 0) throw new AppError("Supplier not found", 404);
-    const products = suppliers[idx].products || [];
-    const pIdx = products.findIndex((p) => p.id === productId);
-    if (pIdx < 0) throw new AppError("Product not found", 404);
-    products[pIdx] = { ...products[pIdx], price: numericPrice };
-    suppliers[idx] = { ...suppliers[idx], products };
-    state.suppliers = suppliers;
-    return state;
-  });
+  await prisma.$transaction(
+    async (tx) => {
+      const row = await tx.supplier.findUnique({ where: { id: supplierId } });
+      if (!row) throw new AppError("Supplier not found", 404);
+      const products = Array.isArray(row.products) ? [...row.products] : [];
+      const pIdx = products.findIndex((p) => p && String(p.id) === String(productId));
+      if (pIdx < 0) throw new AppError("Product not found", 404);
+      products[pIdx] = { ...products[pIdx], price: numericPrice };
+      await tx.supplier.update({
+        where: { id: supplierId },
+        data: { products },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
+  );
   return getSupplierById(supplierId);
 }
 

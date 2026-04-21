@@ -4,11 +4,13 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
+    "dev": "nodemon --config nodemon.json server.js",
     "start": "node server.js",
+    "start:node": "node server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "node prisma/seed.js",
+    "backfill:escrow": "node scripts/backfill-escrow.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

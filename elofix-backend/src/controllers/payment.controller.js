@@ -1,4 +1,5 @@
 const paymentService = require("../services/payment.service");
+const jobService = require("../services/job.service");
 
 async function getSavedCards(req, res) {
   const userId = req.query.userId || req.user.userId;
@@ -41,6 +42,16 @@ async function createInvoice(req, res) {
   res.status(201).json({ success: true, invoice });
 }
 
+async function releaseEscrow(req, res) {
+  const jobId = req.body?.jobId || req.body?.id;
+  if (!jobId) {
+    return res.status(400).json({ success: false, message: "jobId is required" });
+  }
+  const amount = req.body?.amount;
+  const job = await jobService.releaseEscrowPayment(String(jobId), amount);
+  res.json({ success: true, job });
+}
+
 async function createRefundInvoice(req, res) {
   const invoice = await paymentService.createRefundInvoice(
     req.body?.userId || req.user.userId,
@@ -54,6 +65,7 @@ async function createRefundInvoice(req, res) {
 
 module.exports = {
   getSavedCards,
+  releaseEscrow,
   addCard,
   deleteCard,
   setDefaultCard,

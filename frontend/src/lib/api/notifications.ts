@@ -41,3 +41,7 @@ export async function getUnreadCount(userId: string): Promise<number> {
   });
   return typeof data?.count === 'number' ? data.count : 0;
 }
+
+export async function postSupportMessage(message: string): Promise<void> {
+  await apiClient.post('/notifications/support', { message });
+}

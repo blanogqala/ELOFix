@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Search, Tags, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -18,6 +21,7 @@ const EMPTY_FORM = {
   icon: '',
   description: '',
   requiresMaterials: false,
+  requiresInspection: true,
   skillsCsv: '',
   step3Type: 'measurements' as Category['step3Type'],
   issueTypesCsv: '',
@@ -25,18 +29,20 @@ const EMPTY_FORM = {
 };
 
 export default function AdminCategories() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
+  const skipSelectNext = useRef(false);
 
   const loadCategories = useCallback(async () => {
     try {
       const data = await getCategories(true);
       setCategories(data);
-      if (!selectedCategoryId && data.length > 0) setSelectedCategoryId(data[0].id);
     } catch (error) {
       toast({
         title: 'Failed to load categories',
@@ -44,11 +50,30 @@ export default function AdminCategories() {
         variant: 'destructive',
       });
     }
-  }, [selectedCategoryId, toast]);
+  }, [toast]);
 
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  useEffect(() => {
+    const prefill = (location.state as { prefill?: { name?: string } } | null)?.prefill;
+    if (prefill?.name) {
+      skipSelectNext.current = true;
+      setSelectedCategoryId(null);
+      setForm({ ...EMPTY_FORM, name: prefill.name });
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    if (categories.length === 0 || selectedCategoryId !== null) return;
+    if (skipSelectNext.current) {
+      skipSelectNext.current = false;
+      return;
+    }
+    setSelectedCategoryId(categories[0].id);
+  }, [categories, selectedCategoryId]);
 
   const filtered = useMemo(
     () =>
@@ -72,12 +97,19 @@ export default function AdminCategories() {
       icon: selected.icon,
       description: selected.description,
       requiresMaterials: selected.requiresMaterials,
+      requiresInspection: selected.requiresInspection !== false,
       skillsCsv: (selected.skills || []).join(', '),
       step3Type: selected.step3Type,
       issueTypesCsv: (selected.issueTypes || []).join(', '),
       sortOrder: selected.sortOrder || 0,
     });
   }, [selected]);
+
+  const startCreateCategory = () => {
+    skipSelectNext.current = true;
+    setSelectedCategoryId(null);
+    setForm(EMPTY_FORM);
+  };
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;
@@ -88,6 +120,7 @@ export default function AdminCategories() {
         icon: form.icon || '🛠️',
         description: form.description || 'Service category',
         requiresMaterials: form.requiresMaterials,
+        requiresInspection: form.requiresInspection,
         skills: form.skillsCsv.split(',').map((s) => s.trim()).filter(Boolean),
         step3Type: form.step3Type,
         issueTypes: form.issueTypesCsv.split(',').map((s) => s.trim()).filter(Boolean),
@@ -117,6 +150,7 @@ export default function AdminCategories() {
         icon: form.icon,
         description: form.description,
         requiresMaterials: form.requiresMaterials,
+        requiresInspection: form.requiresInspection,
         skills: form.skillsCsv.split(',').map((s) => s.trim()).filter(Boolean),
         step3Type: form.step3Type,
         issueTypes: form.issueTypesCsv.split(',').map((s) => s.trim()).filter(Boolean),
@@ -155,21 +189,30 @@ export default function AdminCategories() {
     }
   };
 
+  const isCreateMode = !selected;
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-2xl font-bold">Service Categories</h1>
-          <p className="text-muted-foreground">Manage categories used in user service requests</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Service Categories</h1>
+            <p className="text-muted-foreground">Manage categories used in user service requests</p>
+          </div>
+          <Button type="button" onClick={startCreateCategory}>
+            Create Category
+          </Button>
         </div>
 
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
+            id="category-search"
             placeholder="Search categories..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10"
+            aria-label="Search categories"
           />
         </div>
 
@@ -178,6 +221,7 @@ export default function AdminCategories() {
             {filtered.map((cat) => (
               <button
                 key={cat.id}
+                type="button"
                 onClick={() => setSelectedCategoryId(cat.id)}
                 className={cn(
                   'w-full p-4 rounded-lg border-2 text-left transition-all flex items-center gap-3',
@@ -196,77 +240,117 @@ export default function AdminCategories() {
           </div>
 
           <div className="lg:col-span-2 card-elevated p-6 space-y-4">
-            {!selected ? (
-              <div className="text-center py-10">
+            {isCreateMode ? (
+              <div className="text-center py-6 border-b border-border">
                 <Tags className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">Create your first category below.</p>
+                <p className="text-sm font-medium">New category</p>
+                <p className="text-sm text-muted-foreground">Fill in the fields and save to create.</p>
               </div>
             ) : null}
 
             <div className="grid sm:grid-cols-2 gap-3">
-              <Input placeholder="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-              <Input placeholder="Icon (emoji)" value={form.icon} onChange={(e) => setForm((f) => ({ ...f, icon: e.target.value }))} />
-            </div>
-            <Input
-              placeholder="Description"
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            />
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Input
-                placeholder="Skills (comma separated)"
-                value={form.skillsCsv}
-                onChange={(e) => setForm((f) => ({ ...f, skillsCsv: e.target.value }))}
-              />
-              <Input
-                placeholder="Issue types (comma separated)"
-                value={form.issueTypesCsv}
-                onChange={(e) => setForm((f) => ({ ...f, issueTypesCsv: e.target.value }))}
-              />
-            </div>
-            <div className="grid sm:grid-cols-3 gap-3">
-              <select
-                className="h-10 rounded-md border border-input bg-background px-3"
-                value={form.step3Type}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, step3Type: e.target.value as Category['step3Type'] }))
-                }
-              >
-                <option value="measurements">measurements</option>
-                <option value="items">items</option>
-                <option value="issue">issue</option>
-              </select>
-              <Input
-                type="number"
-                placeholder="Sort order"
-                value={form.sortOrder}
-                onChange={(e) => setForm((f) => ({ ...f, sortOrder: Number(e.target.value) }))}
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.requiresMaterials}
-                  onChange={(e) => setForm((f) => ({ ...f, requiresMaterials: e.target.checked }))}
+              <div className="space-y-2">
+                <Label htmlFor="cat-name">Name</Label>
+                <Input
+                  id="cat-name"
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 />
-                Requires materials
-              </label>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cat-icon">Icon (emoji)</Label>
+                <Input
+                  id="cat-icon"
+                  value={form.icon}
+                  onChange={(e) => setForm((f) => ({ ...f, icon: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cat-desc">Description</Label>
+              <Input
+                id="cat-desc"
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              />
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="cat-skills">Skills (comma separated)</Label>
+                <Input
+                  id="cat-skills"
+                  value={form.skillsCsv}
+                  onChange={(e) => setForm((f) => ({ ...f, skillsCsv: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cat-issues">Issue types (comma separated)</Label>
+                <Input
+                  id="cat-issues"
+                  value={form.issueTypesCsv}
+                  onChange={(e) => setForm((f) => ({ ...f, issueTypesCsv: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4 items-end">
+              <div className="space-y-2">
+                <Label htmlFor="cat-step3">Step 3 type</Label>
+                <select
+                  id="cat-step3"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3"
+                  value={form.step3Type}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, step3Type: e.target.value as Category['step3Type'] }))
+                  }
+                >
+                  <option value="measurements">measurements</option>
+                  <option value="items">items</option>
+                  <option value="issue">issue</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cat-sort">Sort order</Label>
+                <Input
+                  id="cat-sort"
+                  type="number"
+                  value={form.sortOrder}
+                  onChange={(e) => setForm((f) => ({ ...f, sortOrder: Number(e.target.value) }))}
+                />
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button onClick={selected ? handleSave : handleCreate} disabled={isSaving}>
-                {selected ? 'Save Changes' : 'Create Category'}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="cat-req-mat"
+                  checked={form.requiresMaterials}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, requiresMaterials: Boolean(v) }))}
+                />
+                <Label htmlFor="cat-req-mat" className="font-normal cursor-pointer">
+                  Requires materials
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="cat-req-insp"
+                  checked={form.requiresInspection}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, requiresInspection: Boolean(v) }))}
+                />
+                <Label htmlFor="cat-req-insp" className="font-normal cursor-pointer">
+                  Requires inspection
+                </Label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" onClick={isCreateMode ? handleCreate : handleSave} disabled={isSaving}>
+                {isCreateMode ? 'Save new category' : 'Save Changes'}
               </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSelectedCategoryId(null);
-                  setForm(EMPTY_FORM);
-                }}
-              >
-                New
+              <Button type="button" variant="outline" onClick={startCreateCategory}>
+                Clear / new
               </Button>
-              {selected ? (
-                <Button variant="destructive" onClick={handleDelete} disabled={isSaving}>
+              {!isCreateMode ? (
+                <Button type="button" variant="destructive" onClick={handleDelete} disabled={isSaving}>
                   <Trash2 className="h-4 w-4 mr-1" /> Delete
                 </Button>
               ) : null}
@@ -277,4 +361,3 @@ export default function AdminCategories() {
     </DashboardLayout>
   );
 }
-

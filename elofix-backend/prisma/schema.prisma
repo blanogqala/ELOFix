@@ -33,43 +33,45 @@ enum SuggestionStatus {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  password     String
-  name         String
-  phone        String?
-  role         Role
-  createdAt    DateTime @default(now())
-
-  providerProfile   Provider?
-  jobsAsCustomer    Job[]                 @relation("JobCustomer")
-  jobsAsProvider    Job[]                 @relation("JobProvider")
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  password            String
+  name                String
+  phone               String?
+  role                Role
+  createdAt           DateTime             @default(now())
+  providerProfile     Provider?
+  jobsAsCustomer      Job[]                @relation("JobCustomer")
+  jobsAsProvider      Job[]                @relation("JobProvider")
   categorySuggestions CategorySuggestion[]
+  notifications       Notification[]
+  savedCards          SavedCard[]
+  invoices            Invoice[]
 }
 
 model Provider {
-  id                 String   @id @default(uuid())
-  userId             String   @unique
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  skills             String[]
-  location           String   @default("UNKNOWN")
-  bio                String?
-  rating             Float    @default(0)
-  approved           Boolean  @default(false)
-  profileCompleted   Boolean  @default(false)
-  onboardingStep     Int?
-  businessName       String?
-  serviceAreas       String[] @default([])
-  laborPricing       Json?
-  documents          Json?
-  settings           Json?
-  portfolioImages    String[] @default([])
-  profileImage       String?
-  blocked            Boolean  @default(false)
-  rejectionReason    String?
-  rejectedAt         DateTime?
-  deletedAt          DateTime?
-  reviewSubmittedAt  DateTime?
+  id                String    @id @default(uuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills            String[]
+  location          String    @default("UNKNOWN")
+  bio               String?
+  rating            Float     @default(0)
+  approved          Boolean   @default(false)
+  profileCompleted  Boolean   @default(false)
+  onboardingStep    Int?
+  businessName      String?
+  serviceAreas      String[]  @default([])
+  laborPricing      Json?
+  documents         Json?
+  settings          Json?
+  portfolioImages   String[]  @default([])
+  profileImage      String?
+  blocked           Boolean   @default(false)
+  rejectionReason   String?
+  rejectedAt        DateTime?
+  deletedAt         DateTime?
+  reviewSubmittedAt DateTime?
 
   workPosts WorkPost[]
 }
@@ -120,20 +122,106 @@ model Job {
   providerId      String?
   provider        User?     @relation("JobProvider", fields: [providerId], references: [id], onDelete: SetNull)
   createdAt       DateTime  @default(now())
+  meta            Json?
 }
 
 model Category {
-  id                String            @id
-  name              String            @unique
-  icon              String
-  description       String
-  requiresMaterials Boolean           @default(false)
-  skills            String[]
-  step3Type         CategoryStep3Type
-  issueTypes        String[]
-  commonItems       Json?
-  isActive          Boolean           @default(true)
-  sortOrder         Int               @default(0)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  id                 String            @id
+  name               String            @unique
+  icon               String
+  description        String
+  requiresMaterials  Boolean           @default(false)
+  requiresInspection Boolean           @default(true)
+  skills             String[]
+  step3Type          CategoryStep3Type
+  issueTypes         String[]
+  commonItems        Json?
+  isActive           Boolean           @default(true)
+  sortOrder          Int               @default(0)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  jobId     String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model SavedCard {
+  id          String  @id @default(uuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  last4       String
+  brand       String
+  expiryMonth Int
+  expiryYear  Int
+  isDefault   Boolean @default(false)
+
+  @@index([userId])
+}
+
+model Invoice {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId     String?
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Supplier {
+  id          String  @id @default(uuid())
+  name        String
+  logo        String?
+  hasDelivery Boolean @default(true)
+  deliveryFee Decimal @default(0) @db.Decimal(12, 2)
+  products    Json    @default("[]")
+}
+
+model MaterialOrder {
+  id        String   @id @default(uuid())
+  userId    String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PromoSpecial {
+  id   String @id @default(uuid())
+  data Json
+}
+
+model DeliveryProvider {
+  id            String   @id @default(uuid())
+  name          String
+  logo          String?
+  baseRate      Decimal  @default(0) @db.Decimal(12, 2)
+  perKmRate     Decimal  @default(0) @db.Decimal(12, 2)
+  estimatedTime String   @default("N/A")
+  vehicleType   String?
+  numberPlate   String?
+  rating        Float?
+}
+
+model StoredFile {
+  id           String   @id @default(uuid())
+  relPath      String
+  originalName String
+  mimeType     String
+  ownerUserId  String?
+  type         String?
+  createdAt    DateTime @default(now())
 }

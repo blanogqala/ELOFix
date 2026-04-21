@@ -1,11 +1,12 @@
-import { useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { getJobsByProvider, getPendingRequestsForProvider } from '@/lib/api/jobs';
 import { getProviderById } from '@/lib/api/providers';
-import { Job, Provider } from '@/types';
+import { queryKeys } from '@/lib/queryKeys';
+import { Job } from '@/types';
 import { 
   ClipboardList, Briefcase, CheckCircle, Clock,
   DollarSign, Star, ArrowRight, AlertCircle, MapPin, Package
@@ -16,37 +17,37 @@ import { getStandardizedStatusLabel, getUserStatusBadgeClass, isActiveWorkflowSt
 export default function ProviderDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [pendingJobs, setPendingJobs] = useState<Job[]>([]);
-  const [provider, setProvider] = useState<Provider | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const userId = user?.id ?? '';
 
-  const loadData = useCallback(async () => {
-    if (!user) return;
-    try {
-      setLoadError(null);
-      const [providerData, providerJobs, pending] = await Promise.all([
-        getProviderById(user.id),
-        getJobsByProvider(user.id),
-        getPendingRequestsForProvider(user.id),
-      ]);
-      setProvider(providerData);
-      setJobs(providerJobs);
-      setPendingJobs(pending);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load provider dashboard data.';
-      setLoadError(message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
+  const {
+    data: provider = null,
+    isLoading: loadingProvider,
+    isError: providerError,
+    error: providerErr,
+  } = useQuery({
+    queryKey: ['provider', 'profile', userId],
+    queryFn: () => getProviderById(userId),
+    enabled: Boolean(userId),
+  });
 
-  useEffect(() => {
-    if (user) {
-      void loadData();
-    }
-  }, [user, loadData]);
+  const { data: jobs = [], isLoading: loadingJobs } = useQuery({
+    queryKey: queryKeys.jobs.byProvider(userId),
+    queryFn: () => getJobsByProvider(userId),
+    enabled: Boolean(userId),
+  });
+
+  const { data: pendingJobs = [], isLoading: loadingPending } = useQuery({
+    queryKey: queryKeys.jobs.pendingForProvider(userId),
+    queryFn: () => getPendingRequestsForProvider(userId),
+    enabled: Boolean(userId),
+  });
+
+  const isLoading = loadingProvider || loadingJobs || loadingPending;
+  const loadError = providerError
+    ? providerErr instanceof Error
+      ? providerErr.message
+      : 'Failed to load provider dashboard data.'
+    : null;
 
   const stats = {
     pending: pendingJobs.length,

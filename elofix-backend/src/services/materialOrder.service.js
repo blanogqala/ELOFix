@@ -1,6 +1,7 @@
 const { randomUUID } = require("crypto");
+const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
-const { readState, updateState } = require("./jsonStore.service");
+const prisma = require("../config/prisma");
 
 function normalizeDeliveryStatus(status) {
   const allowed = ["SelfCollect", "PendingApproval", "Approved", "Rejected", "Cancelled", "InProgress", "Delivered"];
@@ -41,59 +42,69 @@ function normalizeOrder(input) {
 
 async function createMaterialOrder(params) {
   const order = normalizeOrder(params || {});
-  await updateState((state) => {
-    state.materialOrders = [...(state.materialOrders || []), order];
-    return state;
+  await prisma.materialOrder.create({
+    data: {
+      id: order.id,
+      userId: order.userId,
+      payload: order,
+    },
   });
   return order;
 }
 
 async function getMaterialOrders(userId) {
-  const state = await readState();
-  return (state.materialOrders || []).filter((o) => o.userId === userId);
+  const rows = await prisma.materialOrder.findMany({
+    where: { userId: String(userId) },
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map((r) => (r.payload && typeof r.payload === "object" ? r.payload : {}));
 }
 
 async function getMaterialOrderById(orderId) {
-  const state = await readState();
-  return (state.materialOrders || []).find((o) => o.id === orderId) || null;
+  const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  if (!row || !row.payload || typeof row.payload !== "object") return null;
+  return row.payload;
 }
 
 async function updateMaterialOrderDelivery(orderId, updates = {}) {
-  let updated = null;
-  await updateState((state) => {
-    const orders = state.materialOrders || [];
-    const idx = orders.findIndex((o) => o.id === orderId);
-    if (idx < 0) throw new AppError("Material order not found", 404);
-    const current = orders[idx];
-    const nextDelivery = {
-      ...(current.delivery || {}),
-      ...(updates || {}),
-      status: updates.status ? normalizeDeliveryStatus(updates.status) : current.delivery?.status,
-    };
-    const next = {
-      ...current,
-      delivery: nextDelivery,
-      deliveryType:
-        nextDelivery.type === "SELF"
-          ? "SELF"
-          : nextDelivery.type === "STORE"
-          ? "STORE_DELIVERY"
-          : "DELIVERY_PROVIDER",
-      deliveryProviderId: nextDelivery.providerId || undefined,
-      deliveryFee: Number(nextDelivery.fee || current.deliveryFee || 0),
-      deliveryStatus:
-        nextDelivery.status === "Delivered"
-          ? "delivered"
-          : nextDelivery.status === "InProgress"
-          ? "out_for_delivery"
-          : "processing",
-    };
-    orders[idx] = next;
-    state.materialOrders = orders;
-    updated = next;
-    return state;
-  });
-  return updated;
+  return prisma.$transaction(
+    async (tx) => {
+      const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
+      if (!row || !row.payload || typeof row.payload !== "object") {
+        throw new AppError("Material order not found", 404);
+      }
+      const current = row.payload;
+      const nextDelivery = {
+        ...(current.delivery || {}),
+        ...(updates || {}),
+        status: updates.status ? normalizeDeliveryStatus(updates.status) : current.delivery?.status,
+      };
+      const next = {
+        ...current,
+        delivery: nextDelivery,
+        deliveryType:
+          nextDelivery.type === "SELF"
+            ? "SELF"
+            : nextDelivery.type === "STORE"
+              ? "STORE_DELIVERY"
+              : "DELIVERY_PROVIDER",
+        deliveryProviderId: nextDelivery.providerId || undefined,
+        deliveryFee: Number(nextDelivery.fee || current.deliveryFee || 0),
+        deliveryStatus:
+          nextDelivery.status === "Delivered"
+            ? "delivered"
+            : nextDelivery.status === "InProgress"
+              ? "out_for_delivery"
+              : "processing",
+      };
+      await tx.materialOrder.update({
+        where: { id: orderId },
+        data: { payload: next },
+      });
+      return next;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
+  );
 }
 
 async function approveMaterialOrderDelivery(orderId) {
@@ -105,26 +116,30 @@ async function rejectMaterialOrderDelivery(orderId) {
 }
 
 async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
-  let updated = null;
-  await updateState((state) => {
-    const orders = state.materialOrders || [];
-    const idx = orders.findIndex((o) => o.id === orderId);
-    if (idx < 0) throw new AppError("Material order not found", 404);
-    const current = orders[idx];
-    const safeFee = Number(fee || current.deliveryFee || 0);
-    updated = {
-      ...current,
-      deliveryFee: safeFee,
-      deliveryStatus: "processing",
-      payment: { ...(current.payment || {}), materialsPaid: true, deliveryPaid: true },
-      delivery: { ...(current.delivery || {}), fee: safeFee, status: "Processing" },
-      deliveryInvoiceId: `INV-DEL-${Date.now()}`,
-    };
-    orders[idx] = updated;
-    state.materialOrders = orders;
-    return state;
-  });
-  return updated;
+  return prisma.$transaction(
+    async (tx) => {
+      const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
+      if (!row || !row.payload || typeof row.payload !== "object") {
+        throw new AppError("Material order not found", 404);
+      }
+      const current = row.payload;
+      const safeFee = Number(fee || current.deliveryFee || 0);
+      const updated = {
+        ...current,
+        deliveryFee: safeFee,
+        deliveryStatus: "processing",
+        payment: { ...(current.payment || {}), materialsPaid: true, deliveryPaid: true },
+        delivery: { ...(current.delivery || {}), fee: safeFee, status: "Processing" },
+        deliveryInvoiceId: `INV-DEL-${Date.now()}`,
+      };
+      await tx.materialOrder.update({
+        where: { id: orderId },
+        data: { payload: updated },
+      });
+      return updated;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
+  );
 }
 
 async function updateMaterialOrderDeliveryStatus(orderId, status) {

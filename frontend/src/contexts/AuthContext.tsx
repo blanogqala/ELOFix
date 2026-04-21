@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { AuthUser, UserRole } from '@/types';
 import * as authApi from '@/lib/api/auth';
+import { queryKeys } from '@/lib/queryKeys';
 import { firebaseEnabled, firebaseOnAuthStateChanged, auth as firebaseAuth } from '@/lib/firebase';
 
 interface AuthContextType {
@@ -19,14 +21,20 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const invalidateJobQueries = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+  }, [queryClient]);
 
   const refreshProfile = useCallback(async (): Promise<AuthUser | null> => {
     try {
       const session = await authApi.fetchAuthMe();
       if (session?.user) {
         setUser(session.user);
+        invalidateJobQueries();
         return session.user;
       }
       authApi.logout();
@@ -37,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
     }
     return null;
-  }, []);
+  }, [invalidateJobQueries]);
 
   useEffect(() => {
     if (firebaseEnabled) {
@@ -53,11 +61,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const session = authApi.getCurrentSession();
           if (session?.user) {
             setUser(session.user);
+            invalidateJobQueries();
             return;
           }
           const refreshed = await authApi.fetchAuthMe();
           if (refreshed?.user) {
             setUser(refreshed.user);
+            invalidateJobQueries();
             return;
           }
           authApi.logout();
@@ -83,13 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     setIsLoading(false);
-  }, [refreshProfile]);
+  }, [refreshProfile, invalidateJobQueries]);
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
       const session = await authApi.login(email, password);
       setUser(session.user);
+      invalidateJobQueries();
       return session.user;
     } finally {
       setIsLoading(false);
@@ -101,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const session = await authApi.register(name, email, phone, password, role);
       setUser(session.user);
+      invalidateJobQueries();
       return session.user;
     } finally {
       setIsLoading(false);
@@ -112,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const session = await authApi.socialLogin(provider);
       setUser(session.user);
+      invalidateJobQueries();
       return session.user;
     } finally {
       setIsLoading(false);

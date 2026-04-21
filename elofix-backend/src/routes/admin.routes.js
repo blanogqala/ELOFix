@@ -8,6 +8,7 @@ const router = express.Router();
 router.use(authenticate);
 router.use(authorizeRoles(["ADMIN"]));
 
+router.get("/analytics", asyncHandler(adminController.getAnalytics));
 router.get("/providers", asyncHandler(adminController.listProviders));
 router.patch(
   "/providers/:userId/documents/:docType/approve",

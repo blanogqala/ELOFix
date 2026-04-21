@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const notificationEvents = require("./notificationEvents.service");
 const { randomUUID } = require("crypto");
 const {
   toApiFileUrl,
@@ -711,6 +712,8 @@ async function approveProviderByUserId(targetUserId) {
     where: { id: profile.id },
     data: { approved: true },
   });
+
+  await notificationEvents.notifyProviderApproved(targetUserId);
 
   return getProviderById(targetUserId);
 }

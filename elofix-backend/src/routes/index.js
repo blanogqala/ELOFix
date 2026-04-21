@@ -12,10 +12,12 @@ const specialRoutes = require("./special.routes");
 const userRoutes = require("./user.routes");
 const deliveryProviderRoutes = require("./deliveryProvider.routes");
 const fileRoutes = require("./file.routes");
+const geocodeRoutes = require("./geocode.routes");
 
 const router = express.Router();
 
 router.use("/auth", authRoutes);
+router.use("/geocode", geocodeRoutes);
 router.use("/jobs", jobRoutes);
 router.use("/categories", categoryRoutes);
 router.use("/providers", providerRoutes);

@@ -1,9 +1,11 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Button } from '@/components/ui/button';
 import { EloFixLogo } from '@/components/EloFixLogo';
+import { getUnreadCount } from '@/lib/api/notifications';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -21,6 +23,8 @@ import {
   ClipboardList,
   ShoppingCart,
   AlertCircle,
+  Bell,
+  Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,7 +44,6 @@ const userNavItems: NavItem[] = [
   { label: 'My Jobs', path: '/user/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
   { label: 'Material Orders', path: '/user/material-orders', icon: <ShoppingCart className="h-4 w-4 shrink-0" /> },
   { label: 'Payments', path: '/user/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
-  { label: 'Profile', path: '/user/profile', icon: <User className="h-4 w-4 shrink-0" /> },
 ];
 
 const providerNavItems: NavItem[] = [
@@ -48,11 +51,11 @@ const providerNavItems: NavItem[] = [
   { label: 'Requests', path: '/provider/requests', icon: <ClipboardList className="h-4 w-4 shrink-0" /> },
   { label: 'Active Jobs', path: '/provider/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
   { label: 'Earnings', path: '/provider/earnings', icon: <DollarSign className="h-4 w-4 shrink-0" /> },
-  { label: 'Profile', path: '/provider/profile', icon: <User className="h-4 w-4 shrink-0" /> },
 ];
 
 const adminNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'Analytics', path: '/admin/analytics', icon: <Activity className="h-4 w-4 shrink-0" /> },
   { label: 'Providers', path: '/admin/providers', icon: <Users className="h-4 w-4 shrink-0" /> },
   { label: 'Suppliers', path: '/admin/suppliers', icon: <Package className="h-4 w-4 shrink-0" /> },
   { label: 'Categories', path: '/admin/categories', icon: <Tags className="h-4 w-4 shrink-0" /> },
@@ -60,12 +63,34 @@ const adminNavItems: NavItem[] = [
   { label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
 ];
 
+function notificationsPathForRole(role: string | undefined): string {
+  switch (role) {
+    case 'admin':
+      return '/admin/notifications';
+    case 'provider':
+      return '/provider/notifications';
+    default:
+      return '/user/notifications';
+  }
+}
+
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { isActiveProvider, isApproved, isProfileComplete } = useProviderStatus();
+
+  const notificationsHref = useMemo(() => notificationsPathForRole(user?.role), [user?.role]);
+
+  const { data: unreadCount = 0 } = useQuery({
+    queryKey: ['notifications', 'unread-count', user?.id],
+    queryFn: () => getUnreadCount(user!.id),
+    enabled: Boolean(user?.id),
+    refetchInterval: 12_000,
+    refetchOnWindowFocus: true,
+    staleTime: 5_000,
+  });
 
   const showInactiveProviderOverlay =
     user?.role === 'provider' &&
@@ -121,61 +146,92 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <EloFixLogo variant="dark" className="h-16" />
           </div>
 
-          {/* User Info */}
+          {/* User Info — customer/provider: link to profile */}
           <div className="mt-16 shrink-0 border-b border-border p-4 lg:mt-0">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
-                <User className="h-4 w-4 text-primary" />
+            {user?.role === 'user' || user?.role === 'provider' ? (
+              <Link
+                to={user.role === 'provider' ? '/provider/profile' : '/user/profile'}
+                onClick={() => setSidebarOpen(false)}
+                className="flex min-w-0 items-center gap-3 rounded-md p-1 -m-1 transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
+                  <User className="h-4 w-4 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <p className="truncate font-medium text-sm">{user?.name}</p>
+                    {user.role === 'provider' && (!isProfileComplete || !isApproved) && (
+                      <AlertCircle
+                        className="h-4 w-4 shrink-0 text-amber-600"
+                        aria-label="Profile needs attention"
+                      />
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">{getRoleLabel()}</p>
+                </div>
+              </Link>
+            ) : (
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
+                  <User className="h-4 w-4 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-sm">{user?.name}</p>
+                  <p className="text-xs text-muted-foreground">{getRoleLabel()}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="truncate font-medium text-sm">{user?.name}</p>
-                <p className="text-xs text-muted-foreground">{getRoleLabel()}</p>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Navigation — scrolls if many items; logout stays at bottom */}
           <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-4">
-            {navItems.map((item) => {
-              const showProfileWarning =
-                user?.role === 'provider' &&
-                item.path === '/provider/profile' &&
-                (!isProfileComplete || !isApproved);
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  onClick={() => setSidebarOpen(false)}
-                  className={cn(
-                    "nav-link",
-                    location.pathname === item.path && "active"
-                  )}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                  {showProfileWarning && (
-                    <AlertCircle
-                      className="h-4 w-4 shrink-0 text-amber-600"
-                      aria-label="Profile needs attention"
-                    />
-                  )}
-                  {location.pathname === item.path && (
-                    <ChevronRight className="ml-auto h-4 w-4" />
-                  )}
-                </Link>
-              );
-            })}
+            {navItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setSidebarOpen(false)}
+                className={cn(
+                  "nav-link",
+                  location.pathname === item.path && "active"
+                )}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+                {location.pathname === item.path && (
+                  <ChevronRight className="ml-auto h-4 w-4" />
+                )}
+              </Link>
+            ))}
           </nav>
 
-          {/* Logout */}
+          {/* Bell + Logout */}
           <div className="shrink-0 border-t border-border p-4">
-            <button 
-              onClick={handleLogout}
-              className="nav-link w-full text-destructive hover:bg-destructive/10"
-            >
-              <LogOut className="h-4 w-4 shrink-0" />
-              <span>Logout</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                to={notificationsHref}
+                onClick={() => setSidebarOpen(false)}
+                className={cn(
+                  'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground transition-colors hover:bg-muted',
+                  location.pathname === notificationsHref && 'border-primary/50 bg-primary/5'
+                )}
+                aria-label="Notifications"
+              >
+                <Bell className="h-4 w-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold leading-none text-primary-foreground">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="nav-link min-w-0 flex-1 text-destructive hover:bg-destructive/10"
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span>Logout</span>
+              </button>
+            </div>
           </div>
         </aside>
 

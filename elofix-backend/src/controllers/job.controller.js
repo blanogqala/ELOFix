@@ -1,4 +1,15 @@
+const AppError = require("../utils/AppError");
+const { filePathToPublicUrl } = require("../middleware/upload.middleware");
 const jobService = require("../services/job.service");
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function uploadJobImage(req, res) {
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  res.json({ success: true, url: filePathToPublicUrl(req.file.path) });
+}
 
 async function createJob(req, res) {
   const job = await jobService.createJob(req.user.userId, req.body || {});
@@ -11,7 +22,11 @@ async function getJobs(req, res) {
 }
 
 async function getJobById(req, res) {
-  const job = await jobService.getJobById(req.params.id);
+  const id = String(req.params.id || "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new AppError("Invalid job id", 400);
+  }
+  const job = await jobService.getJobById(id);
   res.json({ success: true, job });
 }
 
@@ -64,13 +79,33 @@ async function addChatMessage(req, res) {
 }
 
 async function submitServicePrice(req, res) {
-  const job = await jobService.submitServicePrice(req.params.id, req.body?.amount, req.body?.note);
+  const id = String(req.params.id || "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new AppError("Invalid job id", 400);
+  }
+  const rawAmount = req.body?.amount;
+  if (rawAmount === undefined || rawAmount === null || String(rawAmount).trim() === "") {
+    throw new AppError("Amount is required", 400);
+  }
+  const amount = Number(rawAmount);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new AppError("Amount must be a non-negative number", 400);
+  }
+  const note = req.body?.note;
+  if (note != null && String(note).length > 5000) {
+    throw new AppError("note is too long", 400);
+  }
+  const job = await jobService.submitServicePrice(id, amount, note);
   res.json({ success: true, job });
 }
 
 async function payLabor(req, res) {
+  const id = String(req.params.id || "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new AppError("Invalid job id", 400);
+  }
   const job = await jobService.payLabor(
-    req.params.id,
+    id,
     req.user.userId,
     req.body?.cardLast4 || req.body?.cardId || "****"
   );
@@ -203,7 +238,19 @@ async function payForStoreMaterials(req, res) {
 }
 
 async function updateJobStatus(req, res) {
-  const job = await jobService.updateJobStatus(req.params.id, req.body?.status);
+  const id = String(req.params.id || "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new AppError("Invalid job id", 400);
+  }
+  const raw = req.body?.status;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    throw new AppError("status is required", 400);
+  }
+  const status = String(raw).trim();
+  if (status.length > 128) {
+    throw new AppError("status is too long", 400);
+  }
+  const job = await jobService.updateJobStatus(id, status);
   res.json({ success: true, job });
 }
 
@@ -228,6 +275,7 @@ async function createLaborInvoice(req, res) {
 }
 
 module.exports = {
+  uploadJobImage,
   createJob,
   getJobs,
   getJobById,

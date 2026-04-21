@@ -2,12 +2,19 @@ const express = require("express");
 const jobController = require("../controllers/job.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate } = require("../middleware/auth.middleware");
+const { uploadJobImage } = require("../middleware/upload.middleware");
 
 const router = express.Router();
 
 router.get("/", authenticate, asyncHandler(jobController.getJobs));
 router.post("/", authenticate, asyncHandler(jobController.createJob));
 router.get("/match", authenticate, asyncHandler(jobController.getMatchedJobs));
+router.post(
+  "/upload-image",
+  authenticate,
+  uploadJobImage.single("file"),
+  asyncHandler(jobController.uploadJobImage)
+);
 router.get("/:id", authenticate, asyncHandler(jobController.getJobById));
 router.patch("/:id/accept", authenticate, asyncHandler(jobController.acceptJob));
 router.delete("/:id", authenticate, asyncHandler(jobController.deleteJob));

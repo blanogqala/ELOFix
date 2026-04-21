@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
 import {
   Dialog,
@@ -106,11 +108,7 @@ export default function AdminJobDetail() {
 
   const getMaxReleasable = () => {
     if (!job) return 0;
-    const held = job.escrow.heldAmount || 0;
-    const released = job.escrow.releasedAmount || 0;
-    const total = held + released;
-    if (job.status === 'COMPLETED') return held;
-    return Math.min(held, Math.max(0, Math.floor(total * 0.5) - released));
+    return job.escrow.heldAmount || 0;
   };
 
   const handleReleasePayment = async () => {
@@ -225,6 +223,30 @@ export default function AdminJobDetail() {
                 <p className="text-sm text-muted-foreground">Description</p>
                 <p>{job.description}</p>
               </div>
+              {job.images.length > 0 && (
+                <div className="border-b border-primary/20 pb-3">
+                  <p className="text-sm text-muted-foreground mb-2">Photos</p>
+                  <div className="flex flex-wrap gap-2">
+                    {job.images.map((img, i) => (
+                      <a
+                        key={`${img}-${i}`}
+                        href={resolveUploadUrl(img)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block h-24 w-24 overflow-hidden rounded-lg bg-muted"
+                      >
+                        <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {job.measurements?.cameraAssist && (
+                <div className="border-b border-primary/20 pb-3">
+                  <p className="text-sm text-muted-foreground mb-2">Guided measurement</p>
+                  <MeasurementCard measurement={job.measurements.cameraAssist} />
+                </div>
+              )}
               <div className="border-b border-primary/20 pb-3">
                 <p className="text-sm text-muted-foreground">Status</p>
                 {getStatusBadge(job.status)}
@@ -493,8 +515,8 @@ export default function AdminJobDetail() {
             <DialogHeader>
               <DialogTitle>Release Payment</DialogTitle>
               <DialogDescription>
-                Release funds from escrow to the provider. Max releasable: {formatCurrency(maxReleasable)}.
-                {job.status !== 'COMPLETED' && ' When job is active, you can release up to 50% total.'}
+                Release funds from escrow to the provider (partial or full). Max releasable:{' '}
+                {formatCurrency(maxReleasable)} (current held balance).
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">

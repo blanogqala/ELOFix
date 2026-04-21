@@ -69,11 +69,7 @@ export default function AdminPaymentDetail() {
 
   const getMaxReleasable = () => {
     if (!job) return 0;
-    const held = job.escrow.heldAmount || 0;
-    const released = job.escrow.releasedAmount || 0;
-    const total = held + released;
-    if (job.status === 'COMPLETED') return held;
-    return Math.min(held, Math.max(0, Math.floor(total * 0.5) - released));
+    return job.escrow.heldAmount || 0;
   };
 
   const handleReleasePayment = async () => {

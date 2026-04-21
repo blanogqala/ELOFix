@@ -1,7 +1,9 @@
 import { useCallback, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys } from '@/lib/queryKeys';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -32,6 +34,7 @@ import {
 
 export default function ProviderRequestDetail() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -67,6 +70,8 @@ export default function ProviderRequestDetail() {
     setIsMutating(true);
     try {
       await acceptJob(job.id);
+      await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(job.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       toast({ title: 'Job accepted!', description: 'The job is now assigned to you.' });
       navigate('/provider/jobs');
     } catch (e) {
@@ -81,6 +86,7 @@ export default function ProviderRequestDetail() {
     setIsMutating(true);
     try {
       await rejectJobByProvider(job.id, rejectReason, rejectDetails);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       toast({ title: 'Request declined', description: 'The request has been rejected.' });
       setRejectOpen(false);
       navigate('/provider/requests');

@@ -1,5 +1,7 @@
 const { randomUUID } = require("crypto");
-const { readState, updateState } = require("./jsonStore.service");
+const { Prisma } = require("@prisma/client");
+const prisma = require("../config/prisma");
+const AppError = require("../utils/AppError");
 
 function createDefaultJobMeta() {
   return {
@@ -9,6 +11,7 @@ function createDefaultJobMeta() {
     laborPaid: false,
     servicePrice: null,
     servicePayment: null,
+    escrow: { heldAmount: 0, releasedAmount: 0 },
     providerAdjustedRequirements: null,
     userMaterialSuggestions: [],
     providerSuggestions: [],
@@ -28,35 +31,63 @@ function createDefaultJobMeta() {
 }
 
 function normalizeMeta(meta) {
-  return { ...createDefaultJobMeta(), ...(meta || {}) };
+  const base = createDefaultJobMeta();
+  const merged = { ...base, ...(meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {}) };
+  const esc = merged.escrow && typeof merged.escrow === "object" ? merged.escrow : {};
+  merged.escrow = {
+    heldAmount: Number(esc.heldAmount) || 0,
+    releasedAmount: Number(esc.releasedAmount) || 0,
+  };
+  return merged;
 }
 
-async function getJobMeta(jobId) {
-  const state = await readState();
-  return normalizeMeta(state.jobsMeta[jobId]);
+function stripJobForApi(job) {
+  if (!job || typeof job !== "object") return job;
+  const { meta: _omit, ...rest } = job;
+  return rest;
+}
+
+/**
+ * Serializable transaction + single-row update prevents lost updates when multiple requests
+ * mutate the same job meta concurrently.
+ */
+async function mutateJobMeta(jobId, mutator) {
+  return prisma.$transaction(
+    async (tx) => {
+      const row = await tx.job.findUnique({
+        where: { id: jobId },
+        select: { id: true, meta: true },
+      });
+      if (!row) {
+        throw new AppError("Job not found", 404);
+      }
+      const current = normalizeMeta(row.meta);
+      const rawNext = mutator(current);
+      const nextMeta = normalizeMeta(rawNext !== undefined && rawNext !== null ? rawNext : current);
+      await tx.job.update({
+        where: { id: jobId },
+        data: { meta: nextMeta },
+      });
+      return nextMeta;
+    },
+    {
+      maxWait: 5000,
+      timeout: 15000,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }
+  );
 }
 
 async function setJobMeta(jobId, patch) {
-  let nextMeta;
-  await updateState((state) => {
-    const current = normalizeMeta(state.jobsMeta[jobId]);
-    nextMeta = { ...current, ...patch };
-    state.jobsMeta[jobId] = nextMeta;
-    return state;
-  });
-  return nextMeta;
+  return mutateJobMeta(jobId, (current) => ({ ...current, ...(patch || {}) }));
 }
 
-async function mutateJobMeta(jobId, mutator) {
-  let nextMeta;
-  await updateState((state) => {
-    const current = normalizeMeta(state.jobsMeta[jobId]);
-    nextMeta = mutator(current) || current;
-    state.jobsMeta[jobId] = normalizeMeta(nextMeta);
-    nextMeta = state.jobsMeta[jobId];
-    return state;
+async function getJobMeta(jobId) {
+  const row = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { meta: true },
   });
-  return nextMeta;
+  return normalizeMeta(row?.meta);
 }
 
 function toFrontendStatus(dbStatus, meta) {
@@ -68,9 +99,17 @@ function toFrontendStatus(dbStatus, meta) {
 function enrichJob(job, meta) {
   const safeMeta = normalizeMeta(meta);
   const status = toFrontendStatus(job.status, safeMeta);
+  const held = safeMeta.escrow?.heldAmount ?? 0;
+  const released = safeMeta.escrow?.releasedAmount ?? 0;
   return {
-    ...job,
+    ...stripJobForApi(job),
     status,
+    escrow: {
+      enabled: true,
+      holdPercent: 0,
+      heldAmount: held,
+      releasedAmount: released,
+    },
     jobNotes: safeMeta.jobNotes,
     chat: safeMeta.chat,
     laborPaid: Boolean(safeMeta.laborPaid),
@@ -134,4 +173,6 @@ module.exports = {
   createNote,
   createChat,
   mapFrontendRole,
+  normalizeMeta,
+  stripJobForApi,
 };

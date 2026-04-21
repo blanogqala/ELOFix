@@ -180,6 +180,71 @@
       "cancelledAt": null,
       "rejectionReason": null,
       "rejectionDetails": null,
+      "rejectedAt": null,
+      "escrow": {
+        "heldAmount": 300,
+        "releasedAmount": 0
+      }
+    },
+    "1f49f8f6-4b33-4966-95d6-3754c90bdeee": {
+      "statusOverride": null,
+      "jobNotes": [],
+      "chat": [],
+      "laborPaid": false,
+      "servicePrice": null,
+      "servicePayment": null,
+      "providerAdjustedRequirements": null,
+      "userMaterialSuggestions": [],
+      "providerSuggestions": [],
+      "materialPayments": [],
+      "storeOrders": [],
+      "proposedLaborPrice": null,
+      "completionConfirmedByUser": false,
+      "userRating": null,
+      "userReview": null,
+      "cancellationReason": null,
+      "cancellationDetails": null,
+      "cancelledAt": null,
+      "rejectionReason": null,
+      "rejectionDetails": null,
+      "rejectedAt": null
+    },
+    "996534ac-69bf-45f4-90e0-9cc77f5987a1": {
+      "statusOverride": "SERVICE_PAID",
+      "jobNotes": [],
+      "chat": [],
+      "laborPaid": true,
+      "servicePrice": {
+        "amount": 600,
+        "note": "",
+        "submittedAt": "2026-04-21T07:18:25.853Z"
+      },
+      "servicePayment": {
+        "status": "paid",
+        "amount": 600,
+        "paidAt": "2026-04-21T07:22:32.215Z",
+        "paymentRef": "LAB-5987a1-1776756152215",
+        "paidBy": "767cbfd0-4c79-49a6-9347-1f0551aff416",
+        "maskedPaymentMethod": "**** **** **** 3456"
+      },
+      "escrow": {
+        "heldAmount": 0,
+        "releasedAmount": 600
+      },
+      "providerAdjustedRequirements": null,
+      "userMaterialSuggestions": [],
+      "providerSuggestions": [],
+      "materialPayments": [],
+      "storeOrders": [],
+      "proposedLaborPrice": null,
+      "completionConfirmedByUser": false,
+      "userRating": null,
+      "userReview": null,
+      "cancellationReason": null,
+      "cancellationDetails": null,
+      "cancelledAt": null,
+      "rejectionReason": null,
+      "rejectionDetails": null,
       "rejectedAt": null
     }
   },
@@ -193,12 +258,34 @@
         "expiryYear": 2026,
         "isDefault": true
       }
+    ],
+    "767cbfd0-4c79-49a6-9347-1f0551aff416": [
+      {
+        "id": "e2e7d959-f10f-4515-bbf4-24ae4a11a9cf",
+        "last4": "3456",
+        "brand": "visa",
+        "expiryMonth": 11,
+        "expiryYear": 2026,
+        "isDefault": true
+      }
     ]
   },
   "invoices": [],
   "suppliers": [],
   "materialOrders": [],
-  "notificationsByUser": {},
+  "notificationsByUser": {
+    "e2477645-4717-49c5-a654-f2449bca218c": [
+      {
+        "id": "5830e3ee-2118-4322-bc45-2ae5dae7cfc8",
+        "userId": "e2477645-4717-49c5-a654-f2449bca218c",
+        "type": "support_contact",
+        "title": "Support message",
+        "message": "Bathandwa Nogqala (bla@gmail.com): hey",
+        "read": false,
+        "createdAt": "2026-04-21T07:21:14.069Z"
+      }
+    ]
+  },
   "specials": [],
   "deliveryProviders": [],
   "filesById": {

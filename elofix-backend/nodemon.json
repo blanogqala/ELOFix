@@ -1,0 +1,16 @@
+{
+  "watch": ["server.js", "src"],
+  "ext": "js,cjs,mjs",
+  "ignore": [
+    "node_modules/**",
+    "data/**",
+    "uploads/**",
+    "prisma/migrations/**",
+    "scripts/**",
+    "*.log",
+    "coverage/**",
+    ".git/**"
+  ],
+  "exec": "node server.js",
+  "delay": 300
+}

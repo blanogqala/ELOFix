@@ -129,6 +129,8 @@ export interface Category {
   sortOrder?: number;
   createdAt?: string;
   updatedAt?: string;
+  /** When false, provider goes straight to pricing after accepting the job */
+  requiresInspection?: boolean;
 }
 
 export interface Product {
@@ -176,8 +178,32 @@ export interface MovingItem {
 
 export interface PlumbingIssue {
   type: string;
-  description: string;
+  /** Omitted when using camera measurement; use main task description instead. */
+  description?: string;
   photo?: string;
+}
+
+/** Structured camera / guided measurement (stored inside `measurements` JSON). */
+export type CameraAssistDimensionMode = 'lengthWidth' | 'heightWidth';
+
+export interface CameraAssistMeasurement {
+  type: 'area' | 'linear' | 'custom';
+  unit: 'm' | 'cm';
+  dimensionMode: CameraAssistDimensionMode;
+  length?: number;
+  width?: number;
+  height?: number;
+  /** Always square meters when set (normalized on save). */
+  area?: number;
+  imageUrl?: string;
+  source: 'manual' | 'camera';
+  /** Populated by API: dimensions in meters / area in m². */
+  normalized?: {
+    lengthM?: number;
+    widthM?: number;
+    heightM?: number;
+    areaM2?: number;
+  };
 }
 
 export interface Measurements {
@@ -185,6 +211,8 @@ export interface Measurements {
   values: Record<string, number>;
   movingItems?: MovingItem[];
   plumbingIssue?: PlumbingIssue;
+  /** Guided / camera pipeline; backward compatible when absent. */
+  cameraAssist?: CameraAssistMeasurement;
 }
 
 export type PaymentPlanType = 'UPFRONT' | 'DEPOSIT' | 'MILESTONE';
@@ -314,6 +342,7 @@ export interface JobLocation {
   area?: string;
   suburb?: string;
   notes?: string;
+  coordinates?: { lat: number; lng: number };
 }
 
 export interface JobStoreOrder {
@@ -392,6 +421,8 @@ export interface Job {
   location?: JobLocation;
   createdAt: string;
   updatedAt: string;
+  /** From category; when false, inspection step is skipped for this job */
+  requiresInspection?: boolean;
 }
 
 export interface ServiceRequest {
@@ -447,10 +478,33 @@ export interface Invoice {
 }
 
 // Notification Types
+export type AppNotificationType =
+  | 'provider_accepted'
+  | 'provider_rejected'
+  | 'material_paid'
+  | 'job_completed'
+  | 'refund_issued'
+  | 'provider_suggestion'
+  | 'job_cancelled'
+  | 'material_list_submitted'
+  | 'material_suggestion_received'
+  | 'material_suggestion_accepted'
+  | 'material_suggestion_rejected'
+  | 'material_list_replaced'
+  | 'job_request'
+  | 'job_accepted'
+  | 'inspection_completed'
+  | 'price_submitted'
+  | 'payment_made'
+  | 'delivery_update'
+  | 'provider_approved'
+  | 'category_suggestion'
+  | 'support_contact';
+
 export interface AppNotification {
   id: string;
   userId: string;
-  type: 'provider_accepted' | 'provider_rejected' | 'material_paid' | 'job_completed' | 'refund_issued' | 'provider_suggestion' | 'job_cancelled' | 'material_list_submitted' | 'material_suggestion_received' | 'material_suggestion_accepted' | 'material_suggestion_rejected' | 'material_list_replaced';
+  type: AppNotificationType;
   title: string;
   message: string;
   read: boolean;

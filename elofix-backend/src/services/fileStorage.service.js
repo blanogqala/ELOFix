@@ -2,7 +2,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { randomUUID } = require("crypto");
 const AppError = require("../utils/AppError");
-const { readState, updateState } = require("./jsonStore.service");
+const prisma = require("../config/prisma");
 const { UPLOAD_ROOT } = require("../middleware/upload.middleware");
 
 const FILES_URL_PREFIX = "/api/files/";
@@ -20,13 +20,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 function toApiFileUrl(fileId) {
   return `${FILES_URL_PREFIX}${fileId}`;
-}
-
-function normalizeFilesById(state) {
-  if (!state || typeof state !== "object") return {};
-  const filesById = state.filesById;
-  if (!filesById || typeof filesById !== "object" || Array.isArray(filesById)) return {};
-  return filesById;
 }
 
 function safeRelativeToUploads(absolutePath) {
@@ -66,26 +59,23 @@ async function registerFilePath(absolutePath, metadata = {}) {
   }
 
   const fileId = randomUUID();
-  const now = new Date().toISOString();
   const record = {
-    fileId,
     relPath,
     originalName: metadata.originalName || path.basename(absolutePath),
     mimeType: inferMimeType(metadata.mimeType, absolutePath),
-    ownerUserId: metadata.ownerUserId ? String(metadata.ownerUserId) : undefined,
-    type: metadata.type ? String(metadata.type) : undefined,
-    createdAt: now,
+    ownerUserId: metadata.ownerUserId ? String(metadata.ownerUserId) : null,
+    type: metadata.type ? String(metadata.type) : null,
   };
 
-  await updateState((state) => {
-    const filesById = normalizeFilesById(state);
-    return {
-      ...state,
-      filesById: {
-        ...filesById,
-        [fileId]: record,
-      },
-    };
+  await prisma.storedFile.create({
+    data: {
+      id: fileId,
+      relPath: record.relPath,
+      originalName: record.originalName,
+      mimeType: record.mimeType,
+      ownerUserId: record.ownerUserId,
+      type: record.type,
+    },
   });
 
   return {
@@ -109,16 +99,20 @@ async function registerUploadedFile(file, metadata = {}) {
 }
 
 async function getRegisteredFile(fileId) {
-  const state = await readState();
-  const filesById = normalizeFilesById(state);
-  const rec = filesById[fileId];
+  const rec = await prisma.storedFile.findUnique({ where: { id: fileId } });
   if (!rec) return null;
   const abs = path.resolve(UPLOAD_ROOT, rec.relPath || "");
   if (!(await existsFile(abs))) return null;
   return {
-    ...rec,
+    fileId: rec.id,
+    relPath: rec.relPath,
+    originalName: rec.originalName,
+    mimeType: rec.mimeType,
+    ownerUserId: rec.ownerUserId || undefined,
+    type: rec.type || undefined,
+    createdAt: rec.createdAt,
     absolutePath: abs,
-    url: toApiFileUrl(fileId),
+    url: toApiFileUrl(rec.id),
   };
 }
 

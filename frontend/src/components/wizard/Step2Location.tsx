@@ -1,8 +1,12 @@
+import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 import { JobLocation } from '@/types';
-import { MapPin } from 'lucide-react';
+import { MapPin, LocateFixed } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { reverseGeocode } from '@/lib/api/geocode';
 
 interface Step2LocationProps {
   location: Partial<JobLocation>;
@@ -10,8 +14,66 @@ interface Step2LocationProps {
 }
 
 export function Step2Location({ location, setLocation }: Step2LocationProps) {
+  const { toast } = useToast();
+  const [geoLoading, setGeoLoading] = useState(false);
+
   const update = (field: keyof JobLocation, value: string | undefined) => {
     setLocation({ ...location, [field]: value });
+  };
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      toast({
+        title: 'Not supported',
+        description: 'Your browser does not support geolocation.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        try {
+          const r = await reverseGeocode(latitude, longitude);
+          setLocation({
+            ...location,
+            address: r.address,
+            city: r.city,
+            area: r.area || r.suburb,
+            suburb: r.suburb || r.area,
+            coordinates: r.coordinates,
+          });
+          toast({
+            title: 'Location filled',
+            description: 'Review and adjust the address if needed.',
+          });
+        } catch (error) {
+          setLocation({
+            ...location,
+            coordinates: { lat: latitude, lng: longitude },
+          });
+          toast({
+            title: 'Could not resolve address',
+            description:
+              error instanceof Error ? error.message : 'Coordinates saved — please enter the address manually.',
+            variant: 'destructive',
+          });
+        } finally {
+          setGeoLoading(false);
+        }
+      },
+      (err) => {
+        setGeoLoading(false);
+        toast({
+          title: 'Location unavailable',
+          description: err.message || 'Permission denied or timeout.',
+          variant: 'destructive',
+        });
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
   };
 
   return (
@@ -24,6 +86,25 @@ export function Step2Location({ location, setLocation }: Step2LocationProps) {
       </div>
 
       <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={useCurrentLocation}
+            disabled={geoLoading}
+          >
+            <LocateFixed className="h-4 w-4" />
+            {geoLoading ? 'Getting location…' : 'Use Current Location'}
+          </Button>
+          {location.coordinates && (
+            <span className="text-xs text-muted-foreground">
+              {location.coordinates.lat.toFixed(5)}, {location.coordinates.lng.toFixed(5)}
+            </span>
+          )}
+        </div>
+
         <div>
           <Label htmlFor="address">Full Address</Label>
           <Input
@@ -77,7 +158,7 @@ export function Step2Location({ location, setLocation }: Step2LocationProps) {
         <div className="p-4 bg-muted/50 rounded-lg flex items-center gap-3">
           <MapPin className="h-5 w-5 text-muted-foreground shrink-0" />
           <p className="text-sm text-muted-foreground">
-            Map pin selection will be available in a future update. For now, please provide the address details above.
+            You can use your current location to fill the address automatically, or enter it manually.
           </p>
         </div>
       </div>

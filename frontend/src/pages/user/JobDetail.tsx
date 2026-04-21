@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys } from '@/lib/queryKeys';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +24,8 @@ import {
   addUserMaterialSuggestion,
   getLaborInvoiceByJobId,
 } from '@/lib/api/jobs';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import { getSavedCards } from '@/lib/api/payments';
 import { getSuppliers } from '@/lib/api/suppliers';
 import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
@@ -60,11 +64,28 @@ import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
 
 export default function JobDetail() {
   const { id } = useParams();
+  const jobId = id ?? '';
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [job, setJob] = useState<Job | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const syncJobsAfterMutation = useCallback(async () => {
+    if (!jobId) return;
+    await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+  }, [jobId, queryClient]);
+
+  const {
+    data: job,
+    isLoading,
+    isError,
+    error: jobError,
+  } = useQuery({
+    queryKey: queryKeys.jobs.detail(jobId),
+    queryFn: () => getJobById(jobId),
+    enabled: Boolean(jobId),
+  });
   const [newMessage, setNewMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>('details');
   const [suggestMaterialsOpen, setSuggestMaterialsOpen] = useState(false);
@@ -124,36 +145,39 @@ export default function JobDetail() {
     }
   }, []);
 
-  const loadJob = useCallback(async () => {
-    if (!id) return;
-    try {
-      const jobData = await getJobById(id);
-      setJob(jobData);
-      
-      // Load provider details
-      if (jobData?.providerId) {
-        try {
-          const providerData = await getProviderById(jobData.providerId);
-          if (providerData) setProvider(providerData);
-        } catch (error) {
+  useEffect(() => {
+    if (!isError || !jobError) return;
+    console.error('Failed to load job:', jobError);
+    toast({
+      title: 'Error',
+      description: jobError instanceof Error ? jobError.message : 'Failed to load job details.',
+      variant: 'destructive',
+    });
+  }, [isError, jobError, toast]);
+
+  useEffect(() => {
+    if (!job?.providerId) {
+      setProvider(null);
+      return;
+    }
+    let cancelled = false;
+    void getProviderById(job.providerId)
+      .then((providerData) => {
+        if (!cancelled && providerData) setProvider(providerData);
+      })
+      .catch((err) => {
+        if (!cancelled) {
           toast({
             title: 'Error',
-            description: error instanceof Error ? error.message : 'Failed to load provider details.',
+            description: err instanceof Error ? err.message : 'Failed to load provider details.',
             variant: 'destructive',
           });
         }
-      }
-    } catch (error) {
-      console.error('Failed to load job:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load job details.',
-        variant: 'destructive',
       });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id, toast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.providerId, toast]);
 
   const loadCards = useCallback(async () => {
     if (!user) return;
@@ -170,30 +194,30 @@ export default function JobDetail() {
   }, [toast, user]);
 
   useEffect(() => {
-    if (id) {
-      void loadJob();
+    if (jobId) {
       void loadCards();
       void loadSuppliers();
       void loadDeliveryProviders();
     }
-  }, [id, loadCards, loadDeliveryProviders, loadJob, loadSuppliers]);
+  }, [jobId, loadCards, loadDeliveryProviders, loadSuppliers]);
 
   useEffect(() => {
     const handleStorageUpdate = (event: StorageEvent) => {
-      if (event.key?.includes('jobs') && id) {
-        void loadJob();
+      if (event.key?.includes('jobs') && jobId) {
+        void queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       }
     };
     window.addEventListener('storage', handleStorageUpdate);
     return () => window.removeEventListener('storage', handleStorageUpdate);
-  }, [id, loadJob]);
+  }, [jobId, queryClient]);
 
   const handleSendMessage = async () => {
     if (!job || !newMessage.trim() || isMessageSending) return;
     setIsMessageSending(true);
     try {
-      const updatedJob = await addChatMessage(job.id, newMessage);
-      setJob(updatedJob);
+      await addChatMessage(job.id, newMessage);
+      await syncJobsAfterMutation();
       setNewMessage('');
     } catch (error) {
       toast({
@@ -211,8 +235,8 @@ export default function JobDetail() {
     setIsActionPending(true);
     try {
       const selectedCard = savedCards.find(c => c.id === cardId);
-      const updatedJob = await payLabor(job.id, user.id, cardId, selectedCard?.last4 || '****');
-      setJob(updatedJob);
+      await payLabor(job.id, user.id, cardId, selectedCard?.last4 || '****');
+      await syncJobsAfterMutation();
       setPayLaborModalOpen(false);
       toast({ title: 'Service paid', description: 'Your labor payment has been processed.' });
     } catch (error) {
@@ -229,8 +253,8 @@ export default function JobDetail() {
   const handleSuggestMaterial = async (suggested: MaterialLine, message: string) => {
     if (!job) return;
     try {
-      const updatedJob = await addUserMaterialSuggestion(job.id, suggested, message);
-      setJob(updatedJob);
+      await addUserMaterialSuggestion(job.id, suggested, message);
+      await syncJobsAfterMutation();
       toast({ title: 'Suggestion sent', description: 'Your alternative material suggestion has been sent to the provider.' });
     } catch (error) {
       toast({
@@ -245,8 +269,8 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const { job: updatedJob, refundAmount } = await cancelJob(job.id, reason, details);
-      setJob(updatedJob);
+      const { refundAmount } = await cancelJob(job.id, reason, details);
+      await syncJobsAfterMutation();
       setCancelDialogOpen(false);
       toast({ 
         title: 'Job Cancelled', 
@@ -268,8 +292,8 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const updatedJob = await confirmJobCompletion(job.id, rating, review);
-      setJob(updatedJob);
+      await confirmJobCompletion(job.id, rating, review);
+      await syncJobsAfterMutation();
       setCompletionDialogOpen(false);
       toast({ 
         title: 'Job Completed!', 
@@ -300,14 +324,14 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const updatedJob = await payForStoreMaterials(
+      await payForStoreMaterials(
         job.id,
         supplierId,
         cardId,
         cardLast4,
         options
       );
-      setJob(updatedJob);
+      await syncJobsAfterMutation();
       toast({ 
         title: 'Materials paid', 
         description: 'Materials paid. Pay for delivery when approved in Order Details.' 
@@ -335,8 +359,8 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const updatedJob = await setStoreDeliveryOption(job.id, storeId, params);
-      setJob(updatedJob);
+      await setStoreDeliveryOption(job.id, storeId, params);
+      await syncJobsAfterMutation();
       toast({
         title: 'Delivery option selected',
         description: 'Your delivery preference has been saved for this store.',
@@ -355,8 +379,8 @@ export default function JobDetail() {
   const handleSimulateProviderApproval = async (storeId: string) => {
     if (!job) return;
     try {
-      const updatedJob = await approveStoreDeliveryRequest(job.id, storeId);
-      setJob(updatedJob);
+      await approveStoreDeliveryRequest(job.id, storeId);
+      await syncJobsAfterMutation();
       toast({
         title: 'Delivery approved',
         description: 'Your delivery provider has approved the request.',
@@ -375,6 +399,8 @@ export default function JobDetail() {
     setIsActionPending(true);
     try {
       await deleteJob(job.id);
+      queryClient.removeQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       toast({ 
         title: 'Job Deleted', 
         description: 'The job has been removed from your list.' 
@@ -400,8 +426,8 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const updatedJob = await acceptProviderSuggestion(job.id, suggestionId);
-      setJob(updatedJob);
+      await acceptProviderSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
       toast({ title: 'Suggestion Accepted', description: 'Your cart has been updated.' });
     } catch (error) {
       toast({
@@ -418,8 +444,8 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const updatedJob = await rejectProviderSuggestion(job.id, suggestionId);
-      setJob(updatedJob);
+      await rejectProviderSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
       toast({ title: 'Suggestion Ignored' });
     } catch (error) {
       toast({
@@ -642,7 +668,9 @@ export default function JobDetail() {
             <CardHeader>
               <CardTitle className="text-lg">Service Price</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Provider has set the labor price after inspection. Pay to proceed.
+                {job.requiresInspection === false
+                  ? 'Provider has set the labor price. Pay to proceed.'
+                  : 'Provider has set the labor price after inspection. Pay to proceed.'}
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -776,6 +804,24 @@ export default function JobDetail() {
                   <p className="text-sm text-muted-foreground">Description</p>
                   <p>{job.description}</p>
                 </div>
+                {job.images.length > 0 && (
+                  <div className="border-b-2 border-primary/20 pb-3">
+                    <p className="text-sm text-muted-foreground mb-2">Photos</p>
+                    <div className="flex flex-wrap gap-2">
+                      {job.images.map((img, i) => (
+                        <a
+                          key={`${img}-${i}`}
+                          href={resolveUploadUrl(img)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block h-24 w-24 overflow-hidden rounded-lg bg-muted"
+                        >
+                          <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {job.location && (
                   <div className="border-b-2 border-primary/20 pb-3">
                     <p className="text-sm text-muted-foreground">Location</p>
@@ -785,6 +831,11 @@ export default function JobDetail() {
                     </p>
                     {job.location.notes && (
                       <p className="text-sm text-muted-foreground mt-1">Notes: {job.location.notes}</p>
+                    )}
+                    {job.location.coordinates && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {job.location.coordinates.lat.toFixed(5)}, {job.location.coordinates.lng.toFixed(5)}
+                      </p>
                     )}
                   </div>
                 )}
@@ -832,6 +883,12 @@ export default function JobDetail() {
                 <CardTitle className="text-lg">Requirements</CardTitle>
               </CardHeader>
               <CardContent>
+                {effectiveMeasurements?.cameraAssist && (
+                  <div className="mb-4 space-y-2">
+                    <p className="text-sm text-muted-foreground">Guided measurement</p>
+                    <MeasurementCard measurement={effectiveMeasurements.cameraAssist} />
+                  </div>
+                )}
                 {effectiveMeasurements?.movingItems && effectiveMeasurements.movingItems.length > 0 ? (
                   <div className="space-y-2">
                     {effectiveMeasurements.movingItems.map(item => (
@@ -847,10 +904,14 @@ export default function JobDetail() {
                       <p className="text-sm text-muted-foreground">Issue Type</p>
                       <p>{effectiveMeasurements.plumbingIssue.type}</p>
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Description</p>
-                      <p>{effectiveMeasurements.plumbingIssue.description}</p>
-                    </div>
+                    {(effectiveMeasurements.plumbingIssue.description?.trim() || job.description) && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">Details</p>
+                        <p>
+                          {effectiveMeasurements.plumbingIssue.description?.trim() || job.description}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -940,7 +1001,11 @@ export default function JobDetail() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">No notes yet. Provider will add inspection notes.</p>
+                  <p className="text-center text-muted-foreground py-8">
+                    {job.requiresInspection === false
+                      ? 'No notes yet. Your provider may add notes about the job.'
+                      : 'No notes yet. Provider will add inspection notes.'}
+                  </p>
                 )}
               </div>
             </CardContent>
@@ -952,7 +1017,9 @@ export default function JobDetail() {
             <CardHeader>
               <CardTitle className="text-lg">Messages</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Message your provider to arrange inspection or discuss the job
+                {job.requiresInspection === false
+                  ? 'Message your provider about the job'
+                  : 'Message your provider to arrange inspection or discuss the job'}
               </p>
             </CardHeader>
             <CardContent>

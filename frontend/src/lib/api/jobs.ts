@@ -10,6 +10,7 @@ import {
   StoreOrderDeliveryType,
 } from '@/types';
 import apiClient from '@/api/client';
+import { areaSquareMetersFromAssist } from '@/lib/measurements';
 
 interface BackendJobUser {
   id: string;
@@ -55,6 +56,8 @@ interface BackendJob {
   rejectionReason?: string;
   rejectionDetails?: string;
   rejectedAt?: string;
+  escrow?: Job['escrow'];
+  requiresInspection?: boolean;
 }
 
 interface BackendJobsResponse {
@@ -83,6 +86,8 @@ function toFrontendJob(job: BackendJob): Job {
   const backendStatus = String(job.status || '').trim().toUpperCase();
   const safeStatus: JobStatus =
     backendStatus === 'ACCEPTED' ? 'ASSIGNED' : ((backendStatus as JobStatus) || 'PENDING');
+  const requiresInspection =
+    typeof job.requiresInspection === 'boolean' ? job.requiresInspection : true;
   const category = String(job.category || job.title || '').trim();
   const measurements =
     job.measurements && typeof job.measurements === 'object'
@@ -90,6 +95,9 @@ function toFrontendJob(job: BackendJob): Job {
       : { source: 'MANUAL', values: {} };
   const materials = Array.isArray(job.materials) ? job.materials : [];
   const images = Array.isArray(job.images) ? job.images : [];
+  const locRaw = job.locationDetails;
+  const location =
+    locRaw && typeof locRaw === 'object' && !Array.isArray(locRaw) ? (locRaw as Job['location']) : undefined;
 
   return {
     id: job.id,
@@ -106,7 +114,14 @@ function toFrontendJob(job: BackendJob): Job {
     laborEstimateRange: { min: price, max: price, unit: 'job' },
     totalEstimateRange: { min: price, max: price },
     paymentPlan: { type: 'UPFRONT' },
-    escrow: { enabled: true, holdPercent: 0, heldAmount: 0, releasedAmount: 0 },
+    escrow: job.escrow
+      ? {
+          enabled: job.escrow.enabled !== false,
+          holdPercent: Number(job.escrow.holdPercent) || 0,
+          heldAmount: Number(job.escrow.heldAmount) || 0,
+          releasedAmount: Number(job.escrow.releasedAmount) || 0,
+        }
+      : { enabled: true, holdPercent: 0, heldAmount: 0, releasedAmount: 0 },
     status: safeStatus,
     jobNotes: Array.isArray(job.jobNotes) ? job.jobNotes : [],
     chat: Array.isArray(job.chat) ? job.chat : [],
@@ -130,9 +145,10 @@ function toFrontendJob(job: BackendJob): Job {
     rejectionReason: job.rejectionReason,
     rejectionDetails: job.rejectionDetails,
     rejectedAt: job.rejectedAt,
-    location: job.locationDetails ?? undefined,
+    location,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt ?? job.createdAt,
+    requiresInspection,
   };
 }
 
@@ -193,7 +209,8 @@ export async function payLabor(
 }
 
 export async function releaseEscrowPayment(jobId: string, amount: number): Promise<Job> {
-  const { data } = await apiClient.post<BackendJobResponse>(`/jobs/${jobId}/escrow/release`, {
+  const { data } = await apiClient.post<BackendJobResponse>('/payments/release', {
+    jobId,
     amount,
   });
   return ensureJob(data, 'release escrow payment');
@@ -282,7 +299,14 @@ export async function createJob(request: ServiceRequest, userId: string, userNam
   const valuesCount = Object.keys(request.measurements?.values || {}).length;
   const hasMovingItems = (request.measurements?.movingItems?.length || 0) > 0;
   const hasIssueType = Boolean(request.measurements?.plumbingIssue?.type);
-  if (!request.measurements || (valuesCount === 0 && !hasMovingItems && !hasIssueType)) {
+  const cam = request.measurements?.cameraAssist;
+  const camArea = cam ? areaSquareMetersFromAssist(cam) : undefined;
+  const hasCameraAssist =
+    cam?.source === 'camera' && camArea !== undefined && camArea >= 0.5;
+  if (cam?.source === 'camera' && (camArea === undefined || camArea < 0.5)) {
+    throw new Error('Camera measurement must be at least 0.5 m² with valid dimensions.');
+  }
+  if (!request.measurements || (valuesCount === 0 && !hasMovingItems && !hasIssueType && !hasCameraAssist)) {
     throw new Error('Please provide job requirements before submitting.');
   }
 
@@ -314,6 +338,16 @@ export async function createJob(request: ServiceRequest, userId: string, userNam
   void userName;
   const { data } = await apiClient.post<BackendJobResponse>('/jobs', payload);
   return ensureJob(data, 'create job');
+}
+
+export async function uploadJobImage(file: File): Promise<string> {
+  const { compressImageForUpload } = await import('@/lib/imageCompression');
+  const prepared = await compressImageForUpload(file, 1280);
+  const formData = new FormData();
+  formData.append('file', prepared);
+  const { data } = await apiClient.post<{ success: boolean; url?: string }>('/jobs/upload-image', formData);
+  if (!data?.success || !data.url) throw new Error('Image upload failed');
+  return data.url;
 }
 
 export async function updateJobStatus(jobId: string, status: JobStatus): Promise<Job> {

@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const notificationEvents = require("./notificationEvents.service");
 
 const SERVICE_AREAS = [
   "Johannesburg",
@@ -48,6 +49,8 @@ function normalizeCategoryInput(input, { isCreate = false } = {}) {
   const step3Type = input.step3Type != null ? String(input.step3Type).trim() : undefined;
   const requiresMaterials =
     input.requiresMaterials != null ? Boolean(input.requiresMaterials) : undefined;
+  const requiresInspection =
+    input.requiresInspection != null ? Boolean(input.requiresInspection) : undefined;
   const isActive = input.isActive != null ? Boolean(input.isActive) : undefined;
   const sortOrder =
     input.sortOrder != null && input.sortOrder !== ""
@@ -78,6 +81,7 @@ function normalizeCategoryInput(input, { isCreate = false } = {}) {
     ...(description != null ? { description } : {}),
     ...(step3Type != null ? { step3Type } : {}),
     ...(requiresMaterials != null ? { requiresMaterials } : {}),
+    ...(requiresInspection != null ? { requiresInspection } : {}),
     ...(isActive != null ? { isActive } : {}),
     ...(sortOrder != null ? { sortOrder } : {}),
     ...(skills != null ? { skills } : {}),
@@ -144,12 +148,19 @@ async function createCategorySuggestion(userId, name) {
     throw new AppError("Suggestion must be at least 2 characters", 400);
   }
 
-  return prisma.categorySuggestion.create({
+  const created = await prisma.categorySuggestion.create({
     data: {
       name: n,
       userId,
     },
   });
+
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  await Promise.all(
+    admins.map((admin) => notificationEvents.notifyCategorySuggestion(admin.id, n, created.id))
+  );
+
+  return created;
 }
 
 module.exports = {

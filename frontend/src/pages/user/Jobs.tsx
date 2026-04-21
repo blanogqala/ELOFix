@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getJobsByUser } from '@/lib/api/jobs';
+import { queryKeys } from '@/lib/queryKeys';
 import { getJobPriceDisplay } from '@/lib/jobUtils';
 import { Job } from '@/types';
 import { Search, Briefcase, ArrowRight } from 'lucide-react';
@@ -15,38 +17,31 @@ import { useToast } from '@/hooks/use-toast';
 export default function UserJobs() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const userId = user?.id ?? '';
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'completed' | 'cancelled'>('all');
-  const { toast } = useToast();
-
-  const loadJobs = useCallback(async () => {
-    if (!user) return;
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      const userJobs = await getJobsByUser(user.id);
-      setJobs(userJobs);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load jobs.';
-      setLoadError(message);
-      toast({
-        title: 'Could not load jobs',
-        description: message,
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [toast, user]);
+  const {
+    data: jobs = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: queryKeys.jobs.byUser(userId),
+    queryFn: () => getJobsByUser(userId),
+    enabled: Boolean(userId),
+  });
+  const loadError = isError ? (error instanceof Error ? error.message : 'Failed to load jobs.') : null;
 
   useEffect(() => {
-    if (user) {
-      void loadJobs();
-    }
-  }, [user, loadJobs]);
+    if (!isError || !loadError) return;
+    toast({
+      title: 'Could not load jobs',
+      description: loadError,
+      variant: 'destructive',
+    });
+  }, [isError, loadError, toast]);
 
   const filteredJobs = jobs
     .filter(job => {
@@ -128,7 +123,7 @@ export default function UserJobs() {
               </div>
               <h3 className="font-semibold mb-2">Failed to load jobs</h3>
               <p className="text-muted-foreground text-sm mb-4">{loadError}</p>
-              <Button onClick={loadJobs} variant="outline">
+              <Button onClick={() => void refetch()} variant="outline">
                 Retry
               </Button>
             </div>

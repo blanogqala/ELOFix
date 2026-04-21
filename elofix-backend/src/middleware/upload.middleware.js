@@ -78,6 +78,21 @@ function workPostImageStorage(userIdFromReq) {
   });
 }
 
+function jobImageStorage() {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uid = String(req.user?.userId || req.user?.id || "anonymous").trim() || "anonymous";
+      const dir = path.join(UPLOAD_ROOT, "jobs", uid);
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
 const userIdFromParams = (req) => String(req.params.id || "").trim();
 
 const uploadProviderDocument = multer({
@@ -98,6 +113,12 @@ const uploadWorkPostImage = multer({
   fileFilter: imageFileFilter,
 });
 
+const uploadJobImage = multer({
+  storage: jobImageStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
+});
+
 /** Public URL path (same host as API) for stored files */
 function filePathToPublicUrl(absolutePath) {
   const rel = path.relative(UPLOAD_ROOT, absolutePath).split(path.sep).join("/");
@@ -109,5 +130,6 @@ module.exports = {
   uploadProviderDocument,
   uploadProviderAvatar,
   uploadWorkPostImage,
+  uploadJobImage,
   filePathToPublicUrl,
 };

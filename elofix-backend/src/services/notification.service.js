@@ -1,55 +1,60 @@
 const { randomUUID } = require("crypto");
-const { readState, updateState } = require("./jsonStore.service");
+const prisma = require("../config/prisma");
+
+function toApiShape(row) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    type: row.type,
+    title: row.title,
+    message: row.message,
+    read: row.read,
+    jobId: row.jobId || undefined,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  };
+}
 
 async function getNotifications(userId) {
-  const state = await readState();
-  const list = state.notificationsByUser?.[userId] || [];
-  return [...list].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const list = await prisma.notification.findMany({
+    where: { userId: String(userId) },
+    orderBy: { createdAt: "desc" },
+  });
+  return list.map(toApiShape);
 }
 
 async function addNotification(notification) {
-  const item = {
-    id: randomUUID(),
-    userId: String(notification.userId),
-    type: String(notification.type || "job_completed"),
-    title: String(notification.title || "Notification"),
-    message: String(notification.message || ""),
-    read: false,
-    jobId: notification.jobId || undefined,
-    createdAt: new Date().toISOString(),
-  };
-  await updateState((state) => {
-    state.notificationsByUser = state.notificationsByUser || {};
-    const current = state.notificationsByUser[item.userId] || [];
-    state.notificationsByUser[item.userId] = [item, ...current];
-    return state;
+  const item = await prisma.notification.create({
+    data: {
+      id: randomUUID(),
+      userId: String(notification.userId),
+      type: String(notification.type || "job_completed"),
+      title: String(notification.title || "Notification"),
+      message: String(notification.message || ""),
+      read: false,
+      jobId: notification.jobId || null,
+    },
   });
-  return item;
+  return toApiShape(item);
 }
 
 async function markAsRead(userId, notificationId) {
-  await updateState((state) => {
-    state.notificationsByUser = state.notificationsByUser || {};
-    const current = state.notificationsByUser[userId] || [];
-    state.notificationsByUser[userId] = current.map((n) =>
-      n.id === notificationId ? { ...n, read: true } : n
-    );
-    return state;
+  await prisma.notification.updateMany({
+    where: { userId: String(userId), id: notificationId },
+    data: { read: true },
   });
 }
 
 async function markAllAsRead(userId) {
-  await updateState((state) => {
-    state.notificationsByUser = state.notificationsByUser || {};
-    const current = state.notificationsByUser[userId] || [];
-    state.notificationsByUser[userId] = current.map((n) => ({ ...n, read: true }));
-    return state;
+  await prisma.notification.updateMany({
+    where: { userId: String(userId) },
+    data: { read: true },
   });
 }
 
 async function getUnreadCount(userId) {
-  const list = await getNotifications(userId);
-  return list.filter((n) => !n.read).length;
+  return prisma.notification.count({
+    where: { userId: String(userId), read: false },
+  });
 }
 
 module.exports = {

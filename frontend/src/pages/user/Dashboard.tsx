@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { getJobsByUser } from '@/lib/api/jobs';
+import { queryKeys } from '@/lib/queryKeys';
 import { getJobPriceDisplay } from '@/lib/jobUtils';
 import { Job } from '@/types';
 import { SpecialsCarousel } from '@/components/dashboard/SpecialsCarousel';
@@ -21,26 +22,12 @@ import { getStandardizedStatusLabel, getUserStatusBadgeClass, isActiveWorkflowSt
 export default function UserDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  const loadJobs = useCallback(async () => {
-    if (!user) return;
-    try {
-      const userJobs = await getJobsByUser(user.id);
-      setJobs(userJobs);
-    } catch (error) {
-      console.error('Failed to load jobs:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      void loadJobs();
-    }
-  }, [user, loadJobs]);
+  const userId = user?.id ?? '';
+  const { data: jobs = [], isLoading } = useQuery({
+    queryKey: queryKeys.jobs.byUser(userId),
+    queryFn: () => getJobsByUser(userId),
+    enabled: Boolean(userId),
+  });
 
   const stats = {
     active: jobs.filter(j => isActiveWorkflowStatus(j.status)).length,

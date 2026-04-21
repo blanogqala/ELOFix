@@ -15,7 +15,8 @@ import {
   AlertCircle,
   UserCheck,
   CreditCard,
-  Activity
+  Activity,
+  BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -285,7 +286,21 @@ export default function AdminDashboard() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid sm:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div
+            className="card-elevated p-6 cursor-pointer hover:border-primary/30 transition-colors"
+            onClick={() => navigate('/admin/analytics')}
+          >
+            <div className="flex items-center gap-4">
+              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <BarChart3 className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-medium">View Analytics</p>
+                <p className="text-sm text-muted-foreground">Jobs, revenue, and providers</p>
+              </div>
+            </div>
+          </div>
           <div 
             className="card-elevated p-6 cursor-pointer hover:border-primary/30 transition-colors"
             onClick={() => navigate('/admin/providers')}

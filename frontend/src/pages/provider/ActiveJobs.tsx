@@ -1,8 +1,10 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { getJobsByProvider, deleteJob } from '@/lib/api/jobs';
+import { queryKeys } from '@/lib/queryKeys';
 import { Job } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,36 +21,24 @@ import {
 export default function ProviderActiveJobs() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const userId = user?.id ?? '';
+  const { data: jobs = [], isLoading } = useQuery({
+    queryKey: queryKeys.jobs.byProvider(userId),
+    queryFn: () => getJobsByProvider(userId),
+    enabled: Boolean(userId),
+  });
   const [filter, setFilter] = useState<string>('all');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
-
-  const loadJobs = useCallback(async () => {
-    if (!user) return;
-    try {
-      const data = await getJobsByProvider(user.id);
-      setJobs(data);
-    } catch (error) {
-      console.error('Failed to load jobs:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      void loadJobs();
-    }
-  }, [user, loadJobs]);
 
   const handleDeleteCancelled = async () => {
     if (!jobToDelete) return;
     try {
       await deleteJob(jobToDelete.id);
-      setJobs(prev => prev.filter(j => j.id !== jobToDelete.id));
+      queryClient.removeQueries({ queryKey: queryKeys.jobs.detail(jobToDelete.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       setDeleteDialogOpen(false);
       setJobToDelete(null);
       toast({ title: 'Deleted', description: 'Cancelled job removed from your list.' });

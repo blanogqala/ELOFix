@@ -1,14 +1,17 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const { parseCameraAssist } = require("../utils/measurements");
 const { randomUUID } = require("crypto");
 const {
   getJobMeta,
   mutateJobMeta,
-  setJobMeta,
   enrichJob,
   createNote,
   createChat,
+  createDefaultJobMeta,
+  normalizeMeta,
 } = require("./jobMeta.service");
+const notificationEvents = require("./notificationEvents.service");
 
 const jobInclude = {
   customer: {
@@ -203,6 +206,7 @@ function parseLocation(location) {
     area = undefined,
     suburb = undefined,
     notes = undefined,
+    coordinates = undefined,
   } = location;
 
   const details = {};
@@ -211,6 +215,14 @@ function parseLocation(location) {
   if (area !== undefined && area !== null && String(area).trim()) details.area = String(area).trim();
   if (suburb !== undefined && suburb !== null && String(suburb).trim()) details.suburb = String(suburb).trim();
   if (notes !== undefined && notes !== null && String(notes).trim()) details.notes = String(notes).trim();
+
+  if (coordinates !== undefined && coordinates !== null && typeof coordinates === "object" && !Array.isArray(coordinates)) {
+    const lat = Number(coordinates.lat);
+    const lng = Number(coordinates.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      details.coordinates = { lat, lng };
+    }
+  }
 
   return {
     location: details.city || details.area || details.suburb || details.address || "UNKNOWN",
@@ -267,7 +279,25 @@ async function createJob(userId, body) {
     normalizedMaterials = materials;
   }
 
-  const measurementResult = parseMeasurements(measurements, {
+  const measurementsForParser =
+    measurements && typeof measurements === "object" && !Array.isArray(measurements)
+      ? { ...measurements, cameraAssist: undefined }
+      : measurements;
+
+  const cameraAssistParsed = parseCameraAssist(
+    measurements && typeof measurements === "object" && !Array.isArray(measurements)
+      ? measurements.cameraAssist
+      : undefined,
+    AppError
+  );
+
+  const cameraImageUrl =
+    cameraAssistParsed && cameraAssistParsed.imageUrl ? String(cameraAssistParsed.imageUrl).trim() : "";
+  if (cameraImageUrl) {
+    normalizedImages = normalizedImages.filter((u) => u !== cameraImageUrl);
+  }
+
+  const measurementResult = parseMeasurements(measurementsForParser, {
     width,
     height,
     length,
@@ -278,7 +308,8 @@ async function createJob(userId, body) {
   const heightNum = measurementResult?.height;
   const lengthNum = measurementResult?.length;
   const areaNum = measurementResult?.area;
-  const normalizedMeasurements =
+
+  const innerMeasurements =
     measurementResult?.measurements ||
     (widthNum !== undefined || heightNum !== undefined || lengthNum !== undefined || areaNum !== undefined
       ? {
@@ -290,7 +321,29 @@ async function createJob(userId, body) {
             ...(areaNum !== undefined ? { area: areaNum } : {}),
           },
         }
-      : null);
+      : { source: "MANUAL", values: {} });
+
+  let plumbingIssuePayload =
+    measurements && typeof measurements === "object" && !Array.isArray(measurements) && measurements.plumbingIssue
+      ? measurements.plumbingIssue
+      : undefined;
+  if (plumbingIssuePayload && typeof plumbingIssuePayload === "object" && cameraAssistParsed) {
+    const { description: _omit, ...rest } = plumbingIssuePayload;
+    plumbingIssuePayload = Object.keys(rest).length ? rest : undefined;
+  }
+
+  const normalizedMeasurements = {
+    ...innerMeasurements,
+    ...(measurements && typeof measurements === "object" && !Array.isArray(measurements)
+      ? {
+          ...(Array.isArray(measurements.movingItems) ? { movingItems: measurements.movingItems } : {}),
+          ...(plumbingIssuePayload && typeof plumbingIssuePayload === "object"
+            ? { plumbingIssue: plumbingIssuePayload }
+            : {}),
+        }
+      : {}),
+    ...(cameraAssistParsed ? { cameraAssist: cameraAssistParsed } : {}),
+  };
 
   const { location: normalizedLocation, locationDetails } = parseLocation(location);
   const providerUserId = await resolveProviderUserId(selectedProviderId);
@@ -329,11 +382,15 @@ async function createJob(userId, body) {
       customerId: userId,
       providerId: providerUserId,
       status: "PENDING",
+      meta: createDefaultJobMeta(),
     },
     include: jobInclude,
   });
-  const meta = await setJobMeta(job.id, {});
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, normalizeMeta(job.meta));
+  if (job.providerId) {
+    await notificationEvents.notifyJobRequest(job.providerId, job.id, job.title);
+  }
+  return enriched;
 }
 
 async function getMatchedJobsForProvider(userId) {
@@ -397,7 +454,7 @@ async function getMatchedJobsForProvider(userId) {
   const mapped = [];
   for (const job of scored) {
     const meta = await getJobMeta(job.id);
-    mapped.push({ ...enrichJob(job, meta), score: job.score });
+    mapped.push({ ...(await finalizeJob(job, meta)), score: job.score });
   }
   return mapped;
 }
@@ -449,14 +506,30 @@ async function acceptJob(jobId, userId) {
     },
     include: jobInclude,
   });
-  const meta = await mutateJobMeta(jobId, (m) => ({
+  let meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
     statusOverride: "ASSIGNED",
     rejectionReason: null,
     rejectionDetails: null,
     rejectedAt: null,
   }));
-  return enrichJob(updated, meta);
+
+  const categorySlug = String(updated.category || "").trim();
+  if (categorySlug) {
+    const cat = await prisma.category.findUnique({
+      where: { id: categorySlug },
+      select: { requiresInspection: true },
+    });
+    if (cat && cat.requiresInspection === false) {
+      meta = await mutateJobMeta(jobId, (m) => ({ ...m, statusOverride: "INSPECTED" }));
+    }
+  }
+
+  const enriched = await finalizeJob(updated, meta);
+  if (updated.customerId) {
+    await notificationEvents.notifyJobAccepted(updated.customerId, jobId, updated.title);
+  }
+  return enriched;
 }
 
 async function getJobs() {
@@ -467,7 +540,7 @@ async function getJobs() {
   const out = [];
   for (const job of jobs) {
     const meta = await getJobMeta(job.id);
-    out.push(enrichJob(job, meta));
+    out.push(await finalizeJob(job, meta));
   }
   return out;
 }
@@ -479,7 +552,7 @@ async function getJobById(jobId) {
   });
   if (!job) throw new AppError("Job not found", 404);
   const meta = await getJobMeta(job.id);
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 function mapFrontendStatusToDb(status) {
@@ -504,6 +577,26 @@ function coerceNumber(value, fallback = 0) {
   return Number.isNaN(n) ? fallback : n;
 }
 
+async function finalizeJob(job, meta) {
+  const base = enrichJob(job, meta);
+  const slug = String(base.category || "").trim();
+  let requiresInspection = true;
+  if (slug) {
+    try {
+      const cat = await prisma.category.findUnique({
+        where: { id: slug },
+        select: { requiresInspection: true },
+      });
+      if (cat && typeof cat.requiresInspection === "boolean") {
+        requiresInspection = cat.requiresInspection;
+      }
+    } catch {
+      requiresInspection = true;
+    }
+  }
+  return { ...base, requiresInspection };
+}
+
 async function updateJobStatus(jobId, status) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
@@ -517,7 +610,11 @@ async function updateJobStatus(jobId, status) {
     });
   }
   const meta = await mutateJobMeta(jobId, (m) => ({ ...m, statusOverride: status }));
-  return enrichJob(updatedJob, meta);
+  const result = await finalizeJob(updatedJob, meta);
+  if (String(status) === "INSPECTED" && job.customerId) {
+    await notificationEvents.notifyInspectionCompleted(job.customerId, jobId, job.title);
+  }
+  return result;
 }
 
 async function deleteJob(jobId) {
@@ -538,7 +635,7 @@ async function addMaterials(jobId, newMaterials = []) {
     include: jobInclude,
   });
   const meta = await getJobMeta(jobId);
-  return enrichJob(updated, meta);
+  return await finalizeJob(updated, meta);
 }
 
 async function removeMaterial(jobId, productId, supplierId) {
@@ -554,7 +651,7 @@ async function removeMaterial(jobId, productId, supplierId) {
     include: jobInclude,
   });
   const meta = await getJobMeta(jobId);
-  return enrichJob(updated, meta);
+  return await finalizeJob(updated, meta);
 }
 
 async function addJobNote(jobId, author, message, title) {
@@ -562,7 +659,7 @@ async function addJobNote(jobId, author, message, title) {
   if (!job) throw new AppError("Job not found", 404);
   const note = createNote(author, message, title);
   const meta = await mutateJobMeta(jobId, (m) => ({ ...m, jobNotes: [...m.jobNotes, note] }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function addChatMessage(jobId, author, message) {
@@ -570,7 +667,7 @@ async function addChatMessage(jobId, author, message) {
   if (!job) throw new AppError("Job not found", 404);
   const chat = createChat(author, message);
   const meta = await mutateJobMeta(jobId, (m) => ({ ...m, chat: [...m.chat, chat] }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function submitServicePrice(jobId, amount, note) {
@@ -582,7 +679,11 @@ async function submitServicePrice(jobId, amount, note) {
     servicePrice: { amount: safeAmount, note: note ? String(note) : "", submittedAt: new Date().toISOString() },
     statusOverride: "SERVICE_PRICE_SUBMITTED",
   }));
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.customerId) {
+    await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
+  }
+  return enriched;
 }
 
 async function payLabor(jobId, userId, cardLast4) {
@@ -603,9 +704,31 @@ async function payLabor(jobId, userId, cardLast4) {
       paidBy: userId,
       maskedPaymentMethod: `**** **** **** ${cardLast4 || "****"}`,
     },
+    escrow: {
+      heldAmount: amount,
+      releasedAmount: Number(m.escrow?.releasedAmount) || 0,
+    },
     statusOverride: "SERVICE_PAID",
   }));
-  return enrichJob(job, meta);
+  // Relational column: customer paid → job is in active work phase. API status still comes from meta (SERVICE_PAID).
+  let jobRow = job;
+  if (job.status === "ACCEPTED") {
+    jobRow = await prisma.job.update({
+      where: { id: jobId },
+      data: { status: "IN_PROGRESS" },
+      include: jobInclude,
+    });
+  }
+  const enriched = await finalizeJob(jobRow, meta);
+  if (job.providerId) {
+    await notificationEvents.notifyPaymentMade(
+      job.providerId,
+      jobId,
+      job.title,
+      "The customer paid for labor / service."
+    );
+  }
+  return enriched;
 }
 
 async function submitMaterials(jobId, materials) {
@@ -618,7 +741,7 @@ async function submitMaterials(jobId, materials) {
     include: jobInclude,
   });
   const meta = await mutateJobMeta(jobId, (m) => ({ ...m, statusOverride: "MATERIALS_SUBMITTED" }));
-  return enrichJob(updated, meta);
+  return await finalizeJob(updated, meta);
 }
 
 async function rejectJobByProvider(jobId, reason, details) {
@@ -631,7 +754,7 @@ async function rejectJobByProvider(jobId, reason, details) {
     rejectionDetails: details || null,
     rejectedAt: new Date().toISOString(),
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function rejectJob(jobId, reason, details) {
@@ -658,7 +781,7 @@ async function updateProviderRequirements(jobId, updates) {
       requirementNotes: payload.requirementNotes || "",
     },
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function addUserMaterialSuggestion(jobId, suggested, message) {
@@ -677,7 +800,7 @@ async function addUserMaterialSuggestion(jobId, suggested, message) {
     ...m,
     userMaterialSuggestions: [...m.userMaterialSuggestions, suggestion],
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function acceptUserSuggestion(jobId, suggestionId) {
@@ -732,7 +855,7 @@ async function acceptUserSuggestion(jobId, suggestionId) {
     }
     return { ...m, userMaterialSuggestions: suggestions, storeOrders };
   });
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function rejectUserSuggestion(jobId, suggestionId) {
@@ -744,7 +867,7 @@ async function rejectUserSuggestion(jobId, suggestionId) {
       s.id === suggestionId ? { ...s, status: "rejected" } : s
     ),
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function addProviderMaterialSuggestion(jobId, suggested, message) {
@@ -763,7 +886,7 @@ async function addProviderMaterialSuggestion(jobId, suggested, message) {
     ...m,
     providerSuggestions: [...m.providerSuggestions, suggestion],
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function acceptProviderSuggestion(jobId, suggestionId) {
@@ -775,7 +898,7 @@ async function acceptProviderSuggestion(jobId, suggestionId) {
       s.id === suggestionId ? { ...s, status: "accepted" } : s
     ),
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function rejectProviderSuggestion(jobId, suggestionId) {
@@ -787,7 +910,7 @@ async function rejectProviderSuggestion(jobId, suggestionId) {
       s.id === suggestionId ? { ...s, status: "rejected" } : s
     ),
   }));
-  return enrichJob(job, meta);
+  return await finalizeJob(job, meta);
 }
 
 async function proposeNewLaborPrice(jobId, amount, reason) {
@@ -797,12 +920,18 @@ async function proposeNewLaborPrice(jobId, amount, reason) {
     ...m,
     proposedLaborPrice: { amount: coerceNumber(amount), reason: String(reason || "") },
   }));
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.customerId) {
+    await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
+  }
+  return enriched;
 }
 
 async function acceptProposedPrice(jobId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  const metaBefore = await getJobMeta(jobId);
+  const hadProposal = Boolean(metaBefore.proposedLaborPrice);
   const meta = await mutateJobMeta(jobId, (m) => {
     if (!m.proposedLaborPrice) return m;
     return {
@@ -816,7 +945,11 @@ async function acceptProposedPrice(jobId) {
       statusOverride: "SERVICE_PRICE_SUBMITTED",
     };
   });
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (hadProposal && job.providerId) {
+    await notificationEvents.notifyProposedPriceAccepted(job.providerId, jobId, job.title);
+  }
+  return enriched;
 }
 
 async function cancelJob(jobId, reason, details) {
@@ -835,7 +968,7 @@ async function cancelJob(jobId, reason, details) {
     cancelledAt: new Date().toISOString(),
   }));
   const refundAmount = Number(updated.price) || 0;
-  return { job: enrichJob(updated, meta), refundAmount };
+  return { job: await finalizeJob(updated, meta), refundAmount };
 }
 
 async function confirmJobCompletion(jobId, rating, review) {
@@ -853,7 +986,7 @@ async function confirmJobCompletion(jobId, rating, review) {
     userRating: rating,
     userReview: review,
   }));
-  return enrichJob(updated, meta);
+  return await finalizeJob(updated, meta);
 }
 
 function ensureStoreOrder(meta, storeId, fallback) {
@@ -897,7 +1030,11 @@ async function setStoreDeliveryOption(jobId, storeId, params) {
     order.payment = order.payment || { materialsPaid: false, deliveryPaid: false };
     return m;
   });
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.customerId) {
+    await notificationEvents.notifyDeliveryUpdate(job.customerId, jobId, job.title, "Delivery option updated");
+  }
+  return enriched;
 }
 
 async function approveStoreDeliveryRequest(jobId, storeId) {
@@ -928,7 +1065,16 @@ async function updateStoreOrderDelivery(jobId, storeId, updates) {
     };
     return m;
   });
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.customerId && (updates.status || updates.type)) {
+    await notificationEvents.notifyDeliveryUpdate(
+      job.customerId,
+      jobId,
+      job.title,
+      String(updates.status || updates.type || "Updated")
+    );
+  }
+  return enriched;
 }
 
 async function approveStoreOrderDelivery(jobId, storeId) {
@@ -960,7 +1106,16 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
     order.deliveryInvoiceId = `INV-DEL-${String(jobId).slice(-6)}-${Date.now()}`;
     return m;
   });
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.providerId) {
+    await notificationEvents.notifyPaymentMade(
+      job.providerId,
+      jobId,
+      job.title,
+      "The customer paid for delivery."
+    );
+  }
+  return enriched;
 }
 
 async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
@@ -1021,22 +1176,38 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
     m.statusOverride = "MATERIALS_PAID";
     return m;
   });
-  return enrichJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.providerId) {
+    await notificationEvents.notifyPaymentMade(
+      job.providerId,
+      jobId,
+      job.title,
+      "The customer paid for materials."
+    );
+  }
+  return enriched;
 }
 
 async function releaseEscrowPayment(jobId, amount) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  const meta = await getJobMeta(jobId);
-  return {
-    ...enrichJob(job, meta),
-    escrow: {
-      enabled: true,
-      holdPercent: 0,
-      heldAmount: 0,
-      releasedAmount: coerceNumber(amount, 0),
-    },
-  };
+  const release = coerceNumber(amount, 0);
+  if (release <= 0) throw new AppError("amount must be positive", 400);
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const held = Number(m.escrow?.heldAmount) || 0;
+    const released = Number(m.escrow?.releasedAmount) || 0;
+    if (release > held) {
+      throw new AppError("Release amount exceeds held escrow", 400);
+    }
+    return {
+      ...m,
+      escrow: {
+        heldAmount: held - release,
+        releasedAmount: released + release,
+      },
+    };
+  });
+  return finalizeJob(job, meta);
 }
 
 async function getLaborInvoiceByJobId(jobId) {

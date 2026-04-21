@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys } from '@/lib/queryKeys';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -42,14 +44,33 @@ import {
 } from '@/lib/jobStatusMapping';
 import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 
 export default function ProviderJobDetail() {
   const { id } = useParams<{ id: string }>();
+  const jobId = id ?? '';
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [job, setJob] = useState<Job | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const syncJobsAfterMutation = useCallback(async () => {
+    if (!jobId) return;
+    await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+  }, [jobId, queryClient]);
+
+  const {
+    data: job,
+    isLoading,
+    isError,
+    error: jobError,
+  } = useQuery({
+    queryKey: queryKeys.jobs.detail(jobId),
+    queryFn: () => getJobById(jobId),
+    enabled: Boolean(jobId),
+  });
   const [noteTitle, setNoteTitle] = useState('');
   const [noteMessage, setNoteMessage] = useState('');
   const [chatMessage, setChatMessage] = useState('');
@@ -81,27 +102,21 @@ export default function ProviderJobDetail() {
     }
   }, [paymentDetailsOpen, job?.id, job?.laborPaid, job?.servicePayment]);
 
-  const loadJob = useCallback(async () => {
-    if (!id) return;
-    try {
-      const data = await getJobById(id);
-      setJob(data);
-      setMaterialsBuilder([]);
-    } catch (e) {
-      setJob(null);
-      toast({
-        title: 'Error',
-        description: e instanceof Error ? e.message : 'Failed to load job details.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id, toast]);
+  useEffect(() => {
+    if (!isError || !jobError) return;
+    toast({
+      title: 'Error',
+      description: jobError instanceof Error ? jobError.message : 'Failed to load job details.',
+      variant: 'destructive',
+    });
+  }, [isError, jobError, toast]);
 
   useEffect(() => {
-    if (id) {
-      void loadJob();
+    setMaterialsBuilder([]);
+  }, [id]);
+
+  useEffect(() => {
+    if (jobId) {
       void getSuppliers()
         .then(setSuppliers)
         .catch((error) => {
@@ -112,23 +127,24 @@ export default function ProviderJobDetail() {
           });
         });
     }
-  }, [id, loadJob, toast]);
+  }, [jobId, toast]);
 
   useEffect(() => {
     const handleStorageUpdate = (event: StorageEvent) => {
-      if (event.key?.includes('jobs') && id) {
-        void loadJob();
+      if (event.key?.includes('jobs') && jobId) {
+        void queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       }
     };
     window.addEventListener('storage', handleStorageUpdate);
     return () => window.removeEventListener('storage', handleStorageUpdate);
-  }, [id, loadJob]);
+  }, [jobId, queryClient]);
 
   const handleMarkInspectionDone = async () => {
     if (!job) return;
     try {
-      const updated = await markInspectionDone(job.id);
-      setJob(updated);
+      await markInspectionDone(job.id);
+      await syncJobsAfterMutation();
       toast({ title: 'Inspection marked done', description: 'You can now submit the service price.' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to update.', variant: 'destructive' });
@@ -140,8 +156,8 @@ export default function ProviderJobDetail() {
     const amount = parseFloat(servicePriceAmount);
     if (isNaN(amount) || amount <= 0) return;
     try {
-      const updated = await submitServicePrice(job.id, amount, servicePriceNote);
-      setJob(updated);
+      await submitServicePrice(job.id, amount, servicePriceNote);
+      await syncJobsAfterMutation();
       setServicePriceAmount('');
       setServicePriceNote('');
       toast({ title: 'Service price submitted', description: 'The user will be notified to pay.' });
@@ -157,8 +173,8 @@ export default function ProviderJobDetail() {
       return;
     }
     try {
-      const updated = await submitMaterials(job.id, materialsBuilder);
-      setJob(updated);
+      await submitMaterials(job.id, materialsBuilder);
+      await syncJobsAfterMutation();
       setMaterialsBuilder([]);
       setAddMaterialsOpen(false);
       toast({ title: 'Materials submitted', description: 'The user can now review and pay.' });
@@ -170,8 +186,8 @@ export default function ProviderJobDetail() {
   const handleAcceptUserSuggestion = async (suggestionId: string) => {
     if (!job) return;
     try {
-      const updated = await acceptUserSuggestion(job.id, suggestionId);
-      setJob(updated);
+      await acceptUserSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
       toast({ title: 'Suggestion accepted' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to accept.', variant: 'destructive' });
@@ -181,8 +197,8 @@ export default function ProviderJobDetail() {
   const handleRejectUserSuggestion = async (suggestionId: string) => {
     if (!job) return;
     try {
-      const updated = await rejectUserSuggestion(job.id, suggestionId);
-      setJob(updated);
+      await rejectUserSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
       toast({ title: 'Suggestion rejected' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to reject.', variant: 'destructive' });
@@ -192,8 +208,8 @@ export default function ProviderJobDetail() {
   const handleSendChat = async () => {
     if (!job || !chatMessage.trim()) return;
     try {
-      const updated = await addChatMessage(job.id, chatMessage);
-      setJob(updated);
+      await addChatMessage(job.id, chatMessage);
+      await syncJobsAfterMutation();
       setChatMessage('');
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to send message.', variant: 'destructive' });
@@ -203,8 +219,8 @@ export default function ProviderJobDetail() {
   const handleSendNote = async () => {
     if (!job || !noteMessage.trim()) return;
     try {
-      const updated = await addJobNote(job.id, noteMessage, noteTitle.trim() || undefined);
-      setJob(updated);
+      await addJobNote(job.id, noteMessage, noteTitle.trim() || undefined);
+      await syncJobsAfterMutation();
       setNoteTitle('');
       setNoteMessage('');
     } catch (e) {
@@ -215,8 +231,8 @@ export default function ProviderJobDetail() {
   const handleMarkComplete = async () => {
     if (!job) return;
     try {
-      const updated = await updateJobStatus(job.id, 'AWAITING_CONFIRMATION');
-      setJob(updated);
+      await updateJobStatus(job.id, 'AWAITING_CONFIRMATION');
+      await syncJobsAfterMutation();
       toast({ title: 'Marked as complete', description: 'Waiting for user confirmation.' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to update status.', variant: 'destructive' });
@@ -227,7 +243,7 @@ export default function ProviderJobDetail() {
     if (!job || !cancelReason) return;
     try {
       const result = await cancelJob(job.id, cancelReason, cancelDetails);
-      setJob(result.job);
+      await syncJobsAfterMutation();
       setCancelOpen(false);
       toast({ title: 'Job cancelled', description: `Refund of ${formatCurrency(result.refundAmount)} will be processed.` });
     } catch (e) {
@@ -238,11 +254,11 @@ export default function ProviderJobDetail() {
   const handleSaveRequirements = async () => {
     if (!job) return;
     try {
-      const updated = await updateProviderRequirements(job.id, {
+      await updateProviderRequirements(job.id, {
         measurements: Object.keys(editMeasurements).length > 0 ? editMeasurements : undefined,
         requirementNotes: editRequirementNotes || undefined,
       });
-      setJob(updated);
+      await syncJobsAfterMutation();
       setEditRequirementsOpen(false);
       setEditMeasurements({});
       setEditRequirementNotes('');
@@ -515,6 +531,12 @@ export default function ProviderJobDetail() {
             </div>
             {effectiveMeasurements && (
               <div className="p-3 bg-muted/50 rounded-lg text-sm space-y-2 border border-primary/40">
+                {effectiveMeasurements.cameraAssist && (
+                  <div className="mb-3 space-y-2">
+                    <p className="text-muted-foreground text-xs">Guided measurement</p>
+                    <MeasurementCard measurement={effectiveMeasurements.cameraAssist} />
+                  </div>
+                )}
                 {effectiveMeasurements.movingItems && effectiveMeasurements.movingItems.length > 0 ? (
                   effectiveMeasurements.movingItems.map(item => (
                     <div key={item.id} className="flex justify-between">
@@ -525,7 +547,10 @@ export default function ProviderJobDetail() {
                 ) : effectiveMeasurements.plumbingIssue ? (
                   <>
                     <div><span className="text-muted-foreground">Type:</span> {effectiveMeasurements.plumbingIssue.type}</div>
-                    <div><span className="text-muted-foreground">Description:</span> {effectiveMeasurements.plumbingIssue.description}</div>
+                    <div>
+                      <span className="text-muted-foreground">Details:</span>{' '}
+                      {effectiveMeasurements.plumbingIssue.description?.trim() || job.description || '—'}
+                    </div>
                   </>
                 ) : (
                   Object.entries(effectiveMeasurements.values || {}).map(([k, v]) => (
@@ -551,7 +576,7 @@ export default function ProviderJobDetail() {
               <div className="flex gap-2 flex-wrap">
                 {job.images.map((img, i) => (
                   <div key={i} className="h-20 w-20 rounded-lg bg-muted overflow-hidden">
-                    <img src={img} alt="" className="h-full w-full object-cover" />
+                    <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
                   </div>
                 ))}
               </div>
@@ -612,8 +637,8 @@ export default function ProviderJobDetail() {
             </div>
           )}
 
-          {/*  Mark inspection & submit price */}
-          {job.status === 'ASSIGNED' && (
+          {/* Mark inspection (skipped when category does not require inspection) */}
+          {job.status === 'ASSIGNED' && job.requiresInspection !== false && (
             <div className="p-4 border border-primary/40 rounded-lg space-y-4">
               <h3 className="font-medium">Service Inspection</h3>
               <p className="text-sm text-muted-foreground">Mark inspection done, then submit your service price.</p>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,8 +7,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { getCategories } from '@/lib/api/categories';
 import { getProvidersByCategory, recommendProviders } from '@/lib/api/providers';
-import { createJob } from '@/lib/api/jobs';
+import { createJob, uploadJobImage } from '@/lib/api/jobs';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { Category, Provider, Measurements, JobLocation } from '@/types';
+import { areaSquareMetersFromAssist } from '@/lib/measurements';
 import { Step2Location } from '@/components/wizard/Step2Location';
 import { Step3DynamicInput } from '@/components/wizard/Step3DynamicInput';
 import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
@@ -49,12 +51,16 @@ export default function ServiceRequest() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedProviderForModal, setSelectedProviderForModal] = useState<Provider | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const currentCategory = categories.find((c) => c.id === selectedCategory) as Category | undefined;
+  const cameraPrimary =
+    currentCategory?.step3Type === 'measurements' && measurements.cameraAssist?.source === 'camera';
 
   const loadCategories = useCallback(async () => {
     try {
@@ -100,12 +106,23 @@ export default function ServiceRequest() {
 
     setIsSubmitting(true);
     try {
+      const measurementsPayload =
+        currentCategory?.step3Type === 'issue' && measurements.plumbingIssue
+          ? {
+              ...measurements,
+              plumbingIssue: {
+                type: measurements.plumbingIssue.type,
+                description: '',
+              },
+            }
+          : measurements;
+
       await createJob(
         {
           category: selectedCategory,
           description,
           images,
-          measurements,
+          measurements: measurementsPayload,
           materials: [],
           location:
             location.address && location.city
@@ -115,6 +132,7 @@ export default function ServiceRequest() {
                   area: location.area,
                   suburb: location.suburb,
                   notes: location.notes,
+                  ...(location.coordinates ? { coordinates: location.coordinates } : {}),
                 }
               : undefined,
           selectedProviderId: selectedProvider,
@@ -149,13 +167,21 @@ export default function ServiceRequest() {
         if (description.length <= 10) return false;
         if (!currentCategory) return false;
         if (currentCategory.step3Type === 'measurements') {
-          return Object.keys(measurements.values).length > 0;
+          const vals = Object.keys(measurements.values).length > 0;
+          const camA = measurements.cameraAssist
+            ? areaSquareMetersFromAssist(measurements.cameraAssist)
+            : undefined;
+          const camOk =
+            measurements.cameraAssist?.source === 'camera' &&
+            camA !== undefined &&
+            camA >= 0.5;
+          return vals || camOk;
         }
         if (currentCategory.step3Type === 'items') {
           return (measurements.movingItems?.length || 0) > 0;
         }
         if (currentCategory.step3Type === 'issue') {
-          return !!measurements.plumbingIssue?.type;
+          return !!measurements.plumbingIssue?.type && description.length > 10;
         }
         return true;
       }
@@ -258,30 +284,73 @@ export default function ServiceRequest() {
               </div>
 
               <div>
-                <label className="text-sm font-medium">Upload Images (Optional)</label>
-                <p className="text-sm text-muted-foreground mb-2">Photos help providers understand your task better</p>
-                <div
-                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => {
-                    toast({
-                      title: 'Not implemented',
-                      description: 'Job image upload endpoint is not implemented in the backend yet.',
-                      variant: 'destructive',
-                    });
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  className="hidden"
+                  onChange={async (e) => {
+                    const input = e.target;
+                    const files = input.files;
+                    if (!files?.length) return;
+                    setImageUploading(true);
+                    try {
+                      const urls: string[] = [];
+                      for (const file of Array.from(files)) {
+                        if (!file.type.startsWith('image/')) continue;
+                        urls.push(await uploadJobImage(file));
+                      }
+                      if (urls.length) {
+                        setImages((prev) => [...prev, ...urls]);
+                        toast({ title: 'Images uploaded', description: `${urls.length} file(s) added.` });
+                      }
+                    } catch (err) {
+                      toast({
+                        title: 'Upload failed',
+                        description: err instanceof Error ? err.message : 'Could not upload images.',
+                        variant: 'destructive',
+                      });
+                    } finally {
+                      setImageUploading(false);
+                      input.value = '';
+                    }
                   }}
+                />
+                <label className="text-sm font-medium">
+                  {cameraPrimary ? 'Additional photos (optional)' : 'Upload Images (Optional)'}
+                </label>
+                <p className="text-sm text-muted-foreground mb-2">
+                  {cameraPrimary
+                    ? 'Your measurement photo is already included. Add more reference shots if useful.'
+                    : 'Photos help providers understand your task better'}
+                </p>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && imageInputRef.current?.click()}
+                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => !imageUploading && imageInputRef.current?.click()}
                 >
                   <Upload className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">Click to upload images</p>
+                  <p className="text-sm text-muted-foreground">
+                    {imageUploading ? 'Uploading…' : 'Click to upload images'}
+                  </p>
                 </div>
 
                 {images.length > 0 && (
                   <div className="flex gap-2 mt-4 flex-wrap">
                     {images.map((img, idx) => (
-                      <div key={idx} className="relative">
-                        <div className="h-20 w-20 rounded-lg bg-muted flex items-center justify-center">
-                          <span className="text-xs text-muted-foreground">Image {idx + 1}</span>
+                      <div key={`${img}-${idx}`} className="relative">
+                        <div className="h-20 w-20 rounded-lg bg-muted overflow-hidden">
+                          <img
+                            src={resolveUploadUrl(img)}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
                         </div>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             setImages(images.filter((_, i) => i !== idx));
@@ -304,6 +373,17 @@ export default function ServiceRequest() {
                   images={images}
                   isLoading={isLoading}
                   setIsLoading={setIsLoading}
+                  appendImageUrls={async (files, options) => {
+                    const urls: string[] = [];
+                    for (const file of files) {
+                      urls.push(await uploadJobImage(file));
+                    }
+                    if (urls.length && options?.appendToJobImages !== false) {
+                      setImages((prev) => [...prev, ...urls]);
+                    }
+                    return urls;
+                  }}
+                  setImages={setImages}
                 />
               )}
             </div>

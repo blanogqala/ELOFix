@@ -1,4 +1,5 @@
 const providerService = require("../services/provider.service");
+const adminAnalyticsService = require("../services/adminAnalytics.service");
 
 async function listProviders(req, res) {
   const providers = await providerService.listProviders({
@@ -40,6 +41,11 @@ async function approveProviderDocument(req, res) {
   res.json({ success: true, provider });
 }
 
+async function getAnalytics(req, res) {
+  const data = await adminAnalyticsService.getAnalytics(req.query || {});
+  res.json({ success: true, ...data });
+}
+
 async function rejectProviderDocument(req, res) {
   const docType = String(req.params.docType || "").trim();
   const feedback = req.body?.feedback ?? req.body?.reason ?? "";
@@ -53,6 +59,7 @@ async function rejectProviderDocument(req, res) {
 
 module.exports = {
   listProviders,
+  getAnalytics,
   approveProvider,
   rejectProvider,
   approveProviderDocument,

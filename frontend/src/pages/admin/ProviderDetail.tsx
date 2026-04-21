@@ -35,6 +35,7 @@ import {
   Trash2,
   ExternalLink,
   Images,
+  Plus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -507,9 +508,27 @@ export default function AdminProviderDetail() {
                         >
                           <div className="space-y-1">
                             <p className="text-base font-semibold leading-tight">{post.title}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {cat ? `${cat.icon} ${cat.name}` : post.categoryId}
-                            </p>
+                            <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                              <span>
+                                {cat ? `${cat.icon} ${cat.name}` : post.categoryId}
+                              </span>
+                              {!cat ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0"
+                                  title="Create category from this name"
+                                  onClick={() =>
+                                    navigate('/admin/categories', {
+                                      state: { prefill: { name: post.categoryId } },
+                                    })
+                                  }
+                                >
+                                  <Plus className="h-4 w-4" />
+                                </Button>
+                              ) : null}
+                            </div>
                           </div>
                           {imgs.length > 0 ? (
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
