@@ -713,6 +713,9 @@ async function submitServicePrice(jobId, amount, note) {
 async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, route) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (String(job.customerId) !== String(userId)) {
+    throw new AppError("Only the customer can pay for labor", 403);
+  }
   const existingMeta = await getJobMeta(jobId);
   if (existingMeta.laborPaid) {
     throw new AppError("Labor already paid", 400);
@@ -729,9 +732,16 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
     throw new AppError("Provider profile not found", 404);
   }
 
-  const amount = existingMeta.servicePrice?.amount || Number(job.price) || 0;
+  const priceCandidate =
+    existingMeta.servicePrice != null && typeof existingMeta.servicePrice === "object"
+      ? existingMeta.servicePrice.amount
+      : undefined;
+  const amount = coerceNumber(
+    priceCandidate !== undefined && priceCandidate !== null ? priceCandidate : job.price,
+    0
+  );
   if (amount <= 0) {
-    throw new AppError("Invalid labor amount", 400);
+    throw new AppError("Invalid labor amount — ensure the service price is set and greater than zero", 400);
   }
 
   const paymentRef = `LAB-${String(jobId).slice(-6)}-${Date.now()}`;

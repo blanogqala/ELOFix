@@ -55,11 +55,12 @@ apiClient.interceptors.response.use(
   (error) => {
     const status = Number(error?.response?.status || 0);
     const responseData = error?.response?.data;
+    const serverMsg = error?.response?.data?.message;
     const message =
       status === 401
         ? 'Session expired. Please log in again.'
         : status === 403
-          ? 'Not authorized'
+          ? serverMsg || 'Not authorized'
           : status >= 500
             ? 'Something went wrong'
             : error?.response?.data?.error?.message ||
