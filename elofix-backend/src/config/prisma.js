@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
+const { resolveDatabaseUrl, isLocalPostgresHost } = require("./databaseUrl");
 
 const globalForPrisma = globalThis;
 
@@ -18,6 +19,16 @@ function poolSslFromConnectionString(connectionString) {
     if (["require", "verify-ca", "verify-full", "no-verify"].includes(mode)) {
       return { rejectUnauthorized: mode === "verify-full" || mode === "verify-ca" };
     }
+    const host = (u.hostname || "").toLowerCase();
+    if (
+      process.env.NODE_ENV === "development" &&
+      host &&
+      !isLocalPostgresHost(host)
+    ) {
+      return {
+        rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === "true",
+      };
+    }
   } catch {
     /* fall through */
   }
@@ -28,10 +39,7 @@ function poolSslFromConnectionString(connectionString) {
 }
 
 function createPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL is not set");
-  }
+  const connectionString = resolveDatabaseUrl();
 
   const ssl = poolSslFromConnectionString(connectionString);
   const pool = new Pool({

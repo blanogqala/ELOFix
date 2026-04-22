@@ -43,10 +43,26 @@ function errorMiddleware(err, req, res, next) {
     statusCode = 400;
     message = err.message || "File upload error";
   } else if (isPrismaKnownRequestError(err)) {
+    if (process.env.NODE_ENV === "development") {
+      try {
+        console.error(
+          "[Prisma dev]",
+          req.method,
+          req.originalUrl,
+          err.code,
+          err.message,
+          err.meta != null ? JSON.stringify(err.meta) : ""
+        );
+      } catch (_) {
+        console.error("[Prisma dev]", req.method, req.originalUrl, err.code, err.message);
+      }
+    }
     const mapped = mapPrismaKnownError(err);
     statusCode = mapped.statusCode;
     message = mapped.message;
-    console.error("[Prisma]", req.method, req.originalUrl, err.code, err.meta || "", err.message);
+    if (process.env.NODE_ENV !== "development") {
+      console.error("[Prisma]", req.method, req.originalUrl, err.code, err.meta || "", err.message);
+    }
   } else if (err.name === "PrismaClientValidationError") {
     statusCode = 400;
     message =

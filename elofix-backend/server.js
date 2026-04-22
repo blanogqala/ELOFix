@@ -8,6 +8,15 @@ const PORT = Number(process.env.PORT) || 5000;
 
 process.on("unhandledRejection", (reason) => {
   console.error("[unhandledRejection]", reason);
+  if (process.env.NODE_ENV === "development") {
+    try {
+      if (reason && typeof reason === "object" && reason.stack) {
+        console.error(reason.stack);
+      }
+    } catch (_) {
+      /* dev-only logging must not mask the rejection */
+    }
+  }
 });
 
 process.on("uncaughtException", (err) => {

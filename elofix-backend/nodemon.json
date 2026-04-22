@@ -1,6 +1,9 @@
 {
   "watch": ["server.js", "src"],
   "ext": "js,cjs,mjs",
+  "env": {
+    "NODE_ENV": "development"
+  },
   "ignore": [
     "node_modules/**",
     "data/**",

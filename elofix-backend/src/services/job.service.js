@@ -716,10 +716,33 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
   if (String(job.customerId) !== String(userId)) {
     throw new AppError("Only the customer can pay for labor", 403);
   }
-  const existingMeta = await getJobMeta(jobId);
-  if (existingMeta.laborPaid) {
+  let existingMeta = await getJobMeta(jobId);
+
+  if (job.laborPaid) {
     throw new AppError("Labor already paid", 400);
   }
+
+  const servicePaid =
+    existingMeta.servicePayment &&
+    String(existingMeta.servicePayment.status || "").toLowerCase() === "paid";
+
+  if (existingMeta.laborPaid && servicePaid) {
+    const data =
+      job.status === "ACCEPTED"
+        ? { status: "IN_PROGRESS", laborPaid: true }
+        : { laborPaid: true };
+    const repaired = await prisma.job.update({
+      where: { id: jobId },
+      data,
+      include: jobInclude,
+    });
+    return finalizeJob(repaired, existingMeta);
+  }
+
+  if (existingMeta.laborPaid) {
+    existingMeta = await mutateJobMeta(jobId, (m) => ({ ...m, laborPaid: false }));
+  }
+
   if (!job.providerId) {
     throw new AppError("Job has no provider", 400);
   }

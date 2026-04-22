@@ -69,7 +69,11 @@ async function failStalePendingWithdrawals() {
 }
 
 function startStuckWithdrawalRecovery() {
-  if (process.env.DISABLE_STUCK_WITHDRAWAL_CRON === "true") {
+  if (
+    process.env.NODE_ENV === "development" &&
+    process.env.DISABLE_STUCK_WITHDRAWAL_CRON === "true"
+  ) {
+    console.log("[stuckWithdrawalRecovery] cron disabled (development + DISABLE_STUCK_WITHDRAWAL_CRON)");
     return () => {};
   }
   const tick = () => {

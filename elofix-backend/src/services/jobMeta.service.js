@@ -133,8 +133,7 @@ function enrichJob(job, meta) {
     },
     jobNotes: safeMeta.jobNotes,
     chat: safeMeta.chat,
-    laborPaid:
-      typeof job.laborPaid === "boolean" ? job.laborPaid : Boolean(safeMeta.laborPaid),
+    laborPaid: Boolean(job.laborPaid) || Boolean(safeMeta.laborPaid),
     paymentReleased: typeof job.paymentReleased === "boolean" ? job.paymentReleased : false,
     servicePrice: safeMeta.servicePrice,
     servicePayment: safeMeta.servicePayment,

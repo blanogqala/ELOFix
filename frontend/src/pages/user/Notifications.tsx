@@ -1,9 +1,10 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   getNotifications,
   markAsRead,
@@ -26,18 +27,75 @@ import {
   Search,
   Tags,
   LifeBuoy,
+  ArrowLeft,
+  Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow, format, isToday, isYesterday, parseISO } from 'date-fns';
 import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 function dateGroupLabel(iso: string): string {
   const d = parseISO(iso);
   if (isToday(d)) return 'Today';
   if (isYesterday(d)) return 'Yesterday';
   return format(d, 'MMMM d, yyyy');
+}
+
+function isSupportType(type: AppNotification['type']): boolean {
+  return type === 'support_contact' || type === 'support_reply';
+}
+
+function getThreadKey(
+  n: AppNotification,
+  ctx: { role: UserRole; currentUserId: string }
+): string {
+  if (n.jobId) {
+    return `job:${n.jobId}`;
+  }
+  if (isSupportType(n.type)) {
+    if (ctx.role === 'admin') {
+      if (n.senderId) {
+        return `support:${n.senderId}`;
+      }
+      return `general:${n.id}`;
+    }
+    return `support:${ctx.currentUserId}`;
+  }
+  return `general:${n.senderId || n.id}`;
+}
+
+/** Best-effort job name from copy used by backend (quoted strings in message). */
+function extractJobContextLabel(msgs: AppNotification[]): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i].message;
+    const quoted = m.match(/["""']([^"']+)[""']/);
+    if (quoted && quoted[1] && quoted[1].length > 0 && quoted[1].length < 120) {
+      return quoted[1].trim();
+    }
+    const forJob = m.match(/for (?:“|"|')([^"'\n]+)(?:”|"|')/i);
+    if (forJob && forJob[1]) return forJob[1].trim();
+  }
+  const last = msgs[msgs.length - 1];
+  return last?.title ?? 'Job activity';
+}
+
+function formatDisplayRole(r?: string): string {
+  if (!r) return '';
+  const x = r.toLowerCase();
+  if (x === 'customer') return 'user';
+  if (x === 'provider' || x === 'user' || x === 'admin') return x;
+  return r;
+}
+
+function initialFromName(name: string): string {
+  const t = name.trim();
+  if (!t) return '?';
+  const parts = t.split(/\s+/);
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return (parts[0]![0]! + (parts[1]![0]! || '')).toUpperCase();
 }
 
 function navigateForNotification(n: AppNotification, role: UserRole, navigate: NavigateFunction): void {
@@ -49,7 +107,7 @@ function navigateForNotification(n: AppNotification, role: UserRole, navigate: N
     navigate('/admin/categories');
     return;
   }
-  if (n.type === 'support_contact') return;
+  if (n.type === 'support_contact' || n.type === 'support_reply') return;
   if (!n.jobId) return;
   if (role === 'user') navigate(`/user/jobs/${n.jobId}`);
   else if (role === 'provider') navigate(`/provider/jobs/${n.jobId}`);
@@ -97,19 +155,31 @@ function getNotificationIcon(type: AppNotification['type']) {
   }
 }
 
+const PANEL_H = 'min-h-[min(70vh,560px)] max-h-[min(70vh,640px)]';
+
+function parseKey(key: string): { kind: 'job' | 'support' | 'general' } {
+  if (key.startsWith('job:')) return { kind: 'job' };
+  if (key.startsWith('support:')) return { kind: 'support' };
+  return { kind: 'general' };
+}
+
 export default function NotificationsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [supportText, setSupportText] = useState('');
   const [supportSending, setSupportSending] = useState(false);
   const [adminReplyUserId, setAdminReplyUserId] = useState('');
   const [adminReplyText, setAdminReplyText] = useState('');
   const [adminReplySending, setAdminReplySending] = useState(false);
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [mobileMessageView, setMobileMessageView] = useState(false);
+  const messageScrollRef = useRef<HTMLDivElement>(null);
 
   const role = user?.role ?? 'user';
+  const supportKey = user?.id ? `support:${user.id}` : null;
 
   const { data: notifications = [], isLoading } = useQuery({
     queryKey: ['notifications', 'list', user?.id],
@@ -146,11 +216,13 @@ export default function NotificationsPage() {
   };
 
   const threadMap = useMemo(() => {
+    if (!user?.id) {
+      return new Map<string, AppNotification[]>();
+    }
+    const ctx = { role, currentUserId: user.id };
     const map = new Map<string, AppNotification[]>();
     for (const n of notifications) {
-      const key =
-        n.conversationId ||
-        (n.senderId && n.jobId ? `legacy:${n.senderId}:${n.jobId}` : `single:${n.id}`);
+      const key = getThreadKey(n, ctx);
       const list = map.get(key) ?? [];
       list.push(n);
       map.set(key, list);
@@ -159,31 +231,44 @@ export default function NotificationsPage() {
       list.sort((a, b) => parseISO(a.createdAt).getTime() - parseISO(b.createdAt).getTime());
     }
     return map;
-  }, [notifications]);
+  }, [notifications, user?.id, role]);
 
-  const threadKeys = useMemo(() => {
-    const keys = [...threadMap.keys()];
-    keys.sort((a, b) => {
+  const displayThreadKeys = useMemo(() => {
+    const keys = new Set<string>(threadMap.keys());
+    if ((role === 'user' || role === 'provider') && supportKey) {
+      keys.add(supportKey);
+    }
+    const out = [...keys];
+    out.sort((a, b) => {
       const msgsA = threadMap.get(a) ?? [];
       const msgsB = threadMap.get(b) ?? [];
-      const tA = Math.max(...msgsA.map((m) => parseISO(m.createdAt).getTime()), 0);
-      const tB = Math.max(...msgsB.map((m) => parseISO(m.createdAt).getTime()), 0);
+      const tA = Math.max(0, ...msgsA.map((m) => parseISO(m.createdAt).getTime()));
+      const tB = Math.max(0, ...msgsB.map((m) => parseISO(m.createdAt).getTime()));
       return tB - tA;
     });
-    return keys;
-  }, [threadMap]);
+    return out;
+  }, [threadMap, role, supportKey]);
 
   useEffect(() => {
-    if (threadKeys.length === 0) {
+    if (displayThreadKeys.length === 0) {
       setSelectedThreadKey(null);
       return;
     }
-    if (selectedThreadKey == null || !threadKeys.includes(selectedThreadKey)) {
-      setSelectedThreadKey(threadKeys[0]);
+    if (selectedThreadKey == null || !displayThreadKeys.includes(selectedThreadKey)) {
+      setSelectedThreadKey(displayThreadKeys[0]!);
     }
-  }, [threadKeys, selectedThreadKey]);
+  }, [displayThreadKeys, selectedThreadKey]);
 
-  const selectedThreadMessages = selectedThreadKey ? threadMap.get(selectedThreadKey) ?? [] : [];
+  const selectedThreadMessages = selectedThreadKey
+    ? threadMap.get(selectedThreadKey) ?? (selectedThreadKey === supportKey ? [] : [])
+    : [];
+
+  useLayoutEffect(() => {
+    const el = messageScrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }, [selectedThreadKey, selectedThreadMessages.length, notifications.length, mobileMessageView]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -228,11 +313,352 @@ export default function NotificationsPage() {
       await postSupportMessage(msg);
       setSupportText('');
       toast({ title: 'Message sent', description: 'Support will review your message.' });
+      if (user?.id) {
+        void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user.id] });
+      }
     } catch {
       toast({ title: 'Failed to send', description: 'Try again later.', variant: 'destructive' });
     } finally {
       setSupportSending(false);
     }
+  };
+
+  const getThreadListRowMeta = (key: string) => {
+    const msgs = threadMap.get(key) ?? [];
+    const last = msgs[msgs.length - 1];
+    const { kind } = parseKey(key);
+
+    if (kind === 'support' && (role === 'user' || role === 'provider')) {
+      return {
+        primary: 'Support',
+        secondary: '' as string | undefined,
+        tertiary: last?.senderRole ? formatDisplayRole(last.senderRole) : '',
+        avatarLabel: 'S',
+        preview: last?.message ?? 'Start a conversation with support',
+        time: last ? parseISO(last.createdAt) : null,
+      };
+    }
+
+    if (kind === 'support' && role === 'admin') {
+      const id = key.slice('support:'.length);
+      return {
+        primary: last?.senderName ?? 'Support',
+        secondary: 'Support request',
+        tertiary: last?.senderRole ? formatDisplayRole(last.senderRole) : 'user',
+        avatarLabel: initialFromName(last?.senderName ?? 'U'),
+        preview: last?.message ?? '',
+        time: last ? parseISO(last.createdAt) : null,
+      };
+    }
+
+    if (kind === 'job' && last) {
+      const jobLabel = extractJobContextLabel(msgs);
+      return {
+        primary: last.senderName ?? 'Update',
+        secondary: jobLabel,
+        tertiary: last.senderRole ? formatDisplayRole(last.senderRole) : '',
+        avatarLabel: initialFromName(last.senderName ?? 'J'),
+        preview: last.message,
+        time: parseISO(last.createdAt),
+      };
+    }
+
+    if (last) {
+      return {
+        primary: last.senderName ?? last.title,
+        secondary: undefined as string | undefined,
+        tertiary: last.senderRole ? formatDisplayRole(last.senderRole) : '',
+        avatarLabel: initialFromName((last.senderName ?? last.title).trim() || 'N'),
+        preview: last.message,
+        time: parseISO(last.createdAt),
+      };
+    }
+
+    return {
+      primary: 'Thread',
+      secondary: undefined as string | undefined,
+      tertiary: '',
+      avatarLabel: '?',
+      preview: 'Start a conversation with support',
+      time: null as Date | null,
+    };
+  };
+
+  const openSupport = () => {
+    if (supportKey) {
+      setSelectedThreadKey(supportKey);
+      if (isMobile) setMobileMessageView(true);
+    }
+  };
+
+  const selectThread = (key: string) => {
+    setSelectedThreadKey(key);
+    if (isMobile) setMobileMessageView(true);
+  };
+
+  const mobileBack = () => {
+    setMobileMessageView(false);
+  };
+
+  const showSupportInput =
+    supportKey && selectedThreadKey === supportKey && role !== 'admin';
+
+  const isSupportUserThreadEmpty =
+    (role === 'user' || role === 'provider') &&
+    supportKey &&
+    selectedThreadKey === supportKey &&
+    (threadMap.get(supportKey) ?? []).length === 0;
+
+  const renderMessageBubbles = () => {
+    if (!selectedThreadKey) {
+      return <p className="text-sm text-muted-foreground text-center py-8">Select a thread</p>;
+    }
+
+    if (isSupportUserThreadEmpty) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center py-10 px-4 text-center text-muted-foreground text-sm">
+          <LifeBuoy className="h-10 w-10 mb-3 opacity-50" />
+          <p>Start a conversation with support</p>
+        </div>
+      );
+    }
+
+    if (selectedThreadMessages.length === 0) {
+      return <p className="text-sm text-muted-foreground text-center py-8">No messages in this thread</p>;
+    }
+
+    let lastGroup = '';
+    return (
+      <div className="flex flex-col gap-3 p-2 sm:p-4">
+        {selectedThreadMessages.map((notification) => {
+          const dLabel = dateGroupLabel(notification.createdAt);
+          const showDate = dLabel !== lastGroup;
+          if (showDate) lastGroup = dLabel;
+          const isMe = user?.id && notification.senderId === user.id;
+          return (
+            <div key={notification.id}>
+              {showDate && (
+                <div className="flex justify-center my-4">
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground bg-muted/80 px-3 py-1 rounded-full">
+                    {dLabel}
+                  </span>
+                </div>
+              )}
+              <div
+                className={cn('flex w-full', isMe ? 'justify-end' : 'justify-start')}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleNotificationClick(notification)}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    handleNotificationClick(notification);
+                  }
+                }}
+              >
+                <div
+                  className={cn(
+                    'max-w-[min(100%,20rem)] rounded-xl px-3 py-2.5 transition-colors cursor-pointer shadow-sm',
+                    isMe
+                      ? 'bg-primary text-primary-foreground rounded-br-md'
+                      : 'bg-card border border-border/80 text-foreground rounded-bl-md',
+                    !notification.read && !isMe && 'ring-1 ring-primary/20'
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-0.5">
+                    {!isMe && (
+                      <span className="shrink-0 text-muted-foreground">
+                        {getNotificationIcon(notification.type)}
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        'text-xs font-medium line-clamp-1',
+                        isMe ? 'text-primary-foreground/90' : 'text-foreground'
+                      )}
+                    >
+                      {notification.title}
+                    </span>
+                  </div>
+                  {!isMe && notification.senderName && (
+                    <p className="text-[10px] opacity-80 mb-1">
+                      {notification.senderName}
+                      {notification.senderRole ? ` · ${formatDisplayRole(notification.senderRole)}` : ''}
+                    </p>
+                  )}
+                  <p
+                    className={cn(
+                      'whitespace-pre-wrap text-sm',
+                      isMe ? 'text-primary-foreground' : 'text-muted-foreground'
+                    )}
+                  >
+                    {notification.message}
+                  </p>
+                  <p
+                    className={cn(
+                      'text-[10px] mt-1.5',
+                      isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                    )}
+                  >
+                    {formatDistanceToNow(parseISO(notification.createdAt), { addSuffix: true })}
+                    {!notification.read && (
+                      <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full align-middle bg-accent" />
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderMessagePanel = (opts: { withBack: boolean; className?: string }) => {
+    const { withBack, className } = opts;
+    return (
+      <div
+        className={cn(
+          'flex flex-col overflow-hidden rounded-lg border-2 border-primary bg-muted/40 transition-colors bg-muted',
+          PANEL_H,
+          className
+        )}
+      >
+        <div className="border-b-2 border-primary/20 px-3 sm:px-4 py-2.5 flex items-center gap-2 shrink-0 min-h-[48px]">
+          {withBack && isMobile && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="shrink-0 h-9 w-9 -ml-1"
+              onClick={mobileBack}
+              aria-label="Back to threads"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-medium text-foreground line-clamp-1">
+              {selectedThreadKey ? (() => {
+                const m = getThreadListRowMeta(selectedThreadKey);
+                return m.secondary ? `${m.primary} · ${m.secondary}` : m.primary;
+              })() : 'Messages'}
+            </h2>
+          </div>
+        </div>
+        <div
+          ref={messageScrollRef}
+          className="flex-1 overflow-y-auto min-h-0"
+        >
+          {renderMessageBubbles()}
+        </div>
+        {showSupportInput && (
+          <form
+            onSubmit={(e) => void handleSupportSubmit(e)}
+            className="border-t border-border/80 p-3 bg-background/80 backdrop-blur-sm shrink-0"
+          >
+            <div className="flex gap-2 items-end">
+              <Textarea
+                value={supportText}
+                onChange={(e) => setSupportText(e.target.value)}
+                placeholder="Message support…"
+                rows={2}
+                maxLength={2000}
+                className="resize-none min-h-[72px] flex-1 rounded-xl"
+              />
+              <Button
+                type="submit"
+                size="icon"
+                className="h-10 w-10 rounded-full shrink-0"
+                disabled={supportSending || supportText.trim().length < 1}
+                aria-label="Send"
+              >
+                {supportSending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+    );
+  };
+
+  const renderThreadList = (opts: { className?: string; emptyHint?: string }) => {
+    const { className, emptyHint } = opts;
+    return (
+      <div
+        className={cn(
+          'flex flex-col overflow-hidden rounded-lg border-2 border-primary bg-muted/30 transition-colors bg-muted',
+          PANEL_H,
+          className
+        )}
+      >
+        <div className="border-b-2 border-primary/20 px-3 py-2.5 text-sm font-medium text-muted-foreground">
+          Conversations
+        </div>
+        <ul className="flex-1 overflow-y-auto min-h-0">
+          {displayThreadKeys.length === 0 && (
+            <li className="px-4 py-8 text-center text-sm text-muted-foreground">
+              {emptyHint ?? 'No threads yet.'}
+            </li>
+          )}
+          {displayThreadKeys.map((key) => {
+            const msgs = threadMap.get(key) ?? [];
+            const unreadInThread = msgs.some((m) => !m.read);
+            const meta = getThreadListRowMeta(key);
+            return (
+              <li key={key}>
+                <button
+                  type="button"
+                  onClick={() => selectThread(key)}
+                  className={cn(
+                    'flex w-full gap-3 text-left items-start border-b border-primary/60 px-4 py-3 transition-all duration-200',
+                    'hover:bg-accent/50 active:bg-accent/70',
+                    selectedThreadKey === key && 'bg-accent/60 border-l-4 border-l-primary pl-3'
+                  )}
+                >
+                  <div className="relative shrink-0">
+                    <Avatar className="h-11 w-11 ring-2 ring-background">
+                      <AvatarFallback className="text-xs font-medium bg-primary/10 text-primary">
+                        {meta.avatarLabel}
+                      </AvatarFallback>
+                    </Avatar>
+                    {unreadInThread && (
+                      <span
+                        className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-primary ring-2 ring-background"
+                        aria-hidden
+                      />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="line-clamp-1 font-medium text-foreground text-sm">
+                        {meta.primary}
+                      </span>
+                      {meta.time && (
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
+                          {formatDistanceToNow(meta.time, { addSuffix: true })}
+                        </span>
+                      )}
+                    </div>
+                    {meta.secondary ? (
+                      <span className="line-clamp-1 text-xs text-primary/80">{meta.secondary}</span>
+                    ) : null}
+                    {meta.tertiary ? (
+                      <span className="line-clamp-1 text-[10px] text-muted-foreground capitalize">
+                        {meta.tertiary}
+                      </span>
+                    ) : null}
+                    <span className="line-clamp-2 text-xs text-muted-foreground mt-0.5">
+                      {key === supportKey && msgs.length === 0 ? 'Tap to start with support' : meta.preview}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
   };
 
   if (isLoading) {
@@ -250,141 +676,70 @@ export default function NotificationsPage() {
     );
   }
 
+  const headerBlock = (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Notifications</h1>
+        <p className="text-sm text-muted-foreground sm:text-base">
+          {unreadCount > 0
+            ? `${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}`
+            : 'All caught up!'}
+        </p>
+      </div>
+      {unreadCount > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 w-full shrink-0 whitespace-nowrap sm:w-auto"
+          onClick={() => void handleMarkAllAsRead()}
+        >
+          <Check className="mr-2 h-4 w-4" />
+          Mark All Read
+        </Button>
+      )}
+    </div>
+  );
+
+  const showFloatSupport = role !== 'admin' && (role === 'user' || role === 'provider') && supportKey;
+
   return (
     <DashboardLayout>
-      <div className="space-y-6 md:space-y-8 animate-fade-in">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Notifications</h1>
-            <p className="text-sm text-muted-foreground sm:text-base">
-              {unreadCount > 0
-                ? `${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}`
-                : 'All caught up!'}
-            </p>
-          </div>
-          {unreadCount > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 w-full shrink-0 whitespace-nowrap sm:w-auto"
-              onClick={() => void handleMarkAllAsRead()}
-            >
-              <Check className="mr-2 h-4 w-4" />
-              Mark All Read
-            </Button>
-          )}
-        </div>
+      <div className="space-y-6 md:space-y-8 animate-fade-in relative pb-20 md:pb-0">
+        {headerBlock}
 
-        {notifications.length === 0 ? (
-          <div className="card-elevated p-8 text-center sm:p-12">
-            <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-semibold mb-2">No notifications</h3>
-            <p className="text-muted-foreground text-sm">You will see updates about your activity here</p>
-          </div>
+        {isMobile ? (
+          !mobileMessageView ? (
+            renderThreadList({
+              className: 'w-full',
+              emptyHint:
+                notifications.length === 0
+                  ? 'No notifications yet. Use the support button to reach us.'
+                  : 'No threads yet.',
+            })
+          ) : (
+            renderMessagePanel({ withBack: true, className: 'w-full' })
+          )
         ) : (
-          <div className="grid min-h-[420px] gap-4 lg:grid-cols-12">
-            <div className="flex flex-col overflow-hidden rounded-lg border border-border lg:col-span-4">
-              <div className="border-b border-border px-3 py-2 text-sm font-medium text-muted-foreground">
-                Threads / users
-              </div>
-              <ul className="max-h-[min(60vh,560px)] flex-1 overflow-y-auto">
-                {threadKeys.map((key) => {
-                  const msgs = threadMap.get(key) ?? [];
-                  const last = msgs[msgs.length - 1];
-                  const unreadInThread = msgs.some((m) => !m.read);
-                  const label =
-                    last?.senderName && last.jobId
-                      ? `${last.senderName} · Job`
-                      : last?.title ?? 'Notification';
-                  return (
-                    <li key={key}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedThreadKey(key)}
-                        className={cn(
-                          'flex w-full flex-col gap-0.5 border-b border-border px-3 py-3 text-left text-sm transition-colors hover:bg-muted/60',
-                          selectedThreadKey === key && 'bg-muted/80'
-                        )}
-                      >
-                        <span className="line-clamp-1 font-medium">{label}</span>
-                        <span className="line-clamp-2 text-xs text-muted-foreground">{last?.message}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {last
-                            ? formatDistanceToNow(parseISO(last.createdAt), { addSuffix: true })
-                            : ''}
-                          {unreadInThread && (
-                            <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" />
-                          )}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-            <div className="flex flex-col overflow-hidden rounded-lg border border-border lg:col-span-8">
-              <div className="border-b border-border px-4 py-2 text-sm font-medium text-muted-foreground">
-                Messages
-              </div>
-              <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 max-h-[min(60vh,560px)]">
-                {selectedThreadMessages.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Select a thread</p>
-                ) : (
-                  selectedThreadMessages.map((notification) => (
-                    <div
-                      key={notification.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleNotificationClick(notification)}
-                      onKeyDown={(ev) => {
-                        if (ev.key === 'Enter' || ev.key === ' ') {
-                          ev.preventDefault();
-                          handleNotificationClick(notification);
-                        }
-                      }}
-                      className={cn(
-                        'rounded-lg border border-border p-3 transition-colors cursor-pointer',
-                        !notification.read && 'border-primary/25 bg-primary/5',
-                        'hover:border-primary/30'
-                      )}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={cn(
-                            'h-9 w-9 flex shrink-0 items-center justify-center rounded-full',
-                            !notification.read ? 'bg-primary/10' : 'bg-muted'
-                          )}
-                        >
-                          {getNotificationIcon(notification.type)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className={cn('font-medium', !notification.read && 'text-primary')}>
-                            {notification.title}
-                          </p>
-                          {notification.senderName && (
-                            <p className="text-xs text-muted-foreground">
-                              {notification.senderName}
-                              {notification.senderRole ? ` · ${notification.senderRole}` : ''}
-                            </p>
-                          )}
-                          <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-                            {notification.message}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {dateGroupLabel(notification.createdAt)} ·{' '}
-                            {formatDistanceToNow(parseISO(notification.createdAt), { addSuffix: true })}
-                          </p>
-                        </div>
-                        {!notification.read && (
-                          <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" />
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+          <div className="grid min-h-0 gap-4 lg:grid-cols-12">
+            {renderThreadList({ className: 'lg:col-span-4' })}
+            {renderMessagePanel({ withBack: false, className: 'lg:col-span-8' })}
           </div>
+        )}
+
+        {showFloatSupport && (
+          <button
+            type="button"
+            onClick={openSupport}
+            className={cn(
+              'fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full',
+              'bg-primary text-primary-foreground shadow-lg',
+              'hover:scale-105 active:scale-95 transition-transform duration-200',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+            )}
+            aria-label="Open support conversation"
+          >
+            <LifeBuoy className="h-6 w-6" />
+          </button>
         )}
 
         {role === 'admin' && (
@@ -416,35 +771,6 @@ export default function NotificationsPage() {
               <div className="flex justify-end">
                 <Button type="submit" disabled={adminReplySending}>
                   {adminReplySending ? 'Sending…' : 'Send reply'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {role !== 'admin' && (
-          <div className="card-elevated p-6 space-y-4 border border-border">
-            <div className="flex items-start gap-3">
-              <LifeBuoy className="h-5 w-5 shrink-0 text-primary mt-0.5" />
-              <div>
-                <h2 className="font-semibold">Contact support</h2>
-                <p className="text-sm text-muted-foreground">
-                  Send a message to the admin team. We will review it as soon as we can.
-                </p>
-              </div>
-            </div>
-            <form onSubmit={(e) => void handleSupportSubmit(e)} className="space-y-3">
-              <Textarea
-                value={supportText}
-                onChange={(e) => setSupportText(e.target.value)}
-                placeholder="Describe your issue or question…"
-                rows={4}
-                maxLength={2000}
-                className="resize-y min-h-[100px]"
-              />
-              <div className="flex justify-end">
-                <Button type="submit" disabled={supportSending || supportText.trim().length < 1}>
-                  {supportSending ? 'Sending…' : 'Send message'}
                 </Button>
               </div>
             </form>
