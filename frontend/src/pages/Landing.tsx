@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ import {
 
 export default function Landing() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
@@ -30,12 +31,23 @@ export default function Landing() {
     })();
   }, []);
 
+  useEffect(() => {
+    const id = location.hash?.replace(/^#/, '');
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    const frame = requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.pathname, location.hash]);
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
       
       {/* Hero Section */}
-      <section className="hero-section text-primary-foreground py-16 md:py-24 lg:py-32">
+      <section id="home" className="scroll-mt-20 hero-section text-primary-foreground py-16 md:py-24 lg:py-32">
         <div className="container">
           <div className="max-w-3xl mx-auto text-center animate-fade-in">
             <h1 className="text-3xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight">
@@ -92,7 +104,7 @@ export default function Landing() {
       </section>
 
       {/* Categories Section */}
-      <section id="categories" className="py-16 md:py-24 border-accent border-b">
+      <section id="categories" className="scroll-mt-15 py-16 md:py-24 border-accent border-b">
         <div className="container">
           <div className="text-center mb-12">
             <h2 className="text-2xl md:text-4xl font-bold mb-4">Our Services</h2>
@@ -119,7 +131,7 @@ export default function Landing() {
       </section>
 
       {/* How It Works Section */}
-      <section id="how-it-works" className="py-16 md:py-24 bg-secondary-foreground/20 border-accent border-b">
+      <section id="how-it-works" className="scroll-mt-15 py-16 md:py-24 bg-secondary-foreground/20 border-accent border-b">
         <div className="container">
           <div className="text-center mb-12">
             <h2 className="text-2xl md:text-4xl font-bold mb-4">How It Works</h2>
@@ -174,7 +186,7 @@ export default function Landing() {
       </section>
 
       {/* Trust Section */}
-      <section className="py-16 md:py-24 border-accent border-b">
+      <section id="why-choose-us" className="scroll-mt-15 py-16 md:py-24 border-accent border-b">
         <div className="container">
           <div className="text-center mb-12">
             <h2 className="text-2xl md:text-4xl font-bold mb-4">Why Choose EloFix</h2>

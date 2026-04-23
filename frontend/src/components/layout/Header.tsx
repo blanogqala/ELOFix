@@ -39,14 +39,21 @@ export function Header() {
         </div>
 
         {/* Desktop Navigation */}
-        <nav className="hidden min-w-0 md:flex md:items-center md:gap-4 lg:gap-6">
-          <Link to="/#categories" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-            Services
-          </Link>
-          <Link to="/#how-it-works" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-            How It Works
-          </Link>
-          
+        <nav className="hidden min-w-0 md:flex md:items-center md:gap-4 lg:gap-6 ">
+          <div className="flex items-center gap-8 mr-64">
+            <Link to="/#home" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+              Home
+            </Link>
+            <Link to="/#categories" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+              Services
+            </Link>
+            <Link to="/#how-it-works" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+              How It Works
+            </Link>
+            <Link to="/#why-choose-us" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+              Why Choose Us
+            </Link>
+          </div>
           {isAuthenticated ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -101,8 +108,10 @@ export function Header() {
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-border bg-card px-4 py-4 animate-fade-in">
           <nav className="flex flex-col gap-3">
+            <Link to="/#home" className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setMobileMenuOpen(false)}>Home</Link>
             <Link to="/#categories" className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setMobileMenuOpen(false)}>Services</Link>
             <Link to="/#how-it-works" className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setMobileMenuOpen(false)}>How It Works</Link>
+            <Link to="/#why-choose-us" className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setMobileMenuOpen(false)}>Why Choose Us</Link>
             {isAuthenticated ? (
               <>
                 <Link to={getDashboardPath()} className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
