@@ -17,6 +17,12 @@ export interface ProviderEarningJobRow {
   laborPaid: boolean;
   paymentReleased: boolean;
   createdAt: string;
+  /** Optional: if API adds explicit job total distinct from `amount` */
+  totalPrice?: number;
+  /** Optional: partial/full released amount when API supports it */
+  releasedAmount?: number;
+  /** Optional: may appear on list payload or only on single-job earnings fetch */
+  customerName?: string;
 }
 
 export interface ProviderEarningsSummary {
