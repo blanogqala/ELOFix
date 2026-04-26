@@ -12,7 +12,7 @@ async function idempotencyGate(tx, { idempotencyKey, requestHash, route }) {
   });
   if (row) {
     if (row.requestHash !== requestHash) {
-      throw new AppError("Idempotency key reused with different payload", 409);
+      throw new AppError("Idempotency key reused with different payload", 409, "E_IDEMPOTENCY_CONFLICT");
     }
     return { replay: true };
   }

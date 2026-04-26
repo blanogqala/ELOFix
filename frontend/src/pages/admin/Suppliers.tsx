@@ -3,8 +3,8 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { getSuppliers, createSupplier } from '@/lib/api/suppliers';
-import { Supplier } from '@/types';
+import { getSuppliers, createSupplier, addProduct, updateProductPrice } from '@/lib/api/suppliers';
+import { Supplier, Product } from '@/types';
 import { Search, Package, Plus, Truck, ShoppingBag, Tag } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -18,6 +18,15 @@ export default function AdminSuppliers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState('');
+  const [manageSupplier, setManageSupplier] = useState<Supplier | null>(null);
+  const [newProduct, setNewProduct] = useState({
+    name: '',
+    category: '',
+    price: '',
+    qualityTier: 'medium' as Product['qualityTier'],
+    unit: 'unit',
+  });
+  const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
 
   useEffect(() => { load(); }, []);
 
@@ -25,6 +34,59 @@ export default function AdminSuppliers() {
     try { setSuppliers(await getSuppliers()); }
     catch { /* no-op */ }
     finally { setIsLoading(false); }
+  };
+
+  const handleAddProduct = async () => {
+    if (!manageSupplier) return;
+    if (!newProduct.name.trim() || !newProduct.category.trim() || !newProduct.price.trim()) {
+      toast({ title: 'Fill name, category, and price', variant: 'destructive' });
+      return;
+    }
+    const price = parseFloat(newProduct.price);
+    if (Number.isNaN(price) || price < 0) {
+      toast({ title: 'Invalid price', variant: 'destructive' });
+      return;
+    }
+    try {
+      const product: Product = {
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `p-${Date.now()}`,
+        name: newProduct.name.trim(),
+        category: newProduct.category.trim(),
+        price,
+        qualityTier: newProduct.qualityTier,
+        unit: newProduct.unit.trim() || 'unit',
+        inStock: true,
+      };
+      await addProduct(manageSupplier.id, product);
+      toast({ title: 'Product added' });
+      setNewProduct({ name: '', category: '', price: '', qualityTier: 'medium', unit: 'unit' });
+      const next = await getSuppliers();
+      setSuppliers(next);
+      const updated = next.find((s) => s.id === manageSupplier.id);
+      if (updated) setManageSupplier(updated);
+    } catch {
+      toast({ title: 'Error', variant: 'destructive' });
+    }
+  };
+
+  const handleSavePrice = async (productId: string) => {
+    if (!manageSupplier) return;
+    const raw = priceEdits[productId];
+    const num = parseFloat(raw);
+    if (raw === undefined || Number.isNaN(num) || num < 0) {
+      toast({ title: 'Invalid price', variant: 'destructive' });
+      return;
+    }
+    try {
+      await updateProductPrice(manageSupplier.id, productId, num);
+      toast({ title: 'Price updated' });
+      const next = await getSuppliers();
+      setSuppliers(next);
+      const updated = next.find((s) => s.id === manageSupplier.id);
+      if (updated) setManageSupplier(updated);
+    } catch {
+      toast({ title: 'Error', variant: 'destructive' });
+    }
   };
 
   const handleAdd = async () => {
@@ -107,7 +169,19 @@ export default function AdminSuppliers() {
                   ))}
                 </div>
 
-                <Button variant="outline" size="sm" className="w-full">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setManageSupplier(supplier);
+                    const edits: Record<string, string> = {};
+                    supplier.products.forEach((p) => {
+                      edits[p.id] = String(p.price);
+                    });
+                    setPriceEdits(edits);
+                  }}
+                >
                   Manage Products
                 </Button>
               </div>
@@ -135,6 +209,78 @@ export default function AdminSuppliers() {
               <Button onClick={handleAdd} disabled={!newName.trim()}>Create</Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={manageSupplier !== null} onOpenChange={(o) => !o && setManageSupplier(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Products — {manageSupplier?.name}</DialogTitle>
+          </DialogHeader>
+          {manageSupplier && (
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Catalog</p>
+                <div className="space-y-2 max-h-48 overflow-y-auto border rounded-md p-2">
+                  {manageSupplier.products.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No products yet.</p>
+                  ) : (
+                    manageSupplier.products.map((p) => (
+                      <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="flex-1 min-w-[120px] font-medium">{p.name}</span>
+                        <span className="text-muted-foreground text-xs capitalize">{p.category}</span>
+                        <Input
+                          className="w-24 h-8"
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={priceEdits[p.id] ?? String(p.price)}
+                          onChange={(e) =>
+                            setPriceEdits((prev) => ({ ...prev, [p.id]: e.target.value }))
+                          }
+                        />
+                        <Button size="sm" variant="secondary" onClick={() => void handleSavePrice(p.id)}>
+                          Save
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="space-y-2 border-t pt-4">
+                <p className="text-sm font-medium">Add product</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-1 sm:col-span-2">
+                    <Label>Name</Label>
+                    <Input
+                      value={newProduct.name}
+                      onChange={(e) => setNewProduct((x) => ({ ...x, name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Category id</Label>
+                    <Input
+                      placeholder="matches category slug"
+                      value={newProduct.category}
+                      onChange={(e) => setNewProduct((x) => ({ ...x, category: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Price (R)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={newProduct.price}
+                      onChange={(e) => setNewProduct((x) => ({ ...x, price: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <Button className="w-full sm:w-auto" onClick={() => void handleAddProduct()}>
+                  Add to catalog
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </DashboardLayout>

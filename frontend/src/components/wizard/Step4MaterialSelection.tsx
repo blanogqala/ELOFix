@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Supplier, Product, MaterialLine } from '@/types';
-import { getSuppliers } from '@/lib/api/suppliers';
+import { getProductsByCategory } from '@/lib/api/suppliers';
 import { 
   ArrowLeft, 
   Plus, 
@@ -40,12 +40,24 @@ export function Step4MaterialSelection({
 
   const loadSuppliers = useCallback(async () => {
     try {
-      const allSuppliers = await getSuppliers();
-      // Filter suppliers that have products in the selected category
-      const relevantSuppliers = allSuppliers.filter(s => 
-        s.products.some(p => p.category === selectedCategory && p.inStock)
-      );
-      setSuppliers(relevantSuppliers);
+      const rows = await getProductsByCategory(selectedCategory);
+      const byId = new Map<string, Supplier>();
+      for (const row of rows) {
+        if (!row.inStock) continue;
+        const sid = row.supplierId;
+        if (!byId.has(sid)) {
+          byId.set(sid, {
+            id: sid,
+            name: row.supplierName,
+            hasDelivery: true,
+            deliveryFee: 0,
+            products: [],
+          });
+        }
+        const { supplierId: _sid, supplierName: _sn, ...product } = row;
+        byId.get(sid)!.products.push(product as Product);
+      }
+      setSuppliers([...byId.values()].filter((s) => s.products.length > 0));
     } catch (error) {
       console.error('Failed to load suppliers:', error);
     } finally {

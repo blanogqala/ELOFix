@@ -14,6 +14,7 @@ const {
   normalizeMeta,
 } = require("./jobMeta.service");
 const earningService = require("./earning.service");
+const paymentService = require("./payment.service");
 const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
@@ -537,8 +538,53 @@ async function acceptJob(jobId, userId) {
   return enriched;
 }
 
-async function getJobs() {
+/**
+ * Jobs visible in list endpoints: admin sees all; customer sees own; provider sees assigned.
+ */
+async function getJobsForActor(userId, role) {
+  let jobs;
+  if (role === "ADMIN") {
+    jobs = await prisma.job.findMany({
+      orderBy: { createdAt: "desc" },
+      include: jobInclude,
+    });
+  } else if (role === "CUSTOMER") {
+    jobs = await prisma.job.findMany({
+      where: { customerId: String(userId) },
+      orderBy: { createdAt: "desc" },
+      include: jobInclude,
+    });
+  } else if (role === "PROVIDER") {
+    jobs = await prisma.job.findMany({
+      where: {
+        OR: [
+          { providerId: String(userId) },
+          {
+            meta: {
+              path: ["rejectedByProviderUserId"],
+              equals: String(userId),
+            },
+          },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      include: jobInclude,
+    });
+  } else {
+    throw new AppError("Forbidden", 403);
+  }
+  const out = [];
+  for (const job of jobs) {
+    const meta = await getJobMeta(job.id);
+    out.push(await finalizeJob(job, meta));
+  }
+  return out;
+}
+
+/** Jobs where the given user is the customer (for material-order merge, etc.). */
+async function getJobsForCustomerId(customerId) {
   const jobs = await prisma.job.findMany({
+    where: { customerId: String(customerId) },
     orderBy: { createdAt: "desc" },
     include: jobInclude,
   });
@@ -556,6 +602,39 @@ async function getJobById(jobId) {
     include: jobInclude,
   });
   if (!job) throw new AppError("Job not found", 404);
+  const meta = await getJobMeta(job.id);
+  return await finalizeJob(job, meta);
+}
+
+async function getJobByIdForActor(jobId, userId, role) {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    include: jobInclude,
+  });
+  if (!job) throw new AppError("Job not found", 404);
+  if (role !== "ADMIN") {
+    if (role === "CUSTOMER") {
+      if (String(job.customerId) !== String(userId)) {
+        throw new AppError("Forbidden", 403);
+      }
+    } else if (role === "PROVIDER") {
+      const isAssigned = String(job.providerId) === String(userId);
+      let isPendingMatch = false;
+      if (!isAssigned && job.status === "PENDING") {
+        const matched = await getMatchedJobsForProvider(userId);
+        isPendingMatch = matched.some((j) => String(j.id) === String(jobId));
+      }
+      const metaPeek = await getJobMeta(jobId);
+      const isRejectedBySelf =
+        metaPeek.statusOverride === "REJECTED" &&
+        String(metaPeek.rejectedByProviderUserId || "") === String(userId);
+      if (!isAssigned && !isPendingMatch && !isRejectedBySelf) {
+        throw new AppError("Forbidden", 403);
+      }
+    } else {
+      throw new AppError("Forbidden", 403);
+    }
+  }
   const meta = await getJobMeta(job.id);
   return await finalizeJob(job, meta);
 }
@@ -622,9 +701,24 @@ async function updateJobStatus(jobId, status) {
   return result;
 }
 
-async function deleteJob(jobId) {
+async function deleteJob(jobId, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) throw new AppError("Job not found", 404);
+  if (actorRole === "ADMIN") {
+    await prisma.job.delete({ where: { id: jobId } });
+    return { id: jobId };
+  }
+  if (actorRole === "CUSTOMER") {
+    if (String(job.customerId) !== String(actorUserId)) {
+      throw new AppError("Forbidden", 403);
+    }
+  } else if (actorRole === "PROVIDER") {
+    if (String(job.providerId) !== String(actorUserId)) {
+      throw new AppError("Forbidden", 403);
+    }
+  } else {
+    throw new AppError("Forbidden", 403);
+  }
   await prisma.job.delete({ where: { id: jobId } });
   return { id: jobId };
 }
@@ -769,6 +863,7 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
 
   const paymentRef = `LAB-${String(jobId).slice(-6)}-${Date.now()}`;
   const paidAt = new Date().toISOString();
+  const gross = new Prisma.Decimal(String(amount));
 
   const txResult = await prisma.$transaction(
     async (tx) => {
@@ -777,44 +872,22 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
         return { replay: true };
       }
 
-      const meta = await mutateJobMetaInTransaction(tx, jobId, (m) => ({
-        ...m,
-        laborPaid: true,
-        servicePayment: {
-          status: "paid",
-          amount,
-          paidAt,
-          paymentRef,
-          paidBy: userId,
-          maskedPaymentMethod: `**** **** **** ${cardLast4 || "****"}`,
-        },
-        escrow: {
-          heldAmount: amount,
-          releasedAmount: Number(m.escrow?.releasedAmount) || 0,
-        },
-        statusOverride: "SERVICE_PAID",
-      }));
-
-      let jobRow = job;
-      if (job.status === "ACCEPTED") {
-        jobRow = await tx.job.update({
-          where: { id: jobId },
-          data: { status: "IN_PROGRESS", laborPaid: true },
-          include: jobInclude,
-        });
-      } else {
-        jobRow = await tx.job.update({
-          where: { id: jobId },
-          data: { laborPaid: true },
-          include: jobInclude,
-        });
+      const j = await tx.job.findUnique({ where: { id: jobId }, include: jobInclude });
+      if (!j) {
+        throw new AppError("Job not found", 404);
       }
 
-      await earningService.createLaborCreditPending(tx, {
-        providerId: providerRow.id,
+      const { jobRow, meta } = await paymentService.runSettleLaborInTransaction(tx, {
+        job: j,
         jobId,
-        amount,
-        idempotencyKey,
+        customerUserId: String(userId),
+        providerProfileId: providerRow.id,
+        gross,
+        paymentRef,
+        paidAt,
+        cardLast4,
+        idempotencyKeyForEarnings: idempotencyKey,
+        channel: "mock",
       });
 
       await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
@@ -863,7 +936,7 @@ async function submitMaterials(jobId, materials) {
   return await finalizeJob(updated, meta);
 }
 
-async function rejectJobByProvider(jobId, reason, details) {
+async function rejectJobByProvider(jobId, reason, details, rejectingProviderUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   const meta = await mutateJobMeta(jobId, (m) => ({
@@ -872,6 +945,9 @@ async function rejectJobByProvider(jobId, reason, details) {
     rejectionReason: reason || null,
     rejectionDetails: details || null,
     rejectedAt: new Date().toISOString(),
+    ...(rejectingProviderUserId
+      ? { rejectedByProviderUserId: String(rejectingProviderUserId) }
+      : {}),
   }));
   return await finalizeJob(job, meta);
 }
@@ -880,10 +956,18 @@ async function rejectJob(jobId, reason, details) {
   return rejectJobByProvider(jobId, reason, details);
 }
 
-async function deleteRejectedRequestFromProviderView(jobId) {
+async function deleteRejectedRequestFromProviderView(jobId, actorUserId) {
   const meta = await getJobMeta(jobId);
   if (meta.statusOverride !== "REJECTED") {
     throw new AppError("Only rejected requests can be removed", 400);
+  }
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { providerId: true } });
+  if (!job) throw new AppError("Job not found", 404);
+  const ok =
+    String(job.providerId || "") === String(actorUserId) ||
+    String(meta.rejectedByProviderUserId || "") === String(actorUserId);
+  if (!ok) {
+    throw new AppError("Forbidden", 403);
   }
   await prisma.job.delete({ where: { id: jobId } });
   return { id: jobId };
@@ -1074,20 +1158,55 @@ async function acceptProposedPrice(jobId) {
 async function cancelJob(jobId, reason, details) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  const updated = await prisma.job.update({
-    where: { id: jobId },
-    data: { status: "CANCELLED" },
-    include: jobInclude,
-  });
-  const meta = await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    statusOverride: "CANCELLED",
-    cancellationReason: reason || null,
-    cancellationDetails: details || null,
-    cancelledAt: new Date().toISOString(),
-  }));
-  const refundAmount = Number(updated.price) || 0;
-  return { job: await finalizeJob(updated, meta), refundAmount };
+  const preMeta = await getJobMeta(jobId);
+  const originalPaymentRef = preMeta?.servicePayment?.paymentRef || preMeta?.servicePayment?.reference || null;
+  const providerRow = job.providerId
+    ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
+    : null;
+
+  const { updated, meta, refundAmount } = await prisma.$transaction(
+    async (tx) => {
+      const j = await tx.job.findUnique({ where: { id: jobId } });
+      if (!j) {
+        throw new AppError("Job not found", 404);
+      }
+      const { refundAmount: rAmt, refundKind } = await paymentService.runCancelJobFinancialsInTransaction(tx, {
+        job: j,
+        providerProfileId: providerRow?.id,
+      });
+      const u = await tx.job.update({
+        where: { id: jobId },
+        data: { status: "CANCELLED" },
+        include: jobInclude,
+      });
+      const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) => ({
+        ...m,
+        statusOverride: "CANCELLED",
+        cancellationReason: reason || null,
+        cancellationDetails: details || null,
+        cancelledAt: new Date().toISOString(),
+        ...(rAmt > 0
+          ? {
+              refund: {
+                amount: rAmt,
+                reason: "cancel",
+                at: new Date().toISOString(),
+                kind: String(refundKind || ""),
+                status: "recorded",
+                ...(originalPaymentRef ? { originalPaymentRef: String(originalPaymentRef) } : {}),
+              },
+            }
+          : {}),
+      }));
+      return { updated: u, meta: meta0, refundAmount: rAmt };
+    },
+    {
+      maxWait: 5000,
+      timeout: 20000,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }
+  );
+  return { job: await finalizeJob(updated, meta), refundAmount: Number(refundAmount) || 0 };
 }
 
 async function confirmJobCompletion(jobId, rating, review) {
@@ -1106,32 +1225,59 @@ async function confirmJobCompletion(jobId, rating, review) {
     }
   }
 
-  const updated = await prisma.job.update({
-    where: { id: jobId },
-    data: { status: "COMPLETED" },
-    include: jobInclude,
-  });
-  const meta = await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    statusOverride: "COMPLETED",
-    completionConfirmedByUser: true,
-    userRating: r,
-    userReview: review,
-  }));
+  const providerRow = job.providerId
+    ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
+    : null;
 
-  await prisma.review.upsert({
-    where: { jobId },
-    create: {
-      id: randomUUID(),
-      jobId,
-      rating: Math.round(r),
-      comment: review != null && String(review).trim() !== "" ? String(review).trim() : null,
+  const { updated } = await prisma.$transaction(
+    async (tx) => {
+      const updated0 = await tx.job.update({
+        where: { id: jobId },
+        data: { status: "COMPLETED" },
+        include: jobInclude,
+      });
+      const j0 = await tx.job.findUnique({ where: { id: jobId } });
+      if (!j0) {
+        throw new AppError("Job not found", 404);
+      }
+      const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) => ({
+        ...m,
+        statusOverride: "COMPLETED",
+        completionConfirmedByUser: true,
+        userRating: r,
+        userReview: review,
+      }));
+      await tx.review.upsert({
+        where: { jobId },
+        create: {
+          id: randomUUID(),
+          jobId,
+          rating: Math.round(r),
+          comment: review != null && String(review).trim() !== "" ? String(review).trim() : null,
+        },
+        update: {
+          rating: Math.round(r),
+          comment: review != null && String(review).trim() !== "" ? String(review).trim() : null,
+        },
+      });
+      if (providerRow) {
+        const alreadySettled = Boolean(j0.escrowSecondReleaseDone && j0.paymentReleased);
+        if (!alreadySettled) {
+          await paymentService.runSecondTrancheInTransaction(tx, {
+            job: j0,
+            providerProfileId: providerRow.id,
+            jobId,
+          });
+        }
+      }
+      return { updated: updated0, meta: meta0 };
     },
-    update: {
-      rating: Math.round(r),
-      comment: review != null && String(review).trim() !== "" ? String(review).trim() : null,
-    },
-  });
+    {
+      maxWait: 5000,
+      timeout: 20000,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }
+  );
 
   await logAudit("review.upsert", {
     userId: job.customerId,
@@ -1139,24 +1285,25 @@ async function confirmJobCompletion(jobId, rating, review) {
   });
 
   if (job.providerId) {
-    const providerRow = await prisma.provider.findUnique({
+    const pRow2 = await prisma.provider.findUnique({
       where: { userId: job.providerId },
       select: { id: true },
     });
-    if (providerRow) {
+    if (pRow2) {
       const agg = await prisma.review.aggregate({
         where: { job: { providerId: job.providerId } },
         _avg: { rating: true },
       });
       const nextRating = agg._avg.rating != null ? Number(agg._avg.rating) : r;
       await prisma.provider.update({
-        where: { id: providerRow.id },
+        where: { id: pRow2.id },
         data: { rating: nextRating },
       });
     }
   }
 
-  return await finalizeJob(updated, meta);
+  const finalMeta = await getJobMeta(jobId);
+  return await finalizeJob(updated, finalMeta);
 }
 
 function ensureStoreOrder(meta, storeId, fallback) {
@@ -1361,11 +1508,9 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
 async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, route, actingUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  if (job.paymentReleased) {
+  if (job.paymentReleased || (paymentService.isEscrowV2Job(job) && job.isFullyReleased)) {
     throw new AppError("Already released", 400);
   }
-  const release = coerceNumber(amount, 0);
-  if (release <= 0) throw new AppError("amount must be positive", 400);
   if (!job.providerId) {
     throw new AppError("Job has no provider", 400);
   }
@@ -1387,7 +1532,15 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
 
       const row = await tx.job.findUnique({
         where: { id: jobId },
-        select: { meta: true, laborPaid: true, paymentReleased: true },
+        select: {
+          meta: true,
+          laborPaid: true,
+          paymentReleased: true,
+          isFullyReleased: true,
+          providerAmount: true,
+          totalPrice: true,
+          releasedAmount: true,
+        },
       });
       if (!row) {
         throw new AppError("Job not found", 404);
@@ -1397,8 +1550,22 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
       }
       const current = normalizeMeta(row.meta);
       const held = Number(current.escrow?.heldAmount) || 0;
+      const pendingEarning = await tx.earning.findFirst({
+        where: { jobId, type: "credit", status: "pending" },
+      });
+      const maxFromPending = pendingEarning ? Number(pendingEarning.amount) : 0;
+      let release = coerceNumber(amount, 0);
+      if (paymentService.isEscrowV2Job(row) && release <= 0) {
+        release = Math.min(held || maxFromPending, maxFromPending || held) || 0;
+      }
+      if (release <= 0) {
+        throw new AppError("amount must be positive (or use default for remaining escrow on v2 jobs)", 400);
+      }
       if (release > held) {
         throw new AppError("Release amount exceeds held escrow", 400);
+      }
+      if (maxFromPending > 0 && release > maxFromPending + 0.0001) {
+        throw new AppError("Release amount exceeds pending earnings", 400);
       }
 
       await earningService.syncPendingCreditToHeld(tx, {
@@ -1429,7 +1596,24 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
       const heldAfter = Number(meta.escrow?.heldAmount) || 0;
       const laborPaidFlag = Boolean(meta.laborPaid) || Boolean(row.laborPaid);
       let jobRow = job;
-      if (laborPaidFlag && heldAfter === 0) {
+      const jfV2 = await tx.job.findUnique({ where: { id: jobId } });
+      if (paymentService.isEscrowV2Job(jfV2) && jfV2.providerAmount) {
+        const rAmt = new Prisma.Decimal(String(jfV2.releasedAmount || 0)).add(
+          new Prisma.Decimal(String(release))
+        );
+        const prov = new Prisma.Decimal(String(jfV2.providerAmount));
+        const done = rAmt.gte(prov) || heldAfter === 0;
+        jobRow = await tx.job.update({
+          where: { id: jobId },
+          data: {
+            releasedAmount: rAmt,
+            isFullyReleased: done,
+            paymentReleased: done,
+            escrowSecondReleaseDone: done,
+          },
+          include: jobInclude,
+        });
+      } else if (laborPaidFlag && heldAfter === 0) {
         jobRow = await tx.job.update({
           where: { id: jobId },
           data: { paymentReleased: true },
@@ -1438,7 +1622,7 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
       }
 
       await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
-      return { replay: false, jobRow, meta };
+      return { replay: false, jobRow, meta, release };
     },
     {
       maxWait: 5000,
@@ -1453,7 +1637,7 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
     return finalizeJob(jobRow, meta);
   }
 
-  const { jobRow, meta } = txResult;
+  const { jobRow, meta, release } = txResult;
   await logAudit("payment.release_escrow", {
     userId: actingUserId != null ? String(actingUserId) : null,
     metadata: { jobId, amount: release, providerId: providerRow.id },
@@ -1511,7 +1695,9 @@ module.exports = {
   getMatchedJobsForProvider,
   acceptJob,
   getJobById,
-  getJobs,
+  getJobByIdForActor,
+  getJobsForActor,
+  getJobsForCustomerId,
   deleteJob,
   addMaterials,
   removeMaterial,

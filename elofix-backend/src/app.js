@@ -3,6 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const routes = require("./routes");
 const errorMiddleware = require("./middleware/error.middleware");
+const asyncHandler = require("./middleware/asyncHandler");
+const paymentController = require("./controllers/payment.controller");
 
 const app = express();
 
@@ -15,8 +17,15 @@ app.use(
       "Idempotency-Key",
       "idempotency-key",
       "X-Requested-With",
+      "x-paystack-signature",
     ],
   })
+);
+// Paystack webhook must receive the raw body for HMAC (same string Paystack signed).
+app.post(
+  "/api/payments/webhooks/paystack",
+  express.raw({ type: "application/json" }),
+  asyncHandler(paymentController.paystackWebhook)
 );
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true, limit: "12mb" }));

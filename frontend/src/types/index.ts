@@ -405,6 +405,8 @@ export interface Job {
   rejectionReason?: string;
   rejectionDetails?: string;
   rejectedAt?: string;
+  /** When a provider declines a pending request before assignment */
+  rejectedByProviderUserId?: string | null;
   completionConfirmedByUser?: boolean;
   // Per-store material orders and delivery tracking (job-attached)
   storeOrders?: JobStoreOrder[];
@@ -427,6 +429,14 @@ export interface Job {
   updatedAt: string;
   /** From category; when false, inspection step is skipped for this job */
   requiresInspection?: boolean;
+  /** Customer gross (labor) after settlement; source of truth from API */
+  totalPrice?: number;
+  commissionAmount?: number;
+  providerAmount?: number;
+  /** Cumulative amount released to provider (not platform fee) */
+  releasedAmount?: number;
+  /** Provider share not yet released */
+  remainingAmount?: number;
 }
 
 export interface ServiceRequest {

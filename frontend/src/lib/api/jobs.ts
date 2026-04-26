@@ -65,8 +65,15 @@ interface BackendJob {
   rejectionReason?: string;
   rejectionDetails?: string;
   rejectedAt?: string;
+  rejectedByProviderUserId?: string | null;
   escrow?: Job['escrow'];
   requiresInspection?: boolean;
+  totalPrice?: number | null;
+  commissionAmount?: number | null;
+  providerAmount?: number | null;
+  /** Job-level amount released to provider (escrow v2) */
+  releasedAmount?: number | null;
+  remainingAmount?: number | null;
 }
 
 interface BackendJobsResponse {
@@ -90,12 +97,20 @@ interface BackendCancelResponse {
   refundAmount: number;
 }
 
+function numOrUndef(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 function toFrontendJob(job: BackendJob): Job {
   const price = Number(job.price) || 0;
+  const totalPriceNum = numOrUndef(job.totalPrice);
   const serviceAmount =
-    job.servicePrice && typeof job.servicePrice.amount === 'number'
-      ? Number(job.servicePrice.amount)
-      : price;
+    totalPriceNum != null
+      ? totalPriceNum
+      : job.servicePrice && typeof job.servicePrice.amount === 'number'
+        ? Number(job.servicePrice.amount)
+        : price;
   const backendStatus = String(job.status || '').trim().toUpperCase();
   const safeStatus: JobStatus =
     backendStatus === 'ACCEPTED' ? 'ASSIGNED' : ((backendStatus as JobStatus) || 'PENDING');
@@ -159,10 +174,16 @@ function toFrontendJob(job: BackendJob): Job {
     rejectionReason: job.rejectionReason,
     rejectionDetails: job.rejectionDetails,
     rejectedAt: job.rejectedAt,
+    rejectedByProviderUserId: job.rejectedByProviderUserId ?? undefined,
     location,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt ?? job.createdAt,
     requiresInspection,
+    totalPrice: numOrUndef(job.totalPrice),
+    commissionAmount: numOrUndef(job.commissionAmount),
+    providerAmount: numOrUndef(job.providerAmount),
+    releasedAmount: numOrUndef(job.releasedAmount),
+    remainingAmount: numOrUndef(job.remainingAmount),
   };
 }
 
@@ -420,7 +441,11 @@ export async function getPendingRequestsForProvider(providerId: string): Promise
 
 export async function getRejectedRequestsByProvider(providerId: string): Promise<Job[]> {
   const jobs = await getJobs();
-  return jobs.filter((j) => j.providerId === providerId && j.status === 'REJECTED');
+  return jobs.filter(
+    (j) =>
+      j.status === 'REJECTED' &&
+      (j.providerId === providerId || j.rejectedByProviderUserId === providerId)
+  );
 }
 
 export async function deleteRejectedRequestFromProviderView(providerId: string, jobId: string): Promise<void> {

@@ -88,6 +88,13 @@ export default function OrderMaterials() {
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (deliveryProviders.length === 0) {
+      setDeliveryType(prev => (prev === 'DELIVERY_PROVIDER' ? 'SELF' : prev));
+      setSelectedDeliveryProvider('');
+    }
+  }, [deliveryProviders.length]);
+
   const filteredStores = suppliers.filter(s =>
     s.name.toLowerCase().includes(storeSearch.toLowerCase())
   );
@@ -347,18 +354,20 @@ export default function OrderMaterials() {
                   </div>
                 )}
 
-                <div className={cn("p-4 border rounded-lg", deliveryType === 'DELIVERY_PROVIDER' && "border-primary bg-primary/5")}>
-                  <div className="flex items-center space-x-3">
-                    <RadioGroupItem value="DELIVERY_PROVIDER" id="del-prov" />
-                    <Label htmlFor="del-prov" className="cursor-pointer flex-1">
-                      <p className="font-medium">Request Delivery Van</p>
-                      <p className="text-sm text-muted-foreground">Choose from available delivery providers</p>
-                    </Label>
+                {deliveryProviders.length > 0 && (
+                  <div className={cn("p-4 border rounded-lg", deliveryType === 'DELIVERY_PROVIDER' && "border-primary bg-primary/5")}>
+                    <div className="flex items-center space-x-3">
+                      <RadioGroupItem value="DELIVERY_PROVIDER" id="del-prov" />
+                      <Label htmlFor="del-prov" className="cursor-pointer flex-1">
+                        <p className="font-medium">Request Delivery Van</p>
+                        <p className="text-sm text-muted-foreground">Choose from available delivery providers</p>
+                      </Label>
+                    </div>
                   </div>
-                </div>
+                )}
               </RadioGroup>
 
-              {deliveryType === 'DELIVERY_PROVIDER' && (
+              {deliveryProviders.length > 0 && deliveryType === 'DELIVERY_PROVIDER' && (
                 <div className="space-y-3">
                   <Label>Select a Delivery Provider</Label>
                   {deliveryProviders.map(dp => (

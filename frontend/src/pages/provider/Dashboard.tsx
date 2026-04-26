@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getStandardizedStatusLabel, getUserStatusBadgeClass, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { formatCurrency } from '@/lib/formatCurrency';
+import { sumReleasedAmountJobs } from '@/lib/jobMoney';
 
 export default function ProviderDashboard() {
   const { user } = useAuth();
@@ -49,11 +51,13 @@ export default function ProviderDashboard() {
       : 'Failed to load provider dashboard data.'
     : null;
 
+  const amountReleasedToYou = sumReleasedAmountJobs(jobs);
+
   const stats = {
     pending: pendingJobs.length,
     active: jobs.filter(j => isActiveWorkflowStatus(j.status)).length,
     completed: jobs.filter(j => j.status === 'COMPLETED').length,
-    earnings: jobs.filter(j => j.status === 'COMPLETED').reduce((sum, j) => sum + j.laborEstimateRange.min, 0),
+    amountReleasedToYou,
   };
 
   const getStatusBadge = (status: Job['status']) => (
@@ -146,8 +150,10 @@ export default function ProviderDashboard() {
                 <DollarSign className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">R{stats.earnings}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Earnings</p>
+                <p className="text-xl font-bold sm:text-2xl tabular-nums">
+                  {formatCurrency(stats.amountReleasedToYou)}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Amount released to you</p>
               </div>
             </div>
           </div>
@@ -239,7 +245,9 @@ export default function ProviderDashboard() {
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-sm font-semibold text-primary">R{job.totalEstimateRange.min}</p>
+                        <p className="text-sm font-semibold text-primary tabular-nums">
+                          {formatCurrency(job.totalEstimateRange.min)}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -298,7 +306,9 @@ export default function ProviderDashboard() {
                         <p className="text-xs text-muted-foreground">{job.userName}</p>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="font-medium text-sm">R{job.laborEstimateRange.min}</p>
+                        <p className="font-medium text-sm tabular-nums">
+                          {formatCurrency(job.laborEstimateRange.min)}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {new Date(job.createdAt).toLocaleDateString()}
                         </p>

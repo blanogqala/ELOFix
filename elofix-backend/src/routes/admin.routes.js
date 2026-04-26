@@ -10,6 +10,7 @@ router.use(authorizeRoles(["ADMIN"]));
 
 router.get("/analytics", asyncHandler(adminController.getAnalytics));
 router.get("/financial-summary", asyncHandler(adminController.getFinancialSummaryEndpoint));
+router.get("/commissions", asyncHandler(adminController.getCommissions));
 router.get("/reconcile/:providerId", asyncHandler(adminController.getReconcileProvider));
 router.get("/providers", asyncHandler(adminController.listProviders));
 router.patch(

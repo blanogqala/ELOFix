@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { getJobs } from '@/lib/api/jobs';
+import { getAdminCommissions } from '@/lib/api/admin';
 import { getAdminProviders, getPendingProviders } from '@/lib/api/providers';
 import { Job, Provider } from '@/types';
 import { 
@@ -30,6 +31,7 @@ export default function AdminDashboard() {
   const [pendingProviders, setPendingProviders] = useState<Provider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
+  const [totalCommissionEarned, setTotalCommissionEarned] = useState(0);
 
   useEffect(() => {
     loadData();
@@ -38,6 +40,8 @@ export default function AdminDashboard() {
   const loadData = async () => {
     try {
       setAdminDataError(null);
+      const toStr = (d: Date) => d.toISOString().slice(0, 10);
+      const end = new Date();
       const [allJobs, allProviders, pending] = await Promise.all([
         getJobs(),
         getAdminProviders(),
@@ -46,6 +50,13 @@ export default function AdminDashboard() {
       setJobs(allJobs);
       setProviders(allProviders);
       setPendingProviders(pending);
+      try {
+        const comm = await getAdminCommissions({ from: '2000-01-01', to: toStr(end) });
+        const v = comm?.totalCommission;
+        setTotalCommissionEarned(typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      } catch {
+        setTotalCommissionEarned(0);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (message.toLowerCase().includes('not implemented')) {
@@ -66,7 +77,7 @@ export default function AdminDashboard() {
     totalProviders: providers.length,
     pendingProviders: pendingProviders.length,
     totalRevenue: jobs.filter(j => j.status === 'COMPLETED').reduce((sum, j) => sum + j.totalEstimateRange.min, 0),
-    escrowHeld: jobs.reduce((sum, j) => sum + j.escrow.heldAmount, 0),
+    totalCommissionEarned,
   };
 
   const getStatusBadge = (status: Job['status']) => (
@@ -161,8 +172,8 @@ export default function AdminDashboard() {
                 <DollarSign className="h-6 w-6 text-accent" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{formatCurrency(stats.escrowHeld)}</p>
-                <p className="text-sm text-muted-foreground">In Escrow</p>
+                <p className="text-2xl font-bold">{formatCurrency(stats.totalCommissionEarned)}</p>
+                <p className="text-sm text-muted-foreground">Total commission earned</p>
               </div>
             </div>
           </div>

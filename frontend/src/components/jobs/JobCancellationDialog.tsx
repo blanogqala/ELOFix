@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertTriangle } from 'lucide-react';
+import { formatCurrency } from '@/lib/formatCurrency';
 
 interface JobCancellationDialogProps {
   open: boolean;
@@ -71,12 +72,12 @@ export function JobCancellationDialog({
             <div className="text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Labor</span>
-                <span className="text-success">+${laborAmount.toFixed(2)}</span>
+                <span className="text-success">+{formatCurrency(laborAmount, { decimals: 2 })}</span>
               </div>
               {!hasMaterialsPaid && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Materials (not ordered)</span>
-                  <span className="text-success">+${materialsAmount.toFixed(2)}</span>
+                  <span className="text-success">+{formatCurrency(materialsAmount, { decimals: 2 })}</span>
                 </div>
               )}
               {hasMaterialsPaid && (
@@ -88,7 +89,7 @@ export function JobCancellationDialog({
               <div className="border-t border-border pt-1 mt-1">
                 <div className="flex justify-between font-medium">
                   <span>Total Refund</span>
-                  <span className="text-success">${refundAmount.toFixed(2)}</span>
+                  <span className="text-success">{formatCurrency(refundAmount, { decimals: 2 })}</span>
                 </div>
               </div>
             </div>

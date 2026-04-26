@@ -18,11 +18,10 @@ import {
   payLabor,
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
-  acceptProviderSuggestion,
-  rejectProviderSuggestion,
   deleteJob,
   addUserMaterialSuggestion,
   getLaborInvoiceByJobId,
+  acceptProposedPrice,
 } from '@/lib/api/jobs';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
@@ -50,7 +49,6 @@ import {
   CheckCircle,
   User,
   XCircle,
-  Lightbulb,
   Check,
   X,
   Ban,
@@ -58,6 +56,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { getUserLaborGross } from '@/lib/jobUtils';
 import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getStandardizedStatusLabel, getUnifiedTimelineStepIndex } from '@/lib/jobStatusMapping';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
@@ -422,42 +421,6 @@ export default function JobDetail() {
     setDeleteMaterialOpen(true);
   };
 
-  const handleAcceptSuggestion = async (suggestionId: string) => {
-    if (!job || isActionPending) return;
-    setIsActionPending(true);
-    try {
-      await acceptProviderSuggestion(job.id, suggestionId);
-      await syncJobsAfterMutation();
-      toast({ title: 'Suggestion Accepted', description: 'Your cart has been updated.' });
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to accept suggestion.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsActionPending(false);
-    }
-  };
-
-  const handleRejectSuggestion = async (suggestionId: string) => {
-    if (!job || isActionPending) return;
-    setIsActionPending(true);
-    try {
-      await rejectProviderSuggestion(job.id, suggestionId);
-      await syncJobsAfterMutation();
-      toast({ title: 'Suggestion Ignored' });
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to reject suggestion.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsActionPending(false);
-    }
-  };
-
   const getStatusBadge = (status: Job['status']) => {
     const label = getStandardizedStatusLabel(status);
     if (status === 'CANCELLED' || status === 'REJECTED') {
@@ -488,7 +451,7 @@ export default function JobDetail() {
   };
 
   const materialsTotal = (job?.materials || []).reduce((sum, m) => sum + (m.qty * m.unitPrice), 0) || 0;
-  const laborTotal = job?.servicePrice?.amount ?? job?.laborEstimateRange?.max ?? 0;
+  const laborTotal = job ? getUserLaborGross(job) : 0;
   const effectiveMeasurements = job
     ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
     : null;
@@ -662,8 +625,58 @@ export default function JobDetail() {
           </CardContent>
         </Card>
 
+        {/* Revised quote from provider */}
+        {!job.laborPaid && job.proposedLaborPrice && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Revised service quote</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Your provider suggested a new labor price. Accept it to update the invoice and pay.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                <p className="text-2xl font-bold text-primary">
+                  {formatCurrency(job.proposedLaborPrice.amount, { decimals: 2 })}
+                </p>
+                {job.proposedLaborPrice.reason ? (
+                  <p className="text-sm text-muted-foreground mt-2">{job.proposedLaborPrice.reason}</p>
+                ) : null}
+              </div>
+              <Button
+                className="btn-accent"
+                disabled={isActionPending}
+                onClick={async () => {
+                  if (!job) return;
+                  setIsActionPending(true);
+                  try {
+                    await acceptProposedPrice(job.id);
+                    await syncJobsAfterMutation();
+                    toast({
+                      title: 'Quote accepted',
+                      description: 'You can pay the updated service price below.',
+                    });
+                  } catch (error) {
+                    toast({
+                      title: 'Error',
+                      description: error instanceof Error ? error.message : 'Could not accept quote.',
+                      variant: 'destructive',
+                    });
+                  } finally {
+                    setIsActionPending(false);
+                  }
+                }}
+              >
+                Accept revised quote
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Service Price Section */}
-        {!job.laborPaid && (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED') && (
+        {!job.laborPaid &&
+          !job.proposedLaborPrice &&
+          (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED') && (
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Service Price</CardTitle>
@@ -698,7 +711,7 @@ export default function JobDetail() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-lg font-semibold">{formatCurrency(job.servicePrice.amount, { decimals: 2 })}</span>
+                <span className="text-lg font-semibold">{formatCurrency(getUserLaborGross(job), { decimals: 2 })}</span>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
                     View Invoice
@@ -706,48 +719,6 @@ export default function JobDetail() {
                   <Badge className="bg-success text-success-foreground">Paid</Badge>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Provider Suggestions */}
-        {job.providerSuggestions && job.providerSuggestions.filter(s => s.status === 'pending').length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Lightbulb className="h-5 w-5 text-accent" />
-                Provider Suggestions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {job.providerSuggestions.filter(s => s.status === 'pending').map(suggestion => (
-                <div key={suggestion.id} className="p-4 border border-border rounded-lg">
-                  <p className="font-medium mb-2">{suggestion.message}</p>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-muted-foreground">
-                      Suggested: {suggestion.suggested.name} (
-                      {formatCurrency(Number(suggestion.suggested.unitPrice) || 0, { decimals: 2 })})
-                    </p>
-                    <div className="flex gap-2">
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => handleRejectSuggestion(suggestion.id)}
-                      >
-                        <X className="h-3 w-3 mr-1" />
-                        Ignore
-                      </Button>
-                      <Button 
-                        size="sm"
-                        onClick={() => handleAcceptSuggestion(suggestion.id)}
-                      >
-                        <Check className="h-3 w-3 mr-1" />
-                        Accept
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
             </CardContent>
           </Card>
         )}
@@ -949,8 +920,8 @@ export default function JobDetail() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Labor / Service</span>
                   <span>
-                    {job.servicePrice
-                      ? formatCurrency(job.servicePrice.amount, { decimals: 2 })
+                    {job.servicePrice || (job.totalPrice != null && job.totalPrice > 0)
+                      ? formatCurrency(getUserLaborGross(job), { decimals: 2 })
                       : `${formatCurrency(job.laborEstimateRange.min, { decimals: 2 })} – ${formatCurrency(job.laborEstimateRange.max, { decimals: 2 })}`}
                   </span>
                 </div>
@@ -1137,7 +1108,7 @@ export default function JobDetail() {
             <div className="flex justify-between p-3 rounded-lg bg-muted/50">
               <span className="text-muted-foreground">Amount</span>
               <span className="font-semibold">
-                {formatCurrency(job.servicePayment?.amount ?? job.servicePrice?.amount ?? laborTotal, { decimals: 2 })}
+                {formatCurrency(job.servicePayment?.amount ?? getUserLaborGross(job), { decimals: 2 })}
               </span>
             </div>
             <div className="flex justify-between">

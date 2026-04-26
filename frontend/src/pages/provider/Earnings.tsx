@@ -18,7 +18,11 @@ import {
   getJobRemainingAmount,
   getJobStatus,
   getJobTotalPrice,
+  getJobProviderNet,
+  getJobProviderReleaseProgress,
   getStatusColor,
+  sumProviderNetAcrossJobs,
+  sumReleasedAcrossJobs,
 } from '@/lib/providerEarningsDerived';
 import { queryKeys } from '@/lib/queryKeys';
 import {
@@ -127,9 +131,9 @@ export default function ProviderEarnings() {
     });
   }, [jobs]);
 
-  const total = jobs.reduce((sum, j) => sum + getJobTotalPrice(j), 0);
-  const availableToWithdrawFromJobs = jobs.reduce((sum, j) => sum + getJobReleasedAmount(j), 0);
-  const pendingBalanceFromJobs = total - availableToWithdrawFromJobs;
+  const yourTotalEarnings = sumProviderNetAcrossJobs(jobs);
+  const amountReleasedToYou = sumReleasedAcrossJobs(jobs);
+  const pendingBalanceFromJobs = jobs.reduce((sum, j) => sum + getJobRemainingAmount(j), 0);
 
   const available = balance?.available ?? 0;
   const withdrawNum = parseFloat(withdrawAmount);
@@ -234,12 +238,16 @@ export default function ProviderEarnings() {
     }
   };
 
-  const panelTotal = mergedPanelJob ? getJobTotalPrice(mergedPanelJob) : 0;
+  const panelCustomerGross = mergedPanelJob ? getJobTotalPrice(mergedPanelJob) : 0;
+  const panelProviderNet = mergedPanelJob ? getJobProviderNet(mergedPanelJob) : 0;
+  const panelCommission = mergedPanelJob
+    ? (Number(mergedPanelJob.commissionAmount) || 0)
+    : 0;
   const panelReleased = mergedPanelJob ? getJobReleasedAmount(mergedPanelJob) : 0;
   const panelRemaining = mergedPanelJob ? getJobRemainingAmount(mergedPanelJob) : 0;
   const derivedDetailStatus = mergedPanelJob ? getJobStatus(mergedPanelJob) : 'Pending';
-  const panelPercent =
-    panelTotal > 0 ? Math.min(100, (panelReleased / panelTotal) * 100) : 0;
+  const panelProgress = mergedPanelJob ? getJobProviderReleaseProgress(mergedPanelJob) : 0;
+  const panelPercent = panelProgress * 100;
   const panelPercentRounded = Math.round(panelPercent);
 
   return (
@@ -248,7 +256,7 @@ export default function ProviderEarnings() {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Earnings</h1>
           <p className="text-sm text-muted-foreground sm:text-base">
-            Track job totals, released escrow, and withdrawals (ZAR)
+            Your total earnings (net of platform fee), released amounts, and escrow (ZAR)
           </p>
         </div>
 
@@ -259,8 +267,10 @@ export default function ProviderEarnings() {
                 <DollarSign className="h-4 w-4 text-success sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">{formatCurrency(total)}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Total</p>
+                <p className="text-xl font-bold sm:text-2xl tabular-nums">
+                  {formatCurrency(yourTotalEarnings)}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Your total earnings</p>
               </div>
             </div>
           </div>
@@ -271,7 +281,7 @@ export default function ProviderEarnings() {
               </div>
               <div className="min-w-0">
                 <p className="text-xl font-bold sm:text-2xl">{formatCurrency(pendingBalanceFromJobs)}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Pending balance</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Remaining to you (escrow)</p>
               </div>
             </div>
           </div>
@@ -281,14 +291,16 @@ export default function ProviderEarnings() {
                 <CheckCircle className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">{formatCurrency(availableToWithdrawFromJobs)}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Available to withdraw</p>
+                <p className="text-xl font-bold sm:text-2xl tabular-nums">
+                  {formatCurrency(amountReleasedToYou)}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Amount released to you</p>
               </div>
             </div>
           </div>
         </div>
         <p className="text-xs text-muted-foreground -mt-4 md:-mt-6">
-          Totals above are summed from your jobs. Bank withdrawals use your ledger balance on the Withdrawal tab.
+          Job sums use amounts from the server. Bank withdrawals use your ledger balance on the Withdrawal tab.
         </p>
 
         <Tabs
@@ -311,9 +323,9 @@ export default function ProviderEarnings() {
             >
               {!selectedJob ? (
                 <div className="transition-all duration-300 ease-out">
-                  <div className="border-b border-border p-4 sm:p-6">
+                  <div className="border-b-2 border-primary/50 p-4 sm:p-6">
                     <h2 className="text-lg font-semibold tracking-tight">Jobs</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="text-sm text-muted-foreground">
                       Tap a job to see payment details and progress
                     </p>
                   </div>
@@ -339,7 +351,7 @@ export default function ProviderEarnings() {
                               onMouseEnter={() => schedulePrefetchCustomer(job.id)}
                               className={cn(
                                 'flex w-full min-w-0 flex-col gap-2 p-4 text-left transition-all duration-300',
-                                'hover:bg-muted/50 hover:shadow-sm active:scale-[0.99]',
+                                'hover:bg-primary/20 hover:shadow-sm active:scale-[0.99]',
                               )}
                             >
                               <div className="flex items-start justify-between gap-2">
@@ -353,15 +365,15 @@ export default function ProviderEarnings() {
                               </p>
                               <div className="grid grid-cols-3 gap-2 text-xs sm:text-sm">
                                 <div>
-                                  <p className="text-muted-foreground">Total</p>
+                                  <p className="text-muted-foreground">Job price (customer)</p>
                                   <p className="font-semibold tabular-nums">{formatCurrency(totalP)}</p>
                                 </div>
                                 <div>
-                                  <p className="text-muted-foreground">Released</p>
+                                  <p className="text-muted-foreground">Released to you</p>
                                   <p className="font-semibold tabular-nums text-primary">{formatCurrency(released)}</p>
                                 </div>
                                 <div>
-                                  <p className="text-muted-foreground">Remaining</p>
+                                  <p className="text-muted-foreground">Remaining to you</p>
                                   <p className="font-semibold tabular-nums">{formatCurrency(remaining)}</p>
                                 </div>
                               </div>
@@ -386,23 +398,28 @@ export default function ProviderEarnings() {
                 </div>
               ) : (
                 <div className="transition-all duration-300 ease-out">
-                  <div className="border-b border-border p-4 sm:p-6">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="mb-3 -ml-2 h-auto gap-2 px-2 py-1.5 text-muted-foreground hover:text-foreground"
-                      onClick={() => setSelectedJob(null)}
-                    >
-                      <ArrowLeft className="h-4 w-4" />
-                      Back
-                    </Button>
-                    <h2 className="text-lg font-semibold tracking-tight">Job details</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">Earnings and release progress for this job</p>
+                  <div className="grid grid-cols-2 gap-4 border-b-2 border-primary/30 p-4 sm:p-6">
+                    <div className="justify-self-start">
+                      <h2 className="text-lg font-semibold tracking-tight">Job details</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">Earnings and release progress for this job</p>
+                    </div>
+                    <div className="justify-self-end">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="mb-3 -ml-2 h-auto gap-2 px-2 py-1.5 text-muted-foreground hover:text-foreground"
+                        onClick={() => setSelectedJob(null)}
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                        Back
+                      </Button>
+                    </div>
+                    
                   </div>
                   {mergedPanelJob ? (
                     <div className="space-y-5 p-4 text-sm sm:p-6">
                       <div>
-                        <p className="text-base font-semibold leading-snug sm:text-lg">{mergedPanelJob.title}</p>
+                        <p className=" text-base font-semibold leading-snug sm:text-lg">{mergedPanelJob.title}</p>
                         {detailFetching && (
                           <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                             <Loader2 className="h-3 w-3 animate-spin" />
@@ -410,17 +427,40 @@ export default function ProviderEarnings() {
                           </p>
                         )}
                       </div>
-                      <dl className="space-y-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-accent">Customer</p>
+                      <dl className="space-y-3 border-b border-primary/30 pb-2">
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Customer</dt>
+                          <dt className="text-muted-foreground">Name</dt>
                           <dd className="text-right font-medium">
                             {mergedPanelJob.customerName?.trim() || '—'}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Total price</dt>
-                          <dd className="text-right font-semibold tabular-nums">{formatCurrency(panelTotal)}</dd>
+                          <dt className="text-muted-foreground">Total price (what they paid)</dt>
+                          <dd className="text-right font-semibold tabular-nums">
+                            {formatCurrency(panelCustomerGross)}
+                          </dd>
                         </div>
+                      </dl>
+                      <p className="pt-2 text-xs font-medium uppercase tracking-wide text-accent">Your share</p>
+                      <dl className="space-y-3 border-b border-primary/30 pb-2">
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Platform fee (7%)</dt>
+                          <dd className="text-right font-semibold tabular-nums">
+                            {formatCurrency(panelCommission || 0)}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Your earnings</dt>
+                          <dd className="text-right font-semibold tabular-nums text-foreground">
+                            {formatCurrency(panelProviderNet)}
+                          </dd>
+                        </div>
+                      </dl>
+                      <p className="pt-2 text-xs font-medium uppercase tracking-wide text-accent">
+                        Your payments
+                      </p>
+                      <dl className="space-y-3 border-b border-primary/30 pb-2">
                         <div className="flex justify-between gap-4">
                           <dt className="text-muted-foreground">Released amount</dt>
                           <dd className="text-right font-semibold tabular-nums text-primary">
@@ -428,7 +468,7 @@ export default function ProviderEarnings() {
                           </dd>
                         </div>
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Remaining</dt>
+                          <dt className="text-muted-foreground">Remaining amount</dt>
                           <dd className="text-right font-semibold tabular-nums">{formatCurrency(panelRemaining)}</dd>
                         </div>
                         <div className="flex justify-between gap-4">
@@ -448,8 +488,8 @@ export default function ProviderEarnings() {
                       </dl>
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>Payment progress</span>
-                          <span className="font-medium text-foreground">{panelPercentRounded}% paid</span>
+                          <span>Release progress (your share)</span>
+                          <span className="font-medium text-foreground">{panelPercentRounded}%</span>
                         </div>
                         <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
                           <div

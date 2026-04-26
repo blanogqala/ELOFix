@@ -9,7 +9,21 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { getJobById, addJobNote, addChatMessage, cancelJob, updateJobStatus, markInspectionDone, submitServicePrice, submitMaterials, acceptUserSuggestion, rejectUserSuggestion, updateProviderRequirements, getLaborInvoiceByJobId } from '@/lib/api/jobs';
+import {
+  getJobById,
+  addJobNote,
+  addChatMessage,
+  cancelJob,
+  updateJobStatus,
+  markInspectionDone,
+  submitServicePrice,
+  submitMaterials,
+  acceptUserSuggestion,
+  rejectUserSuggestion,
+  updateProviderRequirements,
+  getLaborInvoiceByJobId,
+  proposeNewLaborPrice,
+} from '@/lib/api/jobs';
 import { getSuppliers } from '@/lib/api/suppliers';
 import { Job, MaterialLine, Supplier, Measurements } from '@/types';
 import {
@@ -46,7 +60,6 @@ import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTime
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
-
 export default function ProviderJobDetail() {
   const { id } = useParams<{ id: string }>();
   const jobId = id ?? '';
@@ -91,6 +104,9 @@ export default function ProviderJobDetail() {
   const [legacyInvoice, setLegacyInvoice] = useState<{ paidAt: string; cardLast4?: string } | null>(null);
   const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
   const [hoveredTimelineStep, setHoveredTimelineStep] = useState<number | null>(null);
+  const [proposeReviseOpen, setProposeReviseOpen] = useState(false);
+  const [reviseAmount, setReviseAmount] = useState('');
+  const [reviseReason, setReviseReason] = useState('');
 
   useEffect(() => {
     if (paymentDetailsOpen && job?.laborPaid && !job.servicePayment) {
@@ -251,6 +267,33 @@ export default function ProviderJobDetail() {
     }
   };
 
+  const handleProposeRevise = async () => {
+    if (!job) return;
+    const amount = parseFloat(reviseAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      toast({ title: 'Enter a valid amount', variant: 'destructive' });
+      return;
+    }
+    if (!reviseReason.trim()) {
+      toast({ title: 'Add a short reason for the customer', variant: 'destructive' });
+      return;
+    }
+    try {
+      await proposeNewLaborPrice(job.id, amount, reviseReason.trim());
+      await syncJobsAfterMutation();
+      setProposeReviseOpen(false);
+      setReviseAmount('');
+      setReviseReason('');
+      toast({ title: 'Revised quote sent', description: 'The customer must accept it before paying.' });
+    } catch (e) {
+      toast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Failed to send proposal.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleSaveRequirements = async () => {
     if (!job) return;
     try {
@@ -297,19 +340,19 @@ export default function ProviderJobDetail() {
         card.items.some(item => item.productId === suggestion.suggested.productId)
     );
   };
-  const providerSuggestionsForDisplay = (job?.userMaterialSuggestions || []).filter(suggestion => {
+  const customerSuggestionsForDisplay = (job?.userMaterialSuggestions || []).filter(suggestion => {
     if (suggestion.status === 'pending') return true;
     if (suggestion.status === 'accepted') return !!getPendingOrderForAcceptedSuggestion(suggestion);
     return false;
   });
   const acceptedSuggestionOrderIds = new Set(
-    providerSuggestionsForDisplay
+    customerSuggestionsForDisplay
       .filter(suggestion => suggestion.status === 'accepted')
       .map(suggestion => getPendingOrderForAcceptedSuggestion(suggestion)?.orderId)
       .filter((orderId): orderId is string => !!orderId)
   );
   const pendingOrderCards = pendingMaterialCards.filter(card => !acceptedSuggestionOrderIds.has(card.orderId));
-  const hasProviderSuggestions = providerSuggestionsForDisplay.length > 0;
+  const hasCustomerMaterialSuggestions = customerSuggestionsForDisplay.length > 0;
   const draftCardsByStore = materialsBuilder.reduce((acc, material) => {
     if (!acc[material.supplierId]) {
       acc[material.supplierId] = {
@@ -323,7 +366,7 @@ export default function ProviderJobDetail() {
   const hasDraftMaterials = materialsBuilder.length > 0;
   const hasProviderPendingOrderContent =
     pendingOrderCards.length > 0 || hasDraftMaterials || canEditMaterials;
-  const showProviderMaterialSubTabs = hasProviderPendingOrderContent && hasProviderSuggestions;
+  const showProviderMaterialSubTabs = hasProviderPendingOrderContent && hasCustomerMaterialSuggestions;
 
   const showMarkComplete = job ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) : false;
   const showCancel = job
@@ -637,6 +680,31 @@ export default function ProviderJobDetail() {
             </div>
           )}
 
+          {job.proposedLaborPrice && !job.laborPaid && (
+            <div className="p-4 border border-amber-500/40 rounded-lg bg-amber-500/5 space-y-1">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                Revised quote pending customer approval
+              </p>
+              <p className="text-lg font-bold text-primary">
+                {formatCurrency(job.proposedLaborPrice.amount, { decimals: 2 })}
+              </p>
+              {job.proposedLaborPrice.reason ? (
+                <p className="text-xs text-muted-foreground">{job.proposedLaborPrice.reason}</p>
+              ) : null}
+            </div>
+          )}
+
+          {job.servicePrice && !job.laborPaid && !job.proposedLaborPrice && (
+            <div className="p-4 border border-primary/40 rounded-lg space-y-2">
+              <p className="text-sm text-muted-foreground">
+                If the scope changed before the customer pays, you can send a revised quote.
+              </p>
+              <Button variant="outline" size="sm" onClick={() => setProposeReviseOpen(true)}>
+                Propose revised price
+              </Button>
+            </div>
+          )}
+
           {/* Mark inspection (skipped when category does not require inspection) */}
           {job.status === 'ASSIGNED' && job.requiresInspection !== false && (
             <div className="p-4 border border-primary/40 rounded-lg space-y-4">
@@ -719,9 +787,9 @@ export default function ProviderJobDetail() {
                         className="h-8 gap-2"
                         onClick={() => setMaterialViewTab('suggestions')}
                       >
-                        Suggestions
+                        Customer suggestions
                         <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                          {providerSuggestionsForDisplay.length}
+                          {customerSuggestionsForDisplay.length}
                         </Badge>
                       </Button>
                     </div>
@@ -830,9 +898,9 @@ export default function ProviderJobDetail() {
                         className="h-8 gap-2"
                         onClick={() => setMaterialViewTab('suggestions')}
                       >
-                        Suggestions
+                        Customer suggestions
                         <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                          {providerSuggestionsForDisplay.length}
+                          {customerSuggestionsForDisplay.length}
                         </Badge>
                       </Button>
                     </div>
@@ -890,10 +958,10 @@ export default function ProviderJobDetail() {
                   )}
                 </div>
               )}
-              {hasProviderSuggestions && (!showProviderMaterialSubTabs || materialViewTab === 'suggestions') && (
+              {hasCustomerMaterialSuggestions && (!showProviderMaterialSubTabs || materialViewTab === 'suggestions') && (
                 <div className="mt-4 pt-4 border-t space-y-3">
-                  <h3 className="font-medium">User Suggestions</h3>
-                  {providerSuggestionsForDisplay.map(s => (
+                  <h3 className="font-medium">Customer material suggestions</h3>
+                  {customerSuggestionsForDisplay.map(s => (
                     <div key={s.id} className="p-3 bg-muted/50 rounded-lg mb-2 flex items-center justify-between">
                       <div>
                         <p className="font-medium">{s.suggested.name} x{s.suggested.qty}</p>
@@ -1164,6 +1232,44 @@ export default function ProviderJobDetail() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditRequirementsOpen(false)}>Cancel</Button>
               <Button onClick={handleSaveRequirements}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={proposeReviseOpen} onOpenChange={setProposeReviseOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Propose revised labor price</DialogTitle>
+              <DialogDescription>
+                The customer must accept this before paying. Briefly explain the change.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">New amount (R)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={reviseAmount}
+                  onChange={(e) => setReviseAmount(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Reason</label>
+                <Textarea
+                  value={reviseReason}
+                  onChange={(e) => setReviseReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Additional prep work required on site"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setProposeReviseOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={() => void handleProposeRevise()}>Send to customer</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

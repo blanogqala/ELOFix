@@ -17,7 +17,7 @@ async function createJob(req, res) {
 }
 
 async function getJobs(req, res) {
-  const jobs = await jobService.getJobs();
+  const jobs = await jobService.getJobsForActor(req.user.userId, req.user.role);
   res.json({ success: true, jobs });
 }
 
@@ -26,7 +26,7 @@ async function getJobById(req, res) {
   if (!UUID_RE.test(id)) {
     throw new AppError("Invalid job id", 400);
   }
-  const job = await jobService.getJobById(id);
+  const job = await jobService.getJobByIdForActor(id, req.user.userId, req.user.role);
   res.json({ success: true, job });
 }
 
@@ -41,7 +41,7 @@ async function acceptJob(req, res) {
 }
 
 async function deleteJob(req, res) {
-  const result = await jobService.deleteJob(req.params.id);
+  const result = await jobService.deleteJob(req.params.id, req.user.userId, req.user.role);
   res.json({ success: true, ...result });
 }
 
@@ -126,12 +126,17 @@ async function rejectJob(req, res) {
 }
 
 async function rejectJobByProvider(req, res) {
-  const job = await jobService.rejectJobByProvider(req.params.id, req.body?.reason, req.body?.details);
+  const job = await jobService.rejectJobByProvider(
+    req.params.id,
+    req.body?.reason,
+    req.body?.details,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function deleteRejectedFromProviderView(req, res) {
-  const result = await jobService.deleteRejectedRequestFromProviderView(req.params.id);
+  const result = await jobService.deleteRejectedRequestFromProviderView(req.params.id, req.user.userId);
   res.json({ success: true, ...result });
 }
 

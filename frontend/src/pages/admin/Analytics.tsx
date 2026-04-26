@@ -17,10 +17,7 @@ import {
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-
-function formatZAR(n: number) {
-  return new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(n);
-}
+import { formatCurrency } from '@/lib/formatCurrency';
 
 export default function AdminAnalytics() {
   const { toast } = useToast();
@@ -109,19 +106,19 @@ export default function AdminAnalytics() {
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="card-elevated p-4">
                 <p className="text-sm text-muted-foreground">Platform volume</p>
-                <p className="text-2xl font-bold">{formatZAR(financial.totalPlatformVolume)}</p>
+                <p className="text-2xl font-bold">{formatCurrency(financial.totalPlatformVolume)}</p>
               </div>
               <div className="card-elevated p-4">
                 <p className="text-sm text-muted-foreground">Pending payouts</p>
-                <p className="text-2xl font-bold">{formatZAR(financial.totalPendingPayouts)}</p>
+                <p className="text-2xl font-bold">{formatCurrency(financial.totalPendingPayouts)}</p>
               </div>
               <div className="card-elevated p-4">
                 <p className="text-sm text-muted-foreground">Completed payouts</p>
-                <p className="text-2xl font-bold">{formatZAR(financial.totalCompletedPayouts)}</p>
+                <p className="text-2xl font-bold">{formatCurrency(financial.totalCompletedPayouts)}</p>
               </div>
               <div className="card-elevated p-4">
                 <p className="text-sm text-muted-foreground">Released to balance (component)</p>
-                <p className="text-2xl font-bold">{formatZAR(financial.breakdown.releasedToBalance)}</p>
+                <p className="text-2xl font-bold">{formatCurrency(financial.breakdown.releasedToBalance)}</p>
               </div>
             </div>
             <div className="card-elevated p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
@@ -149,7 +146,7 @@ export default function AdminAnalytics() {
           </div>
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">Revenue (range)</p>
-            <p className="text-2xl font-bold">{formatZAR(summary.totalRevenue)}</p>
+            <p className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</p>
           </div>
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">New provider signups</p>
@@ -185,7 +182,7 @@ export default function AdminAnalytics() {
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v: number) => formatZAR(v)} />
+                  <Tooltip formatter={(v: number) => [formatCurrency(v), 'Amount']} />
                   <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>

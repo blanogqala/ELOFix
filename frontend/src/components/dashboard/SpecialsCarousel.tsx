@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getSpecials } from '@/lib/api/specials';
+import { getSpecials, getSpecialsByCategory } from '@/lib/api/specials';
 import { Special } from '@/types';
 import { ChevronLeft, ChevronRight, Clock, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -18,9 +18,8 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
 
   const loadSpecials = useCallback(async () => {
     try {
-      const data = await getSpecials();
-      const filtered = category ? data.filter(s => s.category === category) : data;
-      setSpecials(filtered);
+      const data = category ? await getSpecialsByCategory(category) : await getSpecials();
+      setSpecials(data);
     } catch (error) {
       console.error('Failed to load specials:', error);
     } finally {

@@ -35,13 +35,16 @@ function errorMiddleware(err, req, res, next) {
 
   let statusCode = 500;
   let message = "Internal Server Error";
+  let code = "E_INTERNAL";
 
   if (err instanceof AppError) {
     statusCode = err.statusCode;
     message = err.message;
+    code = err.code || (statusCode === 404 ? "NOT_FOUND" : "E_APP");
   } else if (err.name === "MulterError" || err.code === "LIMIT_FILE_SIZE") {
     statusCode = 400;
     message = err.message || "File upload error";
+    code = "E_UPLOAD";
   } else if (isPrismaKnownRequestError(err)) {
     if (process.env.NODE_ENV === "development") {
       try {
@@ -60,21 +63,26 @@ function errorMiddleware(err, req, res, next) {
     const mapped = mapPrismaKnownError(err);
     statusCode = mapped.statusCode;
     message = mapped.message;
+    code = err.code && String(err.code).startsWith("P") ? `E_${err.code}` : "E_DB";
     if (process.env.NODE_ENV !== "development") {
       console.error("[Prisma]", req.method, req.originalUrl, err.code, err.meta || "", err.message);
     }
   } else if (err.name === "PrismaClientValidationError") {
     statusCode = 400;
+    code = "E_PRISMA_VALIDATION";
     message =
       process.env.NODE_ENV === "production" ? "Invalid request for database operation" : err.message;
     console.error("[Prisma validation]", req.method, req.originalUrl, err.message);
+  } else {
+    code = "E_UNHANDLED";
+    if (process.env.NODE_ENV === "development") {
+      console.error("[ERROR]", req.method, req.originalUrl, err && err.stack ? err.stack : err);
+    } else {
+      console.error("[ERROR]", req.method, req.originalUrl, err && err.message ? err.message : err);
+    }
   }
 
-  const body = { success: false, message };
-
-  if (!(err instanceof AppError) && !isPrismaKnownRequestError(err) && err.name !== "PrismaClientValidationError") {
-    console.error("[ERROR]", req.method, req.originalUrl, err && err.stack ? err.stack : err);
-  }
+  const body = { success: false, message, code };
 
   if (process.env.NODE_ENV !== "production" && err.stack) {
     body.stack = err.stack;

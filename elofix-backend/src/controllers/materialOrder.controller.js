@@ -3,18 +3,23 @@ const jobService = require("../services/job.service");
 
 async function getMaterialOrders(req, res) {
   const userId = String(req.query.userId || req.user.userId);
+  if (req.user.role !== "ADMIN" && String(userId) !== String(req.user.userId)) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
   const orders = await materialOrderService.getMaterialOrders(userId);
   res.json({ success: true, orders });
 }
 
 async function getAllMaterialOrdersForUser(req, res) {
   const userId = String(req.query.userId || req.user.userId);
+  if (req.user.role !== "ADMIN" && String(userId) !== String(req.user.userId)) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
   const [orders, jobs] = await Promise.all([
     materialOrderService.getMaterialOrders(userId),
-    jobService.getJobs(),
+    jobService.getJobsForCustomerId(userId),
   ]);
   const jobStoreOrders = jobs
-    .filter((j) => j.userId === userId)
     .flatMap((job) =>
       (job.storeOrders || []).map((storeOrder) => ({
         id: storeOrder.orderId,

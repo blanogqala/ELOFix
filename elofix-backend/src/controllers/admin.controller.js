@@ -4,6 +4,7 @@ const categoryService = require("../services/category.service");
 const withdrawalAdminService = require("../services/withdrawalAdmin.service");
 const { reconcileProvider } = require("../services/reconciliation.service");
 const { getFinancialSummary } = require("../services/financialSummary.service");
+const { getCommissionSummary } = require("../services/commission.service");
 const AppError = require("../utils/AppError");
 
 async function listProviders(req, res) {
@@ -112,6 +113,11 @@ async function getFinancialSummaryEndpoint(req, res) {
   res.json({ success: true, summary });
 }
 
+async function getCommissions(req, res) {
+  const data = await getCommissionSummary(req.query || {});
+  res.json({ success: true, ...data });
+}
+
 module.exports = {
   listProviders,
   getAnalytics,
@@ -130,4 +136,5 @@ module.exports = {
   markWithdrawalFailed,
   getReconcileProvider,
   getFinancialSummaryEndpoint,
+  getCommissions,
 };

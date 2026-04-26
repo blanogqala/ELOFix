@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { SavedCard } from '@/types';
 import { CreditCard, Lock, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
 
 interface PaymentBreakdownItem {
   label: string;
@@ -146,7 +147,7 @@ export function PaymentModal({
                 <span className={item.isBold ? "" : "text-muted-foreground"}>
                   {item.label}
                 </span>
-                <span>${item.amount.toFixed(2)}</span>
+                <span className="tabular-nums">{formatCurrency(item.amount, { decimals: 2 })}</span>
               </div>
             ))}
           </div>

@@ -16,7 +16,6 @@ import {
   MessageSquare,
   FileText,
   Clock,
-  DollarSign,
   CheckCircle,
   AlertCircle,
   Mail,
@@ -30,6 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
 import {
@@ -174,7 +174,6 @@ export default function AdminJobDetail() {
   const paymentStatus = getPaymentStatus();
   const heldAmount = job.escrow.heldAmount || 0;
   const releasedAmount = job.escrow.releasedAmount || 0;
-  const totalAmount = job.servicePrice?.amount ?? job.totalEstimateRange.min;
   const maxReleasable = getMaxReleasable();
 
   const materials = job.materials || [];
@@ -250,10 +249,6 @@ export default function AdminJobDetail() {
               <div className="border-b border-primary/20 pb-3">
                 <p className="text-sm text-muted-foreground">Status</p>
                 {getStatusBadge(job.status)}
-              </div>
-              <div className="border-b border-primary/20 pb-3">
-                <p className="text-sm text-muted-foreground">Total Amount</p>
-                <p className="font-semibold">{formatCurrency(totalAmount)}</p>
               </div>
               {job.location && (
                 <div className="border-b border-primary/20 pb-3">
@@ -391,49 +386,32 @@ export default function AdminJobDetail() {
           </Card>
         </div>
 
-        {(heldAmount > 0 || releasedAmount > 0) && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <DollarSign className="h-5 w-5" />
-                Payment Status
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 bg-muted/30 rounded-lg border border-primary/90 mr-6 ml-6 mb-10 pt-3">
-              <div className="flex items-center justify-between text-sm py-1 border-b border-primary/20 pb-3">
-                <span className="text-muted-foreground">Status</span>
+        <AdminJobPaymentBreakdownCard
+          job={job}
+          footer={
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Escrow / workflow status</span>
                 <span className={cn('font-medium', paymentStatus.class)}>{paymentStatus.label}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm py-1">
-                <span className="text-muted-foreground">Total Amount</span>
-                <span className="font-medium">{formatCurrency(heldAmount + releasedAmount)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm py-1">
-                <span className="text-muted-foreground">Amount Released</span>
-                <span>{formatCurrency(releasedAmount)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm py-1">
-                <span className="text-muted-foreground">Remaining Balance</span>
-                <span className="font-medium">{formatCurrency(heldAmount)}</span>
               </div>
               {maxReleasable > 0 ? (
                 <Button
-                  className="w-full sm:w-auto mt-2"
+                  className="w-full sm:w-auto"
                   onClick={() => {
                     setReleaseAmount(String(maxReleasable));
                     setReleaseModalOpen(true);
                   }}
                 >
-                  Release Payment
+                  Release payment
                 </Button>
               ) : heldAmount > 0 ? (
-                <p className="text-sm text-muted-foreground mt-2">
-                  Remaining {formatCurrency(heldAmount)} can be released when job is completed.
+                <p className="text-sm text-muted-foreground">
+                  Up to {formatCurrency(heldAmount)} still held in escrow for release when the job is ready.
                 </p>
               ) : null}
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          }
+        />
 
         <Card>
           <CardHeader>

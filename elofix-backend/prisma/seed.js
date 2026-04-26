@@ -51,6 +51,17 @@ const categories = [
     ],
     sortOrder: 4,
   },
+  {
+    id: "delivery",
+    name: "Delivery / Courier",
+    icon: "🚚",
+    description:
+      "Platform couriers for material runs. Providers add the skill `delivery` in their profile to appear when customers choose a registered courier (not a separate admin list).",
+    requiresMaterials: false,
+    skills: ["delivery", "courier", "transport"],
+    step3Type: "measurements",
+    sortOrder: 5,
+  },
 ];
 
 function getAdminConfig() {

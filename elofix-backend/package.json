@@ -13,6 +13,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
     "backfill:escrow": "node scripts/backfill-escrow.js",
+    "backfill:escrow-v2": "node scripts/backfill-escrow-v2.js",
     "backfill:earnings": "node scripts/backfill-earnings.js",
     "migrate:bank-encrypt": "node scripts/migrate-bank-encrypt.js",
     "test": "echo \"Error: no test specified\" && exit 1"

@@ -1,3 +1,4 @@
+const AppError = require("../utils/AppError");
 const paymentService = require("../services/payment.service");
 const jobService = require("../services/job.service");
 
@@ -70,6 +71,53 @@ async function createRefundInvoice(req, res) {
   res.status(201).json({ success: true, invoice });
 }
 
+async function verifyPaystack(req, res) {
+  if (String(req.user?.role) !== "CUSTOMER") {
+    throw new AppError("Only customers can verify labor payment", 403);
+  }
+  const jobId = String(req.body?.jobId || "").trim();
+  const reference = String(req.body?.reference || "").trim();
+  if (!jobId || !reference) {
+    throw new AppError("jobId and reference are required", 400);
+  }
+  if (!paymentService.isPaystackConfigured()) {
+    throw new AppError("Paystack is not configured", 503);
+  }
+  const out = await paymentService.verifyPaystackAndSettleLabor({
+    jobId,
+    customerUserId: req.user.userId,
+    reference,
+    idempotencyKey: req.financialIdempotencyKey,
+    requestHash: req.financialRequestHash,
+    route: req.financialIdempotencyRoute,
+  });
+  const job = await jobService.getJobByIdForActor(
+    jobId,
+    req.user.userId,
+    String(req.user?.role || "CUSTOMER")
+  );
+  res.json({
+    success: true,
+    job,
+    replay: Boolean(out.replay),
+    alreadySettled: Boolean(out.alreadySettled),
+  });
+}
+
+/**
+ * Body is raw Buffer; registered with express.raw in app.js.
+ */
+async function paystackWebhook(req, res) {
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf)) {
+    return res.status(400).json({ success: false, message: "Expected application/json raw body" });
+  }
+  const sig = req.headers["x-paystack-signature"] || req.headers["X-Paystack-Signature"];
+  const out = await paymentService.processPaystackWebhookBuffer(buf, sig);
+  const status = out.httpStatus != null ? out.httpStatus : 200;
+  res.status(status).json({ success: status < 400, ...out });
+}
+
 module.exports = {
   getSavedCards,
   releaseEscrow,
@@ -80,4 +128,6 @@ module.exports = {
   getInvoice,
   createInvoice,
   createRefundInvoice,
+  verifyPaystack,
+  paystackWebhook,
 };

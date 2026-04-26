@@ -9,6 +9,13 @@ const router = express.Router();
 router.use(authenticate);
 
 router.post(
+  "/paystack/verify",
+  financialIdem.attachFinancialRequestFingerprint,
+  financialIdem.requireIdempotencyKey,
+  asyncHandler(paymentController.verifyPaystack)
+);
+
+router.post(
   "/release",
   authorizeRoles(["ADMIN"]),
   financialIdem.attachFinancialRequestFingerprint,

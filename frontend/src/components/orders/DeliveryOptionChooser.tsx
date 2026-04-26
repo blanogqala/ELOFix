@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { formatCurrency } from '@/lib/formatCurrency';
 import {
   Dialog,
@@ -44,9 +44,17 @@ export function DeliveryOptionChooser({
 }: DeliveryOptionChooserProps) {
   const [selectedType, setSelectedType] = useState<'SELF' | 'STORE' | 'PROVIDER'>('SELF');
   const [selectedProviderId, setSelectedProviderId] = useState('');
+  const hasCourierOption = deliveryProviders.length > 0;
+
+  useEffect(() => {
+    if (!hasCourierOption) {
+      setSelectedType(prev => (prev === 'PROVIDER' ? 'SELF' : prev));
+      setSelectedProviderId('');
+    }
+  }, [hasCourierOption]);
 
   const handleConfirm = () => {
-    if (selectedType === 'PROVIDER' && !selectedProviderId) return;
+    if (hasCourierOption && selectedType === 'PROVIDER' && !selectedProviderId) return;
 
     if (selectedType === 'SELF') {
       onSelect({ type: 'SELF', status: 'SelfCollect', fee: 0 });
@@ -103,18 +111,20 @@ export function DeliveryOptionChooser({
               </div>
             )}
 
-            <div className="p-3 border rounded-lg">
-              <div className="flex items-center space-x-3">
-                <RadioGroupItem value="PROVIDER" id="chooser-provider" />
-                <Label htmlFor="chooser-provider" className="cursor-pointer flex-1">
-                  <p className="font-medium">Hire a delivery provider</p>
-                  <p className="text-sm text-muted-foreground">Choose from available delivery providers</p>
-                </Label>
+            {hasCourierOption && (
+              <div className="p-3 border rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <RadioGroupItem value="PROVIDER" id="chooser-provider" />
+                  <Label htmlFor="chooser-provider" className="cursor-pointer flex-1">
+                    <p className="font-medium">Hire a delivery provider</p>
+                    <p className="text-sm text-muted-foreground">Choose from available delivery providers</p>
+                  </Label>
+                </div>
               </div>
-            </div>
+            )}
           </RadioGroup>
 
-          {selectedType === 'PROVIDER' && (
+          {hasCourierOption && selectedType === 'PROVIDER' && (
             <div className="space-y-2">
               <Label>Select a provider</Label>
               {deliveryProvidersError && (
@@ -141,11 +151,6 @@ export function DeliveryOptionChooser({
                   </div>
                 ))}
               </RadioGroup>
-              {deliveryProviders.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Delivery providers are not available yet.
-                </p>
-              )}
             </div>
           )}
         </div>
@@ -155,7 +160,7 @@ export function DeliveryOptionChooser({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={selectedType === 'PROVIDER' && (!selectedProviderId || deliveryProviders.length === 0)}
+            disabled={hasCourierOption && selectedType === 'PROVIDER' && !selectedProviderId}
             className="btn-accent"
           >
             <Truck className="h-3 w-3 mr-1" />

@@ -6,10 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getJobById, releaseEscrowPayment } from '@/lib/api/jobs';
 import { getLaborInvoiceByJobId } from '@/lib/api/jobs';
+import { createRefundInvoice } from '@/lib/api/payments';
 import { Job } from '@/types';
 import {
   ArrowLeft,
-  DollarSign,
   User,
   Briefcase,
   Clock,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,10 @@ export default function AdminPaymentDetail() {
   const [releaseModalOpen, setReleaseModalOpen] = useState(false);
   const [releaseAmount, setReleaseAmount] = useState('');
   const [isReleasing, setIsReleasing] = useState(false);
+  const [refundLabor, setRefundLabor] = useState('');
+  const [refundMaterials, setRefundMaterials] = useState('');
+  const [refundCardLast4, setRefundCardLast4] = useState('');
+  const [refundBusy, setRefundBusy] = useState(false);
 
   const loadJob = useCallback(async () => {
     if (!jobId) return;
@@ -70,6 +75,41 @@ export default function AdminPaymentDetail() {
   const getMaxReleasable = () => {
     if (!job) return 0;
     return job.escrow.heldAmount || 0;
+  };
+
+  const handleRecordRefundInvoice = async () => {
+    if (!job) return;
+    const labor = parseFloat(refundLabor);
+    const materials = parseFloat(refundMaterials);
+    if (Number.isNaN(labor) || labor < 0 || Number.isNaN(materials) || materials < 0) {
+      toast({ title: 'Enter valid refund amounts', variant: 'destructive' });
+      return;
+    }
+    if (labor === 0 && materials === 0) {
+      toast({ title: 'At least one amount must be greater than zero', variant: 'destructive' });
+      return;
+    }
+    const last4 = refundCardLast4.replace(/\D/g, '').slice(-4);
+    if (last4.length !== 4) {
+      toast({ title: 'Enter card last 4 digits', variant: 'destructive' });
+      return;
+    }
+    setRefundBusy(true);
+    try {
+      await createRefundInvoice(job.userId, job.id, labor, materials, last4);
+      toast({ title: 'Refund invoice recorded', description: 'Visible on the customer invoices list.' });
+      setRefundLabor('');
+      setRefundMaterials('');
+      setRefundCardLast4('');
+    } catch (err: unknown) {
+      toast({
+        title: 'Error',
+        description: err instanceof Error ? err.message : 'Failed to record refund.',
+        variant: 'destructive',
+      });
+    } finally {
+      setRefundBusy(false);
+    }
   };
 
   const handleReleasePayment = async () => {
@@ -127,9 +167,7 @@ export default function AdminPaymentDetail() {
   }
 
   const paymentStatus = getPaymentStatus();
-  const heldAmount = job.escrow.heldAmount || 0;
   const releasedAmount = job.escrow.releasedAmount || 0;
-  const totalAmount = job.servicePrice?.amount ?? job.totalEstimateRange.min;
   const maxReleasable = getMaxReleasable();
 
   const transactionHistory: { type: string; amount: number; date: string; by: string }[] = [];
@@ -143,7 +181,7 @@ export default function AdminPaymentDetail() {
   }
   if (releasedAmount > 0) {
     transactionHistory.push({
-      type: 'Escrow Release',
+      type: 'Escrow release (meta)',
       amount: releasedAmount,
       date: new Date().toISOString(),
       by: 'Admin',
@@ -194,41 +232,75 @@ export default function AdminPaymentDetail() {
           </Card>
         </div>
 
+        <AdminJobPaymentBreakdownCard
+          job={job}
+          footer={
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Escrow / workflow status</span>
+                <span className={cn('font-medium', paymentStatus.class)}>{paymentStatus.label}</span>
+              </div>
+              {maxReleasable > 0 && (
+                <Button
+                  className="w-full sm:w-auto"
+                  onClick={() => {
+                    setReleaseAmount(String(maxReleasable));
+                    setReleaseModalOpen(true);
+                  }}
+                >
+                  Release remaining funds
+                </Button>
+              )}
+            </div>
+          }
+        />
+
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <DollarSign className="h-5 w-5" />
-              Payment Breakdown
-            </CardTitle>
+            <CardTitle className="text-lg">Record refund invoice</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Total Job Amount</span>
-              <span className="font-semibold">{formatCurrency(totalAmount)}</span>
+            <p className="text-sm text-muted-foreground">
+              Creates a refund line item record for the customer (e.g. after a partial cancellation). Totals should match your finance process.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="refund-labor">Labor refund (R)</Label>
+                <Input
+                  id="refund-labor"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={refundLabor}
+                  onChange={(e) => setRefundLabor(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="refund-mat">Materials refund (R)</Label>
+                <Input
+                  id="refund-mat"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={refundMaterials}
+                  onChange={(e) => setRefundMaterials(e.target.value)}
+                />
+              </div>
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Amount Already Released</span>
-              <span>{formatCurrency(releasedAmount)}</span>
+            <div className="space-y-1 max-w-xs">
+              <Label htmlFor="refund-card">Card last 4</Label>
+              <Input
+                id="refund-card"
+                inputMode="numeric"
+                maxLength={4}
+                value={refundCardLast4}
+                onChange={(e) => setRefundCardLast4(e.target.value)}
+                placeholder="4242"
+              />
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Remaining Balance</span>
-              <span>{formatCurrency(heldAmount)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Payment Status</span>
-              <span className={cn('font-medium', paymentStatus.class)}>{paymentStatus.label}</span>
-            </div>
-            {maxReleasable > 0 && (
-              <Button
-                className="w-full sm:w-auto"
-                onClick={() => {
-                  setReleaseAmount(String(maxReleasable));
-                  setReleaseModalOpen(true);
-                }}
-              >
-                Release Remaining Funds
-              </Button>
-            )}
+            <Button onClick={() => void handleRecordRefundInvoice()} disabled={refundBusy}>
+              {refundBusy ? 'Saving…' : 'Save refund invoice'}
+            </Button>
           </CardContent>
         </Card>
 

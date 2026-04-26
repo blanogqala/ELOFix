@@ -27,6 +27,7 @@ function createDefaultJobMeta() {
     rejectionReason: null,
     rejectionDetails: null,
     rejectedAt: null,
+    rejectedByProviderUserId: null,
   };
 }
 
@@ -122,9 +123,27 @@ function enrichJob(job, meta) {
   const status = toFrontendStatus(job.status, safeMeta);
   const held = safeMeta.escrow?.heldAmount ?? 0;
   const released = safeMeta.escrow?.releasedAmount ?? 0;
+  const provNum = job.providerAmount != null ? Number(job.providerAmount) : null;
+  const relToProvider =
+    job.releasedAmount != null && !Number.isNaN(Number(job.releasedAmount))
+      ? Number(job.releasedAmount)
+      : null;
+  let remainingAmount = 0;
+  if (provNum != null && !Number.isNaN(provNum)) {
+    const r = relToProvider != null && !Number.isNaN(relToProvider) ? relToProvider : 0;
+    remainingAmount = Math.max(0, provNum - r);
+  }
   return {
     ...stripJobForApi(job),
     status,
+    totalPrice: job.totalPrice != null ? Number(job.totalPrice) : null,
+    providerAmount: job.providerAmount != null ? Number(job.providerAmount) : null,
+    commissionAmount: job.commissionAmount != null ? Number(job.commissionAmount) : null,
+    releasedAmount: job.releasedAmount != null ? Number(job.releasedAmount) : null,
+    remainingAmount,
+    isFullyReleased: typeof job.isFullyReleased === "boolean" ? job.isFullyReleased : false,
+    escrowSecondReleaseDone:
+      typeof job.escrowSecondReleaseDone === "boolean" ? job.escrowSecondReleaseDone : false,
     escrow: {
       enabled: true,
       holdPercent: 0,
@@ -152,6 +171,7 @@ function enrichJob(job, meta) {
     rejectionReason: safeMeta.rejectionReason,
     rejectionDetails: safeMeta.rejectionDetails,
     rejectedAt: safeMeta.rejectedAt,
+    rejectedByProviderUserId: safeMeta.rejectedByProviderUserId || null,
   };
 }
 

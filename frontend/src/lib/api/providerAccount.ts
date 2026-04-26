@@ -19,8 +19,12 @@ export interface ProviderEarningJobRow {
   createdAt: string;
   /** Optional: if API adds explicit job total distinct from `amount` */
   totalPrice?: number;
-  /** Optional: partial/full released amount when API supports it */
+  commissionAmount?: number;
+  providerAmount?: number;
+  /** Cumulative amount released to provider (not platform fee) */
   releasedAmount?: number;
+  /** Provider share not yet released */
+  remainingAmount?: number;
   /** Optional: may appear on list payload or only on single-job earnings fetch */
   customerName?: string;
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -229,6 +229,15 @@ export function MaterialPaymentSection({
     deliveryFee?: number;
     materials: MaterialLine[];
   } | null>(null);
+
+  const hasCourierOption = deliveryProviders.length > 0;
+
+  useEffect(() => {
+    if (!hasCourierOption) {
+      setSelectedDeliveryType(prev => (prev === 'PROVIDER' ? 'SELF' : prev));
+      setSelectedProviderId('');
+    }
+  }, [hasCourierOption]);
 
   // Group materials by store
   const materials = job.materials || [];
@@ -489,7 +498,14 @@ export function MaterialPaymentSection({
   };
 
   const handlePurchaseFlowStep1Next = () => {
-    if (purchaseFlowStore && selectedDeliveryType === 'PROVIDER' && !selectedProviderId) return;
+    if (
+      purchaseFlowStore &&
+      hasCourierOption &&
+      selectedDeliveryType === 'PROVIDER' &&
+      !selectedProviderId
+    ) {
+      return;
+    }
     setPurchaseFlowStep(2);
   };
 
@@ -875,20 +891,22 @@ export function MaterialPaymentSection({
                 </div>
               )}
 
-              <div className="p-3 border rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <RadioGroupItem value="PROVIDER" id="provider-delivery" />
-                  <Label htmlFor="provider-delivery" className="cursor-pointer flex-1">
-                    <p className="font-medium">Hire a Delivery Provider</p>
-                    <p className="text-sm text-muted-foreground">
-                      Choose from nearby delivery providers
-                    </p>
-                  </Label>
+              {hasCourierOption && (
+                <div className="p-3 border rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <RadioGroupItem value="PROVIDER" id="provider-delivery" />
+                    <Label htmlFor="provider-delivery" className="cursor-pointer flex-1">
+                      <p className="font-medium">Hire a Delivery Provider</p>
+                      <p className="text-sm text-muted-foreground">
+                        Choose from nearby delivery providers
+                      </p>
+                    </Label>
+                  </div>
                 </div>
-              </div>
+              )}
             </RadioGroup>
 
-            {selectedDeliveryType === 'PROVIDER' && (
+            {hasCourierOption && selectedDeliveryType === 'PROVIDER' && (
               <div className="space-y-2">
                 <Label>Select a provider</Label>
                 <RadioGroup
@@ -931,7 +949,7 @@ export function MaterialPaymentSection({
             <Button
               onClick={handleConfirmDeliveryOption}
               disabled={
-                selectedDeliveryType === 'PROVIDER' && !selectedProviderId
+                hasCourierOption && selectedDeliveryType === 'PROVIDER' && !selectedProviderId
               }
               className="btn-accent"
             >
@@ -974,8 +992,8 @@ export function MaterialPaymentSection({
               </div>
             </div>
 
-            {/* Delivery Selection (if no store delivery) */}
-            {selectedStore && !selectedStore.hasDelivery && (
+            {/* Delivery Selection (if no store delivery and couriers exist) */}
+            {selectedStore && !selectedStore.hasDelivery && hasCourierOption && (
               <div>
                 <Label className="mb-2 block">Select Delivery Provider</Label>
                 <RadioGroup value={selectedDeliveryId} onValueChange={setSelectedDeliveryId}>
@@ -1156,18 +1174,20 @@ export function MaterialPaymentSection({
                     </div>
                   )}
 
-                  <div className="p-3 border rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <RadioGroupItem value="PROVIDER" id="purchase-provider" />
-                      <Label htmlFor="purchase-provider" className="cursor-pointer flex-1">
-                        <p className="font-medium">Request a delivery provider</p>
-                        <p className="text-sm text-muted-foreground">Choose from nearby delivery providers</p>
-                      </Label>
+                  {hasCourierOption && (
+                    <div className="p-3 border rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <RadioGroupItem value="PROVIDER" id="purchase-provider" />
+                        <Label htmlFor="purchase-provider" className="cursor-pointer flex-1">
+                          <p className="font-medium">Request a delivery provider</p>
+                          <p className="text-sm text-muted-foreground">Choose from nearby delivery providers</p>
+                        </Label>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </RadioGroup>
 
-                {selectedDeliveryType === 'PROVIDER' && (
+                {hasCourierOption && selectedDeliveryType === 'PROVIDER' && (
                   <div className="space-y-2">
                     <Label>Select a delivery provider</Label>
                     <RadioGroup value={selectedProviderId} onValueChange={setSelectedProviderId}>
@@ -1207,7 +1227,7 @@ export function MaterialPaymentSection({
                 <Button variant="outline" onClick={() => setPurchaseFlowOpen(false)}>Cancel</Button>
                 <Button
                   onClick={handlePurchaseFlowStep1Next}
-                  disabled={selectedDeliveryType === 'PROVIDER' && !selectedProviderId}
+                  disabled={hasCourierOption && selectedDeliveryType === 'PROVIDER' && !selectedProviderId}
                   className="btn-accent"
                 >
                   Continue to Payment

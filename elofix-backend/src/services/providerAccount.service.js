@@ -6,6 +6,7 @@ const earningService = require("./earning.service");
 const bankCrypto = require("../utils/bankCrypto");
 const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
+const { enrichJob, normalizeMeta } = require("./jobMeta.service");
 
 function coerceMoney(value) {
   const n = Number(value);
@@ -25,7 +26,8 @@ async function requireProviderByUserId(userId) {
 }
 
 function jobToEarningRow(job) {
-  const price = Number(job.price) || 0;
+  const e = enrichJob(job, normalizeMeta(job.meta));
+  const amount = e.totalPrice != null && !Number.isNaN(Number(e.totalPrice)) ? Number(e.totalPrice) : Number(job.price) || 0;
   const released = Boolean(job.paymentReleased);
   const paidLabor = Boolean(job.laborPaid);
   let status = "PENDING";
@@ -36,11 +38,17 @@ function jobToEarningRow(job) {
     id: job.id,
     title: job.title,
     category: job.category,
-    amount: price,
+    amount,
+    totalPrice: e.totalPrice,
+    commissionAmount: e.commissionAmount,
+    providerAmount: e.providerAmount,
+    releasedAmount: e.releasedAmount,
+    remainingAmount: e.remainingAmount,
     status,
     laborPaid: paidLabor,
     paymentReleased: released,
     createdAt: job.createdAt instanceof Date ? job.createdAt.toISOString() : String(job.createdAt),
+    customerName: job.customer?.name,
   };
 }
 
@@ -90,6 +98,9 @@ async function getProviderEarnings(userId) {
   const jobs = await prisma.job.findMany({
     where: { providerId: providerUserId },
     orderBy: { createdAt: "desc" },
+    include: {
+      customer: { select: { name: true } },
+    },
   });
 
   const ledger = await getLedgerSummary(provider.id);
