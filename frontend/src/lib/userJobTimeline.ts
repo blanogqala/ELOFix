@@ -1,14 +1,11 @@
 import type { Job, JobStatus } from '@/types';
 import {
   UNIFIED_TIMELINE_STEPS,
-  UNIFIED_TIMELINE_LAST_INDEX,
   getUnifiedTimelineStepIndex,
 } from '@/lib/jobStatusMapping';
 
 /** Fixed 6-step labels shown on user job detail timeline (UI only). */
 export const USER_TIMELINE_STEPS = UNIFIED_TIMELINE_STEPS;
-
-const LAST_STEP_INDEX = UNIFIED_TIMELINE_LAST_INDEX;
 
 /**
  * Maps backend job status to a linear timeline index 0..5.
@@ -29,14 +26,50 @@ export interface UserTimelineViewState {
   terminalAt?: string;
 }
 
+function hasNonEmptyObject(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length > 0);
+}
+
+function inferCancelledPinIndex(job: Job): number {
+  // Prefer explicit pre-cancel status when available.
+  if (job.cancelledAtStatus && job.cancelledAtStatus !== 'CANCELLED' && job.cancelledAtStatus !== 'REJECTED') {
+    return getUserTimelineStepIndex(job.cancelledAtStatus);
+  }
+
+  const hasAwaitingConfirmationSignals =
+    (job.jobNotes || []).some((n) => /awaiting confirmation|marked as complete|mark as complete/i.test(String(n.message || ''))) ||
+    Boolean(job.completionConfirmedByUser);
+  if (hasAwaitingConfirmationSignals) return 4;
+
+  const hasInProgressSignals =
+    Boolean(job.laborPaid) &&
+    ((job.materialPayments || []).some((p) => p.status === 'paid') || (job.storeOrders || []).length > 0) &&
+    (((job.chat || []).length > 0) || ((job.jobNotes || []).length > 0));
+  if (hasInProgressSignals) return 3;
+
+  const hasPaymentOrPricingSignals =
+    Boolean(job.servicePrice) ||
+    Boolean(job.servicePayment) ||
+    Boolean(job.laborPaid) ||
+    (job.materialPayments || []).length > 0 ||
+    (job.storeOrders || []).length > 0;
+  if (hasPaymentOrPricingSignals) return 2;
+
+  const hasInspectionSignals =
+    Boolean(job.providerId) ||
+    hasNonEmptyObject(job.providerAdjustedRequirements?.measurements) ||
+    Boolean(job.providerAdjustedRequirements?.requirementNotes?.trim());
+  if (hasInspectionSignals) return 1;
+
+  return 0;
+}
+
 /**
  * Derives timeline indices and terminal (cancel/reject) pin for rendering.
  */
 export function getUserTimelineViewState(job: Job): UserTimelineViewState {
   if (job.status === 'CANCELLED') {
-    const from = job.cancelledAtStatus;
-    const pinIndex =
-      from != null ? getUserTimelineStepIndex(from) : LAST_STEP_INDEX;
+    const pinIndex = inferCancelledPinIndex(job);
     return {
       currentIdx: pinIndex,
       pinIndex,

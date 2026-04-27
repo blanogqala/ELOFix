@@ -16,8 +16,8 @@ interface CountResponse {
   count: number;
 }
 
-export async function getNotifications(userId: string): Promise<AppNotification[]> {
-  const { data } = await apiClient.get<NotificationsResponse>('/notifications', { params: { userId } });
+export async function getNotifications(): Promise<AppNotification[]> {
+  const { data } = await apiClient.get<NotificationsResponse>('/notifications');
   return Array.isArray(data?.notifications) ? data.notifications : [];
 }
 
@@ -27,18 +27,16 @@ export async function addNotification(notification: Omit<AppNotification, 'id' |
   return data.notification;
 }
 
-export async function markAsRead(userId: string, notificationId: string): Promise<void> {
-  await apiClient.patch(`/notifications/${notificationId}/read`, { userId });
+export async function markAsRead(notificationId: string): Promise<void> {
+  await apiClient.patch(`/notifications/${notificationId}/read`);
 }
 
-export async function markAllAsRead(userId: string): Promise<void> {
-  await apiClient.patch('/notifications/read-all', { userId });
+export async function markAllAsRead(): Promise<void> {
+  await apiClient.patch('/notifications/read-all');
 }
 
-export async function getUnreadCount(userId: string): Promise<number> {
-  const { data } = await apiClient.get<CountResponse>('/notifications/unread-count', {
-    params: { userId },
-  });
+export async function getUnreadCount(): Promise<number> {
+  const { data } = await apiClient.get<CountResponse>('/notifications/unread-count');
   return typeof data?.count === 'number' ? data.count : 0;
 }
 

@@ -1,11 +1,13 @@
 import { ReactNode, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Button } from '@/components/ui/button';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getUnreadCount } from '@/lib/api/notifications';
+import { socket } from '@/lib/socket';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -81,18 +83,38 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const queryClient = useQueryClient();
   const { isActiveProvider, isApproved, isProfileComplete } = useProviderStatus();
 
   const notificationsHref = useMemo(() => notificationsPathForRole(user?.role), [user?.role]);
 
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications', 'unread-count', user?.id],
-    queryFn: () => getUnreadCount(user!.id),
+    queryFn: () => getUnreadCount(),
     enabled: Boolean(user?.id),
-    refetchInterval: 12_000,
     refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const refreshUnread = () => {
+      void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
+    };
+
+    socket.on('notification:new', refreshUnread);
+    socket.on('message:new', refreshUnread);
+    socket.on('notification:read', refreshUnread);
+    socket.on('notification:read-all', refreshUnread);
+
+    return () => {
+      socket.off('notification:new', refreshUnread);
+      socket.off('message:new', refreshUnread);
+      socket.off('notification:read', refreshUnread);
+      socket.off('notification:read-all', refreshUnread);
+    };
+  }, [queryClient, user?.id]);
 
   const showInactiveProviderOverlay =
     user?.role === 'provider' &&

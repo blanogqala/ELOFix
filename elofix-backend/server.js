@@ -1,5 +1,6 @@
 require("dotenv/config");
 const http = require("http");
+const { Server } = require("socket.io");
 const app = require("./src/app");
 const prisma = require("./src/config/prisma");
 const { startStuckWithdrawalRecovery } = require("./src/jobs/stuckWithdrawalRecovery");
@@ -25,6 +26,25 @@ process.on("uncaughtException", (err) => {
 });
 
 const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
+global.io = io;
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  socket.on("join", (userId) => {
+    if (!userId) return;
+    socket.join(String(userId));
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
+});
 
 server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);

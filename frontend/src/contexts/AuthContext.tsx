@@ -4,6 +4,7 @@ import { AuthUser, UserRole } from '@/types';
 import * as authApi from '@/lib/api/auth';
 import { queryKeys } from '@/lib/queryKeys';
 import { firebaseEnabled, firebaseOnAuthStateChanged, auth as firebaseAuth } from '@/lib/firebase';
+import { socket } from '@/lib/socket';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -94,6 +95,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsLoading(false);
   }, [refreshProfile, invalidateJobQueries]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      socket.disconnect();
+      return;
+    }
+
+    socket.connect();
+    socket.emit('join', user.id);
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [user?.id]);
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);

@@ -60,6 +60,36 @@ import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTime
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
+
+function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
+  if (!values) return undefined;
+  const exact = values[key];
+  if (typeof exact === 'number' && Number.isFinite(exact)) return exact;
+  const fallback = Object.entries(values).find(([k, v]) => k.toLowerCase() === key && Number.isFinite(Number(v)));
+  if (!fallback) return undefined;
+  return Number(fallback[1]);
+}
+
+function formatMeasurementRows(values: Record<string, number> | undefined): Array<{ label: string; value: string }> {
+  if (!values) return [];
+  const area = getMeasurementValue(values, 'area');
+  const length = getMeasurementValue(values, 'length');
+  const width = getMeasurementValue(values, 'width');
+  const rows: Array<{ label: string; value: string }> = [];
+
+  if (area !== undefined) rows.push({ label: 'Area', value: `${area} m²` });
+  if (length !== undefined) rows.push({ label: 'Length', value: `${length} m` });
+  if (width !== undefined) rows.push({ label: 'Width', value: `${width} m` });
+
+  for (const [k, v] of Object.entries(values)) {
+    const key = k.toLowerCase();
+    if (key === 'area' || key === 'length' || key === 'width') continue;
+    rows.push({ label: k, value: String(v) });
+  }
+
+  return rows;
+}
+
 export default function ProviderJobDetail() {
   const { id } = useParams<{ id: string }>();
   const jobId = id ?? '';
@@ -100,6 +130,9 @@ export default function ProviderJobDetail() {
   const [editRequirementsOpen, setEditRequirementsOpen] = useState(false);
   const [editMeasurements, setEditMeasurements] = useState<Partial<Measurements>>({});
   const [editRequirementNotes, setEditRequirementNotes] = useState('');
+  const [editArea, setEditArea] = useState('');
+  const [editLength, setEditLength] = useState('');
+  const [editWidth, setEditWidth] = useState('');
   const [paymentDetailsOpen, setPaymentDetailsOpen] = useState(false);
   const [legacyInvoice, setLegacyInvoice] = useState<{ paidAt: string; cardLast4?: string } | null>(null);
   const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
@@ -296,9 +329,38 @@ export default function ProviderJobDetail() {
 
   const handleSaveRequirements = async () => {
     if (!job) return;
+    const parseOptional = (raw: string): number | undefined => {
+      const trimmed = raw.trim();
+      if (!trimmed) return undefined;
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
+    const area = parseOptional(editArea);
+    const length = parseOptional(editLength);
+    const width = parseOptional(editWidth);
+    const hasCoreMeasurement = area !== undefined || length !== undefined || width !== undefined;
+    if (!hasCoreMeasurement) {
+      toast({
+        title: 'Missing measurements',
+        description: 'Enter at least one of Area, Length, or Width before saving.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const values: Record<string, number> = {
+      ...(area !== undefined ? { area } : {}),
+      ...(length !== undefined ? { length } : {}),
+      ...(width !== undefined ? { width } : {}),
+    };
+
     try {
       await updateProviderRequirements(job.id, {
-        measurements: Object.keys(editMeasurements).length > 0 ? editMeasurements : undefined,
+        measurements: {
+          ...editMeasurements,
+          values,
+        },
         requirementNotes: editRequirementNotes || undefined,
       });
       await syncJobsAfterMutation();
@@ -314,7 +376,22 @@ export default function ProviderJobDetail() {
   const effectiveMeasurements = job
     ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
     : null;
+  const canProceedWithSpecs = Boolean(
+    effectiveMeasurements &&
+      ((effectiveMeasurements.values && Object.keys(effectiveMeasurements.values).length > 0) ||
+        (effectiveMeasurements.movingItems && effectiveMeasurements.movingItems.length > 0) ||
+        (effectiveMeasurements.plumbingIssue &&
+          (Boolean(effectiveMeasurements.plumbingIssue.type) ||
+            Boolean(effectiveMeasurements.plumbingIssue.description))) ||
+        effectiveMeasurements.cameraAssist)
+  );
   const requirementNotes = job?.providerAdjustedRequirements?.requirementNotes;
+  const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
+  const isCancelledJob = job?.status === 'CANCELLED';
+  const cancellationReasonText =
+    (job?.cancellationDetails && job.cancellationDetails.trim()) ||
+    (job?.cancellationReason && job.cancellationReason.trim()) ||
+    'No reason provided';
   const locationParts = job?.location
     ? [job.location.address, job.location.city, job.location.area, job.location.suburb].filter(Boolean)
     : [];
@@ -431,6 +508,7 @@ export default function ProviderJobDetail() {
                 return USER_TIMELINE_STEPS.map((label, index, arr) => {
                   const insight = getTimelineStepInsight(job, index);
                   const isTerminalStep = isTerminal && index === pinIndex;
+                  const isFutureTerminalStep = isTerminal && index > pinIndex;
                   const isActive =
                     !isTerminal &&
                     job.status !== 'COMPLETED' &&
@@ -453,14 +531,23 @@ export default function ProviderJobDetail() {
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              onMouseEnter={() => lockedTimelineStep === null && setHoveredTimelineStep(index)}
-                              onMouseLeave={() => lockedTimelineStep === null && setHoveredTimelineStep(null)}
+                              onMouseEnter={() => {
+                                if (isFutureTerminalStep) return;
+                                if (lockedTimelineStep === null) setHoveredTimelineStep(index);
+                              }}
+                              onMouseLeave={() => {
+                                if (isFutureTerminalStep) return;
+                                if (lockedTimelineStep === null) setHoveredTimelineStep(null);
+                              }}
                               onClick={() => {
+                                if (isFutureTerminalStep) return;
                                 setLockedTimelineStep((current) => (current === index ? null : index));
                                 setHoveredTimelineStep(null);
                               }}
+                              disabled={isFutureTerminalStep}
                               className={cn(
                                 "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold transition-transform hover:scale-105 focus:outline-none",
+                                isFutureTerminalStep && "opacity-40 cursor-not-allowed",
                                 isPast ? "bg-success text-success-foreground" :
                                 isTerminalStep ? "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2" :
                                 isActive ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2" :
@@ -472,8 +559,14 @@ export default function ProviderJobDetail() {
                           </PopoverTrigger>
                           <PopoverContent className="w-64">
                             <div className="space-y-1 text-xs">
-                              <p className="font-semibold">{insight.stepLabel}</p>
-                              <p className="text-muted-foreground">{insight.nextAction}</p>
+                              <p className="font-semibold">
+                                {isTerminalStep && isCancelled ? 'Cancelled' : insight.stepLabel}
+                              </p>
+                              <p className="text-muted-foreground">
+                                {isTerminalStep && isCancelled
+                                  ? `Reason: ${cancellationReasonText}`
+                                  : insight.nextAction}
+                              </p>
                             </div>
                           </PopoverContent>
                         </Popover>
@@ -557,7 +650,7 @@ export default function ProviderJobDetail() {
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-muted-foreground text-sm">Requirements & Measurements</p>
+              <p className="text-muted-foreground text-sm">Measurements & Requirements</p>
               <Button
                 variant="ghost"
                 size="sm"
@@ -565,6 +658,10 @@ export default function ProviderJobDetail() {
                 onClick={() => {
                   setEditRequirementsOpen(true);
                   setEditMeasurements(job.providerAdjustedRequirements?.measurements || {});
+                  const openValues = job.providerAdjustedRequirements?.measurements?.values || job.measurements?.values || {};
+                  setEditArea(openValues.area != null ? String(openValues.area) : '');
+                  setEditLength(openValues.length != null ? String(openValues.length) : '');
+                  setEditWidth(openValues.width != null ? String(openValues.width) : '');
                   setEditRequirementNotes(job.providerAdjustedRequirements?.requirementNotes || '');
                 }}
               >
@@ -595,17 +692,19 @@ export default function ProviderJobDetail() {
                       {effectiveMeasurements.plumbingIssue.description?.trim() || job.description || '—'}
                     </div>
                   </>
-                ) : (
-                  Object.entries(effectiveMeasurements.values || {}).map(([k, v]) => (
-                    <div key={k} className="flex justify-between">
-                      <span className="capitalize text-muted-foreground">{k}</span>
-                      <span>{v}</span>
+                ) : measurementRows.length > 0 ? (
+                  measurementRows.map((row) => (
+                    <div key={row.label} className="flex justify-between">
+                      <span className="capitalize text-muted-foreground">{row.label}</span>
+                      <span>{row.value}</span>
                     </div>
                   ))
+                ) : (
+                  <p className="text-muted-foreground">No measurement values provided.</p>
                 )}
                 {requirementNotes && (
                   <div className="pt-2 border-t border-border mt-2">
-                    <p className="text-muted-foreground text-xs mb-1">Provider notes</p>
+                    <p className="text-muted-foreground text-xs mb-1">Notes</p>
                     <p>{requirementNotes}</p>
                   </div>
                 )}
@@ -659,6 +758,11 @@ export default function ProviderJobDetail() {
           {(job.status === 'INSPECTED' || job.status === 'ASSIGNED') && !job.servicePrice && (
             <div className="p-4 border border-primary/40 rounded-lg space-y-4 ">
               <h3 className="font-medium">Submit Service Price</h3>
+              {!canProceedWithSpecs && (
+                <p className="text-warning text-sm">
+                  You must add measurements before completing this step.
+                </p>
+              )}
               <div className="flex gap-2 flex-wrap">
                 <Input
                   type="number"
@@ -673,7 +777,10 @@ export default function ProviderJobDetail() {
                   onChange={e => setServicePriceNote(e.target.value)}
                   className="flex-1 min-w-[120px]"
                 />
-                <Button onClick={handleSubmitServicePrice} disabled={!servicePriceAmount || parseFloat(servicePriceAmount) <= 0}>
+                <Button
+                  onClick={handleSubmitServicePrice}
+                  disabled={!canProceedWithSpecs || !servicePriceAmount || parseFloat(servicePriceAmount) <= 0}
+                >
                   Submit Price
                 </Button>
               </div>
@@ -710,7 +817,12 @@ export default function ProviderJobDetail() {
             <div className="p-4 border border-primary/40 rounded-lg space-y-4">
               <h3 className="font-medium">Service Inspection</h3>
               <p className="text-sm text-muted-foreground">Mark inspection done, then submit your service price.</p>
-              <Button onClick={handleMarkInspectionDone}>
+              {!canProceedWithSpecs && (
+                <p className="text-warning text-sm">
+                  You must add measurements before completing this step.
+                </p>
+              )}
+              <Button onClick={handleMarkInspectionDone} disabled={!canProceedWithSpecs}>
                 Mark Inspection Done
               </Button>
             </div>
@@ -1200,33 +1312,46 @@ export default function ProviderJobDetail() {
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div>
-                <label className="text-sm font-medium">Measurement values (e.g. area: 25)</label>
+                <label className="text-sm font-medium">Area (m²)</label>
                 <Input
-                  placeholder="area=25, length=10..."
-                  value={
-                    editMeasurements.values
-                      ? Object.entries(editMeasurements.values).map(([k, v]) => `${k}=${v}`).join(', ')
-                      : ''
-                  }
-                  onChange={e => {
-                    const pairs = e.target.value.split(',').map(s => s.trim());
-                    const values: Record<string, number> = {};
-                    for (const p of pairs) {
-                      const [k, v] = p.split('=').map(s => s.trim());
-                      if (k && v && !isNaN(parseFloat(v))) values[k] = parseFloat(v);
-                    }
-                    setEditMeasurements(prev => ({ ...prev, values: Object.keys(values).length ? values : undefined }));
-                  }}
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="e.g. 20"
+                  value={editArea}
+                  onChange={(e) => setEditArea(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Requirement notes (inspection-corrected)</label>
+                <label className="text-sm font-medium">Length (m)</label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="e.g. 5"
+                  value={editLength}
+                  onChange={(e) => setEditLength(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Width (m)</label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="e.g. 4"
+                  value={editWidth}
+                  onChange={(e) => setEditWidth(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Additional Notes (optional)</label>
                 <Textarea
                   placeholder="Add notes about dimensions, quantities, or work requirements..."
                   value={editRequirementNotes}
                   onChange={e => setEditRequirementNotes(e.target.value)}
                   rows={3}
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Enter at least one of Area, Length, or Width.
+                </p>
               </div>
             </div>
             <DialogFooter>

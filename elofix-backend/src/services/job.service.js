@@ -661,6 +661,42 @@ function coerceNumber(value, fallback = 0) {
   return Number.isNaN(n) ? fallback : n;
 }
 
+function hasMeaningfulMeasurements(measurements) {
+  if (!measurements || typeof measurements !== "object" || Array.isArray(measurements)) {
+    return false;
+  }
+
+  const values = measurements.values;
+  const hasValues =
+    values &&
+    typeof values === "object" &&
+    !Array.isArray(values) &&
+    Object.keys(values).length > 0;
+  const hasMovingItems =
+    Array.isArray(measurements.movingItems) && measurements.movingItems.length > 0;
+  const hasIssue =
+    measurements.plumbingIssue &&
+    typeof measurements.plumbingIssue === "object" &&
+    (String(measurements.plumbingIssue.type || "").trim().length > 0 ||
+      String(measurements.plumbingIssue.description || "").trim().length > 0);
+  const hasCameraAssist =
+    measurements.cameraAssist &&
+    typeof measurements.cameraAssist === "object";
+
+  return Boolean(hasValues || hasMovingItems || hasIssue || hasCameraAssist);
+}
+
+function assertMeasurementsReadyForSpecification(job, meta) {
+  const providerAdjusted = meta?.providerAdjustedRequirements?.measurements;
+  const mergedMeasurements = {
+    ...(job?.measurements && typeof job.measurements === "object" ? job.measurements : {}),
+    ...(providerAdjusted && typeof providerAdjusted === "object" ? providerAdjusted : {}),
+  };
+  if (!hasMeaningfulMeasurements(mergedMeasurements)) {
+    throw new AppError("Measurements are required before completing specifications.", 400);
+  }
+}
+
 async function finalizeJob(job, meta) {
   const base = enrichJob(job, meta);
   const slug = String(base.category || "").trim();
@@ -684,6 +720,10 @@ async function finalizeJob(job, meta) {
 async function updateJobStatus(jobId, status) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (String(status) === "INSPECTED") {
+    const metaBefore = await getJobMeta(jobId);
+    assertMeasurementsReadyForSpecification(job, metaBefore);
+  }
   const dbStatus = mapFrontendStatusToDb(status);
   let updatedJob = job;
   if (dbStatus && dbStatus !== job.status) {
@@ -770,6 +810,12 @@ async function addChatMessage(jobId, author, message) {
     String(author.userId) === String(job.customerId) ? job.providerId : job.customerId;
   const roleLabel = author.role === "CUSTOMER" ? "customer" : String(author.role || "user").toLowerCase();
   if (recipientId) {
+    if (global.io) {
+      global.io.to(String(recipientId)).emit("message:new", {
+        jobId,
+        senderId: String(author.userId),
+      });
+    }
     await notificationEvents.notifyChatMessage({
       recipientId: String(recipientId),
       jobId,
@@ -786,6 +832,8 @@ async function addChatMessage(jobId, author, message) {
 async function submitServicePrice(jobId, amount, note) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  const metaBefore = await getJobMeta(jobId);
+  assertMeasurementsReadyForSpecification(job, metaBefore);
   const safeAmount = coerceNumber(amount);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,

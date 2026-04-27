@@ -46,6 +46,7 @@ export default function ServiceRequest() {
   const [description, setDescription] = useState('');
   const [images, setImages] = useState<string[]>([]);
   const [measurements, setMeasurements] = useState<Measurements>({ source: 'MANUAL', values: {} });
+  const [useMeasurements, setUseMeasurements] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
@@ -108,7 +109,9 @@ export default function ServiceRequest() {
     setIsSubmitting(true);
     try {
       const measurementsPayload =
-        currentCategory?.step3Type === 'issue' && measurements.plumbingIssue
+        !useMeasurements
+          ? undefined
+          : currentCategory?.step3Type === 'issue' && measurements.plumbingIssue
           ? {
               ...measurements,
               plumbingIssue: {
@@ -167,6 +170,7 @@ export default function ServiceRequest() {
       case 3: {
         if (description.length <= 10) return false;
         if (!currentCategory) return false;
+        if (!useMeasurements) return true;
         if (currentCategory.step3Type === 'measurements') {
           const vals = Object.keys(measurements.values).length > 0;
           const camA = measurements.cameraAssist
@@ -366,7 +370,21 @@ export default function ServiceRequest() {
                 )}
               </div>
 
-              {currentCategory && (
+              <div className="rounded-lg border border-primary bg-primary/10 p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={useMeasurements}
+                    onChange={(e) => setUseMeasurements(e.target.checked)}
+                  />
+                  Add measurements or detailed requirements
+                </label>
+                <p className="mt-1 text-xs font-bold text-accent">
+                  Optional for request submission. You can submit now and your provider can add/update measurements after inspection (This can give better understanding of the task).
+                </p>
+              </div>
+
+              {useMeasurements && currentCategory && (
                 <Step3DynamicInput
                   category={currentCategory}
                   measurements={measurements}

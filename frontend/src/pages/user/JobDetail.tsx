@@ -61,6 +61,35 @@ import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTime
 import { getStandardizedStatusLabel, getUnifiedTimelineStepIndex } from '@/lib/jobStatusMapping';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
 
+function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
+  if (!values) return undefined;
+  const exact = values[key];
+  if (typeof exact === 'number' && Number.isFinite(exact)) return exact;
+  const fallback = Object.entries(values).find(([k, v]) => k.toLowerCase() === key && Number.isFinite(Number(v)));
+  if (!fallback) return undefined;
+  return Number(fallback[1]);
+}
+
+function formatMeasurementRows(values: Record<string, number> | undefined): Array<{ label: string; value: string }> {
+  if (!values) return [];
+  const area = getMeasurementValue(values, 'area');
+  const length = getMeasurementValue(values, 'length');
+  const width = getMeasurementValue(values, 'width');
+  const rows: Array<{ label: string; value: string }> = [];
+
+  if (area !== undefined) rows.push({ label: 'Area', value: `${area} m²` });
+  if (length !== undefined) rows.push({ label: 'Length', value: `${length} m` });
+  if (width !== undefined) rows.push({ label: 'Width', value: `${width} m` });
+
+  for (const [k, v] of Object.entries(values)) {
+    const key = k.toLowerCase();
+    if (key === 'area' || key === 'length' || key === 'width') continue;
+    rows.push({ label: k, value: String(v) });
+  }
+
+  return rows;
+}
+
 export default function JobDetail() {
   const { id } = useParams();
   const jobId = id ?? '';
@@ -456,6 +485,11 @@ export default function JobDetail() {
     ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
     : null;
   const hasMaterialsPaid = job?.materialPayments?.some(p => p.status === 'paid') || false;
+  const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
+  const cancellationReasonText =
+    (job?.cancellationDetails && job.cancellationDetails.trim()) ||
+    (job?.cancellationReason && job.cancellationReason.trim()) ||
+    'No reason provided';
 
   // Infer completion readiness from provider-authored notes
   const providerMarkedComplete = job?.status === 'IN_PROGRESS' && 
@@ -552,6 +586,7 @@ export default function JobDetail() {
                 return USER_TIMELINE_STEPS.map((label, index, arr) => {
                   const insight = getTimelineStepInsight(job, index);
                   const isTerminalStep = isTerminal && index === pinIndex;
+                  const isFutureTerminalStep = isTerminal && index > pinIndex;
                   const isActive =
                     !isTerminal &&
                     job.status !== 'COMPLETED' &&
@@ -574,14 +609,23 @@ export default function JobDetail() {
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              onMouseEnter={() => lockedTimelineStep === null && setHoveredTimelineStep(index)}
-                              onMouseLeave={() => lockedTimelineStep === null && setHoveredTimelineStep(null)}
+                              onMouseEnter={() => {
+                                if (isFutureTerminalStep) return;
+                                if (lockedTimelineStep === null) setHoveredTimelineStep(index);
+                              }}
+                              onMouseLeave={() => {
+                                if (isFutureTerminalStep) return;
+                                if (lockedTimelineStep === null) setHoveredTimelineStep(null);
+                              }}
                               onClick={() => {
+                                if (isFutureTerminalStep) return;
                                 setLockedTimelineStep((current) => (current === index ? null : index));
                                 setHoveredTimelineStep(null);
                               }}
+                              disabled={isFutureTerminalStep}
                               className={cn(
                                 "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold transition-transform hover:scale-105 focus:outline-none",
+                                isFutureTerminalStep && "opacity-40 cursor-not-allowed",
                                 isPast ? "bg-success text-success-foreground" :
                                 isTerminalStep ? "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2" :
                                 isActive ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2" :
@@ -593,8 +637,14 @@ export default function JobDetail() {
                           </PopoverTrigger>
                           <PopoverContent className="w-64">
                             <div className="space-y-1 text-xs">
-                              <p className="font-semibold">{insight.stepLabel}</p>
-                              <p className="text-muted-foreground">{insight.nextAction}</p>
+                              <p className="font-semibold">
+                                {isTerminalStep && isCancelled ? 'Cancelled' : insight.stepLabel}
+                              </p>
+                              <p className="text-muted-foreground">
+                                {isTerminalStep && isCancelled
+                                  ? `Reason: ${cancellationReasonText}`
+                                  : insight.nextAction}
+                              </p>
                             </div>
                           </PopoverContent>
                         </Popover>
@@ -852,7 +902,7 @@ export default function JobDetail() {
             {/* Measurements / Requirements */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Requirements</CardTitle>
+                <CardTitle className="text-lg">Measurements & Requirements</CardTitle>
               </CardHeader>
               <CardContent>
                 {effectiveMeasurements?.cameraAssist && (
@@ -885,19 +935,21 @@ export default function JobDetail() {
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : measurementRows.length > 0 ? (
                   <div className="grid grid-cols-2 gap-4 text-sm">
-                    {Object.entries(effectiveMeasurements?.values || {}).map(([key, value]) => (
-                      <div key={key}>
-                        <p className="text-muted-foreground capitalize">{key}</p>
-                        <p className="font-medium">{value}</p>
+                    {measurementRows.map((row) => (
+                      <div key={row.label}>
+                        <p className="text-muted-foreground">{row.label}</p>
+                        <p className="font-medium">{row.value}</p>
                       </div>
                     ))}
                   </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No measurement values provided.</p>
                 )}
                 {job.providerAdjustedRequirements?.requirementNotes && (
                   <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-sm text-muted-foreground mb-1">Provider notes</p>
+                    <p className="text-sm text-muted-foreground mb-1">Notes</p>
                     <p className="text-sm">{job.providerAdjustedRequirements.requirementNotes}</p>
                   </div>
                 )}

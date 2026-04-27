@@ -315,8 +315,10 @@ export async function getJobById(id: string): Promise<Job | null> {
     const { data } = await apiClient.get<BackendJobResponse>(`/jobs/${id}`);
     return data?.job ? toFrontendJob(data.job) : null;
   } catch (error) {
-    const status = (error as { status?: number })?.status;
-    if (status === 404) return null;
+    const status =
+      (error as { status?: number })?.status ??
+      (error as { response?: { status?: number } })?.response?.status;
+    if (status === 404 || status === 403) return null;
     throw error;
   }
 }
@@ -349,20 +351,18 @@ export async function createJob(request: ServiceRequest, userId: string, userNam
   if (cam?.source === 'camera' && (camArea === undefined || camArea < 0.5)) {
     throw new Error('Camera measurement must be at least 0.5 m² with valid dimensions.');
   }
-  if (!request.measurements || (valuesCount === 0 && !hasMovingItems && !hasIssueType && !hasCameraAssist)) {
-    throw new Error('Please provide job requirements before submitting.');
-  }
 
-  const valuesPrice = Object.values(request.measurements.values || {}).reduce(
+  const valuesPrice = Object.values(request.measurements?.values || {}).reduce(
     (sum, value) => sum + Number(value || 0),
     0
   );
-  const movingPrice = (request.measurements.movingItems || []).reduce(
+  const movingPrice = (request.measurements?.movingItems || []).reduce(
     (sum, item) => sum + (Number(item.weight || 20) * Number(item.qty || 0)),
     0
   );
   const issueFallbackPrice = hasIssueType ? 1 : 0;
-  const computedPrice = Math.max(1, valuesPrice || movingPrice || issueFallbackPrice);
+  const hasAnyRequirements = valuesCount > 0 || hasMovingItems || hasIssueType || hasCameraAssist;
+  const computedPrice = hasAnyRequirements ? Math.max(1, valuesPrice || movingPrice || issueFallbackPrice) : 1;
   if (computedPrice <= 0) throw new Error('Estimated price must be greater than zero.');
 
   const payload = {

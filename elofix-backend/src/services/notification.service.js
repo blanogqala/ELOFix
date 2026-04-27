@@ -1,6 +1,15 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 
+function emitToUserRoom(userId, event, payload) {
+  if (!userId || !global.io) return;
+  try {
+    global.io.to(String(userId)).emit(event, payload);
+  } catch (err) {
+    console.error("[socket] emit failed", err);
+  }
+}
+
 function toApiShape(row) {
   return {
     id: row.id,
@@ -64,7 +73,9 @@ async function addNotification(notification) {
       conversationId,
     },
   });
-  return toApiShape(item);
+  const apiItem = toApiShape(item);
+  emitToUserRoom(apiItem.userId, "notification:new", apiItem);
+  return apiItem;
 }
 
 async function markAsRead(userId, notificationId) {
@@ -72,6 +83,7 @@ async function markAsRead(userId, notificationId) {
     where: { userId: String(userId), id: notificationId },
     data: { read: true },
   });
+  emitToUserRoom(userId, "notification:read", { notificationId: String(notificationId) });
 }
 
 async function markAllAsRead(userId) {
@@ -79,6 +91,7 @@ async function markAllAsRead(userId) {
     where: { userId: String(userId) },
     data: { read: true },
   });
+  emitToUserRoom(userId, "notification:read-all", { userId: String(userId) });
 }
 
 async function getUnreadCount(userId) {
