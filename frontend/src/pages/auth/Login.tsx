@@ -100,14 +100,9 @@ export default function Login() {
             <EloFixLogo variant="dark" className="h-24" />
           </div>
 
-          <h1 className="mb-1 text-xl font-semibold sm:text-2xl md:text-3xl">Welcome back</h1>
+          <h1 className="mb-1 text-xl font-semibold sm:text-2xl md:text-3xl">Welcome back!</h1>
           <p className="mb-8 text-sm text-muted-foreground sm:text-base">Enter your credentials to access your account</p>
 
-          <div className="bg-muted/50 border border-border rounded-lg p-4 mb-6">
-            <p className="text-sm text-muted-foreground">
-              Sign in with the account you created via the register page.
-            </p>
-          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
