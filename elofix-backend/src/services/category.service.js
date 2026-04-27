@@ -13,6 +13,15 @@ const SERVICE_AREAS = [
 
 const ALLOWED_STEP3_TYPES = new Set(["measurements", "items", "issue"]);
 
+function emitSuggestionEvent(event, payload, userIds = []) {
+  if (!global.io) return;
+  global.io.emit(event, payload);
+  for (const userId of userIds) {
+    if (!userId) continue;
+    global.io.to(String(userId)).emit(event, payload);
+  }
+}
+
 function slugify(value) {
   return String(value || "")
     .trim()
@@ -142,8 +151,23 @@ async function listServiceAreas() {
   return [...SERVICE_AREAS];
 }
 
-async function createCategorySuggestion(userId, name) {
-  const n = String(name || "").trim();
+function normalizeSuggestionPayload(input) {
+  if (!input || typeof input !== "object") return {};
+  const serviceName = String(
+    input.serviceName || input.name || input.suggestion || ""
+  ).trim();
+  const description = input.description != null ? String(input.description).trim() : "";
+  const icon = input.icon != null ? String(input.icon).trim() : "";
+  return {
+    serviceName,
+    ...(description ? { description } : {}),
+    ...(icon ? { icon } : {}),
+  };
+}
+
+async function createCategorySuggestion(userId, payload) {
+  const normalized = normalizeSuggestionPayload(payload);
+  const n = normalized.serviceName;
   if (n.length < 2) {
     throw new AppError("Suggestion must be at least 2 characters", 400);
   }
@@ -156,6 +180,8 @@ async function createCategorySuggestion(userId, name) {
   const created = await prisma.categorySuggestion.create({
     data: {
       name: n,
+      description: normalized.description,
+      icon: normalized.icon,
       userId,
       ...(providerRow ? { providerId: providerRow.id } : {}),
     },
@@ -165,8 +191,36 @@ async function createCategorySuggestion(userId, name) {
   await Promise.all(
     admins.map((admin) => notificationEvents.notifyCategorySuggestion(admin.id, n, created.id))
   );
+  emitSuggestionEvent(
+    "category_suggestion:created",
+    {
+      suggestionId: created.id,
+      providerId: created.providerId || null,
+      userId: created.userId,
+      status: created.status,
+    },
+    [created.userId]
+  );
 
   return created;
+}
+
+async function listCategorySuggestionsForProvider(userId, { status } = {}) {
+  const providerRow = await prisma.provider.findUnique({
+    where: { userId: String(userId) },
+    select: { id: true },
+  });
+  if (!providerRow) return [];
+  const st = status ? String(status).toUpperCase() : null;
+  const where =
+    st && ["PENDING", "APPROVED", "REJECTED"].includes(st) ? { status: st } : undefined;
+  return prisma.categorySuggestion.findMany({
+    where: {
+      providerId: providerRow.id,
+      ...(where || {}),
+    },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 async function listCategorySuggestionsForAdmin({ status } = {}) {
@@ -183,7 +237,7 @@ async function listCategorySuggestionsForAdmin({ status } = {}) {
   });
 }
 
-async function approveCategorySuggestion(suggestionId) {
+async function approveCategorySuggestion(suggestionId, payload = {}) {
   const s = await prisma.categorySuggestion.findUnique({ where: { id: suggestionId } });
   if (!s) throw new AppError("Suggestion not found", 404);
   if (s.status !== "PENDING") {
@@ -192,41 +246,122 @@ async function approveCategorySuggestion(suggestionId) {
 
   const normalized = normalizeCategoryInput(
     {
-      name: s.name,
-      icon: "📁",
-      description: `Community-suggested category: ${s.name}`,
+      name: payload.serviceName || payload.name || s.name,
+      icon: payload.icon || "🛠️",
+      description:
+        payload.description ||
+        s.description ||
+        `Community-suggested category: ${s.name}`,
       step3Type: "measurements",
       requiresMaterials: false,
       requiresInspection: true,
-      skills: [],
+      skills: Array.isArray(payload.skills) ? payload.skills : [],
       issueTypes: [],
     },
     { isCreate: true }
   );
 
-  const id = await ensureUniqueId(slugify(normalized.name));
+  const idBase = slugify(normalized.name);
+  const id = await ensureUniqueId(idBase);
+
   try {
-    await prisma.category.create({
-      data: {
-        id,
-        ...normalized,
-        skills: normalized.skills || [],
-        issueTypes: normalized.issueTypes || [],
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.category.create({
+        data: {
+          id,
+          ...normalized,
+          skills: normalized.skills || [],
+          issueTypes: normalized.issueTypes || [],
+        },
+      });
+
+      await tx.categorySuggestion.update({
+        where: { id: s.id },
+        data: {
+          status: "APPROVED",
+          approvedAt: new Date(),
+          approvedCategoryId: id,
+          name: normalized.name,
+          description: normalized.description,
+          icon: normalized.icon,
+        },
+      });
+
+      if (s.providerId) {
+        const provider = await tx.provider.findUnique({
+          where: { id: s.providerId },
+          select: { skills: true, userId: true },
+        });
+        if (provider) {
+          const skillSet = new Set(Array.isArray(provider.skills) ? provider.skills : []);
+          skillSet.add(id);
+          await tx.provider.update({
+            where: { id: s.providerId },
+            data: { skills: Array.from(skillSet) },
+          });
+          return { providerUserId: provider.userId };
+        }
+      }
+      return { providerUserId: null };
     });
+
+    if (result.providerUserId) {
+      await notificationEvents.notifyUser(result.providerUserId, {
+        type: "category_suggestion",
+        title: "Service approved",
+        message: `"${normalized.name}" has been approved and added to your profile.`,
+      });
+    }
+    emitSuggestionEvent(
+      "category_suggestion:updated",
+      {
+        suggestionId: s.id,
+        providerId: s.providerId || null,
+        userId: s.userId,
+        status: "APPROVED",
+        categoryId: id,
+      },
+      [s.userId, result.providerUserId]
+    );
+    return { suggestionId: s.id, categoryId: id, providerUserId: result.providerUserId };
   } catch (error) {
     if (error.code === "P2002") {
       throw new AppError("Category with the same name already exists", 409);
     }
     throw error;
   }
+}
 
-  await prisma.categorySuggestion.update({
+async function rejectCategorySuggestion(suggestionId) {
+  const s = await prisma.categorySuggestion.findUnique({ where: { id: suggestionId } });
+  if (!s) throw new AppError("Suggestion not found", 404);
+  if (s.status !== "PENDING") {
+    throw new AppError("Suggestion is not pending", 400);
+  }
+
+  const updated = await prisma.categorySuggestion.update({
     where: { id: s.id },
-    data: { status: "APPROVED" },
+    data: { status: "REJECTED" },
   });
-
-  return { suggestionId: s.id, categoryId: id };
+  if (updated.userId) {
+    await notificationEvents.notifyUser(updated.userId, {
+      type: "category_suggestion",
+      title: "Service suggestion update",
+      message: `"${updated.name}" was not approved this time.`,
+    });
+  }
+  emitSuggestionEvent(
+    "category_suggestion:updated",
+    {
+      suggestionId: updated.id,
+      providerId: updated.providerId || null,
+      userId: updated.userId,
+      status: "REJECTED",
+      categoryId: null,
+    },
+    [updated.userId]
+  );
+  return { suggestionId: updated.id, providerId: updated.providerId || null };
 }
 
 module.exports = {
@@ -237,7 +372,9 @@ module.exports = {
   deleteCategory,
   listServiceAreas,
   createCategorySuggestion,
+  listCategorySuggestionsForProvider,
   listCategorySuggestionsForAdmin,
   approveCategorySuggestion,
+  rejectCategorySuggestion,
 };
 

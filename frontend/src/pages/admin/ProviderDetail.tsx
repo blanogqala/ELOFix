@@ -301,6 +301,7 @@ export default function AdminProviderDetail() {
   }
 
   const serviceNames = getCategoryNames(provider.skills);
+  const pendingServiceSuggestions = provider.pendingSuggestions || [];
   const statusClass = provider.blocked
     ? 'status-cancelled'
     : provider.approved
@@ -450,13 +451,30 @@ export default function AdminProviderDetail() {
                   <Briefcase className="h-4 w-4" />
                   Services Offered
                 </h3>
-                <div className="flex flex-wrap gap-1">
-                  {serviceNames.map(s => (
-                    <span key={s} className="px-2 py-0.5 bg-muted rounded-full text-xs">
-                      {s}
-                    </span>
+                <div className="flex flex-col gap-1 text-sm">
+                  {serviceNames.map((s) => (
+                    <span key={s}>{s}</span>
                   ))}
-                  {serviceNames.length === 0 && <span className="text-muted-foreground text-sm">None</span>}
+                  {pendingServiceSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.id}
+                      type="button"
+                      onClick={() =>
+                        navigate('/admin/categories', {
+                          state: {
+                            providerId: provider.profileId || '',
+                            suggestionId: suggestion.id,
+                          },
+                        })
+                      }
+                      className="w-fit text-left text-orange-700 underline decoration-dotted underline-offset-2 dark:text-orange-300"
+                    >
+                      {suggestion.name} (Pending)
+                    </button>
+                  ))}
+                  {serviceNames.length === 0 && pendingServiceSuggestions.length === 0 && (
+                    <span className="text-muted-foreground text-sm">None</span>
+                  )}
                 </div>
               </div>
 

@@ -71,7 +71,12 @@ async function listCategorySuggestions(req, res) {
 }
 
 async function approveCategorySuggestion(req, res) {
-  const result = await categoryService.approveCategorySuggestion(req.params.id);
+  const result = await categoryService.approveCategorySuggestion(req.params.id, req.body || {});
+  res.json({ success: true, ...result });
+}
+
+async function rejectCategorySuggestion(req, res) {
+  const result = await categoryService.rejectCategorySuggestion(req.params.id);
   res.json({ success: true, ...result });
 }
 
@@ -130,6 +135,7 @@ module.exports = {
   deleteProvider,
   listCategorySuggestions,
   approveCategorySuggestion,
+  rejectCategorySuggestion,
   listWithdrawals,
   approveWithdrawal,
   markWithdrawalPaid,

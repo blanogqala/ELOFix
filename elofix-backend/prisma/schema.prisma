@@ -98,16 +98,22 @@ model WorkPost {
 model CategorySuggestion {
   id         String           @id @default(uuid())
   name       String
+  description String?
+  icon       String?
   userId     String
   user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   providerId String?
   provider   Provider?        @relation("ProviderCategorySuggestions", fields: [providerId], references: [id], onDelete: SetNull)
   status     SuggestionStatus @default(PENDING)
   createdAt  DateTime         @default(now())
+  approvedAt DateTime?
+  approvedCategoryId String?
 
   @@index([userId])
   @@index([status])
   @@index([providerId])
+  @@index([providerId, status])
+  @@index([createdAt])
 }
 
 model Job {

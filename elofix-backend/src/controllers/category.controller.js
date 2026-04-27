@@ -32,11 +32,15 @@ async function listServiceAreas(req, res) {
 }
 
 async function suggestCategory(req, res) {
-  const suggestion = await categoryService.createCategorySuggestion(
-    req.user.userId,
-    req.body?.name || req.body?.suggestion
-  );
+  const suggestion = await categoryService.createCategorySuggestion(req.user.userId, req.body || {});
   res.status(201).json({ success: true, suggestion });
+}
+
+async function listMySuggestions(req, res) {
+  const suggestions = await categoryService.listCategorySuggestionsForProvider(req.user.userId, {
+    status: req.query.status,
+  });
+  res.json({ success: true, suggestions });
 }
 
 module.exports = {
@@ -47,5 +51,6 @@ module.exports = {
   deleteCategory,
   listServiceAreas,
   suggestCategory,
+  listMySuggestions,
 };
 

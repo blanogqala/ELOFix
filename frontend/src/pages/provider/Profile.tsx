@@ -18,7 +18,13 @@ import {
   submitProviderForReview,
 } from '@/lib/api/providers';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
-import { getCategories, getServiceAreas, suggestCategory } from '@/lib/api/categories';
+import {
+  getCategories,
+  getServiceAreas,
+  getMyCategorySuggestions,
+  suggestCategory,
+  type CategorySuggestion,
+} from '@/lib/api/categories';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
 import {
@@ -29,6 +35,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { socket } from '@/lib/socket';
 import {
   Dialog,
   DialogContent,
@@ -96,7 +103,9 @@ export default function ProviderProfile() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestText, setSuggestText] = useState('');
+  const [suggestDescription, setSuggestDescription] = useState('');
   const [suggestSubmitting, setSuggestSubmitting] = useState(false);
+  const [suggestedServices, setSuggestedServices] = useState<CategorySuggestion[]>([]);
   const [manualAreaInput, setManualAreaInput] = useState('');
 
   // Settings state
@@ -179,13 +188,60 @@ export default function ProviderProfile() {
     }
   }, [defaultSettings, toast, user]);
 
+  const loadMySuggestions = useCallback(async () => {
+    if (!user) return;
+    try {
+      const suggestions = await getMyCategorySuggestions();
+      setSuggestedServices(suggestions.filter((s) => s.status === 'PENDING'));
+    } catch {
+      setSuggestedServices([]);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (user) {
       void loadProvider();
+      void loadMySuggestions();
     }
     void loadCategories();
     void loadServiceAreas();
-  }, [user, loadCategories, loadProvider, loadServiceAreas]);
+  }, [user, loadCategories, loadProvider, loadServiceAreas, loadMySuggestions]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const handleSuggestionEvent = async (payload?: {
+      userId?: string;
+      status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+    }) => {
+      if (payload?.userId && payload.userId !== user.id) return;
+      if (payload?.status === 'APPROVED') {
+        toast({
+          title: 'Service approved and added to your profile',
+          description: 'Your approved service is now active.',
+        });
+      }
+      await Promise.all([loadMySuggestions(), loadProvider(), loadCategories()]);
+    };
+    socket.on('category_suggestion:created', handleSuggestionEvent);
+    socket.on('category_suggestion:updated', handleSuggestionEvent);
+    const pollingId = window.setInterval(() => {
+      void loadMySuggestions();
+      void loadProvider();
+      void loadCategories();
+    }, 30000);
+    const onFocus = () => {
+      void loadMySuggestions();
+      void loadProvider();
+      void loadCategories();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      socket.off('category_suggestion:created', handleSuggestionEvent);
+      socket.off('category_suggestion:updated', handleSuggestionEvent);
+      window.clearInterval(pollingId);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [user, loadMySuggestions, loadProvider, loadCategories, toast]);
 
   // ── Profile Info Save ──
   const handleSaveProfile = async () => {
@@ -421,9 +477,14 @@ export default function ProviderProfile() {
     }
     setSuggestSubmitting(true);
     try {
-      await suggestCategory(name);
+      await suggestCategory({
+        serviceName: name,
+        ...(suggestDescription.trim() ? { description: suggestDescription.trim() } : {}),
+      });
       setSuggestOpen(false);
       setSuggestText('');
+      setSuggestDescription('');
+      await loadMySuggestions();
       toast({ title: 'Suggestion sent', description: 'An admin will review your category request.' });
     } catch {
       toast({ title: 'Error', description: 'Could not send suggestion.', variant: 'destructive' });
@@ -771,6 +832,23 @@ export default function ProviderProfile() {
                 <Button type="button" variant="outline" size="sm" onClick={() => setSuggestOpen(true)}>
                   + Suggest Service
                 </Button>
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {suggestedServices.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/80">No suggestions yet</p>
+                ) : (
+                  suggestedServices.map((suggestion) => (
+                    <div
+                      key={suggestion.id}
+                      className="flex items-center gap-2 text-sm text-muted-foreground/90"
+                    >
+                      <span className="truncate">{suggestion.name}</span>
+                      <Badge className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                        Pending
+                      </Badge>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -1207,6 +1285,16 @@ export default function ProviderProfile() {
               onChange={(e) => setSuggestText(e.target.value)}
               placeholder="e.g. Pool maintenance"
             />
+            <div className="space-y-2">
+              <Label htmlFor="suggest-description">Description (optional)</Label>
+              <Textarea
+                id="suggest-description"
+                value={suggestDescription}
+                onChange={(e) => setSuggestDescription(e.target.value)}
+                placeholder="Short context for the admin reviewer"
+                rows={3}
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setSuggestOpen(false)}>Cancel</Button>
               <Button onClick={() => void handleSuggestSubmit()} disabled={suggestSubmitting}>

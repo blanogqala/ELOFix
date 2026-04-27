@@ -10,7 +10,6 @@ import { Category, Provider } from '@/types';
 import { 
   Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 export default function AdminProviders() {
   const navigate = useNavigate();
@@ -104,12 +103,10 @@ export default function AdminProviders() {
     return { total: totalDocs, approved: approvedDocs };
   };
 
-  const getCategoryNames = (skills: string[]) => {
-    return skills
-      .map(s => categories.find(c => c.id === s))
-      .filter(Boolean)
-      .map(c => c!.name);
-  };
+  const getResolvedServiceNames = (skills: string[]) =>
+    skills
+      .map((skill) => categories.find((c) => c.id === skill)?.name || skill)
+      .filter(Boolean);
 
   return (
     <DashboardLayout>
@@ -201,7 +198,12 @@ export default function AdminProviders() {
                 ) : filteredProviders.length > 0 ? (
                   filteredProviders.map((provider) => {
                     const docStatus = getDocumentStatus(provider);
-                    const serviceNames = getCategoryNames(provider.skills);
+                    const activeServiceNames = getResolvedServiceNames(provider.skills || []);
+                    const pendingServiceNames = (provider.pendingSuggestions || []).map((s) => s.name);
+                    const allServices = [
+                      ...activeServiceNames.map((name) => ({ name, pending: false })),
+                      ...pendingServiceNames.map((name) => ({ name, pending: true })),
+                    ];
                     return (
                       <tr key={provider.id} className="hover:bg-muted/50 transition-colors">
                         <td className="px-6 py-4">
@@ -221,12 +223,19 @@ export default function AdminProviders() {
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="flex flex-wrap gap-1">
-                            {serviceNames.slice(0, 2).map(s => (
-                              <span key={s} className="px-2 py-0.5 bg-muted rounded-full text-xs">{s}</span>
+                          <div className="flex flex-wrap items-center gap-1 text-xs">
+                            {allServices.map((service, idx) => (
+                              <span
+                                key={`${provider.id}-${service.name}-${idx}`}
+                                className={service.pending ? 'text-orange-700 dark:text-orange-300' : 'text-foreground'}
+                              >
+                                {service.name}
+                                {service.pending ? ' (Pending)' : ''}
+                                {idx < allServices.length - 1 ? ',' : ''}
+                              </span>
                             ))}
-                            {serviceNames.length > 2 && (
-                              <span className="text-xs text-muted-foreground">+{serviceNames.length - 2}</span>
+                            {allServices.length === 0 && (
+                              <span className="text-muted-foreground">—</span>
                             )}
                           </div>
                         </td>

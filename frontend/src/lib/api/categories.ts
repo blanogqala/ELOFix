@@ -11,6 +11,19 @@ interface CategoryResponse {
   category: Category;
 }
 
+export interface CategorySuggestion {
+  id: string;
+  name: string;
+  description?: string | null;
+  icon?: string | null;
+  userId: string;
+  providerId?: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approvedAt?: string | null;
+  approvedCategoryId?: string | null;
+  createdAt: string;
+}
+
 export type CategoryInput = Omit<Category, 'id' | 'createdAt' | 'updatedAt'> & {
   id?: string;
 };
@@ -54,7 +67,27 @@ export async function getServiceAreas(): Promise<string[]> {
   return Array.isArray(data?.serviceAreas) ? data.serviceAreas : [];
 }
 
-export async function suggestCategory(name: string): Promise<void> {
-  await apiClient.post('/categories/suggest', { name });
+export async function suggestCategory(payload: {
+  serviceName: string;
+  description?: string;
+}): Promise<CategorySuggestion> {
+  const { data } = await apiClient.post<{ success: boolean; suggestion: CategorySuggestion }>(
+    '/categories/suggest',
+    payload
+  );
+  if (!data?.suggestion) throw new Error('Failed to submit suggestion');
+  return data.suggestion;
+}
+
+export async function getMyCategorySuggestions(
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED'
+): Promise<CategorySuggestion[]> {
+  const { data } = await apiClient.get<{ success: boolean; suggestions: CategorySuggestion[] }>(
+    '/categories/suggestions/me',
+    {
+      params: status ? { status } : undefined,
+    }
+  );
+  return Array.isArray(data?.suggestions) ? data.suggestions : [];
 }
 

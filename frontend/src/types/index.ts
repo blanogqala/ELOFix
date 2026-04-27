@@ -35,6 +35,7 @@ export interface ProviderSettings {
 
 export interface Provider {
   id: string;
+  profileId?: string;
   name: string;
   email: string;
   phone: string;
@@ -94,6 +95,13 @@ export interface Provider {
   reviewSubmittedAt?: string;
   /** PATCH only: set true to record review submission */
   submitForReview?: boolean;
+  pendingSuggestionsCount?: number;
+  pendingSuggestions?: Array<{
+    id: string;
+    name: string;
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    createdAt: string;
+  }>;
 }
 
 export interface ProviderReview {

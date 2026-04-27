@@ -13,6 +13,12 @@ router.post(
   authorizeRoles(["PROVIDER"]),
   asyncHandler(categoryController.suggestCategory)
 );
+router.get(
+  "/suggestions/me",
+  authenticate,
+  authorizeRoles(["PROVIDER"]),
+  asyncHandler(categoryController.listMySuggestions)
+);
 router.get("/:id", asyncHandler(categoryController.getCategory));
 
 router.post(

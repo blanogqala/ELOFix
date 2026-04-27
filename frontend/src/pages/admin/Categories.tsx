@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,9 +17,11 @@ import {
 import {
   getAdminCategorySuggestions,
   approveAdminCategorySuggestion,
+  rejectAdminCategorySuggestion,
   type AdminCategorySuggestion,
 } from '@/lib/api/adminCategories';
 import { useToast } from '@/hooks/use-toast';
+import { socket } from '@/lib/socket';
 
 const EMPTY_FORM = {
   name: '',
@@ -36,6 +38,7 @@ const EMPTY_FORM = {
 export default function AdminCategories() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -45,6 +48,8 @@ export default function AdminCategories() {
   const skipSelectNext = useRef(false);
   const [pendingSuggestions, setPendingSuggestions] = useState<AdminCategorySuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [providerFilterId, setProviderFilterId] = useState<string>(searchParams.get('providerId') || '');
+  const [suggestionFilterId, setSuggestionFilterId] = useState<string>(searchParams.get('suggestionId') || '');
 
   const loadCategories = useCallback(async () => {
     try {
@@ -92,6 +97,22 @@ export default function AdminCategories() {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    const providerIdFromState = (location.state as { providerId?: string } | null)?.providerId;
+    const suggestionIdFromState = (location.state as { suggestionId?: string } | null)?.suggestionId;
+    if (providerIdFromState || suggestionIdFromState) {
+      const nextProviderId = providerIdFromState || providerFilterId;
+      const nextSuggestionId = suggestionIdFromState || suggestionFilterId;
+      setProviderFilterId(providerIdFromState);
+      if (suggestionIdFromState) setSuggestionFilterId(suggestionIdFromState);
+      const params = new URLSearchParams();
+      if (nextProviderId) params.set('providerId', nextProviderId);
+      if (nextSuggestionId) params.set('suggestionId', nextSuggestionId);
+      setSearchParams(params);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state, navigate, setSearchParams, providerFilterId, suggestionFilterId]);
 
   useEffect(() => {
     if (categories.length === 0 || selectedCategoryId !== null) return;
@@ -218,10 +239,42 @@ export default function AdminCategories() {
 
   const isCreateMode = !selected;
 
+  const filteredPendingSuggestions = useMemo(() => {
+    return pendingSuggestions.filter((s) => {
+      if (providerFilterId && s.providerId !== providerFilterId) return false;
+      if (suggestionFilterId && s.id !== suggestionFilterId) return false;
+      return true;
+    });
+  }, [pendingSuggestions, providerFilterId, suggestionFilterId]);
+
+  useEffect(() => {
+    const refreshSuggestions = () => void loadPendingSuggestions();
+    socket.on('category_suggestion:created', refreshSuggestions);
+    socket.on('category_suggestion:updated', refreshSuggestions);
+    const intervalId = window.setInterval(() => {
+      void loadPendingSuggestions();
+    }, 30000);
+    const onFocus = () => {
+      void loadPendingSuggestions();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      socket.off('category_suggestion:created', refreshSuggestions);
+      socket.off('category_suggestion:updated', refreshSuggestions);
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [loadPendingSuggestions]);
+
   const handleApproveSuggestion = async (id: string) => {
     setIsSaving(true);
     try {
-      const result = await approveAdminCategorySuggestion(id);
+      const suggestion = pendingSuggestions.find((s) => s.id === id);
+      const result = await approveAdminCategorySuggestion(id, {
+        serviceName: suggestion?.name || '',
+        description: suggestion?.description || '',
+        icon: suggestion?.icon || '🛠️',
+      });
       toast({ title: 'Suggestion approved', description: `Category id: ${result.categoryId}` });
       await loadCategories();
       await loadPendingSuggestions();
@@ -229,6 +282,23 @@ export default function AdminCategories() {
       toast({
         title: 'Approve failed',
         description: error instanceof Error ? error.message : 'Could not approve.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRejectSuggestion = async (id: string) => {
+    setIsSaving(true);
+    try {
+      await rejectAdminCategorySuggestion(id);
+      toast({ title: 'Suggestion rejected' });
+      await loadPendingSuggestions();
+    } catch (error) {
+      toast({
+        title: 'Reject failed',
+        description: error instanceof Error ? error.message : 'Could not reject.',
         variant: 'destructive',
       });
     } finally {
@@ -252,17 +322,45 @@ export default function AdminCategories() {
         <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">Pending category suggestions</h2>
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadPendingSuggestions()}>
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Filter by provider id"
+                value={providerFilterId}
+                onChange={(e) => {
+                  const value = e.target.value.trim();
+                  setProviderFilterId(value);
+                  const params = new URLSearchParams();
+                  if (value) params.set('providerId', value);
+                  if (suggestionFilterId) params.set('suggestionId', suggestionFilterId);
+                  setSearchParams(params);
+                }}
+                className="h-8 w-56"
+              />
+              <Input
+                placeholder="Filter by suggestion id"
+                value={suggestionFilterId}
+                onChange={(e) => {
+                  const value = e.target.value.trim();
+                  setSuggestionFilterId(value);
+                  const params = new URLSearchParams();
+                  if (providerFilterId) params.set('providerId', providerFilterId);
+                  if (value) params.set('suggestionId', value);
+                  setSearchParams(params);
+                }}
+                className="h-8 w-56"
+              />
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadPendingSuggestions()}>
+                Refresh
+              </Button>
+            </div>
           </div>
           {suggestionsLoading ? (
             <p className="text-sm text-muted-foreground mt-2">Loading…</p>
-          ) : pendingSuggestions.length === 0 ? (
+          ) : filteredPendingSuggestions.length === 0 ? (
             <p className="text-sm text-muted-foreground mt-2">No pending suggestions</p>
           ) : (
             <ul className="mt-3 space-y-2">
-              {pendingSuggestions.map((s) => (
+              {filteredPendingSuggestions.map((s) => (
                 <li
                   key={s.id}
                   className="flex flex-col gap-2 rounded-lg border border-border/80 p-3 sm:flex-row sm:items-center sm:justify-between"
@@ -273,15 +371,29 @@ export default function AdminCategories() {
                       From {s.user?.name ?? s.userId}
                       {s.provider?.businessName ? ` · ${s.provider.businessName}` : ''}
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(s.createdAt).toLocaleString()}
+                    </p>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={isSaving}
-                    onClick={() => void handleApproveSuggestion(s.id)}
-                  >
-                    Approve &amp; create
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={isSaving}
+                      onClick={() => void handleApproveSuggestion(s.id)}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={isSaving}
+                      onClick={() => void handleRejectSuggestion(s.id)}
+                    >
+                      Reject
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>

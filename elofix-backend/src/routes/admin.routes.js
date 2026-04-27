@@ -29,6 +29,7 @@ router.patch("/providers/:userId/delete", asyncHandler(adminController.deletePro
 
 router.get("/category-suggestions", asyncHandler(adminController.listCategorySuggestions));
 router.patch("/category-suggestions/:id/approve", asyncHandler(adminController.approveCategorySuggestion));
+router.patch("/category-suggestions/:id/reject", asyncHandler(adminController.rejectCategorySuggestion));
 
 router.get("/withdrawals", asyncHandler(adminController.listWithdrawals));
 router.patch("/withdrawals/:id/approve", asyncHandler(adminController.approveWithdrawal));

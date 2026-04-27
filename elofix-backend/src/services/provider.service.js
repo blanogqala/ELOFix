@@ -190,7 +190,14 @@ function checkProviderProfileCompletion(profile, user, workPostCount) {
   return true;
 }
 
-function toProviderResponse(profile, user, completedJobs, workPosts, reviewRows = []) {
+function toProviderResponse(
+  profile,
+  user,
+  completedJobs,
+  workPosts,
+  reviewRows = [],
+  { pendingSuggestionsCount = 0, pendingSuggestions = [] } = {}
+) {
   const documents = normalizeDocuments(profile.documents);
   const laborPricing =
     profile.laborPricing && typeof profile.laborPricing === "object" ? profile.laborPricing : {};
@@ -249,6 +256,8 @@ function toProviderResponse(profile, user, completedJobs, workPosts, reviewRows 
     reviewSubmittedAt: profile.reviewSubmittedAt
       ? profile.reviewSubmittedAt.toISOString()
       : undefined,
+    pendingSuggestionsCount,
+    pendingSuggestions,
   };
 }
 
@@ -596,7 +605,35 @@ async function listProviders({ category, forAdmin = false } = {}) {
           status: "COMPLETED",
         },
       });
-      return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts);
+      const pendingSuggestionsCount = forAdmin
+        ? await prisma.categorySuggestion.count({
+            where: {
+              providerId: profile.id,
+              status: "PENDING",
+            },
+          })
+        : 0;
+      const pendingSuggestions = forAdmin
+        ? await prisma.categorySuggestion.findMany({
+            where: { providerId: profile.id, status: "PENDING" },
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              createdAt: true,
+            },
+          })
+        : [];
+      return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts, [], {
+        pendingSuggestionsCount,
+        pendingSuggestions: pendingSuggestions.map((s) => ({
+          id: s.id,
+          name: s.name,
+          status: s.status,
+          createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
+        })),
+      });
     })
   );
 
@@ -631,7 +668,26 @@ async function getProviderById(id) {
     },
   });
 
-  return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts, reviewRows);
+  const pendingSuggestions = await prisma.categorySuggestion.findMany({
+    where: { providerId: profile.id, status: "PENDING" },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      createdAt: true,
+    },
+  });
+
+  return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts, reviewRows, {
+    pendingSuggestionsCount: pendingSuggestions.length,
+    pendingSuggestions: pendingSuggestions.map((s) => ({
+      id: s.id,
+      name: s.name,
+      status: s.status,
+      createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
+    })),
+  });
 }
 
 async function getProviderByUserId(userId) {
