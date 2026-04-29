@@ -6,6 +6,8 @@ const { reconcileProvider } = require("../services/reconciliation.service");
 const { getFinancialSummary } = require("../services/financialSummary.service");
 const { getCommissionSummary } = require("../services/commission.service");
 const AppError = require("../utils/AppError");
+const supplierService = require("../services/supplier.service");
+const materialOrderService = require("../services/materialOrder.service");
 
 async function listProviders(req, res) {
   const providers = await providerService.listProviders({
@@ -123,6 +125,36 @@ async function getCommissions(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function listSuppliers(req, res) {
+  const suppliers = await supplierService.listSuppliersForAdminDashboard();
+  res.json({ success: true, suppliers });
+}
+
+async function listSupplierMaterialOrders(req, res) {
+  const supplierId = String(req.params.supplierId || "").trim();
+  if (!supplierId) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const orders = await materialOrderService.listMaterialOrdersBySupplierIdsForAdmin([supplierId]);
+  res.json({ success: true, orders });
+}
+
+async function listAllPlatformMaterialOrders(req, res) {
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+  const orders = await materialOrderService.listAllMaterialOrdersForAdmin({ limit });
+  const totalMaterialsRevenue = orders.reduce((s, o) => s + Number(o.materialsSubtotal || 0), 0);
+  const platformCommissionTotal = orders.reduce((s, o) => s + Number(o.platformCommission || 0), 0);
+  res.json({
+    success: true,
+    orders,
+    summary: {
+      orderCount: orders.length,
+      totalMaterialsRevenue,
+      platformCommissionTotal,
+    },
+  });
+}
+
 module.exports = {
   listProviders,
   getAnalytics,
@@ -143,4 +175,7 @@ module.exports = {
   getReconcileProvider,
   getFinancialSummaryEndpoint,
   getCommissions,
+  listSuppliers,
+  listSupplierMaterialOrders,
+  listAllPlatformMaterialOrders,
 };

@@ -17,13 +17,17 @@ import {
   updateJobStatus,
   markInspectionDone,
   submitServicePrice,
-  submitMaterials,
   acceptUserSuggestion,
   rejectUserSuggestion,
   updateProviderRequirements,
   getLaborInvoiceByJobId,
   proposeNewLaborPrice,
 } from '@/lib/api/jobs';
+import {
+  getMaterialRequestsForJob,
+  createMaterialRequestDraft,
+  submitMaterialRequestPayload,
+} from '@/lib/api/materialRequests';
 import { getSuppliers } from '@/lib/api/suppliers';
 import { Job, MaterialLine, Supplier, Measurements } from '@/types';
 import {
@@ -102,6 +106,7 @@ export default function ProviderJobDetail() {
     if (!jobId) return;
     await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
     await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.materialRequests.job(jobId) });
   }, [jobId, queryClient]);
 
   const {
@@ -114,6 +119,12 @@ export default function ProviderJobDetail() {
     queryFn: () => getJobById(jobId),
     enabled: Boolean(jobId),
   });
+  const { data: materialRequestsData } = useQuery({
+    queryKey: queryKeys.materialRequests.job(jobId),
+    queryFn: () => getMaterialRequestsForJob(jobId),
+    enabled: Boolean(jobId),
+  });
+  const materialRequests = materialRequestsData ?? [];
   const [noteTitle, setNoteTitle] = useState('');
   const [noteMessage, setNoteMessage] = useState('');
   const [chatMessage, setChatMessage] = useState('');
@@ -160,9 +171,24 @@ export default function ProviderJobDetail() {
     });
   }, [isError, jobError, toast]);
 
+  /** Reset local draft when navigating; hydrate from latest draft MR for this job */
   useEffect(() => {
+    if (!jobId) return;
+    let alive = true;
     setMaterialsBuilder([]);
-  }, [id]);
+    void getMaterialRequestsForJob(jobId)
+      .then((rows) => {
+        if (!alive) return;
+        const draft = rows.find((r) => r.status === 'draft');
+        if (draft?.items?.length) {
+          setMaterialsBuilder(draft.items as MaterialLine[]);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [jobId]);
 
   useEffect(() => {
     if (jobId) {
@@ -217,12 +243,19 @@ export default function ProviderJobDetail() {
 
   const handleSubmitMaterials = async () => {
     if (!job) return;
-    if (materialsBuilder.length === 0) {
+    const draftMr = materialRequests.find((r) => r.status === 'draft');
+    if (materialsBuilder.length === 0 && !draftMr) {
       toast({ title: 'No draft materials', description: 'Save materials first before submitting to user.' });
       return;
     }
     try {
-      await submitMaterials(job.id, materialsBuilder);
+      if (draftMr?.id) {
+        await submitMaterialRequestPayload({ jobId: job.id, materialRequestId: draftMr.id });
+      } else if (materialsBuilder.length > 0) {
+        await submitMaterialRequestPayload({ jobId: job.id, materials: materialsBuilder });
+      } else {
+        return;
+      }
       await syncJobsAfterMutation();
       setMaterialsBuilder([]);
       setAddMaterialsOpen(false);
@@ -441,6 +474,8 @@ export default function ProviderJobDetail() {
     return acc;
   }, {} as Record<string, { storeName: string; items: MaterialLine[] }>);
   const hasDraftMaterials = materialsBuilder.length > 0;
+  const draftMrFromApi = materialRequests.find((r) => r.status === 'draft');
+  const hasSubmittedMaterialRequests = materialRequests.some((r) => r.status === 'submitted');
   const hasProviderPendingOrderContent =
     pendingOrderCards.length > 0 || hasDraftMaterials || canEditMaterials;
   const showProviderMaterialSubTabs = hasProviderPendingOrderContent && hasCustomerMaterialSuggestions;
@@ -883,6 +918,36 @@ export default function ProviderJobDetail() {
                       </div>
                     </div>
                   )}
+                  {(job.jobMaterialOrders?.length ?? 0) > 0 && (
+                    <div className="space-y-3 pt-2 border-t border-border/60">
+                      <h3 className="text-sm font-semibold text-muted-foreground">Active orders (supplier)</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Database-backed orders suppliers fulfill after payment — same pipeline as Supplier dashboard.
+                      </p>
+                      <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
+                        {job.jobMaterialOrders!.map((mo) => (
+                          <div
+                            key={mo.id}
+                            className="border rounded-lg p-3 bg-muted/20 border-primary/20"
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-sm font-medium truncate">{mo.supplierName || 'Store'}</span>
+                              <Badge variant="outline" className="shrink-0 capitalize">
+                                {String(mo.fulfillmentStatus || 'PENDING').toLowerCase().replace(/_/g, ' ')}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground mb-1">
+                              Order #{mo.id.slice(0, 8)} · Paid ({mo.paymentStatus})
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Subtotal {formatCurrency(mo.materialsSubtotal, { decimals: 2 })} · Commission{' '}
+                              {formatCurrency(mo.platformCommission, { decimals: 2 })}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {showProviderMaterialSubTabs && (
                     <div className="inline-flex rounded-lg border border-border p-1 bg-muted/30">
                       <Button
@@ -909,8 +974,51 @@ export default function ProviderJobDetail() {
 
                   {(!showProviderMaterialSubTabs || materialViewTab === 'orders') && (
                     <div className="space-y-3">
-                      {(pendingOrderCards.length > 0 || hasDraftMaterials) && (
+                      {hasDraftMaterials && (
+                        <>
+                          <h3 className="text-sm font-semibold text-muted-foreground">Draft Materials</h3>
+                          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+                            {Object.entries(draftCardsByStore).map(([storeId, draft]) => {
+                              const total = draft.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+                              return (
+                                <div key={`draft-${storeId}`} className="border rounded-lg p-4 border-muted-foreground/30 bg-muted/20">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center gap-2">
+                                      <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+                                      <span className="font-medium">{draft.storeName}</span>
+                                    </div>
+                                    <Badge variant="outline" className="text-muted-foreground border-muted-foreground/40">
+                                      Draft
+                                    </Badge>
+                                  </div>
+                                  <div className="space-y-1 text-sm">
+                                    {draft.items.map(item => (
+                                      <div key={`draft-${storeId}-${item.productId}`} className="flex justify-between">
+                                        <span>{item.name} x{item.qty}</span>
+                                        <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
+                                    <span>Subtotal</span>
+                                    <span>{formatCurrency(total, { decimals: 2 })}</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    Not sent to the user yet. Use Submit Materials to User when ready.
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                      {(pendingOrderCards.length > 0 || hasSubmittedMaterialRequests) && (
                         <h3 className="text-sm font-semibold text-muted-foreground">Pending Materials</h3>
+                      )}
+                      {hasSubmittedMaterialRequests && (
+                        <p className="text-xs text-muted-foreground">
+                          Submission recorded — awaiting customer payment per store below.
+                        </p>
                       )}
                       {pendingOrderCards.length > 0 && (
                         <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
@@ -923,7 +1031,7 @@ export default function ProviderJobDetail() {
                                     <ShoppingCart className="h-4 w-4 text-muted-foreground" />
                                     <span className="font-medium">{card.storeName || card.storeId}</span>
                                   </div>
-                                  <Badge variant="secondary">Pending</Badge>
+                                  <Badge className="bg-amber-500/90 text-amber-950 hover:bg-amber-500 border-amber-600/80">Pending</Badge>
                                 </div>
                                 <div className="space-y-1 text-sm">
                                   {card.items.map(item => (
@@ -942,45 +1050,15 @@ export default function ProviderJobDetail() {
                           })}
                         </div>
                       )}
-                      {hasDraftMaterials && (
-                        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                          {Object.entries(draftCardsByStore).map(([storeId, draft]) => {
-                            const total = draft.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
-                            return (
-                              <div key={`draft-${storeId}`} className="border border-amber-400/70 bg-amber-500/5 rounded-lg p-4">
-                                <div className="flex items-center justify-between mb-3">
-                                  <div className="flex items-center gap-2">
-                                    <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                    <span className="font-medium">{draft.storeName}</span>
-                                  </div>
-                                  <Badge variant="secondary">Saved locally</Badge>
-                                </div>
-                                <div className="space-y-1 text-sm">
-                                  {draft.items.map(item => (
-                                    <div key={`draft-${storeId}-${item.productId}`} className="flex justify-between">
-                                      <span>{item.name} x{item.qty}</span>
-                                      <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
-                                  <span>Subtotal</span>
-                                  <span>{formatCurrency(total, { decimals: 2 })}</span>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-2">
-                                  Not sent to the user yet. Use Submit Materials to User when ready.
-                                </p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
                       {canEditMaterials && (
                         <div className="flex flex-wrap gap-2">
                           <Button onClick={() => setAddMaterialsOpen(true)} variant="outline">
                             Add / Edit Materials
                           </Button>
-                          <Button onClick={handleSubmitMaterials} disabled={materialsBuilder.length === 0}>
+                          <Button
+                            onClick={handleSubmitMaterials}
+                            disabled={materialsBuilder.length === 0 && !draftMrFromApi}
+                          >
                             Submit Materials to User
                           </Button>
                         </div>
@@ -1021,18 +1099,20 @@ export default function ProviderJobDetail() {
                     <div className="space-y-4">
                       {hasDraftMaterials && (
                         <>
-                          <h3 className="text-sm font-semibold text-muted-foreground">Pending Materials</h3>
+                          <h3 className="text-sm font-semibold text-muted-foreground">Draft Materials</h3>
                           <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
                             {Object.entries(draftCardsByStore).map(([storeId, draft]) => {
                               const total = draft.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
                               return (
-                                <div key={`draft-${storeId}`} className="border border-amber-400/70 bg-amber-500/5 rounded-lg p-4">
+                                <div key={`draft-${storeId}`} className="border rounded-lg p-4 border-muted-foreground/30 bg-muted/20">
                                   <div className="flex items-center justify-between mb-3">
                                     <div className="flex items-center gap-2">
                                       <ShoppingCart className="h-4 w-4 text-muted-foreground" />
                                       <span className="font-medium">{draft.storeName}</span>
                                     </div>
-                                    <Badge variant="secondary">Saved locally</Badge>
+                                    <Badge variant="outline" className="text-muted-foreground border-muted-foreground/40">
+                                      Draft
+                                    </Badge>
                                   </div>
                                   <div className="space-y-1 text-sm">
                                     {draft.items.map(item => (
@@ -1055,13 +1135,56 @@ export default function ProviderJobDetail() {
                           </div>
                         </>
                       )}
+                      {(pendingOrderCards.length > 0 || hasSubmittedMaterialRequests) && (
+                        <h3 className="text-sm font-semibold text-muted-foreground">Pending Materials</h3>
+                      )}
+                      {hasSubmittedMaterialRequests && (
+                        <p className="text-xs text-muted-foreground">
+                          Submission recorded — awaiting customer payment per store below.
+                        </p>
+                      )}
+                      {pendingOrderCards.length > 0 && (
+                        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+                          {pendingOrderCards.map((card) => {
+                            const total = card.items.reduce((sum, item) => sum + (item.qty * item.unitPrice), 0);
+                            return (
+                              <div key={card.orderId} className="border border-primary/60 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                  <div className="flex items-center gap-2">
+                                    <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+                                    <span className="font-medium">{card.storeName || card.storeId}</span>
+                                  </div>
+                                  <Badge className="bg-amber-500/90 text-amber-950 hover:bg-amber-500 border-amber-600/80">
+                                    Pending
+                                  </Badge>
+                                </div>
+                                <div className="space-y-1 text-sm">
+                                  {card.items.map(item => (
+                                    <div key={`${card.orderId}-${item.productId}`} className="flex justify-between">
+                                      <span>{item.name} x{item.qty}</span>
+                                      <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
+                                  <span>Subtotal</span>
+                                  <span>{formatCurrency(total, { decimals: 2 })}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       <p className="text-sm text-muted-foreground">Browse stores and add materials needed for this job.</p>
                       {canEditMaterials && (
                         <div className="flex flex-wrap gap-2">
                           <Button onClick={() => setAddMaterialsOpen(true)} variant="outline">
                             Add / Edit Materials
                           </Button>
-                          <Button onClick={handleSubmitMaterials} disabled={materialsBuilder.length === 0}>
+                          <Button
+                            onClick={handleSubmitMaterials}
+                            disabled={materialsBuilder.length === 0 && !draftMrFromApi}
+                          >
                             Submit Materials to User
                           </Button>
                         </div>
@@ -1227,7 +1350,21 @@ export default function ProviderJobDetail() {
           suppliers={suppliers}
           jobCategory={job.category}
           existingMaterials={materialsBuilder}
-          onAddMaterials={(mats) => setMaterialsBuilder(mats)}
+          onAddMaterials={(mats) => {
+            setMaterialsBuilder(mats);
+            if (!job?.id) return;
+            void createMaterialRequestDraft({ jobId: job.id, items: mats })
+              .then(() =>
+                queryClient.invalidateQueries({ queryKey: queryKeys.materialRequests.job(jobId) })
+              )
+              .catch((err: unknown) =>
+                toast({
+                  title: 'Could not save draft',
+                  description: err instanceof Error ? err.message : 'Try again.',
+                  variant: 'destructive',
+                })
+              );
+          }}
         />
 
         {/* Payment Details Modal */}

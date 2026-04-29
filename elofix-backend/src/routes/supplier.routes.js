@@ -15,17 +15,5 @@ router.post(
   authorizeRoles(["ADMIN"]),
   asyncHandler(supplierController.createSupplier)
 );
-router.post(
-  "/:id/products",
-  authenticate,
-  authorizeRoles(["ADMIN"]),
-  asyncHandler(supplierController.addProduct)
-);
-router.patch(
-  "/:id/products/:productId/price",
-  authenticate,
-  authorizeRoles(["ADMIN"]),
-  asyncHandler(supplierController.updateProductPrice)
-);
 
 module.exports = router;

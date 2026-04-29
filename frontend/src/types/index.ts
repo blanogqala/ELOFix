@@ -1,6 +1,6 @@
 // FixMate Domain Types
 
-export type UserRole = 'user' | 'provider' | 'admin';
+export type UserRole = 'user' | 'provider' | 'admin' | 'supplier';
 
 export interface User {
   id: string;
@@ -123,7 +123,37 @@ export interface Admin {
   role: 'admin';
 }
 
-export type AuthUser = User | Provider | Admin;
+/** Supplier storefront + inventory (from GET /supplier/me or nested in /auth/me). */
+export interface SupplierAccountProfile {
+  id: string;
+  name: string;
+  logo?: string;
+  hasDelivery: boolean;
+  deliveryFee?: number;
+  products: Product[];
+  businessName?: string;
+  address?: string;
+  phone?: string;
+  createdAt?: string;
+  createdByAdmin?: boolean;
+  userId?: string;
+  accountEmail?: string | null;
+  displayName?: string | null;
+  accountPhone?: string | null;
+  role?: string;
+}
+
+export interface SupplierUser {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: 'supplier';
+  createdAt: string;
+  supplierProfile: SupplierAccountProfile | null;
+}
+
+export type AuthUser = User | Provider | Admin | SupplierUser;
 
 export interface Category {
   id: string;
@@ -151,6 +181,9 @@ export interface Product {
   qualityTier: 'low' | 'medium' | 'high';
   unit: string;
   inStock: boolean;
+  /** Stock quantity when managed by supplier dashboard */
+  quantity?: number;
+  description?: string;
   special?: boolean;
   specialEndDate?: string;
   image?: string;
@@ -163,7 +196,23 @@ export interface Supplier {
   hasDelivery: boolean;
   deliveryFee?: number;
   products: Product[];
+  businessName?: string;
+  address?: string;
+  phone?: string;
+  createdAt?: string;
+  createdByAdmin?: boolean;
+  userId?: string;
+  linkedUserEmail?: string | null;
+  linkedUserName?: string | null;
+  linkedUserId?: string | null;
 }
+
+export type MaterialFulfillmentStatus =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'PREPARING'
+  | 'READY'
+  | 'COMPLETED';
 
 export interface MaterialLine {
   supplierId: string;
@@ -378,6 +427,25 @@ export interface JobStoreOrder {
   deliveryRequest?: StoreOrderDeliveryRequest;
 }
 
+/** DB-backed material purchase order linked to a job (customer paid → supplier fulfills) */
+export interface JobMaterialOrderSnapshot {
+  id: string;
+  jobId?: string | null;
+  supplierId?: string | null;
+  supplierName?: string;
+  customerId?: string;
+  providerId?: string | null;
+  fulfillmentStatus: MaterialFulfillmentStatus | string;
+  paymentStatus: string;
+  source?: string;
+  total: number;
+  materialsSubtotal: number;
+  platformCommission: number;
+  supplierEarning: number;
+  items: Array<{ name?: string; quantity: number; price: number; productId?: string }>;
+  createdAt: string;
+}
+
 export interface Job {
   id: string;
   category: string;
@@ -416,7 +484,9 @@ export interface Job {
   /** When a provider declines a pending request before assignment */
   rejectedByProviderUserId?: string | null;
   completionConfirmedByUser?: boolean;
-  // Per-store material orders and delivery tracking (job-attached)
+  /** Persisted MaterialOrder rows for this job (supplier fulfillment) after payment */
+  jobMaterialOrders?: JobMaterialOrderSnapshot[];
+  /** Per-supplier store checkout orders embedded on the job (API: `storeOrders`) */
   storeOrders?: JobStoreOrder[];
   servicePrice?: { amount: number; note?: string; submittedAt?: string };
   servicePayment?: {

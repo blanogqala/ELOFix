@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { categoryKeysMatch } from '@/lib/categoryKey';
 
 interface AddMaterialsModalProps {
   open: boolean;
@@ -90,17 +91,29 @@ export function AddMaterialsModal({
     onOpenChange(isOpen);
   };
 
-  // Filter products by category and search
-  const filteredProducts = useMemo(() => {
-    if (!selectedSupplier) return [];
-    
-    return selectedSupplier.products.filter(p => {
-      const matchesSearch = !searchQuery || 
-        p.name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory = p.category.toLowerCase() === jobCategory.toLowerCase();
-      return matchesSearch && matchesCategory;
-    });
+  const filteredProductsResult = useMemo(() => {
+    if (!selectedSupplier) return { products: [] as Product[], showingCategoryFallback: false };
+    const q = searchQuery.trim().toLowerCase();
+    const bySearch = (p: Product) =>
+      !q ||
+      p.name.toLowerCase().includes(q);
+    const byCat = (p: Product) => categoryKeysMatch(p.category, jobCategory);
+    const strict = selectedSupplier.products.filter((p) => bySearch(p) && byCat(p));
+    if (strict.length > 0) return { products: strict, showingCategoryFallback: false };
+    if (!searchQuery.trim()) {
+      return {
+        products: selectedSupplier.products.filter((p) => p.inStock !== false),
+        showingCategoryFallback: true,
+      };
+    }
+    return {
+      products: selectedSupplier.products.filter(bySearch),
+      showingCategoryFallback: true,
+    };
   }, [selectedSupplier, searchQuery, jobCategory]);
+
+  const filteredProducts = filteredProductsResult.products;
+  const showingCategoryFallback = filteredProductsResult.showingCategoryFallback;
 
   // All products for extra search
   const allProducts = useMemo(() => {
@@ -170,7 +183,7 @@ export function AddMaterialsModal({
       unitPrice: item.product.price,
       qualityTier: item.product.qualityTier,
       unit: item.product.unit,
-      isExtra: item.product.category?.toLowerCase() !== jobCategory.toLowerCase(),
+      isExtra: !categoryKeysMatch(item.product.category, jobCategory),
       ...(item.product.image && { imageUrl: item.product.image }),
     }));
 
@@ -267,12 +280,19 @@ export function AddMaterialsModal({
                 className="pl-10"
               />
             </div>
+            {showingCategoryFallback && (
+              <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/40 px-3 py-2">
+                No exact category match — showing this store&apos;s full catalog. Extra items are marked when saved.
+              </p>
+            )}
 
             <ScrollArea className="flex-1 pr-4">
               <div className="space-y-3">
-                {filteredProducts.length === 0 && !searchQuery && (
+                {filteredProducts.length === 0 && (
                   <p className="text-center text-muted-foreground py-8">
-                    No products found for this category
+                    {searchQuery.trim()
+                      ? 'No products match your search.'
+                      : 'No products in this catalog.'}
                   </p>
                 )}
 

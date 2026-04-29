@@ -1,6 +1,7 @@
 import {
   Invoice,
   Job,
+  JobMaterialOrderSnapshot,
   JobStatus,
   MaterialLine,
   Measurements,
@@ -55,6 +56,7 @@ interface BackendJob {
   providerSuggestions?: Job['providerSuggestions'];
   materialPayments?: Job['materialPayments'];
   storeOrders?: Job['storeOrders'];
+  jobMaterialOrders?: JobMaterialOrderSnapshot[];
   proposedLaborPrice?: Job['proposedLaborPrice'];
   completionConfirmedByUser?: boolean;
   userRating?: number;
@@ -164,6 +166,9 @@ function toFrontendJob(job: BackendJob): Job {
     providerSuggestions: Array.isArray(job.providerSuggestions) ? job.providerSuggestions : [],
     materialPayments: Array.isArray(job.materialPayments) ? job.materialPayments : [],
     storeOrders: Array.isArray(job.storeOrders) ? job.storeOrders : [],
+    jobMaterialOrders: Array.isArray(job.jobMaterialOrders)
+      ? (job.jobMaterialOrders as JobMaterialOrderSnapshot[])
+      : [],
     proposedLaborPrice: job.proposedLaborPrice,
     completionConfirmedByUser: Boolean(job.completionConfirmedByUser),
     userRating: job.userRating,

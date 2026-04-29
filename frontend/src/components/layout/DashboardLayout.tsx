@@ -28,6 +28,7 @@ import {
   Bell,
   Activity,
   Wallet,
+  Store,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -67,12 +68,21 @@ const adminNavItems: NavItem[] = [
   { label: 'Withdrawals', path: '/admin/withdrawals', icon: <Wallet className="h-4 w-4 shrink-0" /> },
 ];
 
+const supplierNavItems: NavItem[] = [
+  { label: 'Dashboard', path: '/supplier/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'Orders', path: '/supplier/orders', icon: <ClipboardList className="h-4 w-4 shrink-0" /> },
+  { label: 'Inventory', path: '/supplier/inventory', icon: <Store className="h-4 w-4 shrink-0" /> },
+  { label: 'Earnings', path: '/supplier/earnings', icon: <DollarSign className="h-4 w-4 shrink-0" /> },
+];
+
 function notificationsPathForRole(role: string | undefined): string {
   switch (role) {
     case 'admin':
       return '/admin/notifications';
     case 'provider':
       return '/provider/notifications';
+    case 'supplier':
+      return '/supplier/notifications';
     default:
       return '/user/notifications';
   }
@@ -123,9 +133,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const getNavItems = (): NavItem[] => {
     switch (user?.role) {
-      case 'admin': return adminNavItems;
-      case 'provider': return providerNavItems;
-      default: return userNavItems;
+      case 'admin':
+        return adminNavItems;
+      case 'provider':
+        return providerNavItems;
+      case 'supplier':
+        return supplierNavItems;
+      default:
+        return userNavItems;
     }
   };
 
@@ -138,9 +153,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const getRoleLabel = () => {
     switch (user?.role) {
-      case 'admin': return 'Administrator';
-      case 'provider': return 'Service Provider';
-      default: return 'Customer';
+      case 'admin':
+        return 'Administrator';
+      case 'provider':
+        return 'Service Provider';
+      case 'supplier':
+        return 'Hardware supplier';
+      default:
+        return 'Customer';
     }
   };
 
@@ -172,9 +192,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
           {/* User Info — customer/provider: link to profile */}
           <div className="mt-16 shrink-0 border-b border-border p-4 lg:mt-0">
-            {user?.role === 'user' || user?.role === 'provider' ? (
+            {user?.role === 'user' || user?.role === 'provider' || user?.role === 'supplier' ? (
               <Link
-                to={user.role === 'provider' ? '/provider/profile' : '/user/profile'}
+                to={
+                  user.role === 'provider'
+                    ? '/provider/profile'
+                    : user.role === 'supplier'
+                      ? '/supplier/profile'
+                      : '/user/profile'
+                }
                 onClick={() => setSidebarOpen(false)}
                 className="flex min-w-0 items-center gap-3 rounded-md p-1 -m-1 transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >

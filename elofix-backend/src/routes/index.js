@@ -13,6 +13,9 @@ const userRoutes = require("./user.routes");
 const fileRoutes = require("./file.routes");
 const geocodeRoutes = require("./geocode.routes");
 const providerAccountRoutes = require("./providerAccount.routes");
+const supplierPortalRoutes = require("./supplierPortal.routes");
+const materialRoutes = require("./material.routes");
+const ordersRoutes = require("./orders.routes");
 
 const router = express.Router();
 
@@ -25,10 +28,13 @@ router.use("/admin", adminRoutes);
 router.use("/suppliers", supplierRoutes);
 router.use("/payments", paymentRoutes);
 router.use("/material-orders", materialOrderRoutes);
+router.use("/orders", ordersRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/specials", specialRoutes);
 router.use("/users", userRoutes);
 router.use("/files", fileRoutes);
 router.use("/provider", providerAccountRoutes);
+router.use("/supplier", supplierPortalRoutes);
+router.use("/materials", materialRoutes);
 
 module.exports = router;

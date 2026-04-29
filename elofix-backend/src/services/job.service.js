@@ -714,7 +714,16 @@ async function finalizeJob(job, meta) {
       requiresInspection = true;
     }
   }
-  return { ...base, requiresInspection };
+  let jobMaterialOrders = [];
+  if (job?.id) {
+    try {
+      const materialOrderService = require("./materialOrder.service");
+      jobMaterialOrders = await materialOrderService.getJobMaterialOrdersForJob(job.id);
+    } catch (e) {
+      console.error("getJobMaterialOrdersForJob", e);
+    }
+  }
+  return { ...base, requiresInspection, jobMaterialOrders };
 }
 
 async function updateJobStatus(jobId, status) {
@@ -971,17 +980,25 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
   return enriched;
 }
 
-async function submitMaterials(jobId, materials) {
+async function submitMaterials(jobId, materials, providerUserId) {
+  const materialRequestService = require("./materialRequest.service");
+  const effectiveProviderId =
+    providerUserId != null && String(providerUserId).trim() !== ""
+      ? String(providerUserId)
+      : null;
+  if (!effectiveProviderId) {
+    throw new AppError("Provider context is required", 400);
+  }
+  await materialRequestService.finalizeProviderMaterialsSubmit(
+    jobId,
+    materials,
+    effectiveProviderId,
+    { draftMaterialRequestId: null }
+  );
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  const nextMaterials = Array.isArray(materials) ? materials : [];
-  const updated = await prisma.job.update({
-    where: { id: jobId },
-    data: { materials: nextMaterials },
-    include: jobInclude,
-  });
-  const meta = await mutateJobMeta(jobId, (m) => ({ ...m, statusOverride: "MATERIALS_SUBMITTED" }));
-  return await finalizeJob(updated, meta);
+  const meta = await getJobMeta(jobId);
+  return await finalizeJob(job, meta);
 }
 
 async function rejectJobByProvider(jobId, reason, details, rejectingProviderUserId) {
@@ -1542,6 +1559,29 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
     return m;
   });
   const enriched = await finalizeJob(job, meta);
+  try {
+    const materialRequestService = require("./materialRequest.service");
+    await materialRequestService.syncSubmittedRequestsToPaid(jobId);
+  } catch (e) {
+    console.error("syncSubmittedRequestsToPaid", e);
+  }
+  try {
+    const materialOrderService = require("./materialOrder.service");
+    const metaAfter = await getJobMeta(jobId);
+    const storeOrders = Array.isArray(metaAfter.storeOrders) ? metaAfter.storeOrders : [];
+    const so = storeOrders.find((o) => String(o.storeId) === String(supplierId));
+    const invoiceRef = so?.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
+    await materialOrderService.ensureJobMaterialPurchaseOrder({
+      jobId,
+      customerUserId: job.customerId,
+      providerUserId: job.providerId,
+      supplierId,
+      materialsLines: materials,
+      invoiceId: invoiceRef,
+    });
+  } catch (e) {
+    console.error("ensureJobMaterialPurchaseOrder", e);
+  }
   if (job.providerId) {
     await notificationEvents.notifyPaymentMade(
       job.providerId,

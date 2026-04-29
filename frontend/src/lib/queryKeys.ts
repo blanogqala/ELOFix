@@ -3,6 +3,10 @@
  * to refresh every job-related query after mutations or auth.
  */
 export const queryKeys = {
+  materialRequests: {
+    /** Provider/customer GET /materials/job/:jobId */
+    job: (jobId: string) => ['material-requests', 'job', jobId] as const,
+  },
   providerEarnings: {
     job: (id: string) => ['provider-earnings', 'job', id] as const,
   },

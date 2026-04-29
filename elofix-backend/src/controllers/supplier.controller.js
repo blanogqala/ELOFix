@@ -1,7 +1,7 @@
 const supplierService = require("../services/supplier.service");
 
 async function listSuppliers(req, res) {
-  const suppliers = await supplierService.listSuppliers();
+  const suppliers = await supplierService.listSuppliersForPublicCatalog();
   res.json({ success: true, suppliers });
 }
 
@@ -11,22 +11,8 @@ async function getSupplier(req, res) {
 }
 
 async function createSupplier(req, res) {
-  const supplier = await supplierService.createSupplier(req.body?.name);
+  const supplier = await supplierService.provisionSupplierByAdmin(req.body || {});
   res.status(201).json({ success: true, supplier });
-}
-
-async function addProduct(req, res) {
-  const supplier = await supplierService.addProduct(req.params.id, req.body || {});
-  res.json({ success: true, supplier });
-}
-
-async function updateProductPrice(req, res) {
-  const supplier = await supplierService.updateProductPrice(
-    req.params.id,
-    req.params.productId,
-    req.body?.newPrice
-  );
-  res.json({ success: true, supplier });
 }
 
 async function getProductsByCategory(req, res) {
@@ -38,7 +24,5 @@ module.exports = {
   listSuppliers,
   getSupplier,
   createSupplier,
-  addProduct,
-  updateProductPrice,
   getProductsByCategory,
 };

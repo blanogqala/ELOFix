@@ -10,6 +10,15 @@ enum Role {
   CUSTOMER
   PROVIDER
   ADMIN
+  SUPPLIER
+}
+
+enum MaterialFulfillmentStatus {
+  PENDING
+  ACCEPTED
+  PREPARING
+  READY
+  COMPLETED
 }
 
 enum JobStatus {
@@ -32,6 +41,12 @@ enum SuggestionStatus {
   REJECTED
 }
 
+enum MaterialRequestStatus {
+  draft
+  submitted
+  paid
+}
+
 model User {
   id                  String               @id @default(uuid())
   email               String               @unique
@@ -49,6 +64,7 @@ model User {
   invoices            Invoice[]
   sentNotifications   Notification[]       @relation("NotificationSender")
   auditLogs           AuditLog[]
+  supplierProfile     Supplier?
 }
 
 model Provider {
@@ -155,6 +171,27 @@ model Job {
   earnings                         Earning[]
   commissionLedger                 CommissionLedger?
   paystackCharges                  PaystackCharge[]
+  materialRequests                 MaterialRequest[]
+  purchaseMaterialOrders           MaterialOrder[] @relation("JobMaterialOrders")
+}
+
+model MaterialRequest {
+  id          String                  @id @default(uuid())
+  jobId       String
+  job         Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  providerId  String
+  customerId  String
+  items       Json
+  totalAmount Decimal                 @db.Decimal(12, 2)
+  status      MaterialRequestStatus   @default(draft)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  @@index([jobId])
+  @@index([providerId])
+  @@index([status])
+  @@index([jobId, status])
+  @@index([customerId])
 }
 
 /// One row per job after successful labor payment — admin aggregation
@@ -357,21 +394,64 @@ model Invoice {
 }
 
 model Supplier {
-  id          String  @id @default(uuid())
-  name        String
-  logo        String?
-  hasDelivery Boolean @default(true)
-  deliveryFee Decimal @default(0) @db.Decimal(12, 2)
-  products    Json    @default("[]")
+  id                    String                       @id @default(uuid())
+  userId                String?                      @unique
+  user                  User?                        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name                  String
+  businessName          String?
+  address               String?
+  phone                 String?
+  logo                  String?
+  hasDelivery           Boolean                      @default(true)
+  deliveryFee           Decimal                      @default(0) @db.Decimal(12, 2)
+  products              Json                         @default("[]")
+  createdByAdmin        Boolean                      @default(false)
+  createdAt             DateTime                     @default(now())
+  materialOrders        MaterialOrder[]
+  inventoryCategories   SupplierInventoryCategory[]
+
+  @@index([createdAt])
+}
+
+/// Per-supplier catalog categories (normalized lowercase unique per store)
+model SupplierInventoryCategory {
+  id         String   @id @default(uuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  name       String
+  createdAt  DateTime @default(now())
+
+  @@unique([supplierId, name])
+  @@index([supplierId])
 }
 
 model MaterialOrder {
-  id        String   @id @default(uuid())
-  userId    String
-  payload   Json
-  createdAt DateTime @default(now())
+  id                     String                     @id @default(uuid())
+  userId                 String
+  supplierId             String?
+  supplier               Supplier?                  @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  /// Job-linked purchase (customer paid from job flow)
+  jobId                  String?
+  job                    Job?                       @relation("JobMaterialOrders", fields: [jobId], references: [id], onDelete: SetNull)
+  providerId             String?
+  /// "unpaid" | "paid" — job flow creates as paid
+  paymentStatus          String                     @default("paid")
+  /// "store_checkout" (standalone cart) | "job_materials" (provider→customer job flow)
+  source                 String                     @default("store_checkout")
+  fulfillmentStatus      MaterialFulfillmentStatus  @default(PENDING)
+  /// Materials subtotal (excludes delivery) — commission base
+  materialsSubtotal      Decimal                    @default(0) @db.Decimal(12, 2)
+  platformCommission     Decimal                    @default(0) @db.Decimal(12, 2)
+  supplierEarning        Decimal                    @default(0) @db.Decimal(12, 2)
+  payload                Json
+  createdAt              DateTime                   @default(now())
 
   @@index([userId])
+  @@index([supplierId])
+  @@index([supplierId, fulfillmentStatus])
+  @@index([createdAt])
+  @@index([jobId])
+  @@index([jobId, supplierId])
 }
 
 model PromoSpecial {

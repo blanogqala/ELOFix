@@ -1,4 +1,4 @@
-import type { AuthUser, Provider, UserRole } from '@/types';
+import type { AuthUser, Provider, SupplierAccountProfile, SupplierUser, UserRole } from '@/types';
 import { getFromStorage, setToStorage, removeFromStorage, STORAGE_KEYS } from './storage';
 import apiClient from '@/api/client';
 
@@ -11,7 +11,7 @@ interface BackendUser {
   id: string;
   email: string;
   name: string;
-  role: 'CUSTOMER' | 'PROVIDER' | 'ADMIN';
+  role: 'CUSTOMER' | 'PROVIDER' | 'ADMIN' | 'SUPPLIER';
   phone?: string | null;
   createdAt: string;
   approved?: boolean;
@@ -31,6 +31,7 @@ interface BackendUser {
   settings?: Provider['settings'];
   blocked?: boolean;
   reviewSubmittedAt?: string;
+  supplierProfile?: SupplierAccountProfile | null;
 }
 
 interface AuthResponse {
@@ -47,6 +48,7 @@ interface MeResponse {
 function mapBackendRole(role: BackendUser['role']): UserRole {
   if (role === 'ADMIN') return 'admin';
   if (role === 'PROVIDER') return 'provider';
+  if (role === 'SUPPLIER') return 'supplier';
   return 'user';
 }
 
@@ -100,6 +102,19 @@ function toAuthUser(user: BackendUser): AuthUser {
       blocked: user.blocked,
       reviewSubmittedAt: user.reviewSubmittedAt,
     };
+  }
+
+  if (role === 'supplier') {
+    const su: SupplierUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? '',
+      role: 'supplier',
+      createdAt: user.createdAt ?? new Date().toISOString(),
+      supplierProfile: user.supplierProfile ?? null,
+    };
+    return su;
   }
 
   return {
@@ -206,6 +221,10 @@ export async function refreshSessionUser(): Promise<AuthSession> {
     throw new Error('Failed to refresh profile');
   }
   return next;
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiClient.post('/auth/change-password', { currentPassword, newPassword });
 }
 
 export async function socialLogin(_provider: 'google'): Promise<AuthSession> {

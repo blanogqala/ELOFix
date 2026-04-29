@@ -49,6 +49,13 @@ import AdminCategories from "./pages/admin/Categories.tsx";
 import AdminAnalytics from "./pages/admin/Analytics";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
 
+// Supplier portal
+import SupplierDashboard from "./pages/supplier/Dashboard";
+import SupplierOrdersPage from "./pages/supplier/OrdersPage";
+import SupplierInventoryPage from "./pages/supplier/InventoryPage";
+import SupplierEarningsPage from "./pages/supplier/EarningsPage";
+import SupplierProfilePage from "./pages/supplier/ProfilePage";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -84,6 +91,7 @@ const App = () => (
             <Route path="/user/notifications" element={<AuthGuard allowedRoles={['user']}><UserNotifications /></AuthGuard>} />
             <Route path="/provider/notifications" element={<AuthGuard allowedRoles={['provider']}><UserNotifications /></AuthGuard>} />
             <Route path="/admin/notifications" element={<AuthGuard allowedRoles={['admin']}><UserNotifications /></AuthGuard>} />
+            <Route path="/supplier/notifications" element={<AuthGuard allowedRoles={['supplier']}><UserNotifications /></AuthGuard>} />
             <Route path="/user/order-materials" element={<AuthGuard allowedRoles={['user']}><OrderMaterials /></AuthGuard>} />
             <Route path="/user/material-orders" element={<AuthGuard allowedRoles={['user']}><MaterialOrders /></AuthGuard>} />
             <Route path="/user/material-orders/:orderId" element={<AuthGuard allowedRoles={['user']}><OrderDetails /></AuthGuard>} />
@@ -99,6 +107,13 @@ const App = () => (
             <Route path="/provider/earnings" element={<AuthGuard allowedRoles={['provider']}><ProviderEarnings /></AuthGuard>} />
             <Route path="/provider/profile" element={<AuthGuard allowedRoles={['provider']}><ProviderProfile /></AuthGuard>} />
             <Route path="/provider/documents" element={<AuthGuard allowedRoles={['provider']}><ProviderDocuments /></AuthGuard>} />
+
+            {/* Supplier Routes */}
+            <Route path="/supplier/dashboard" element={<AuthGuard allowedRoles={['supplier']}><SupplierDashboard /></AuthGuard>} />
+            <Route path="/supplier/orders" element={<AuthGuard allowedRoles={['supplier']}><SupplierOrdersPage /></AuthGuard>} />
+            <Route path="/supplier/inventory" element={<AuthGuard allowedRoles={['supplier']}><SupplierInventoryPage /></AuthGuard>} />
+            <Route path="/supplier/earnings" element={<AuthGuard allowedRoles={['supplier']}><SupplierEarningsPage /></AuthGuard>} />
+            <Route path="/supplier/profile" element={<AuthGuard allowedRoles={['supplier']}><SupplierProfilePage /></AuthGuard>} />
 
             {/* Admin Routes */}
             <Route path="/admin/dashboard" element={<AuthGuard allowedRoles={['admin']}><AdminDashboard /></AuthGuard>} />

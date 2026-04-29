@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const providerService = require("./provider.service");
+const supplierService = require("./supplier.service");
 
 const VALID_ROLES = ["CUSTOMER", "PROVIDER", "ADMIN"];
 
@@ -25,6 +26,9 @@ function parseRole(role) {
   if (role === "ADMIN") {
     // Admin users must be provisioned manually (DB or seed script), never via public registration.
     throw new AppError("Admin accounts cannot be created via public registration", 403);
+  }
+  if (role === "SUPPLIER") {
+    throw new AppError("Supplier accounts cannot be created via public registration", 403);
   }
   return role;
 }
@@ -132,12 +136,52 @@ async function getMe(userId) {
     };
   }
 
+  if (user.role === "SUPPLIER") {
+    const supplier = await supplierService.getSupplierProfileByUserId(userId);
+    const { password: _p2, ...base } = user;
+    return {
+      user: {
+        ...base,
+        role: "SUPPLIER",
+        supplierProfile: supplier,
+      },
+    };
+  }
+
   const { password: _p, ...safe } = user;
   return { user: safe };
+}
+
+async function changePassword(userId, body = {}) {
+  const currentPassword = body.currentPassword ?? body.oldPassword;
+  const newPassword = body.newPassword ?? body.password;
+  if (!currentPassword || !newPassword) {
+    throw new AppError("Current password and new password are required", 400);
+  }
+  if (String(newPassword).length < 8) {
+    throw new AppError("New password must be at least 8 characters", 400);
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { password: true },
+  });
+  if (!user?.password) {
+    throw new AppError("Unable to update password", 400);
+  }
+  const ok = await bcrypt.compare(String(currentPassword), user.password);
+  if (!ok) {
+    throw new AppError("Current password is incorrect", 401);
+  }
+  await prisma.user.update({
+    where: { id: userId },
+    data: { password: await bcrypt.hash(String(newPassword), 12) },
+  });
+  return true;
 }
 
 module.exports = {
   register,
   login,
   getMe,
+  changePassword,
 };

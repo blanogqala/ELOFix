@@ -116,7 +116,11 @@ async function payLabor(req, res) {
 }
 
 async function submitMaterials(req, res) {
-  const job = await jobService.submitMaterials(req.params.id, req.body?.materials || []);
+  const job = await jobService.submitMaterials(
+    req.params.id,
+    req.body?.materials || [],
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 

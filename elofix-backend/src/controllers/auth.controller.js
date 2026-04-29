@@ -15,8 +15,14 @@ async function getMe(req, res) {
   res.json({ success: true, ...result });
 }
 
+async function changePassword(req, res) {
+  await authService.changePassword(req.user.userId, req.body || {});
+  res.json({ success: true });
+}
+
 module.exports = {
   register,
   login,
   getMe,
+  changePassword,
 };

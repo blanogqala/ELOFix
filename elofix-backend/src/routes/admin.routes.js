@@ -8,6 +8,7 @@ const router = express.Router();
 router.use(authenticate);
 router.use(authorizeRoles(["ADMIN"]));
 
+router.get("/material-orders", asyncHandler(adminController.listAllPlatformMaterialOrders));
 router.get("/analytics", asyncHandler(adminController.getAnalytics));
 router.get("/financial-summary", asyncHandler(adminController.getFinancialSummaryEndpoint));
 router.get("/commissions", asyncHandler(adminController.getCommissions));
@@ -35,5 +36,8 @@ router.get("/withdrawals", asyncHandler(adminController.listWithdrawals));
 router.patch("/withdrawals/:id/approve", asyncHandler(adminController.approveWithdrawal));
 router.patch("/withdrawals/:id/mark-paid", asyncHandler(adminController.markWithdrawalPaid));
 router.patch("/withdrawals/:id/mark-failed", asyncHandler(adminController.markWithdrawalFailed));
+
+router.get("/suppliers", asyncHandler(adminController.listSuppliers));
+router.get("/suppliers/:supplierId/material-orders", asyncHandler(adminController.listSupplierMaterialOrders));
 
 module.exports = router;

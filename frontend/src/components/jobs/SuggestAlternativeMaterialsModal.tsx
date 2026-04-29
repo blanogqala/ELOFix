@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Supplier, Product, MaterialLine } from '@/types';
 import { ArrowLeft, Plus, Minus, Store, Lightbulb } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { categoryKeysMatch } from '@/lib/categoryKey';
 
 interface SuggestAlternativeMaterialsModalProps {
   open: boolean;
@@ -52,14 +53,31 @@ export function SuggestAlternativeMaterialsModal({
     onOpenChange(isOpen);
   };
 
-  const filteredProducts = useMemo(() => {
-    if (!selectedSupplier) return [];
-    return selectedSupplier.products.filter(p => {
-      const matchesSearch = !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory = p.category.toLowerCase() === jobCategory.toLowerCase();
-      return matchesSearch && matchesCategory && p.inStock;
-    });
+  const filteredProductsResult = useMemo(() => {
+    if (!selectedSupplier) return { products: [] as Product[], showingCategoryFallback: false };
+    const q = searchQuery.trim().toLowerCase();
+    const bySearch = (p: Product) =>
+      !q ||
+      p.name.toLowerCase().includes(q);
+    const byCat = (p: Product) => categoryKeysMatch(p.category, jobCategory);
+    const strict = selectedSupplier.products.filter(
+      (p) => bySearch(p) && byCat(p) && p.inStock
+    );
+    if (strict.length > 0) return { products: strict, showingCategoryFallback: false };
+    if (!searchQuery.trim()) {
+      return {
+        products: selectedSupplier.products.filter((p) => p.inStock !== false),
+        showingCategoryFallback: true,
+      };
+    }
+    return {
+      products: selectedSupplier.products.filter((p) => bySearch(p) && p.inStock !== false),
+      showingCategoryFallback: true,
+    };
   }, [selectedSupplier, searchQuery, jobCategory]);
+
+  const filteredProducts = filteredProductsResult.products;
+  const showingCategoryFallback = filteredProductsResult.showingCategoryFallback;
 
   const handleSelectSupplier = (supplier: Supplier) => {
     setSelectedSupplier(supplier);
@@ -131,7 +149,11 @@ export function SuggestAlternativeMaterialsModal({
                       <div className="flex-1">
                         <p className="font-medium">{supplier.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {supplier.products.filter(p => p.category === jobCategory && p.inStock).length} products
+                          {supplier.products.filter(
+                            (p) => categoryKeysMatch(p.category, jobCategory) && p.inStock
+                          ).length ||
+                            supplier.products.filter((p) => p.inStock).length}{' '}
+                          products
                         </p>
                       </div>
                     </button>
@@ -154,6 +176,11 @@ export function SuggestAlternativeMaterialsModal({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="input-field"
               />
+              {showingCategoryFallback && (
+                <p className="text-xs text-muted-foreground">
+                  Showing full in-stock catalog — no exact category match.
+                </p>
+              )}
 
               <ScrollArea className="flex-1 min-h-[200px]">
                 <div className="space-y-2 pr-4">

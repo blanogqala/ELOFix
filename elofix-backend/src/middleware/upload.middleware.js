@@ -119,6 +119,48 @@ const uploadJobImage = multer({
   fileFilter: imageFileFilter,
 });
 
+function supplierProductImageStorage() {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uid = String(req.user?.userId || req.user?.id || "").trim() || "anonymous";
+      const dir = path.join(UPLOAD_ROOT, "suppliers", uid, "product-images");
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `product-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
+function supplierLogoStorage() {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uid = String(req.user?.userId || req.user?.id || "").trim() || "anonymous";
+      const dir = path.join(UPLOAD_ROOT, "suppliers", uid, "store-logo");
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `logo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
+const uploadSupplierProductImage = multer({
+  storage: supplierProductImageStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
+});
+
+const uploadSupplierLogo = multer({
+  storage: supplierLogoStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
+});
+
 /** Public URL path (same host as API) for stored files */
 function filePathToPublicUrl(absolutePath) {
   const rel = path.relative(UPLOAD_ROOT, absolutePath).split(path.sep).join("/");
@@ -131,5 +173,7 @@ module.exports = {
   uploadProviderAvatar,
   uploadWorkPostImage,
   uploadJobImage,
+  uploadSupplierProductImage,
+  uploadSupplierLogo,
   filePathToPublicUrl,
 };

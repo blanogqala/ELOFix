@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { getJobs } from '@/lib/api/jobs';
-import { getAdminCommissions } from '@/lib/api/admin';
+import { getAdminCommissions, getAdminPlatformMaterialOrders } from '@/lib/api/admin';
 import { getAdminProviders, getPendingProviders } from '@/lib/api/providers';
 import { Job, Provider } from '@/types';
 import { 
@@ -19,6 +19,7 @@ import {
   Activity,
   BarChart3,
   Wallet,
+  ShoppingBag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -32,6 +33,12 @@ export default function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
   const [totalCommissionEarned, setTotalCommissionEarned] = useState(0);
+  /** Persisted supplier material orders (store + job pipeline) — see GET /admin/material-orders */
+  const [materialPipeline, setMaterialPipeline] = useState<{
+    orderCount: number;
+    totalMaterialsRevenue: number;
+    platformCommissionTotal: number;
+  } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -56,6 +63,21 @@ export default function AdminDashboard() {
         setTotalCommissionEarned(typeof v === 'number' && Number.isFinite(v) ? v : 0);
       } catch {
         setTotalCommissionEarned(0);
+      }
+      try {
+        const mo = await getAdminPlatformMaterialOrders(500);
+        const s = mo?.summary;
+        if (s && typeof s.orderCount === 'number') {
+          setMaterialPipeline({
+            orderCount: s.orderCount,
+            totalMaterialsRevenue: Number(s.totalMaterialsRevenue) || 0,
+            platformCommissionTotal: Number(s.platformCommissionTotal) || 0,
+          });
+        } else {
+          setMaterialPipeline(null);
+        }
+      } catch {
+        setMaterialPipeline(null);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
@@ -178,6 +200,42 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
+
+        {materialPipeline && (
+          <div className="card-elevated p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <ShoppingBag className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <h2 className="font-semibold">Material orders (database)</h2>
+                  <p className="text-sm text-muted-foreground">
+                    All paid supplier orders; platform commission is 7% of materials line (see each order breakdown).
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-sm sm:text-right">
+                <div>
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Orders</p>
+                  <p className="text-lg font-semibold tabular-nums">{materialPipeline.orderCount}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Materials revenue</p>
+                  <p className="text-lg font-semibold tabular-nums">
+                    {formatCurrency(materialPipeline.totalMaterialsRevenue)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Platform (7%)</p>
+                  <p className="text-lg font-semibold tabular-nums text-accent">
+                    {formatCurrency(materialPipeline.platformCommissionTotal)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Pending Approvals Alert */}
         {pendingProviders.length > 0 && (

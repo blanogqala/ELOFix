@@ -17,6 +17,7 @@ import {
   Package
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { categoryKeysMatch } from '@/lib/categoryKey';
 
 interface Step4MaterialSelectionProps {
   selectedCategory: string;
@@ -37,10 +38,17 @@ export function Step4MaterialSelection({
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'specials' | 'low' | 'medium' | 'high'>('specials');
+  const [fallbackCatalog, setFallbackCatalog] = useState(false);
 
   const loadSuppliers = useCallback(async () => {
+    setIsLoading(true);
+    setFallbackCatalog(false);
     try {
-      const rows = await getProductsByCategory(selectedCategory);
+      let rows = await getProductsByCategory(selectedCategory);
+      if (rows.length === 0) {
+        rows = await getProductsByCategory('');
+        setFallbackCatalog(true);
+      }
       const byId = new Map<string, Supplier>();
       for (const row of rows) {
         if (!row.inStock) continue;
@@ -111,7 +119,10 @@ export function Step4MaterialSelection({
   };
 
   const getCategoryProducts = (supplier: Supplier) => {
-    return supplier.products.filter(p => p.category === selectedCategory && p.inStock);
+    const inStock = supplier.products.filter((p) => p.inStock);
+    const matched = inStock.filter((p) => categoryKeysMatch(p.category, selectedCategory));
+    if (fallbackCatalog && matched.length === 0) return inStock;
+    return matched;
   };
 
   const getSpecialsCount = (supplier: Supplier) => {
@@ -155,6 +166,11 @@ export function Step4MaterialSelection({
         <div>
           <h2 className="text-xl font-semibold mb-2">Select Materials</h2>
           <p className="text-muted-foreground">Choose a hardware store to browse materials</p>
+          {fallbackCatalog && suppliers.length > 0 && (
+            <p className="mt-2 text-sm text-amber-800 dark:text-amber-200 rounded-md bg-amber-500/15 border border-amber-500/30 px-3 py-2">
+              No products are tagged exactly for this job category — showing full store catalogs instead. Suppliers can assign categories in Inventory to narrow this later.
+            </p>
+          )}
         </div>
 
         {/* Store Cards */}
@@ -334,6 +350,9 @@ export function Step4MaterialSelection({
             </div>
             <div>
               <h2 className="text-xl font-semibold">{selectedSupplier.name}</h2>
+              {fallbackCatalog && (
+                <p className="text-xs text-muted-foreground">Showing full in-stock catalog for this store.</p>
+              )}
               {selectedSupplier.hasDelivery && (
                 <p className="text-sm text-muted-foreground flex items-center gap-1">
                   <Truck className="h-3 w-3" />
@@ -427,7 +446,13 @@ export function Step4MaterialSelection({
                   ) : (
                     <Button 
                       size="sm"
-                      onClick={() => handleAddMaterial(product, selectedSupplier)}
+                      onClick={() =>
+                        handleAddMaterial(
+                          product,
+                          selectedSupplier,
+                          !categoryKeysMatch(product.category, selectedCategory)
+                        )
+                      }
                     >
                       <Plus className="h-4 w-4 mr-1" />
                       Add
@@ -469,7 +494,7 @@ export function Step4MaterialSelection({
           p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           p.category.toLowerCase().includes(searchQuery.toLowerCase())
         )
-      : allProducts.filter(p => p.category !== selectedCategory);
+      : allProducts.filter((p) => !categoryKeysMatch(p.category, selectedCategory));
 
     return (
       <div className="space-y-6">

@@ -25,9 +25,14 @@ export default function Login() {
 
   const getRedirectPath = (role: string) => {
     switch (role) {
-      case 'admin': return '/admin/dashboard';
-      case 'provider': return '/provider/dashboard';
-      default: return '/user/dashboard';
+      case 'admin':
+        return '/admin/dashboard';
+      case 'provider':
+        return '/provider/dashboard';
+      case 'supplier':
+        return '/supplier/dashboard';
+      default:
+        return '/user/dashboard';
     }
   };
 
@@ -43,6 +48,9 @@ export default function Login() {
     }
     if (role === 'provider') {
       return attemptedPath.startsWith('/provider/') ? attemptedPath : defaultPath;
+    }
+    if (role === 'supplier') {
+      return attemptedPath.startsWith('/supplier/') ? attemptedPath : defaultPath;
     }
     return attemptedPath.startsWith('/user/') ? attemptedPath : defaultPath;
   };
