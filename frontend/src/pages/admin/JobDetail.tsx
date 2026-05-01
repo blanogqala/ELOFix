@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getJobById, releaseEscrowPayment } from '@/lib/api/jobs';
+import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
+import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { getProviderById } from '@/lib/api/providers';
 import { getCategories } from '@/lib/api/categories';
 import { getUserById } from '@/lib/api/users';
@@ -25,13 +27,15 @@ import {
   Package,
   Store,
   ArrowRight,
+  Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob, JOB_TIMELINE_LABELS } from '@/lib/jobProgressDisplay';
+import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import {
   Dialog,
   DialogContent,
@@ -56,6 +60,7 @@ export default function AdminJobDetail() {
   const [isReleasing, setIsReleasing] = useState(false);
   const [materialsModalOpen, setMaterialsModalOpen] = useState(false);
   const [commTab, setCommTab] = useState<'messages' | 'notes'>('messages');
+  const [materialRequests, setMaterialRequests] = useState<MaterialRequestDto[]>([]);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -70,6 +75,15 @@ export default function AdminJobDetail() {
     try {
       const data = await getJobById(id);
       setJob(data || null);
+      if (data?.id) {
+        try {
+          setMaterialRequests(await getMaterialRequestsForJob(data.id));
+        } catch {
+          setMaterialRequests([]);
+        }
+      } else {
+        setMaterialRequests([]);
+      }
       if (data?.userId) {
         const userData = await getUserById(data.userId);
         setCustomer(userData || null);
@@ -136,9 +150,9 @@ export default function AdminJobDetail() {
     }
   };
 
-  const getStatusBadge = (status: Job['status']) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(status))}>
-      {getStandardizedStatusLabel(status)}
+  const getStatusBadge = (current: Job) => (
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(current))}>
+      {getJobDisplayStatusLabel(current)}
     </span>
   );
 
@@ -205,6 +219,58 @@ export default function AdminJobDetail() {
           </Button>
         </div>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Job progress</CardTitle>
+            <p className="text-sm text-muted-foreground">Shared milestones (customer, provider, admin).</p>
+          </CardHeader>
+          <CardContent className="pt-2">
+            <div className="flex items-center justify-between overflow-x-auto pb-2">
+              {JOB_TIMELINE_LABELS.map((label, index, arr) => {
+                const view = getUserTimelineViewState(job, materialRequests);
+                const isTerminal = view.terminal !== 'none';
+                const isCancelled = view.terminal === 'cancelled';
+                const pinIndex = view.pinIndex;
+                const currentIdx = view.currentIdx;
+                const isFutureTerminalStep = isTerminal && isCancelled && index > pinIndex;
+                const isActive =
+                  !isTerminal && job.status !== 'COMPLETED' && index === currentIdx;
+                const isPast = isTerminal
+                  ? index < pinIndex
+                  : job.status === 'COMPLETED' || index < currentIdx;
+                return (
+                  <div key={label} className="flex items-center">
+                    <div className="flex flex-col items-center min-w-[56px]">
+                      <div
+                        className={cn(
+                          'h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold',
+                          isFutureTerminalStep && 'opacity-40',
+                          isPast ? 'bg-success text-success-foreground' :
+                          isActive ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2' :
+                          'bg-muted text-muted-foreground'
+                        )}
+                      >
+                        {isPast ? <Check className="h-4 w-4" /> : index + 1}
+                      </div>
+                      <span
+                        className={cn(
+                          'text-[10px] mt-1 text-center leading-tight max-w-[80px]',
+                          isActive ? 'font-medium' : 'text-muted-foreground'
+                        )}
+                      >
+                        {label}
+                      </span>
+                    </div>
+                    {index < arr.length - 1 && (
+                      <div className={cn('w-4 sm:w-8 h-0.5 mx-0.5 shrink-0', isPast ? 'bg-success' : 'bg-muted')} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="grid lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
@@ -248,7 +314,7 @@ export default function AdminJobDetail() {
               )}
               <div className="border-b border-primary/20 pb-3">
                 <p className="text-sm text-muted-foreground">Status</p>
-                {getStatusBadge(job.status)}
+                {getStatusBadge(job)}
               </div>
               {job.location && (
                 <div className="border-b border-primary/20 pb-3">

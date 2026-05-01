@@ -28,7 +28,32 @@ function createDefaultJobMeta() {
     rejectionDetails: null,
     rejectedAt: null,
     rejectedByProviderUserId: null,
+    progressStep: 0,
+    /** Once true (first service or material batch paid), timeline never returns to payment step. */
+    hasStarted: false,
   };
+}
+
+function dedupeJobStoreOrders(storeOrders) {
+  const seen = new Set();
+  return (Array.isArray(storeOrders) ? storeOrders : []).filter((o) => {
+    const id = String(o.orderId || "");
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+/** Sticky + payment-derived: used in API and must match jobProgress.util derive. */
+function resolveJobHasStarted(meta, job) {
+  const safe = normalizeMeta(meta);
+  if (safe.hasStarted === true) return true;
+  if (Boolean(job.laborPaid) || Boolean(safe.laborPaid)) return true;
+  const mps = Array.isArray(safe.materialPayments) ? safe.materialPayments : [];
+  if (mps.some((p) => String(p.status || "").toLowerCase() === "paid")) return true;
+  const orders = dedupeJobStoreOrders(safe.storeOrders);
+  if (orders.some((o) => o.payment && o.payment.materialsPaid === true)) return true;
+  return false;
 }
 
 function normalizeMeta(meta) {
@@ -39,6 +64,10 @@ function normalizeMeta(meta) {
     heldAmount: Number(esc.heldAmount) || 0,
     releasedAmount: Number(esc.releasedAmount) || 0,
   };
+  let ps = Number(merged.progressStep);
+  if (!Number.isFinite(ps) || ps < 0) ps = 0;
+  merged.progressStep = ps;
+  merged.hasStarted = merged.hasStarted === true;
   return merged;
 }
 
@@ -172,6 +201,8 @@ function enrichJob(job, meta) {
     rejectionDetails: safeMeta.rejectionDetails,
     rejectedAt: safeMeta.rejectedAt,
     rejectedByProviderUserId: safeMeta.rejectedByProviderUserId || null,
+    progressStep: Number(safeMeta.progressStep) || 0,
+    hasStarted: resolveJobHasStarted(meta, job),
   };
 }
 
@@ -212,6 +243,7 @@ module.exports = {
   mutateJobMeta,
   mutateJobMetaInTransaction,
   enrichJob,
+  resolveJobHasStarted,
   toFrontendStatus,
   createNote,
   createChat,

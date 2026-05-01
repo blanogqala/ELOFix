@@ -16,7 +16,7 @@ import {
   ArrowLeft, Check, X, MapPin, Calendar, User,
   MessageSquare, Send, Package, XCircle,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useProviderStatus } from '@/hooks/useProviderStatus';
 import {
   Select,
   SelectContent,
@@ -35,7 +35,7 @@ import {
 export default function ProviderRequestDetail() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { isProfileComplete } = useProviderStatus();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [job, setJob] = useState<Job | null>(null);
@@ -67,6 +67,15 @@ export default function ProviderRequestDetail() {
 
   const handleAccept = async () => {
     if (!job || isMutating) return;
+    if (!isProfileComplete) {
+      toast({
+        title: 'Complete your profile first',
+        description: 'Finish profile info, skills & pricing, and required documents before accepting jobs.',
+        variant: 'destructive',
+      });
+      navigate('/provider/profile');
+      return;
+    }
     setIsMutating(true);
     try {
       await acceptJob(job.id);
@@ -312,10 +321,19 @@ export default function ProviderRequestDetail() {
           )}
         </div>
 
+        {job.status === 'PENDING' && !isProfileComplete && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-50">
+            Complete your profile (info, skills, documents) before you can accept this request.
+            <Button type="button" variant="link" className="h-auto p-0 ml-1" onClick={() => navigate('/provider/profile')}>
+              Open profile
+            </Button>
+          </div>
+        )}
+
         {/* Action Buttons - only for PENDING */}
         {job.status === 'PENDING' && (
           <div className="sticky bottom-4 flex flex-col gap-3 sm:flex-row">
-            <Button className="h-11 flex-1 whitespace-nowrap sm:h-12" onClick={handleAccept} disabled={isMutating}>
+            <Button className="h-11 flex-1 whitespace-nowrap sm:h-12" onClick={handleAccept} disabled={isMutating || !isProfileComplete}>
               <Check className="mr-2 h-4 w-4 sm:h-5 sm:w-5" /> Accept Request
             </Button>
             <Button variant="outline" className="h-11 flex-1 whitespace-nowrap sm:h-12" onClick={() => setRejectOpen(true)} disabled={isMutating}>

@@ -45,6 +45,7 @@ import AdminJobDetail from "./pages/admin/JobDetail";
 import AdminPayments from "./pages/admin/Payments";
 import AdminPaymentDetail from "./pages/admin/PaymentDetail";
 import AdminSuppliers from "./pages/admin/Suppliers";
+import AdminSupplierDetail from "./pages/admin/SupplierDetail";
 import AdminCategories from "./pages/admin/Categories.tsx";
 import AdminAnalytics from "./pages/admin/Analytics";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
@@ -121,6 +122,7 @@ const App = () => (
             <Route path="/admin/providers" element={<AuthGuard allowedRoles={['admin']}><AdminProviders /></AuthGuard>} />
             <Route path="/admin/providers/:id" element={<AuthGuard allowedRoles={['admin']}><AdminProviderDetail /></AuthGuard>} />
             <Route path="/admin/suppliers" element={<AuthGuard allowedRoles={['admin']}><AdminSuppliers /></AuthGuard>} />
+            <Route path="/admin/suppliers/:supplierId" element={<AuthGuard allowedRoles={['admin']}><AdminSupplierDetail /></AuthGuard>} />
             <Route path="/admin/categories" element={<AuthGuard allowedRoles={['admin']}><AdminCategories /></AuthGuard>} />
             <Route path="/admin/jobs" element={<AuthGuard allowedRoles={['admin']}><AdminJobs /></AuthGuard>} />
             <Route path="/admin/jobs/:id" element={<AuthGuard allowedRoles={['admin']}><AdminJobDetail /></AuthGuard>} />

@@ -3,6 +3,99 @@ const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const supplierService = require("./supplier.service");
+const notificationService = require("./notification.service");
+
+function emitMaterialOrderFulfillmentToCustomer(userId, payload) {
+  try {
+    if (!global.io || !userId) return;
+    global.io.to(String(userId)).emit("material_order:fulfillment", payload);
+  } catch (e) {
+    console.error("emitMaterialOrderFulfillmentToCustomer", e);
+  }
+}
+
+function fulfillmentEnumToBatchStatus(fs) {
+  const u = String(fs || "PENDING").toUpperCase();
+  const map = {
+    PENDING: "pending",
+    ACCEPTED: "accepted",
+    PREPARING: "preparing",
+    READY: "ready",
+    OUT_FOR_DELIVERY: "out_for_delivery",
+    COMPLETED: "delivered",
+  };
+  return map[u] || "pending";
+}
+
+function deliveryJobTypeToCanonical(dt) {
+  const d = String(dt || "SELF").toUpperCase();
+  if (d === "SELF") return "pickup";
+  return "delivery";
+}
+
+function mergeMaterialBatch(payload, row, overrides = {}) {
+  const base = payload.materialBatch && typeof payload.materialBatch === "object" ? { ...payload.materialBatch } : {};
+  const id = base.id || row.id;
+  const supplierId = base.supplierId || row.supplierId || payload.storeId || "";
+  const items = Array.isArray(base.items) && base.items.length > 0 ? base.items : (Array.isArray(payload.items) ? payload.items : []);
+  const deliveryType =
+    base.deliveryType || deliveryJobTypeToCanonical(payload.delivery?.type || payload.deliveryType);
+  const nextStatus = overrides.status != null ? overrides.status : fulfillmentEnumToBatchStatus(row.fulfillmentStatus);
+  const timestamps = {
+    acceptedAt: base.timestamps?.acceptedAt,
+    readyAt: base.timestamps?.readyAt,
+    pickedUpAt: base.timestamps?.pickedUpAt,
+    deliveredAt: base.timestamps?.deliveredAt,
+    ...(overrides.timestamps || {}),
+  };
+  return {
+    ...base,
+    id,
+    supplierId: String(supplierId || ""),
+    items,
+    status: nextStatus,
+    deliveryType,
+    pickupAddress: base.pickupAddress != null ? String(base.pickupAddress) : "",
+    deliveryAddress: base.deliveryAddress != null ? String(base.deliveryAddress) : "",
+    assignedDriverId: base.assignedDriverId || payload.deliveryProviderId || undefined,
+    timestamps,
+  };
+}
+
+async function notifyCustomerFulfillmentStep(row, next) {
+  const customerId = row.userId;
+  if (!customerId) return;
+  const jobId = row.jobId || undefined;
+  try {
+    if (next === "READY") {
+      await notificationService.addNotification({
+        userId: customerId,
+        jobId,
+        type: "material_tracking",
+        title: "Materials update",
+        message: "Your materials are ready for pickup",
+      });
+    } else if (next === "OUT_FOR_DELIVERY") {
+      await notificationService.addNotification({
+        userId: customerId,
+        jobId,
+        type: "material_tracking",
+        title: "Materials update",
+        message: "Your materials are on the way",
+      });
+    } else if (next === "COMPLETED") {
+      await notificationService.addNotification({
+        userId: customerId,
+        jobId,
+        type: "material_tracking",
+        title: "Materials update",
+        message: "Materials delivered successfully",
+      });
+    }
+  } catch (e) {
+    console.error("notifyCustomerFulfillmentStep", e);
+  }
+}
 
 function normalizeDeliveryStatus(status) {
   const allowed = ["SelfCollect", "PendingApproval", "Approved", "Rejected", "Cancelled", "InProgress", "Delivered"];
@@ -79,6 +172,17 @@ function normalizeOrder(input) {
     providerId: input.providerId ? String(input.providerId) : undefined,
     source: input.source === "job_materials" ? "job_materials" : "store_checkout",
     supplierActivity: [{ type: "created", createdAt: new Date().toISOString() }],
+    materialBatch: {
+      id,
+      supplierId: storeId,
+      items,
+      status: "pending",
+      deliveryType: deliveryJobTypeToCanonical(delivery.type || "SELF"),
+      pickupAddress: "",
+      deliveryAddress: "",
+      assignedDriverId: delivery.providerId || undefined,
+      timestamps: {},
+    },
   };
 
   const prismaRow = {
@@ -226,7 +330,7 @@ async function updateMaterialOrderDeliveryStatus(orderId, status) {
   return updateMaterialOrderDelivery(orderId, { status: mapped });
 }
 
-const FULFILLMENT_ORDER = ["PENDING", "ACCEPTED", "PREPARING", "READY", "COMPLETED"];
+const FULFILLMENT_ORDER = ["PENDING", "ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "COMPLETED"];
 
 function canTransition(from, to) {
   const i = FULFILLMENT_ORDER.indexOf(from);
@@ -263,6 +367,16 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
       });
       payload.supplierActivity = activity;
 
+      const tsPatch = {};
+      if (next === "ACCEPTED") tsPatch.acceptedAt = ts;
+      if (next === "READY") tsPatch.readyAt = ts;
+      if (next === "OUT_FOR_DELIVERY") tsPatch.pickedUpAt = ts;
+      if (next === "COMPLETED") tsPatch.deliveredAt = ts;
+      payload.materialBatch = mergeMaterialBatch(payload, { ...row, fulfillmentStatus: next }, {
+        status: fulfillmentEnumToBatchStatus(next),
+        timestamps: tsPatch,
+      });
+
       await tx.materialOrder.update({
         where: { id: orderId },
         data: {
@@ -274,10 +388,27 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
       return enrichOrderFromDbRow(nextRow, payload);
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 15000 }
-  );
+  ).then(async (enriched) => {
+    try {
+      const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+      if (row && ["READY", "OUT_FOR_DELIVERY", "COMPLETED"].includes(next)) {
+        const p = enriched && typeof enriched === "object" ? enriched : {};
+        await notifyCustomerFulfillmentStep(row, next);
+        emitMaterialOrderFulfillmentToCustomer(row.userId, {
+          orderId: String(orderId),
+          jobId: row.jobId || null,
+          fulfillmentStatus: next,
+          materialBatch: p.materialBatch,
+        });
+      }
+    } catch (e) {
+      console.error("postFulfillmentNotify", e);
+    }
+    return enriched;
+  });
 }
 
-const ALLOWED_STATUS = ["PENDING", "ACCEPTED", "PREPARING", "READY", "COMPLETED"];
+const ALLOWED_STATUS = ["PENDING", "ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "COMPLETED"];
 
 async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = {}) {
   const raw =
@@ -442,25 +573,50 @@ async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId) {
  * Idempotent on (jobId, supplierId, customer userId, source=job_materials).
  */
 async function ensureJobMaterialPurchaseOrder(params) {
-  const { jobId, customerUserId, providerUserId, supplierId, materialsLines, invoiceId } = params;
+  const {
+    jobId,
+    customerUserId,
+    providerUserId,
+    supplierId,
+    materialsLines,
+    invoiceId,
+    jobStoreOrderId,
+    jobDeliveryType = "SELF",
+    deliveryProviderId: paramDeliveryProviderId,
+    jobSiteAddress = "",
+  } = params;
   const sid = String(supplierId || "").trim();
   if (!jobId || !sid || !customerUserId) {
     throw new AppError("jobId, supplierId and customerUserId are required", 400);
   }
 
-  const existing = await prisma.materialOrder.findFirst({
-    where: {
-      jobId: String(jobId),
-      supplierId: sid,
-      userId: String(customerUserId),
-      source: "job_materials",
-    },
-  });
-  if (existing) {
-    return enrichOrderFromDbRow(
-      existing,
-      existing.payload && typeof existing.payload === "object" ? existing.payload : {}
-    );
+  const storeOrderId = jobStoreOrderId ? String(jobStoreOrderId).trim() : "";
+
+  if (storeOrderId) {
+    const byId = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
+    if (byId) {
+      return enrichOrderFromDbRow(
+        byId,
+        byId.payload && typeof byId.payload === "object" ? byId.payload : {}
+      );
+    }
+  }
+
+  if (!storeOrderId) {
+    const existing = await prisma.materialOrder.findFirst({
+      where: {
+        jobId: String(jobId),
+        supplierId: sid,
+        userId: String(customerUserId),
+        source: "job_materials",
+      },
+    });
+    if (existing) {
+      return enrichOrderFromDbRow(
+        existing,
+        existing.payload && typeof existing.payload === "object" ? existing.payload : {}
+      );
+    }
   }
 
   const lines = Array.isArray(materialsLines) ? materialsLines : [];
@@ -478,23 +634,43 @@ async function ensureJobMaterialPurchaseOrder(params) {
     supplierName: m.supplierName,
   }));
 
+  const jd = String(jobDeliveryType || "SELF").toUpperCase();
+  const apiDel = jd === "STORE" ? "STORE" : jd === "PROVIDER" || jd === "DELIVERY_PROVIDER" ? "PROVIDER" : "SELF";
+
   const { prismaRow, order } = normalizeOrder({
+    id: storeOrderId || undefined,
     userId: String(customerUserId),
     storeId: sid,
     storeName: lines[0]?.supplierName || "Store",
     items,
     materialsTotal,
-    delivery: { type: "SELF", fee: 0 },
+    delivery: { type: apiDel, fee: 0, providerId: paramDeliveryProviderId },
     jobId: String(jobId),
     providerId: providerUserId ? String(providerUserId) : null,
     paymentStatus: "paid",
     source: "job_materials",
   });
 
+  const supplierRow = await prisma.supplier.findUnique({
+    where: { id: sid },
+    select: { address: true },
+  });
+  const pickupAddr = supplierRow?.address ? String(supplierRow.address) : "";
+
   const finalPayload = {
     ...order,
     invoiceId: invoiceId || order.invoiceId,
+    jobStoreOrderId: storeOrderId || order.id,
   };
+  finalPayload.materialBatch = mergeMaterialBatch(finalPayload, { id: prismaRow.id, supplierId: sid, fulfillmentStatus: "PENDING" }, {
+    status: "pending",
+  });
+  finalPayload.materialBatch.pickupAddress = pickupAddr;
+  finalPayload.materialBatch.deliveryAddress = String(jobSiteAddress || "");
+  finalPayload.materialBatch.deliveryType = deliveryJobTypeToCanonical(apiDel);
+  if (paramDeliveryProviderId) {
+    finalPayload.materialBatch.assignedDriverId = String(paramDeliveryProviderId);
+  }
 
   await prisma.materialOrder.create({
     data: {
@@ -536,6 +712,7 @@ async function getJobMaterialOrdersForJob(jobId) {
       fulfillmentStatus: r.fulfillmentStatus,
       paymentStatus: r.paymentStatus,
       source: r.source,
+      jobStoreOrderId: payload.jobStoreOrderId || null,
       total: Number(payload.total ?? r.materialsSubtotal ?? 0),
       materialsSubtotal: Number(r.materialsSubtotal ?? 0),
       platformCommission: Number(r.platformCommission ?? 0),
@@ -546,7 +723,97 @@ async function getJobMaterialOrdersForJob(jobId) {
         price: Number(i.price ?? i.unitPrice ?? 0),
         productId: i.productId,
       })),
+      materialBatch: mergeMaterialBatch(payload, r, {}),
       createdAt: r.createdAt?.toISOString?.() || String(r.createdAt),
+    };
+  });
+}
+
+const ADMIN_ANALYTICS_COMMISSION_RATE = 0.07;
+
+function roundMoney2(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+/** Order total for analytics: payload.total if present, else materials + delivery fee from payload/row. */
+function orderTotalFromRow(row) {
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  const fromPayload = Number(payload.total);
+  if (Number.isFinite(fromPayload) && fromPayload >= 0) return fromPayload;
+  const mat = Number(row.materialsSubtotal ?? payload.materialsSubtotal ?? 0);
+  const fee = Number(payload.deliveryFee ?? 0);
+  return Math.max(0, mat + fee);
+}
+
+/**
+ * Aggregates completed + paid material orders (platform-wide or per supplier).
+ * Commission = 7% of each order's total (see orderTotalFromRow).
+ */
+async function aggregateCompletedPaidMaterialOrders({ supplierId } = {}) {
+  const where = {
+    paymentStatus: "paid",
+    fulfillmentStatus: "COMPLETED",
+    ...(supplierId != null && String(supplierId).trim() !== ""
+      ? { supplierId: String(supplierId) }
+      : { supplierId: { not: null } }),
+  };
+  const rows = await prisma.materialOrder.findMany({
+    where,
+    select: { materialsSubtotal: true, payload: true },
+  });
+  let totalRevenue = 0;
+  for (const row of rows) {
+    totalRevenue += orderTotalFromRow(row);
+  }
+  totalRevenue = roundMoney2(totalRevenue);
+  const orderCount = rows.length;
+  const totalCommission = roundMoney2(totalRevenue * ADMIN_ANALYTICS_COMMISSION_RATE);
+  const averageOrderValue = orderCount > 0 ? roundMoney2(totalRevenue / orderCount) : 0;
+  return {
+    orderCount,
+    totalRevenue,
+    totalCommission,
+    averageOrderValue,
+    commissionRate: ADMIN_ANALYTICS_COMMISSION_RATE,
+  };
+}
+
+/** Recent material orders for admin supplier view (newest first). */
+async function listRecentMaterialOrdersBySupplierForAdmin(supplierId, { limit = 10 } = {}) {
+  const sid = String(supplierId || "").trim();
+  if (!sid) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const take = Math.min(50, Math.max(1, Number(limit) || 10));
+  const rows = await prisma.materialOrder.findMany({
+    where: { supplierId: sid },
+    orderBy: { createdAt: "desc" },
+    take,
+    include: { supplier: true },
+  });
+  const userIds = [...new Set(rows.map((r) => r.userId))];
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true, email: true, phone: true },
+  });
+  const uMap = new Map(users.map((u) => [u.id, u]));
+  return rows.map((r) => {
+    const base = enrichOrderFromDbRow(r, r.payload && typeof r.payload === "object" ? r.payload : {});
+    const u = uMap.get(r.userId);
+    return {
+      ...base,
+      id: r.id,
+      jobId: r.jobId,
+      providerId: r.providerId,
+      source: r.source,
+      paymentStatus: r.paymentStatus,
+      fulfillmentStatus: r.fulfillmentStatus,
+      customerId: r.userId,
+      customerName: u?.name,
+      customerEmail: u?.email,
+      customerPhone: u?.phone,
+      total: orderTotalFromRow(r),
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt || ""),
     };
   });
 }
@@ -590,6 +857,9 @@ async function listAllMaterialOrdersForAdmin({ limit = 200 } = {}) {
 }
 
 module.exports = {
+  aggregateCompletedPaidMaterialOrders,
+  listRecentMaterialOrdersBySupplierForAdmin,
+  orderTotalFromRow,
   createMaterialOrder,
   getMaterialOrders,
   getMaterialOrderById,

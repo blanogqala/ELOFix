@@ -42,14 +42,64 @@ export async function getAdminCommissions(params?: { from?: string; to?: string 
   return data;
 }
 
-export async function getAdminSuppliers(): Promise<Supplier[]> {
-  const { data } = await apiClient.get<{ success: boolean; suppliers: Supplier[] }>('/admin/suppliers');
-  return Array.isArray(data?.suppliers) ? data.suppliers : [];
+/** Material-order analytics: completed + paid only; commission = commissionRate × totalRevenue. */
+export interface AdminSupplierOrderAnalytics {
+  orderCount: number;
+  totalRevenue: number;
+  totalCommission: number;
+  averageOrderValue: number;
+  commissionRate: number;
+}
+
+export interface AdminGlobalSupplierAnalytics extends AdminSupplierOrderAnalytics {
+  totalSuppliers: number;
+}
+
+export async function getAdminSuppliers(): Promise<{
+  suppliers: Supplier[];
+  globalSupplierOrderAnalytics: AdminGlobalSupplierAnalytics;
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    suppliers: Supplier[];
+    globalSupplierOrderAnalytics: AdminGlobalSupplierAnalytics;
+  }>('/admin/suppliers');
+  return {
+    suppliers: Array.isArray(data?.suppliers) ? data.suppliers : [],
+    globalSupplierOrderAnalytics:
+      data?.globalSupplierOrderAnalytics ?? {
+        totalSuppliers: 0,
+        orderCount: 0,
+        totalRevenue: 0,
+        totalCommission: 0,
+        averageOrderValue: 0,
+        commissionRate: 0.07,
+      },
+  };
+}
+
+export async function getAdminSupplierDetail(supplierId: string): Promise<{
+  supplier: Supplier & {
+    linkedUserEmail?: string | null;
+    linkedUserId?: string | null;
+  };
+  analytics: AdminSupplierOrderAnalytics;
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    supplier: Supplier & { linkedUserEmail?: string | null; linkedUserId?: string | null };
+    analytics: AdminSupplierOrderAnalytics;
+  }>(`/admin/suppliers/${supplierId}`);
+  if (!data?.supplier) {
+    throw new Error('Supplier not found');
+  }
+  return { supplier: data.supplier, analytics: data.analytics };
 }
 
 export interface AdminSupplierOrderRow {
   id: string;
   userId?: string;
+  paymentStatus?: string;
   fulfillmentStatus?: string;
   materialsSubtotal?: number;
   platformCommission?: number;
@@ -66,6 +116,14 @@ export interface AdminSupplierOrderRow {
 export async function getAdminSupplierMaterialOrders(supplierId: string): Promise<AdminSupplierOrderRow[]> {
   const { data } = await apiClient.get<{ success: boolean; orders: AdminSupplierOrderRow[] }>(
     `/admin/suppliers/${supplierId}/material-orders`
+  );
+  return Array.isArray(data?.orders) ? data.orders : [];
+}
+
+export async function getAdminSupplierOrders(supplierId: string, limit = 10): Promise<AdminSupplierOrderRow[]> {
+  const { data } = await apiClient.get<{ success: boolean; orders: AdminSupplierOrderRow[] }>(
+    `/admin/suppliers/${supplierId}/orders`,
+    { params: { limit } }
   );
   return Array.isArray(data?.orders) ? data.orders : [];
 }

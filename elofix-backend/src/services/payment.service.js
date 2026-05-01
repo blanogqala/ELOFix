@@ -329,6 +329,7 @@ async function runSettleLaborInTransaction(
 
   const meta = await mutateJobMetaInTransaction(tx, jobId, (m) => ({
     ...m,
+    hasStarted: true,
     laborPaid: true,
     servicePayment: {
       status: "paid",

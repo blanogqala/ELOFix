@@ -1,5 +1,8 @@
 import type { Job } from '@/types';
-import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
+import type { MaterialRequestDto } from '@/lib/api/materialRequests';
+import { UNIFIED_TIMELINE_STEPS } from '@/lib/jobStatusMapping';
+import { allMaterialsPaidAggregate, getMonotonicTimelineStepIndex } from '@/lib/jobProgressDisplay';
+import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 
 export interface TimelineStepInsight {
   stepIndex: number;
@@ -12,42 +15,16 @@ function hasMaterials(job: Job): boolean {
   return (job.materials || []).length > 0;
 }
 
-function hasAnyMaterialPaid(job: Job): boolean {
-  return (job.materialPayments || []).some(payment => payment.status === 'paid');
-}
-
-function getInspectedStepContent(job: Job): {
-  nextAction: string;
-} {
-  if (job.status === 'ASSIGNED') {
-    return {
-      nextAction: 'Provider must complete inspection.',
-    };
-  }
-
-  if (!job.servicePrice) {
-    return {
-      nextAction: 'Provider must submit service price.',
-    };
-  }
-
-  if (!hasMaterials(job)) {
-    return {
-      nextAction: 'Provider must add material list.',
-    };
-  }
-
-  return {
-    nextAction: 'Inspection phase completed.',
-  };
-}
-
-export function getTimelineStepInsight(job: Job, stepIndex: number): TimelineStepInsight {
-  const timelineState = getUserTimelineViewState(job);
+export function getTimelineStepInsight(
+  job: Job,
+  stepIndex: number,
+  materialRequests?: MaterialRequestDto[]
+): TimelineStepInsight {
+  const timelineState = getUserTimelineViewState(job, materialRequests);
   const isTerminal = timelineState.terminal !== 'none';
-  const activeIndex = isTerminal ? timelineState.pinIndex : timelineState.currentIdx;
+  const activeIndex = isTerminal ? timelineState.pinIndex : getMonotonicTimelineStepIndex(job);
   const isDone = !isTerminal && (job.status === 'COMPLETED' || stepIndex < activeIndex);
-  const stepLabel = USER_TIMELINE_STEPS[stepIndex] || `Step ${stepIndex + 1}`;
+  const stepLabel = UNIFIED_TIMELINE_STEPS[stepIndex] ?? `Step ${stepIndex + 1}`;
 
   if (stepIndex === 0) {
     return {
@@ -55,32 +32,34 @@ export function getTimelineStepInsight(job: Job, stepIndex: number): TimelineSte
       stepLabel,
       nextAction:
         job.status === 'PENDING'
-          ? 'Waiting for provider to accept request.'
-          : 'Pending step completed.',
+          ? 'Waiting for a provider to accept this request.'
+          : 'Job is open.',
       isDone,
     };
   }
 
   if (stepIndex === 1) {
-    const inspectedContent = getInspectedStepContent(job);
     return {
       stepIndex,
       stepLabel,
-      ...inspectedContent,
+      nextAction:
+        job.status === 'ASSIGNED'
+          ? 'Provider completes inspection and measurements.'
+          : 'Inspection phase; provider prepares service price and materials.',
       isDone,
     };
   }
 
   if (stepIndex === 2) {
     const servicePaid = !!job.laborPaid;
-    const materialsPaid = hasAnyMaterialPaid(job);
+    const materialsFullyPaid = allMaterialsPaidAggregate(job);
     return {
       stepIndex,
       stepLabel,
       nextAction:
-        servicePaid && materialsPaid
-          ? 'Complete any remaining required payments.'
-          : 'User must complete all required payments.',
+        servicePaid && materialsFullyPaid
+          ? 'Service and all material batches are paid.'
+          : 'Complete service payment and pay every material batch.',
       isDone,
     };
   }
@@ -91,8 +70,8 @@ export function getTimelineStepInsight(job: Job, stepIndex: number): TimelineSte
       stepLabel,
       nextAction:
         job.status === 'IN_PROGRESS'
-          ? 'Provider should complete the work.'
-          : 'Job moves here after required payments.',
+          ? 'Provider is performing the work.'
+          : 'Work proceeds once payments above are complete.',
       isDone,
     };
   }
@@ -103,8 +82,8 @@ export function getTimelineStepInsight(job: Job, stepIndex: number): TimelineSte
       stepLabel,
       nextAction:
         job.status === 'AWAITING_CONFIRMATION'
-          ? 'User must confirm completion.'
-          : 'Provider marks work complete to reach this step.',
+          ? 'Confirm completion when satisfied with the work.'
+          : 'Provider will mark the job complete to reach this step.',
       isDone,
     };
   }
@@ -112,8 +91,7 @@ export function getTimelineStepInsight(job: Job, stepIndex: number): TimelineSte
   return {
     stepIndex,
     stepLabel,
-    nextAction:
-      job.status === 'COMPLETED' ? 'Job completed.' : 'Reach final completion.',
+    nextAction: hasMaterials(job) ? 'Job finished.' : 'Reach completion.',
     isDone,
   };
 }

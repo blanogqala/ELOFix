@@ -14,13 +14,12 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Job, MaterialLine, SavedCard, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
-import { OrderCard, OrderCardViewModel } from '@/components/orders/OrderCard';
+import { MaterialCard } from '@/components/materials/MaterialCard';
 import { 
   CreditCard, 
   Truck, 
   Package, 
   CheckCircle,
-  Store,
   Plus,
   Trash2,
   AlertCircle,
@@ -28,6 +27,12 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { MaterialTrackingMini } from '@/components/materials/MaterialTrackingMini';
+import {
+  fulfillmentStatusBadgeLabel,
+  resolveMaterialBatchFromSnapshot,
+} from '@/lib/materialBatchTracking';
+import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
 
 interface MaterialPaymentSectionProps {
   job: Job;
@@ -63,29 +68,23 @@ interface MaterialPaymentSectionProps {
   onViewStoreOrder: (orderId: string) => void;
 }
 
-interface PendingMaterialOrderCardProps {
-  job: Job;
-  storeOrder: JobStoreOrder;
-  storeName: string;
-  isPaid: boolean;
-  showSuggestedOriginBadge: boolean;
-  onPurchase: () => void;
-  onDeleteMaterial?: (material: MaterialLine) => void;
-  purchaseButtonLabel: string;
+function uniqueMaterialLines(materials: MaterialLine[]): MaterialLine[] {
+  return Array.from(
+    new Map(
+      materials.map((m) => {
+        const id = (m as { id?: string }).id;
+        const key =
+          id && String(id).trim() !== ''
+            ? String(id)
+            : `${m.supplierId}|${m.productId}|${m.materialRequestId ?? ''}|${m.name}`;
+        return [key, m];
+      })
+    ).values()
+  );
 }
 
-function PendingMaterialOrderCard({
-  job,
-  storeOrder,
-  storeName,
-  isPaid,
-  showSuggestedOriginBadge,
-  onPurchase,
-  onDeleteMaterial,
-  purchaseButtonLabel,
-}: PendingMaterialOrderCardProps) {
-  const storeId = storeOrder.storeId;
-  const storeMaterials: MaterialLine[] = storeOrder.items.map(item => ({
+function lineFromOrderItem(storeId: string, storeName: string, item: JobStoreOrder['items'][number]): MaterialLine {
+  return {
     supplierId: storeId,
     supplierName: storeName,
     productId: item.productId,
@@ -95,93 +94,7 @@ function PendingMaterialOrderCard({
     qualityTier: item.qualityTier,
     unit: 'unit',
     imageUrl: item.imageUrl,
-  }));
-  const storeTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
-
-  return (
-    <div className={cn('p-4 border rounded-lg', 'border-border')}>
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-            <Store className="h-5 w-5 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <p className="font-medium flex items-center gap-2 flex-wrap">
-              <span className="truncate">{storeName}</span>
-              {showSuggestedOriginBadge && (
-                <Badge variant="secondary" className="text-[10px]">
-                  Suggested
-                </Badge>
-              )}
-            </p>
-            <p className="text-sm text-muted-foreground">{storeOrder.items.length} items</p>
-          </div>
-        </div>
-        <div className="text-left sm:text-right space-y-1 w-full sm:w-auto">
-          <p className="font-bold">
-            {formatCurrency(storeTotal, { decimals: 2 })}
-            {storeOrder.deliveryFee > 0 && (
-              <span className="text-muted-foreground font-normal text-sm ml-1">
-                + {formatCurrency(storeOrder.deliveryFee)} delivery (pay later)
-              </span>
-            )}
-          </p>
-          <div className="flex flex-col items-start sm:items-end gap-1">
-            <Badge variant="outline">
-              {storeOrder.deliveryType === 'SELF' && 'Self Collection'}
-              {storeOrder.deliveryType === 'STORE' && 'Store Delivery'}
-              {storeOrder.deliveryType === 'PROVIDER' && 'Delivery Provider'}
-            </Badge>
-            {storeOrder.deliveryStatus === 'PendingApproval' && (
-              <Badge variant="outline" className="text-xs">
-                Awaiting Delivery Provider Approval
-              </Badge>
-            )}
-          </div>
-          {!isPaid &&
-            ['ASSIGNED', 'INSPECTED', 'SERVICE_PRICE_SUBMITTED', 'SERVICE_PAID', 'MATERIALS_SUBMITTED', 'MATERIALS_PAID', 'IN_PROGRESS'].includes(
-              job.status
-            ) && (
-              <div className="flex flex-col items-stretch sm:items-end gap-1 w-full sm:w-auto pt-1">
-                <Button
-                  size="sm"
-                  className="btn-accent w-full sm:w-auto max-w-full h-auto whitespace-normal break-words text-xs leading-tight px-3 py-2"
-                  onClick={onPurchase}
-                >
-                  <CreditCard className="h-3 w-3 mr-1 shrink-0" />
-                  {purchaseButtonLabel}
-                </Button>
-              </div>
-            )}
-        </div>
-      </div>
-
-      <div className="mt-3 pt-3 border-t border-border space-y-2">
-        {storeMaterials.map(m => (
-          <div key={m.productId} className="flex justify-between items-center text-sm gap-2">
-            <span className="text-muted-foreground">
-              {m.name} × {m.qty}
-            </span>
-            <div className="flex items-center gap-2 shrink-0">
-              <span>{formatCurrency(m.qty * m.unitPrice, { decimals: 2 })}</span>
-              {!isPaid &&
-                onDeleteMaterial &&
-                (job.status === 'ASSIGNED' || job.status === 'MATERIALS_SUBMITTED') && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-6 w-6 text-destructive hover:text-destructive"
-                    onClick={() => onDeleteMaterial(m)}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  };
 }
 
 export function MaterialPaymentSection({
@@ -220,7 +133,7 @@ export function MaterialPaymentSection({
   const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [purchaseFlowOpen, setPurchaseFlowOpen] = useState(false);
   const [purchaseFlowStep, setPurchaseFlowStep] = useState<1 | 2>(1);
-  const [pendingViewTab, setPendingViewTab] = useState<'orders' | 'suggestions'>('orders');
+  const [userMaterialTab, setUserMaterialTab] = useState<'pending' | 'suggested'>('pending');
   const [purchaseFlowStore, setPurchaseFlowStore] = useState<{
     orderId?: string;
     id: string;
@@ -239,8 +152,8 @@ export function MaterialPaymentSection({
     }
   }, [hasCourierOption]);
 
-  // Group materials by store
-  const materials = job.materials || [];
+  // Group materials by store (deduped lines so pending / paid views do not double-list)
+  const materials = uniqueMaterialLines(job.materials || []);
   const materialsByStore = materials.reduce((acc, m) => {
     if (!acc[m.supplierId]) {
       acc[m.supplierId] = {
@@ -312,76 +225,7 @@ export function MaterialPaymentSection({
   const getStoreOrder = (orderId: string): JobStoreOrder | undefined => {
     return job.storeOrders?.find(so => so.orderId === orderId);
   };
-  const getOrderForAcceptedSuggestion = (suggestion: UserMaterialSuggestion): JobStoreOrder | undefined => {
-    if (suggestion.status !== 'accepted') return undefined;
-    const linked = pendingCards.find(card => card.sourceUserSuggestionId === suggestion.id);
-    if (linked) return linked;
-    return [...pendingCards].reverse().find(
-      card =>
-        card.storeId === suggestion.suggested.supplierId &&
-        card.items.some(item => item.productId === suggestion.suggested.productId)
-    );
-  };
-  const acceptedSuggestionOrderIds = new Set(
-    userSuggestions
-      .filter(suggestion => suggestion.status === 'accepted')
-      .map(suggestion => getOrderForAcceptedSuggestion(suggestion)?.orderId)
-      .filter((orderId): orderId is string => !!orderId)
-  );
-  const pendingOrderCards = pendingCards.filter(card => !acceptedSuggestionOrderIds.has(card.orderId));
-  const suggestionsForDisplay = userSuggestions.filter(suggestion => {
-    if (suggestion.status === 'pending') return true;
-    if (suggestion.status === 'accepted') return !!getOrderForAcceptedSuggestion(suggestion);
-    return false;
-  });
-  const hasPendingSuggestionItems = suggestionsForDisplay.length > 0;
-  const showPendingSubTabs = pendingOrderCards.length > 0 && hasPendingSuggestionItems;
-
-  const toOrderCardViewModel = (
-    storeOrder: JobStoreOrder,
-    storeNameFallback: string
-  ): OrderCardViewModel => {
-    const itemsTotal = storeOrder.items.reduce(
-      (sum, item) => sum + item.unitPrice * item.qty,
-      0
-    );
-    const total = itemsTotal + (storeOrder.deliveryFee || 0);
-
-    const deliveryTypeLabel =
-      storeOrder.deliveryType === 'SELF'
-        ? 'Self'
-        : storeOrder.deliveryType === 'STORE'
-        ? 'Store'
-        : 'Provider';
-
-    const statusConfig: Record<
-      string,
-      { label: string; className: string }
-    > = {
-      Processing: { label: 'Processing', className: 'bg-warning/20 text-warning' },
-      OnTheWay: { label: 'On the Way', className: 'bg-primary/20 text-primary' },
-      Delivered: { label: 'Delivered', className: 'bg-success/20 text-success' },
-      Approved: { label: 'Processing', className: 'bg-warning/20 text-warning' },
-      PendingApproval: {
-        label: 'Pending Approval',
-        className: 'bg-warning/20 text-warning',
-      },
-    };
-
-    const status = statusConfig[storeOrder.deliveryStatus] || statusConfig.Processing;
-
-    return {
-      id: storeOrder.orderId,
-      storeName: storeOrder.storeName || storeNameFallback,
-      itemsCount: storeOrder.items.reduce((sum, i) => sum + i.qty, 0),
-      total,
-      deliveryFee: storeOrder.deliveryFee,
-      deliveryTypeLabel,
-      deliveryStatusLabel: status.label,
-      deliveryStatusClassName: status.className,
-      createdAt: storeOrder.createdAt,
-    };
-  };
+  const suggestedMaterialsOnly = userSuggestions.filter((s) => s.status === 'pending');
 
   const handleOpenPaymentDialog = (storeId: string, storeName: string, hasDelivery: boolean, deliveryFee?: number, orderId?: string) => {
     const store = materialsByStore[storeId];
@@ -679,7 +523,7 @@ export function MaterialPaymentSection({
 
           {paidCards.length > 0 && (
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-muted-foreground">Paid Materials</h4>
+              <h4 className="text-sm font-semibold text-muted-foreground">Paid materials</h4>
               <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
                 {paidCards.map((storeOrder) => {
                   const storeId = storeOrder.storeId;
@@ -689,153 +533,250 @@ export function MaterialPaymentSection({
                     ? (job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId)
                         || job.materialPayments?.find(payment => !payment.orderId && payment.supplierId === storeId))
                     : job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId);
-                  const vm = toOrderCardViewModel(storeOrder, storeName);
+                  const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+                  const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
+                  const batch = resolveMaterialBatchFromSnapshot(mo);
+                  const driverLabel =
+                    batch?.assignedDriverId &&
+                    deliveryProviders.find((d) => d.id === batch.assignedDriverId)?.name;
                   return (
-                    <div key={storeOrder.orderId} className="p-4 border rounded-lg border-success/50 bg-success/5 space-y-2">
-                      <OrderCard order={vm} onClick={() => onViewStoreOrder(storeOrder.orderId)} />
-                      <div className="text-xs text-muted-foreground">
-                        <p>Invoice: {storeOrder.invoiceId || 'Pending assignment'}</p>
-                        <p>Paid at: {paymentRecord?.paidAt ? new Date(paymentRecord.paidAt).toLocaleString() : 'N/A'}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {showPendingSubTabs && (
-            <div className="inline-flex rounded-lg border border-border p-1 bg-muted/30">
-              <Button
-                size="sm"
-                variant={pendingViewTab === 'orders' ? 'default' : 'ghost'}
-                className="h-8"
-                onClick={() => setPendingViewTab('orders')}
-              >
-                Pending Orders
-              </Button>
-              <Button
-                size="sm"
-                variant={pendingViewTab === 'suggestions' ? 'default' : 'ghost'}
-                className="h-8"
-                onClick={() => setPendingViewTab('suggestions')}
-              >
-                Suggestions
-              </Button>
-            </div>
-          )}
-
-          {(pendingOrderCards.length > 0 && (!showPendingSubTabs || pendingViewTab === 'orders')) && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-muted-foreground">Pending Materials</h4>
-              <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                {pendingOrderCards.map((storeOrder) => {
-                const storeId = storeOrder.storeId;
-                const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
-                const isLegacyCard = storeOrder.orderId.startsWith('legacy-');
-                const paymentRecord = isLegacyCard
-                  ? (job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId)
-                      || job.materialPayments?.find(payment => !payment.orderId && payment.supplierId === storeId))
-                  : job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId);
-                const isPaid = !!storeOrder.payment?.materialsPaid || paymentRecord?.status === 'paid';
-
-                return (
-                  <PendingMaterialOrderCard
-                    key={storeOrder.orderId}
-                    job={job}
-                    storeOrder={storeOrder}
-                    storeName={storeName}
-                    isPaid={isPaid}
-                    showSuggestedOriginBadge={!!storeOrder.sourceUserSuggestionId}
-                    onPurchase={() => openPurchaseFlow(storeId, storeOrder.orderId)}
-                    onDeleteMaterial={onDeleteMaterial}
-                    purchaseButtonLabel={`Purchase From ${storeName}`}
-                  />
-                );
-              })}
-              </div>
-            </div>
-          )}
-
-          {(hasPendingSuggestionItems && (!showPendingSubTabs || pendingViewTab === 'suggestions')) && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-muted-foreground">Suggested Materials</h4>
-              <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                {suggestionsForDisplay.map((suggestion) => {
-                  if (suggestion.status === 'pending') {
-                    const storeName = suggestion.suggested.supplierName || 'Store';
-                    const lineTotal = suggestion.suggested.qty * suggestion.suggested.unitPrice;
-                    return (
-                      <div key={suggestion.id} className={cn('p-4 border rounded-lg', 'border-border')}>
-                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                              <Store className="h-5 w-5 text-primary" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="font-medium flex items-center gap-2 flex-wrap">
-                                <span className="truncate">{storeName}</span>
-                                <Badge variant="secondary" className="text-[10px]">
-                                  Suggested
-                                </Badge>
-                              </p>
-                              <p className="text-sm text-muted-foreground">1 item</p>
-                            </div>
+                    <MaterialCard
+                      key={storeOrder.orderId}
+                      status="paid"
+                      supplierName={storeName}
+                      subtotal={itemsTotal}
+                      items={storeOrder.items.map((item) => ({
+                        rowKey: `${storeOrder.orderId}-${item.productId}`,
+                        name: item.name,
+                        qty: item.qty,
+                        lineTotal: item.qty * item.unitPrice,
+                      }))}
+                      meta={
+                        <div className="space-y-2 w-full">
+                          <div className="flex flex-wrap gap-2 items-center">
+                            <Badge variant="secondary" className="text-xs">
+                              {fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
+                            </Badge>
+                            <Badge variant="outline">
+                              {storeOrder.deliveryType === 'SELF' && 'Pickup'}
+                              {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
+                              {storeOrder.deliveryType === 'PROVIDER' && 'Courier delivery'}
+                            </Badge>
                           </div>
-                          <div className="text-left sm:text-right space-y-1 w-full sm:w-auto">
-                            <p className="font-bold">{formatCurrency(lineTotal, { decimals: 2 })}</p>
-                            <Badge variant="secondary">Waiting for provider approval</Badge>
-                          </div>
-                        </div>
-                        {suggestion.message && (
-                          <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
-                            {suggestion.message}
+                          <p className="text-xs text-muted-foreground">
+                            Supplier:{' '}
+                            <span className="text-foreground font-medium">{mo?.supplierName || storeName}</span>
                           </p>
-                        )}
-                        <div className="mt-3 pt-3 border-t border-border space-y-2">
-                          <div className="flex justify-between items-center text-sm gap-2">
-                            <span className="text-muted-foreground">
-                              {suggestion.suggested.name} × {suggestion.suggested.qty}
-                            </span>
-                            <span className="shrink-0">{formatCurrency(lineTotal, { decimals: 2 })}</span>
-                          </div>
+                          {batch?.pickupAddress ? (
+                            <p className="text-xs text-muted-foreground">Pickup: {batch.pickupAddress}</p>
+                          ) : null}
+                          {batch?.deliveryType === 'pickup' && (
+                            <p className="text-xs text-muted-foreground">Collect your order at the supplier address above.</p>
+                          )}
+                          {batch?.deliveryAddress ? (
+                            <p className="text-xs text-muted-foreground">Delivery address: {batch.deliveryAddress}</p>
+                          ) : null}
+                          {driverLabel ? (
+                            <p className="text-xs text-muted-foreground">Courier: {driverLabel}</p>
+                          ) : null}
+                          {batch?.deliveryType === 'delivery' && mo && ['READY', 'OUT_FOR_DELIVERY'].includes(String(mo.fulfillmentStatus).toUpperCase()) && (
+                            <p className="text-xs text-foreground">Delivery in progress — you will be notified at each step.</p>
+                          )}
                         </div>
-                      </div>
-                    );
-                  }
-
-                  const acceptedOrder = getOrderForAcceptedSuggestion(suggestion);
-                  if (!acceptedOrder) return null;
-                  const storeId = acceptedOrder.storeId;
-                  const storeName = acceptedOrder.storeName || materialsByStore[storeId]?.name || 'Store';
-                  const isLegacyCard = acceptedOrder.orderId.startsWith('legacy-');
-                  const paymentRecord = isLegacyCard
-                    ? (job.materialPayments?.find(payment => payment.orderId === acceptedOrder.orderId)
-                        || job.materialPayments?.find(payment => !payment.orderId && payment.supplierId === storeId))
-                    : job.materialPayments?.find(payment => payment.orderId === acceptedOrder.orderId);
-                  const isPaid = !!acceptedOrder.payment?.materialsPaid || paymentRecord?.status === 'paid';
-
-                  return (
-                    <div key={suggestion.id} className="space-y-2">
-                      {suggestion.message && (
-                        <p className="text-xs text-muted-foreground px-1">{suggestion.message}</p>
-                      )}
-                      <PendingMaterialOrderCard
-                        job={job}
-                        storeOrder={acceptedOrder}
-                        storeName={storeName}
-                        isPaid={isPaid}
-                        showSuggestedOriginBadge
-                        onPurchase={() => openPurchaseFlow(acceptedOrder.storeId, acceptedOrder.orderId)}
-                        onDeleteMaterial={onDeleteMaterial}
-                        purchaseButtonLabel="Purchase Suggested Material"
-                      />
-                    </div>
+                      }
+                      footer={
+                        <div className="text-xs text-muted-foreground space-y-2">
+                          <MaterialTrackingMini batch={batch} />
+                          <p>Invoice: {storeOrder.invoiceId || 'Pending assignment'}</p>
+                          <p>Paid at: {paymentRecord?.paidAt ? new Date(paymentRecord.paidAt).toLocaleString() : 'N/A'}</p>
+                          <Button variant="outline" size="sm" className="mt-1" onClick={() => onViewStoreOrder(storeOrder.orderId)}>
+                            View order
+                          </Button>
+                        </div>
+                      }
+                    />
                   );
                 })}
               </div>
             </div>
           )}
+
+          <div className="pt-2 border-t border-border space-y-3">
+            <div
+              className="inline-flex rounded-lg border border-border p-1 bg-muted/30 transition-colors"
+              role="tablist"
+              aria-label="Materials"
+            >
+              <Button
+                type="button"
+                role="tab"
+                aria-selected={userMaterialTab === 'pending'}
+                size="sm"
+                variant={userMaterialTab === 'pending' ? 'default' : 'ghost'}
+                className="h-8 transition-colors duration-150"
+                onClick={() => setUserMaterialTab('pending')}
+              >
+                Pending materials
+              </Button>
+              <Button
+                type="button"
+                role="tab"
+                aria-selected={userMaterialTab === 'suggested'}
+                size="sm"
+                variant={userMaterialTab === 'suggested' ? 'default' : 'ghost'}
+                className="h-8 gap-2 transition-colors duration-150"
+                onClick={() => setUserMaterialTab('suggested')}
+              >
+                Suggested materials
+                <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
+                  {suggestedMaterialsOnly.length}
+                </Badge>
+              </Button>
+            </div>
+
+            {userMaterialTab === 'pending' ? (
+              <div className="min-h-[4rem] space-y-3 animate-in fade-in duration-200" role="tabpanel">
+                {pendingCards.length > 0 ? (
+                  <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+                    {pendingCards.map((storeOrder) => {
+                      const storeId = storeOrder.storeId;
+                      const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
+                      const isLegacyCard = storeOrder.orderId.startsWith('legacy-');
+                      const paymentRecord = isLegacyCard
+                        ? (job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId)
+                            || job.materialPayments?.find(payment => !payment.orderId && payment.supplierId === storeId))
+                        : job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId);
+                      const isPaid = !!storeOrder.payment?.materialsPaid || paymentRecord?.status === 'paid';
+                      const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+                      const canPay =
+                        !isPaid &&
+                        ['ASSIGNED', 'INSPECTED', 'SERVICE_PRICE_SUBMITTED', 'SERVICE_PAID', 'MATERIALS_SUBMITTED', 'MATERIALS_PAID', 'IN_PROGRESS'].includes(job.status);
+                      const canDelete =
+                        Boolean(onDeleteMaterial) &&
+                        (job.status === 'ASSIGNED' || job.status === 'MATERIALS_SUBMITTED');
+
+                      return (
+                        <MaterialCard
+                          key={storeOrder.orderId}
+                          status="pending"
+                          supplierName={storeName}
+                          subtotal={itemsTotal}
+                          items={storeOrder.items.map((item) => ({
+                            rowKey: `${storeOrder.orderId}-${item.productId}`,
+                            name: item.name,
+                            qty: item.qty,
+                            lineTotal: item.qty * item.unitPrice,
+                          }))}
+                          meta={
+                            <>
+                              {storeOrder.sourceUserSuggestionId ? (
+                                <Badge variant="secondary" className="text-[10px] w-fit">
+                                  From your suggestion
+                                </Badge>
+                              ) : null}
+                              <div className="flex flex-wrap gap-2 items-center">
+                                <Badge variant="outline">
+                                  {storeOrder.deliveryType === 'SELF' && 'Self collection'}
+                                  {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
+                                  {storeOrder.deliveryType === 'PROVIDER' && 'Delivery provider'}
+                                </Badge>
+                                {storeOrder.deliveryFee > 0 ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    + {formatCurrency(storeOrder.deliveryFee)} delivery (pay later)
+                                  </span>
+                                ) : null}
+                                {storeOrder.deliveryStatus === 'PendingApproval' ? (
+                                  <Badge variant="outline" className="text-xs">
+                                    Awaiting delivery provider approval
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </>
+                          }
+                          footer={
+                            canDelete && onDeleteMaterial ? (
+                              <div className="space-y-2 pt-1 border-t border-border">
+                                <p className="text-xs font-medium text-muted-foreground">Remove lines (before payment)</p>
+                                <div className="flex flex-wrap gap-2 justify-end">
+                                  {storeOrder.items.map((item) => (
+                                    <Button
+                                      key={`del-${item.productId}`}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-8 text-destructive"
+                                      onClick={() => onDeleteMaterial(lineFromOrderItem(storeId, storeName, item))}
+                                    >
+                                      <Trash2 className="h-3 w-3 mr-1" />
+                                      {item.name}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : undefined
+                          }
+                          actions={
+                            canPay ? (
+                              <Button
+                                size="sm"
+                                className="btn-accent"
+                                onClick={() => openPurchaseFlow(storeId, storeOrder.orderId)}
+                              >
+                                <CreditCard className="h-3 w-3 mr-1" />
+                                {`Pay ${storeName}`}
+                              </Button>
+                            ) : undefined
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-8 text-center">
+                    No pending materials. Suggested items appear under Suggested until your provider approves them.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="min-h-[4rem] animate-in fade-in duration-200" role="tabpanel">
+                {suggestedMaterialsOnly.length > 0 ? (
+                  <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+                    {suggestedMaterialsOnly.map((suggestion) => {
+                      const storeName = suggestion.suggested.supplierName || 'Store';
+                      const lineTotal = suggestion.suggested.qty * suggestion.suggested.unitPrice;
+                      return (
+                        <MaterialCard
+                          key={suggestion.id}
+                          status="suggested"
+                          supplierName={storeName}
+                          subtotal={lineTotal}
+                          items={[
+                            {
+                              rowKey: suggestion.id,
+                              name: suggestion.suggested.name,
+                              qty: suggestion.suggested.qty,
+                              lineTotal,
+                            },
+                          ]}
+                          meta={
+                            <>
+                              <Badge variant="secondary">Waiting for provider approval</Badge>
+                              {suggestion.message ? (
+                                <p className="text-xs text-muted-foreground">{suggestion.message}</p>
+                              ) : null}
+                            </>
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-8 text-center">
+                    No suggested materials. Use Suggest Alternatives to add items from stores.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 

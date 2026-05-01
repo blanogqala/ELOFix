@@ -1,19 +1,10 @@
-import type { Job, JobStatus } from '@/types';
-import {
-  UNIFIED_TIMELINE_STEPS,
-  getUnifiedTimelineStepIndex,
-} from '@/lib/jobStatusMapping';
+import type { Job } from '@/types';
+import type { MaterialRequestDto } from '@/lib/api/materialRequests';
+import { UNIFIED_TIMELINE_STEPS } from '@/lib/jobStatusMapping';
+import { getMonotonicTimelineStepIndex, getStepIndexFromJobState, jobHasStarted } from '@/lib/jobProgressDisplay';
 
-/** Fixed 6-step labels shown on user job detail timeline (UI only). */
+/** Original six timeline labels (same as dashboards / badges). */
 export const USER_TIMELINE_STEPS = UNIFIED_TIMELINE_STEPS;
-
-/**
- * Maps backend job status to a linear timeline index 0..5.
- * Does not encode cancel/reject — use {@link getUserTimelineViewState} for CANCELLED/REJECTED jobs.
- */
-export function getUserTimelineStepIndex(status: JobStatus): number {
-  return getUnifiedTimelineStepIndex(status);
-}
 
 export type UserTimelineTerminal = 'none' | 'cancelled' | 'rejected';
 
@@ -31,9 +22,8 @@ function hasNonEmptyObject(value: unknown): boolean {
 }
 
 function inferCancelledPinIndex(job: Job): number {
-  // Prefer explicit pre-cancel status when available.
   if (job.cancelledAtStatus && job.cancelledAtStatus !== 'CANCELLED' && job.cancelledAtStatus !== 'REJECTED') {
-    return getUserTimelineStepIndex(job.cancelledAtStatus);
+    return getStepIndexFromJobState({ ...job, status: job.cancelledAtStatus });
   }
 
   const hasAwaitingConfirmationSignals =
@@ -41,11 +31,7 @@ function inferCancelledPinIndex(job: Job): number {
     Boolean(job.completionConfirmedByUser);
   if (hasAwaitingConfirmationSignals) return 4;
 
-  const hasInProgressSignals =
-    Boolean(job.laborPaid) &&
-    ((job.materialPayments || []).some((p) => p.status === 'paid') || (job.storeOrders || []).length > 0) &&
-    (((job.chat || []).length > 0) || ((job.jobNotes || []).length > 0));
-  if (hasInProgressSignals) return 3;
+  if (jobHasStarted(job)) return 3;
 
   const hasPaymentOrPricingSignals =
     Boolean(job.servicePrice) ||
@@ -66,8 +52,12 @@ function inferCancelledPinIndex(job: Job): number {
 
 /**
  * Derives timeline indices and terminal (cancel/reject) pin for rendering.
+ * @param _materialRequests reserved for API parity with provider (unused; job JSON is source of truth).
  */
-export function getUserTimelineViewState(job: Job): UserTimelineViewState {
+export function getUserTimelineViewState(
+  job: Job,
+  _materialRequests?: MaterialRequestDto[]
+): UserTimelineViewState {
   if (job.status === 'CANCELLED') {
     const pinIndex = inferCancelledPinIndex(job);
     return {
@@ -88,8 +78,10 @@ export function getUserTimelineViewState(job: Job): UserTimelineViewState {
   }
 
   return {
-    currentIdx: getUserTimelineStepIndex(job.status),
+    currentIdx: getMonotonicTimelineStepIndex(job),
     pinIndex: 0,
     terminal: 'none',
   };
 }
+
+export { JOB_TIMELINE_LABELS } from '@/lib/jobProgressDisplay';

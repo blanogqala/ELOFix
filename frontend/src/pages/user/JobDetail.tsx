@@ -23,6 +23,7 @@ import {
   getLaborInvoiceByJobId,
   acceptProposedPrice,
 } from '@/lib/api/jobs';
+import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import { getSavedCards } from '@/lib/api/payments';
@@ -34,7 +35,7 @@ import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection
 import { SuggestAlternativeMaterialsModal } from '@/components/jobs/SuggestAlternativeMaterialsModal';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
 import { getProviderById } from '@/lib/api/providers';
@@ -49,7 +50,6 @@ import {
   CheckCircle,
   User,
   XCircle,
-  Check,
   X,
   Ban,
   Trash2
@@ -57,9 +57,10 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getUserLaborGross } from '@/lib/jobUtils';
-import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
-import { getStandardizedStatusLabel, getUnifiedTimelineStepIndex } from '@/lib/jobStatusMapping';
+import { getUserTimelineViewState } from '@/lib/userJobTimeline';
+import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/jobProgressDisplay';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
+import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
   if (!values) return undefined;
@@ -102,6 +103,7 @@ export default function JobDetail() {
     if (!jobId) return;
     await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
     await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.materialRequests.job(jobId) });
   }, [jobId, queryClient]);
 
   const {
@@ -114,6 +116,12 @@ export default function JobDetail() {
     queryFn: () => getJobById(jobId),
     enabled: Boolean(jobId),
   });
+  const { data: materialRequestsData } = useQuery({
+    queryKey: queryKeys.materialRequests.job(jobId),
+    queryFn: () => getMaterialRequestsForJob(jobId),
+    enabled: Boolean(jobId),
+  });
+  const materialRequests = materialRequestsData ?? [];
   const [newMessage, setNewMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>('details');
   const [suggestMaterialsOpen, setSuggestMaterialsOpen] = useState(false);
@@ -136,6 +144,8 @@ export default function JobDetail() {
   const [legacyInvoice, setLegacyInvoice] = useState<{ paidAt: string; cardLast4?: string } | null>(null);
   const [isActionPending, setIsActionPending] = useState(false);
   const [isMessageSending, setIsMessageSending] = useState(false);
+
+  useMaterialOrderFulfillmentSocket({ userId: user?.id, activeJobId: jobId });
 
   useEffect(() => {
     if (serviceInvoiceOpen && job?.laborPaid && !job.servicePayment) {
@@ -450,8 +460,9 @@ export default function JobDetail() {
     setDeleteMaterialOpen(true);
   };
 
-  const getStatusBadge = (status: Job['status']) => {
-    const label = getStandardizedStatusLabel(status);
+  const getStatusBadge = (current: Job) => {
+    const label = getJobDisplayStatusLabel(current);
+    const status = current.status;
     if (status === 'CANCELLED' || status === 'REJECTED') {
       return (
         <Badge className="inline-flex items-center gap-1 bg-red-100 text-red-800">
@@ -460,7 +471,7 @@ export default function JobDetail() {
         </Badge>
       );
     }
-    const idx = getUnifiedTimelineStepIndex(status);
+    const idx = getMonotonicTimelineStepIndex(current);
     const stepClasses: Record<number, string> = {
       0: 'bg-yellow-100 text-yellow-800',
       1: 'bg-blue-100 text-blue-800',
@@ -517,6 +528,8 @@ export default function JobDetail() {
     );
   }
 
+  const timelineView = getUserTimelineViewState(job, materialRequests);
+
   return (
     <DashboardLayout>
       <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
@@ -529,7 +542,7 @@ export default function JobDetail() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">{job.categoryName}</h1>
-                {getStatusBadge(job.status)}
+                {getStatusBadge(job)}
               </div>
               <p className="text-sm text-muted-foreground sm:text-base">Job #{job.id.slice(-8)}</p>
             </div>
@@ -572,108 +585,17 @@ export default function JobDetail() {
         </div>
 
         {/* Status Timeline */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between overflow-x-auto pb-2">
-              {(() => {
-                const view = getUserTimelineViewState(job);
-                const isCancelled = view.terminal === 'cancelled';
-                const isRejected = view.terminal === 'rejected';
-                const isTerminal = isCancelled || isRejected;
-                const pinIndex = view.pinIndex;
-                const currentIdx = view.currentIdx;
-
-                return USER_TIMELINE_STEPS.map((label, index, arr) => {
-                  const insight = getTimelineStepInsight(job, index);
-                  const isTerminalStep = isTerminal && index === pinIndex;
-                  const isFutureTerminalStep = isTerminal && index > pinIndex;
-                  const isActive =
-                    !isTerminal &&
-                    job.status !== 'COMPLETED' &&
-                    index === currentIdx;
-                  const isPast = isTerminal
-                    ? index < pinIndex
-                    : job.status === 'COMPLETED' || index < currentIdx;
-
-                  return (
-                    <div key={label} className="flex items-center">
-                      <div className="flex flex-col items-center min-w-[50px]">
-                        <Popover
-                          open={lockedTimelineStep === index || (lockedTimelineStep === null && hoveredTimelineStep === index)}
-                          onOpenChange={(open) => {
-                            if (!open && lockedTimelineStep === index) {
-                              setLockedTimelineStep(null);
-                            }
-                          }}
-                        >
-                          <PopoverTrigger asChild>
-                            <button
-                              type="button"
-                              onMouseEnter={() => {
-                                if (isFutureTerminalStep) return;
-                                if (lockedTimelineStep === null) setHoveredTimelineStep(index);
-                              }}
-                              onMouseLeave={() => {
-                                if (isFutureTerminalStep) return;
-                                if (lockedTimelineStep === null) setHoveredTimelineStep(null);
-                              }}
-                              onClick={() => {
-                                if (isFutureTerminalStep) return;
-                                setLockedTimelineStep((current) => (current === index ? null : index));
-                                setHoveredTimelineStep(null);
-                              }}
-                              disabled={isFutureTerminalStep}
-                              className={cn(
-                                "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold transition-transform hover:scale-105 focus:outline-none",
-                                isFutureTerminalStep && "opacity-40 cursor-not-allowed",
-                                isPast ? "bg-success text-success-foreground" :
-                                isTerminalStep ? "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2" :
-                                isActive ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2" :
-                                "bg-muted text-muted-foreground"
-                              )}
-                            >
-                              {isPast ? <Check className="h-4 w-4" /> : index + 1}
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-64">
-                            <div className="space-y-1 text-xs">
-                              <p className="font-semibold">
-                                {isTerminalStep && isCancelled ? 'Cancelled' : insight.stepLabel}
-                              </p>
-                              <p className="text-muted-foreground">
-                                {isTerminalStep && isCancelled
-                                  ? `Reason: ${cancellationReasonText}`
-                                  : insight.nextAction}
-                              </p>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                        <span className={cn(
-                          "text-[10px] mt-1 text-center leading-tight",
-                          isTerminalStep ? "font-medium text-destructive" :
-                          isActive ? "font-medium" : "text-muted-foreground"
-                        )}>
-                          {isTerminalStep
-                            ? isCancelled
-                              ? `Cancelled${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
-                              : `Rejected${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
-                            : label}
-                        </span>
-                      </div>
-                      {index < arr.length - 1 && (
-                        <div className={cn(
-                          "w-6 sm:w-10 h-0.5 mx-1",
-                          isTerminal ? (index < pinIndex ? "bg-success" : "bg-muted") :
-                          (index < currentIdx ? "bg-success" : "bg-muted")
-                        )} />
-                      )}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </CardContent>
-        </Card>
+        <JobWorkflowTimeline
+          job={job}
+          view={timelineView}
+          variant="user"
+          getStepInsight={(stepIndex) => getTimelineStepInsight(job, stepIndex, materialRequests)}
+          cancellationReasonText={cancellationReasonText}
+          lockedTimelineStep={lockedTimelineStep}
+          setLockedTimelineStep={setLockedTimelineStep}
+          hoveredTimelineStep={hoveredTimelineStep}
+          setHoveredTimelineStep={setHoveredTimelineStep}
+        />
 
         {/* Revised quote from provider */}
         {!job.laborPaid && job.proposedLaborPrice && (
@@ -815,7 +737,7 @@ export default function JobDetail() {
 
         {/* Tab Content */}
         {activeTab === 'details' && (
-          <div className="grid lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-6">
             {/* Job Info */}
             <Card>
               <CardHeader>

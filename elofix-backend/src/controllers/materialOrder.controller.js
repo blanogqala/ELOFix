@@ -46,45 +46,51 @@ async function getAllMaterialOrdersForUser(req, res) {
     materialOrderService.getMaterialOrders(userId),
     jobService.getJobsForCustomerId(userId),
   ]);
-  const jobStoreOrders = jobs
-    .flatMap((job) =>
-      (job.storeOrders || []).map((storeOrder) => ({
-        id: storeOrder.orderId,
-        storeName:
-          storeOrder.storeName || job.materials?.find((m) => m.supplierId === storeOrder.storeId)?.supplierName || "Store",
-        itemsCount: (storeOrder.items || []).reduce((sum, i) => sum + Number(i.qty || 0), 0),
-        total:
-          (storeOrder.items || []).reduce((sum, i) => sum + Number(i.qty || 0) * Number(i.unitPrice || 0), 0) +
-          Number(storeOrder.deliveryFee || 0),
-        deliveryFee: Number(storeOrder.deliveryFee || 0),
-        deliveryTypeLabel:
-          storeOrder.deliveryType === "SELF" ? "Self" : storeOrder.deliveryType === "STORE" ? "Store" : "Provider",
-        deliveryStatusLabel: storeOrder.deliveryStatus || "Processing",
-        deliveryStatusClassName: "bg-warning/20 text-warning",
-        createdAt: storeOrder.createdAt,
-      }))
-    );
-  const standalone = orders.map((order) => ({
-    id: order.id,
-    storeName: order.storeName,
-    itemsCount: (order.items || []).reduce((sum, i) => sum + Number(i.qty || 0), 0),
-    total: Number(order.total || 0),
-    deliveryFee: Number(order.deliveryFee || 0),
-    deliveryTypeLabel:
-      order.deliveryType === "SELF" ? "Self" : order.deliveryType === "STORE_DELIVERY" ? "Store" : "Provider",
-    deliveryStatusLabel:
+  const jobById = new Map(jobs.map((j) => [j.id, j]));
+
+  const fulfillmentLabel = (raw) => {
+    const u = String(raw || "PENDING").toUpperCase();
+    if (u === "PENDING") return "Awaiting supplier";
+    if (u === "ACCEPTED") return "Accepted";
+    if (u === "PREPARING") return "Preparing";
+    if (u === "READY") return "Ready";
+    if (u === "OUT_FOR_DELIVERY") return "Out for delivery";
+    if (u === "COMPLETED") return "Delivered";
+    return u;
+  };
+
+  const mapped = orders.map((order) => {
+    const jobId = order.jobId != null && String(order.jobId).trim() !== "" ? String(order.jobId) : null;
+    const job = jobId ? jobById.get(jobId) : null;
+    const fulfillment = String(order.fulfillmentStatus || "PENDING").toUpperCase();
+    const legacyDeliveryLabel =
       order.deliveryStatus === "delivered"
         ? "Delivered"
         : order.deliveryStatus === "out_for_delivery"
           ? "On the Way"
-          : "Processing",
-    deliveryStatusClassName: "bg-warning/20 text-warning",
-    createdAt: order.createdAt,
-  }));
-  const merged = [...standalone, ...jobStoreOrders].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-  res.json({ success: true, orders: merged });
+          : "Processing";
+
+    return {
+      id: order.id,
+      storeName: order.storeName || "Store",
+      jobId,
+      jobTitle: job?.title ?? null,
+      providerName: job?.provider?.name ?? null,
+      itemsCount: (order.items || []).reduce((sum, i) => sum + Number(i.qty || 0), 0),
+      total: Number(order.total || 0),
+      deliveryFee: Number(order.deliveryFee || 0),
+      deliveryTypeLabel:
+        order.deliveryType === "SELF" ? "Pickup" : order.deliveryType === "STORE_DELIVERY" ? "Store delivery" : "Courier",
+      deliveryStatusLabel: legacyDeliveryLabel,
+      fulfillmentStatus: fulfillment,
+      fulfillmentStatusLabel: fulfillmentLabel(fulfillment),
+      deliveryStatusClassName: "bg-warning/20 text-warning",
+      createdAt: order.createdAt,
+    };
+  });
+
+  mapped.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  res.json({ success: true, orders: mapped });
 }
 
 async function getMaterialOrder(req, res) {

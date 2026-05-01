@@ -11,7 +11,8 @@ import { getJobPriceDisplay } from '@/lib/jobUtils';
 import { Job } from '@/types';
 import { Search, Briefcase, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
+import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { useToast } from '@/hooks/use-toast';
 
 export default function UserJobs() {
@@ -57,9 +58,9 @@ export default function UserJobs() {
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  const getStatusBadge = (status: Job['status']) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(status))}>
-      {getStandardizedStatusLabel(status)}
+  const getStatusBadge = (job: Job) => (
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
+      {getJobDisplayStatusLabel(job)}
     </span>
   );
 
@@ -142,7 +143,7 @@ export default function UserJobs() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <p className="font-medium">{job.categoryName}</p>
-                        {getStatusBadge(job.status)}
+                        {getStatusBadge(job)}
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{job.description}</p>
                       {job.providerName && (

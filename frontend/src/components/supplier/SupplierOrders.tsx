@@ -25,6 +25,7 @@ const STATUS_BADGE: Record<string, string> = {
   ACCEPTED: 'bg-blue-500/15 text-blue-900 dark:text-blue-100 border-blue-500/30',
   PREPARING: 'bg-violet-500/15 text-violet-900 dark:text-violet-100 border-violet-500/30',
   READY: 'bg-emerald-500/15 text-emerald-900 dark:text-emerald-100 border-emerald-500/30',
+  OUT_FOR_DELIVERY: 'bg-sky-500/15 text-sky-900 dark:text-sky-100 border-sky-500/30',
   COMPLETED: 'bg-muted text-muted-foreground border-border',
 };
 
@@ -43,6 +44,8 @@ function nextFulfillmentStatus(s: string | undefined): MaterialFulfillmentStatus
     case 'PREPARING':
       return 'READY';
     case 'READY':
+      return 'OUT_FOR_DELIVERY';
+    case 'OUT_FOR_DELIVERY':
       return 'COMPLETED';
     default:
       return null;
@@ -58,7 +61,9 @@ function actionButtonLabel(s: string | undefined): string {
     case 'PREPARING':
       return 'Mark ready';
     case 'READY':
-      return 'Complete';
+      return 'Dispatch / Ready for collection';
+    case 'OUT_FOR_DELIVERY':
+      return 'Mark delivered';
     default:
       return '—';
   }
@@ -74,7 +79,7 @@ function matchesFilter(st: string | undefined, filter: FilterKey): boolean {
     case 'pending':
       return u === 'PENDING';
     case 'in_progress':
-      return u === 'ACCEPTED' || u === 'PREPARING';
+      return u === 'ACCEPTED' || u === 'PREPARING' || u === 'OUT_FOR_DELIVERY';
     case 'ready':
       return u === 'READY';
     case 'completed':

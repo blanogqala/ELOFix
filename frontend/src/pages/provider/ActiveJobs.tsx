@@ -12,11 +12,8 @@ import { Briefcase, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
-import {
-  getStandardizedStatusLabel,
-  getProviderStatusBadgeVariant,
-  ACTIVE_WORKFLOW_JOB_STATUSES,
-} from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getProviderJobBadgeVariantForJob } from '@/lib/jobProgressDisplay';
+import { ACTIVE_WORKFLOW_JOB_STATUSES } from '@/lib/jobStatusMapping';
 
 export default function ProviderActiveJobs() {
   const { user } = useAuth();
@@ -47,8 +44,8 @@ export default function ProviderActiveJobs() {
     }
   };
 
-  const getStatusBadge = (status: Job['status']) => (
-    <Badge variant={getProviderStatusBadgeVariant(status)}>{getStandardizedStatusLabel(status)}</Badge>
+  const getStatusBadge = (job: Job) => (
+    <Badge variant={getProviderJobBadgeVariantForJob(job)}>{getJobDisplayStatusLabel(job)}</Badge>
   );
 
   const filtered = (() => {
@@ -129,7 +126,7 @@ export default function ProviderActiveJobs() {
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex flex-wrap items-center gap-2">
                       <p className="font-medium">{job.categoryName}</p>
-                      {getStatusBadge(job.status)}
+                      {getStatusBadge(job)}
                     </div>
                     <p className="truncate text-sm text-muted-foreground">{job.description}</p>
                     <p className="mt-1 text-xs text-muted-foreground">Client: {job.userName}</p>

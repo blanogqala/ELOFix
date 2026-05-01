@@ -70,6 +70,8 @@ interface BackendJob {
   rejectedByProviderUserId?: string | null;
   escrow?: Job['escrow'];
   requiresInspection?: boolean;
+  progressStep?: number;
+  hasStarted?: boolean;
   totalPrice?: number | null;
   commissionAmount?: number | null;
   providerAmount?: number | null;
@@ -153,6 +155,8 @@ function toFrontendJob(job: BackendJob): Job {
         }
       : { enabled: true, holdPercent: 0, heldAmount: 0, releasedAmount: 0 },
     status: safeStatus,
+    progressStep: numOrUndef(job.progressStep),
+    hasStarted: Boolean(job.hasStarted),
     jobNotes: Array.isArray(job.jobNotes) ? job.jobNotes : [],
     chat: Array.isArray(job.chat) ? job.chat : [],
     laborPaid: Boolean(job.laborPaid),

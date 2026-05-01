@@ -40,43 +40,35 @@ function lineToOrderItem(line) {
   };
 }
 
-/** Merges provider materials into pending (unpaid, not delivered) store orders; otherwise appends a new order. */
-function mergeStoreOrdersFromProviderMaterials(currentStoreOrders, materials) {
+/**
+ * Appends new per-supplier store orders for this material request batch (never overwrites prior submissions).
+ * Each order carries materialRequestId so payment + MR paid sync target the correct cycle.
+ */
+function appendStoreOrdersForMaterialRequest(currentStoreOrders, materials, materialRequestId) {
   const byStore = groupMaterialsBySupplier(materials);
   const next = Array.isArray(currentStoreOrders) ? [...currentStoreOrders] : [];
+  const batchId = randomUUID();
   const createdAt = new Date().toISOString();
+  const mrId = String(materialRequestId || "").trim();
 
   for (const [storeId, lines] of byStore.entries()) {
     const items = lines.map(lineToOrderItem);
     const storeName = lines[0]?.supplierName || "Store";
-    const idx = next.findIndex(
-      (o) =>
-        String(o.storeId) === String(storeId) &&
-        o.deliveryStatus !== "Delivered" &&
-        !o.payment?.materialsPaid
-    );
-    if (idx >= 0) {
-      next[idx] = {
-        ...next[idx],
-        items,
-        storeName,
-        payment: next[idx].payment || { materialsPaid: false, deliveryPaid: false },
-      };
-    } else {
-      next.push({
-        storeId,
-        orderId: randomUUID(),
-        items,
-        storeName,
-        deliveryType: "SELF",
-        deliveryFee: 0,
-        deliveryStatus: "SelfCollect",
-        paymentStatus: "Paid",
-        invoiceId: "",
-        createdAt,
-        payment: { materialsPaid: false, deliveryPaid: false },
-      });
-    }
+    next.push({
+      storeId,
+      orderId: randomUUID(),
+      ...(mrId ? { materialRequestId: mrId } : {}),
+      submissionBatchId: batchId,
+      items,
+      storeName,
+      deliveryType: "SELF",
+      deliveryFee: 0,
+      deliveryStatus: "SelfCollect",
+      paymentStatus: "Paid",
+      invoiceId: "",
+      createdAt,
+      payment: { materialsPaid: false, deliveryPaid: false },
+    });
   }
   return next;
 }
@@ -201,26 +193,13 @@ async function finalizeProviderMaterialsSubmit(jobId, materials, providerUserId,
 
   const draftHandledId = options.draftMaterialRequestId || null;
 
-  await prisma.job.update({
-    where: { id: jobId },
-    data: { materials: nextMaterials },
-  });
-
-  await mutateJobMeta(jobId, (m) => {
-    const merged = mergeStoreOrdersFromProviderMaterials(m.storeOrders, nextMaterials);
-    return {
-      ...m,
-      storeOrders: merged,
-      statusOverride: "MATERIALS_SUBMITTED",
-    };
-  });
-
   const mrDraft =
     draftHandledId &&
     (await prisma.materialRequest.findFirst({
       where: { id: draftHandledId, jobId, providerId: String(providerUserId), status: "draft" },
     }));
 
+  let materialRequestId;
   if (mrDraft) {
     await prisma.materialRequest.update({
       where: { id: mrDraft.id },
@@ -230,15 +209,9 @@ async function finalizeProviderMaterialsSubmit(jobId, materials, providerUserId,
         status: "submitted",
       },
     });
+    materialRequestId = mrDraft.id;
   } else {
-    await prisma.materialRequest.deleteMany({
-      where: {
-        jobId,
-        providerId: String(providerUserId),
-        status: { in: ["draft", "submitted"] },
-      },
-    });
-    await prisma.materialRequest.create({
+    const created = await prisma.materialRequest.create({
       data: {
         jobId,
         providerId: String(providerUserId),
@@ -248,7 +221,46 @@ async function finalizeProviderMaterialsSubmit(jobId, materials, providerUserId,
         status: "submitted",
       },
     });
+    materialRequestId = created.id;
   }
+
+  const existingJob = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { materials: true },
+  });
+  const existingLines = normalizeMaterialLines(existingJob?.materials);
+  const tagged = nextMaterials.map((line) => ({
+    ...line,
+    materialRequestId: String(materialRequestId),
+  }));
+  const combinedMaterials = [...existingLines, ...tagged];
+
+  await prisma.job.update({
+    where: { id: jobId },
+    data: { materials: combinedMaterials },
+  });
+
+  const jobStatusRow = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { status: true },
+  });
+
+  const jobProgressUtil = require("../utils/jobProgress.util");
+
+  await mutateJobMeta(jobId, (m) => {
+    const storeOrders = appendStoreOrdersForMaterialRequest(
+      m.storeOrders,
+      nextMaterials,
+      materialRequestId
+    );
+    const next = {
+      ...m,
+      storeOrders,
+      statusOverride: "MATERIALS_SUBMITTED",
+    };
+    next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, jobStatusRow || { status: "ACCEPTED" });
+    return next;
+  });
 }
 
 async function submitFromBody(providerUserId, body) {
@@ -302,15 +314,22 @@ async function syncSubmittedRequestsToPaid(jobId) {
     const supplierIds = new Set(items.map((i) => String(i.supplierId)));
     if (supplierIds.size === 0) continue;
 
-    let allPaid = true;
-    for (const sid of supplierIds) {
-      const paidOrder = storeOrders.some(
-        (o) => String(o.storeId) === String(sid) && o.payment?.materialsPaid === true
-      );
-      if (!paidOrder) {
-        allPaid = false;
-        break;
+    const linked = storeOrders.filter((o) => String(o.materialRequestId || "") === String(mr.id));
+    let allPaid = false;
+    if (linked.length > 0) {
+      allPaid = linked.every((o) => o.payment?.materialsPaid === true);
+    } else {
+      let legacyOk = true;
+      for (const sid of supplierIds) {
+        const paidOrder = storeOrders.some(
+          (o) => String(o.storeId) === String(sid) && o.payment?.materialsPaid === true
+        );
+        if (!paidOrder) {
+          legacyOk = false;
+          break;
+        }
       }
+      allPaid = legacyOk;
     }
     if (allPaid) {
       await prisma.materialRequest.update({
@@ -345,6 +364,6 @@ module.exports = {
   listForJobActor,
   syncSubmittedRequestsToPaid,
   patchMarkPaidForCustomer,
-  mergeStoreOrdersFromProviderMaterials,
+  appendStoreOrdersForMaterialRequest,
   toApiMaterialRequest,
 };

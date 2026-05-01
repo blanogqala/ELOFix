@@ -9,9 +9,8 @@ import { Category, Job } from '@/types';
 import { Search, Briefcase, ArrowRight, X, ArrowUpDown, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import {
-  getStandardizedStatusLabel,
-  getUserStatusBadgeClass,
   jobMatchesAdminStatusFilter,
   ADMIN_JOB_STATUS_FILTER_LABELS,
 } from '@/lib/jobStatusMapping';
@@ -87,9 +86,9 @@ export default function AdminJobs() {
     return result;
   }, [jobs, searchQuery, statusFilter, categoryFilter, sortBy]);
 
-  const getStatusBadge = (status: Job['status']) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(status))}>
-      {getStandardizedStatusLabel(status)}
+  const getStatusBadge = (job: Job) => (
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
+      {getJobDisplayStatusLabel(job)}
     </span>
   );
 
@@ -196,7 +195,7 @@ export default function AdminJobs() {
                         </td>
                         <td className="px-6 py-4 text-sm">{job.userName}</td>
                         <td className="px-6 py-4 text-sm">{job.providerName || '—'}</td>
-                        <td className="px-6 py-4">{getStatusBadge(job.status)}</td>
+                        <td className="px-6 py-4">{getStatusBadge(job)}</td>
                         <td className="px-6 py-4 text-sm font-medium">{formatCurrency(job.totalEstimateRange.min)}</td>
                         <td className="px-6 py-4 text-sm text-muted-foreground">
                           {new Date(job.createdAt).toLocaleDateString()}

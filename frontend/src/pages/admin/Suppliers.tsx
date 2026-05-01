@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { getAdminSupplierMaterialOrders, getAdminSuppliers } from '@/lib/api/admin';
+import { getAdminSuppliers } from '@/lib/api/admin';
 import { provisionSupplier } from '@/lib/api/suppliers';
-import type { Supplier } from '@/types';
-import { Search, Package, Plus, Eye } from 'lucide-react';
+import { Search, Plus, Eye, Store, TrendingUp, Percent, PackageCheck } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Table,
@@ -19,16 +19,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Card, CardContent } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/formatCurrency';
 
 export default function AdminSuppliers() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
-  const [detail, setDetail] = useState<Supplier | null>(null);
 
   const [form, setForm] = useState({
     email: '',
@@ -39,16 +38,13 @@ export default function AdminSuppliers() {
     address: '',
   });
 
-  const { data: suppliers = [], isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['admin', 'suppliers'],
     queryFn: () => getAdminSuppliers(),
   });
 
-  const ordersQuery = useQuery({
-    queryKey: ['admin', 'supplier', 'orders', detail?.id],
-    queryFn: () => getAdminSupplierMaterialOrders(detail!.id),
-    enabled: Boolean(detail?.id),
-  });
+  const suppliers = data?.suppliers ?? [];
+  const ga = data?.globalSupplierOrderAnalytics;
 
   const provisionMut = useMutation({
     mutationFn: () =>
@@ -73,7 +69,8 @@ export default function AdminSuppliers() {
     (s) =>
       !searchQuery ||
       s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (s.businessName || '').toLowerCase().includes(searchQuery.toLowerCase())
+      (s.businessName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (s.linkedUserEmail || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -82,8 +79,9 @@ export default function AdminSuppliers() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold">Suppliers</h1>
-            <p className="text-muted-foreground">
-              Provision vendor logins (not public signup). Inventory is managed only in the supplier portal.
+            <p className="text-muted-foreground max-w-2xl">
+              Platform-wide supplier performance from completed, paid material orders. Commission is{' '}
+              {Math.round((ga?.commissionRate ?? 0.07) * 100)}% of each order total.
             </p>
           </div>
           <Button onClick={() => setAddOpen(true)}>
@@ -92,10 +90,74 @@ export default function AdminSuppliers() {
           </Button>
         </div>
 
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Card className="border-border/80 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total suppliers</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{ga?.totalSuppliers ?? suppliers.length}</p>
+                </div>
+                <div className="rounded-lg bg-primary/10 p-2">
+                  <Store className="h-5 w-5 text-primary" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/80 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Supplier revenue</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {formatCurrency(ga?.totalRevenue ?? 0)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid orders</p>
+                </div>
+                <div className="rounded-lg bg-emerald-500/10 p-2">
+                  <TrendingUp className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/80 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Platform commission</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums text-accent">
+                    {formatCurrency(ga?.totalCommission ?? 0)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {Math.round((ga?.commissionRate ?? 0.07) * 100)}% of order totals
+                  </p>
+                </div>
+                <div className="rounded-lg bg-accent/10 p-2">
+                  <Percent className="h-5 w-5 text-accent" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/80 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Orders fulfilled</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{ga?.orderCount ?? 0}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid</p>
+                </div>
+                <div className="rounded-lg bg-primary/10 p-2">
+                  <PackageCheck className="h-5 w-5 text-primary" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <Input
-            placeholder="Search…"
+            placeholder="Search by store, business, or email…"
             className="h-10 border-0 flex-1 min-w-[12rem]"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -108,9 +170,9 @@ export default function AdminSuppliers() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Store</TableHead>
-                <TableHead>Login</TableHead>
-                <TableHead>Products</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -118,19 +180,34 @@ export default function AdminSuppliers() {
               {filtered.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell>
-                    <div className="font-medium">{s.name}</div>
-                    {s.businessName && <div className="text-xs text-muted-foreground">{s.businessName}</div>}
+                    <div className="font-medium">{s.businessName || s.name}</div>
+                    {s.businessName && s.businessName !== s.name && (
+                      <div className="text-xs text-muted-foreground">{s.name}</div>
+                    )}
                   </TableCell>
                   <TableCell>
                     {s.linkedUserEmail ? (
                       <span className="text-sm">{s.linkedUserEmail}</span>
                     ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {s.linkedUserEmail ? (
+                      <Badge variant="outline" className="font-normal">
+                        Active
+                      </Badge>
+                    ) : (
                       <Badge variant="secondary">No login</Badge>
                     )}
                   </TableCell>
-                  <TableCell>{s.products?.length ?? 0}</TableCell>
                   <TableCell className="text-right">
-                    <Button type="button" variant="outline" size="sm" onClick={() => setDetail(s)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate(`/admin/suppliers/${s.id}`)}
+                    >
                       <Eye className="mr-2 h-4 w-4" />
                       View details
                     </Button>
@@ -214,104 +291,6 @@ export default function AdminSuppliers() {
               Create supplier
             </Button>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!detail} onOpenChange={(v) => !v && setDetail(null)}>
-        <DialogContent className="sm:max-w-3xl max-h-[88vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" /> {detail?.name}
-            </DialogTitle>
-          </DialogHeader>
-          {detail && (
-            <ScrollArea className="max-h-[70vh] pr-4">
-              <div className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Account</CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-sm space-y-1">
-                    <p>
-                      <span className="text-muted-foreground">Login:</span>{' '}
-                      {detail.linkedUserEmail || 'No linked login'}
-                    </p>
-                    {detail.linkedUserId && (
-                      <p>
-                        <span className="text-muted-foreground">User id:</span> {detail.linkedUserId}
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <div>
-                  <h3 className="text-sm font-semibold mb-2">Catalog (read-only)</h3>
-                  <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-                    {(detail.products || []).length === 0 && (
-                      <p className="text-sm text-muted-foreground">No SKUs listed.</p>
-                    )}
-                    {(detail.products || []).map((p) => (
-                      <Card key={p.id} className="overflow-hidden">
-                        <CardHeader className="py-2">
-                          <CardTitle className="text-sm leading-tight">{p.name}</CardTitle>
-                          <p className="text-xs text-muted-foreground capitalize">{p.category}</p>
-                          <p className="text-sm font-semibold">{formatCurrency(p.price)}</p>
-                          <Badge variant={p.inStock ? 'default' : 'secondary'}>
-                            {p.inStock ? 'In stock' : 'Out'}
-                          </Badge>
-                        </CardHeader>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold mb-2">Orders & commission</h3>
-                  {ordersQuery.isLoading && <p className="text-sm text-muted-foreground">Loading orders…</p>}
-                  {!ordersQuery.isLoading && (ordersQuery.data?.length ?? 0) === 0 && (
-                    <p className="text-sm text-muted-foreground">No material orders for this vendor yet.</p>
-                  )}
-                  <div className="rounded-md border border-border overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Order</TableHead>
-                          <TableHead>Customer</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Materials</TableHead>
-                          <TableHead className="text-right">Platform 7%</TableHead>
-                          <TableHead className="text-right">Supplier 93%</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(ordersQuery.data || []).map((o) => (
-                          <TableRow key={o.id}>
-                            <TableCell className="font-mono text-xs">{o.id.slice(0, 8)}…</TableCell>
-                            <TableCell>
-                              <div className="text-sm">{o.customerName}</div>
-                              <div className="text-xs text-muted-foreground">{o.customerEmail}</div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{String(o.fulfillmentStatus || '—')}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {formatCurrency(Number(o.materialsSubtotal ?? 0))}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {formatCurrency(Number(o.platformCommission ?? 0))}
-                            </TableCell>
-                            <TableCell className="text-right font-medium">
-                              {formatCurrency(Number(o.supplierEarning ?? 0))}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-              </div>
-            </ScrollArea>
-          )}
         </DialogContent>
       </Dialog>
     </DashboardLayout>

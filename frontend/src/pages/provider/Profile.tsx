@@ -25,6 +25,7 @@ import {
   suggestCategory,
   type CategorySuggestion,
 } from '@/lib/api/categories';
+import { evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
 import {
@@ -106,6 +107,7 @@ export default function ProviderProfile() {
   const [suggestDescription, setSuggestDescription] = useState('');
   const [suggestSubmitting, setSuggestSubmitting] = useState(false);
   const [suggestedServices, setSuggestedServices] = useState<CategorySuggestion[]>([]);
+  const [profileTab, setProfileTab] = useState<string>('info');
   const [manualAreaInput, setManualAreaInput] = useState('');
 
   // Settings state
@@ -270,6 +272,18 @@ export default function ProviderProfile() {
       setProvider(updated);
       await refreshProfile();
       await loadProvider();
+      const refreshed = evaluateProviderCoreSections(updated, {
+        phone,
+        businessName,
+        bio,
+        serviceAreas,
+        selectedSkills,
+        pricing,
+      });
+      if (refreshed.profileInfo) {
+        if (!refreshed.skillsAndPrices) setProfileTab('pricing');
+        else if (!refreshed.documents) setProfileTab('docs');
+      }
       toast({ title: 'Profile saved', description: 'Your profile info has been updated.' });
     } catch {
       toast({ title: 'Error', description: 'Failed to save profile.', variant: 'destructive' });
@@ -307,6 +321,17 @@ export default function ProviderProfile() {
       next = await updateProviderPricing(user.id, pricing);
       setProvider(next);
       await refreshProfile();
+      const refreshed = evaluateProviderCoreSections(next, {
+        phone,
+        businessName,
+        bio,
+        serviceAreas,
+        selectedSkills,
+        pricing,
+      });
+      if (refreshed.skillsAndPrices && !refreshed.documents) {
+        setProfileTab('docs');
+      }
       toast({ title: 'Pricing saved', description: 'Your skills and rates have been updated.' });
     } catch {
       toast({ title: 'Error', description: 'Failed to save pricing.', variant: 'destructive' });
@@ -415,52 +440,30 @@ export default function ProviderProfile() {
     ? workPosts
     : workPosts.filter(p => p.categoryId === postFilterCategory);
 
+  const coreSections = useMemo(
+    () =>
+      evaluateProviderCoreSections(provider, {
+        phone,
+        businessName,
+        bio,
+        serviceAreas,
+        selectedSkills,
+        pricing,
+      }),
+    [provider, phone, businessName, bio, serviceAreas, selectedSkills, pricing]
+  );
+
   const completionDetails = useMemo(() => {
-    const infoOk =
-      phone.trim().length > 0 &&
-      businessName.trim().length > 0 &&
-      (bio?.trim().length || 0) >= 20 &&
-      serviceAreas.length >= 1;
-
-    const skillsOk =
-      selectedSkills.length > 0 &&
-      selectedSkills.every(
-        (s) => pricing[s] && (pricing[s]?.rate ?? 0) > 0
-      );
-
-    const docsOk =
-      provider?.documents?.idDoc?.url &&
-      provider?.documents?.proofOfSkill?.url;
-
     const postsOk = workPosts.length >= 1;
-
     return {
-      infoOk,
-      skillsOk,
-      docsOk,
+      infoOk: coreSections.profileInfo,
+      skillsOk: coreSections.skillsAndPrices,
+      docsOk: coreSections.documents,
       postsOk,
     };
-  }, [
-    phone,
-    businessName,
-    bio,
-    serviceAreas.length,
-    selectedSkills,
-    pricing,
-    provider?.documents,
-    workPosts.length,
-  ]);
+  }, [coreSections, workPosts.length]);
 
-  const completionPercent = useMemo(() => {
-    let pts = 0;
-
-    if (completionDetails.infoOk) pts += 25;
-    if (completionDetails.skillsOk) pts += 25;
-    if (completionDetails.docsOk) pts += 25;
-    if (completionDetails.postsOk) pts += 25;
-
-    return pts;
-  }, [completionDetails]);
+  const completionPercent = coreSections.percentCore;
 
   const dismissOnboarding = () => {
     setOnboardingOpen(false);
@@ -614,23 +617,23 @@ export default function ProviderProfile() {
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Profile completion</span>
+              <span>Profile completion (info · skills · documents)</span>
               <span>{completionPercent}%</span>
             </div>
             <Progress value={completionPercent} className="h-2" />
           </div>
         </div>
 
-        <Tabs defaultValue="info" className="space-y-6">
+        <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-6">
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 ">
             <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm ">
-              Profile
+              Profile {coreSections.profileInfo ? '✅' : '⚠️'}
             </TabsTrigger>
             <TabsTrigger value="pricing" className="gap-1.5 text-xs sm:text-sm">
-              <span className="truncate">Skills &amp; Pricing</span>
+              <span className="truncate">Skills &amp; Pricing {coreSections.skillsAndPrices ? '✅' : '⚠️'}</span>
             </TabsTrigger>
             <TabsTrigger value="docs" className="gap-1.5 text-xs sm:text-sm">
-              Documents
+              Documents {coreSections.documents ? '✅' : '⚠️'}
             </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
               Work Posts
@@ -685,7 +688,10 @@ export default function ProviderProfile() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Phone Number</Label>
+                  <div className="flex items-center gap-2">
+                    <Label>Phone Number</Label>
+                    {errors.phone && <span className="text-xs text-destructive">Required</span>}
+                  </div>
                   <Input
                     value={phone}
                     onChange={(e) => {
@@ -697,7 +703,10 @@ export default function ProviderProfile() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Business Name</Label>
+                  <div className="flex items-center gap-2">
+                    <Label>Business Name</Label>
+                    {errors.businessName && <span className="text-xs text-destructive">Required</span>}
+                  </div>
                   <Input
                     value={businessName}
                     onChange={(e) => {
@@ -711,7 +720,10 @@ export default function ProviderProfile() {
               </div>
 
               <div className="space-y-2">
-                <Label>About / Bio</Label>
+                <div className="flex items-center gap-2">
+                  <Label>About / Bio</Label>
+                  {errors.bio && <span className="text-xs text-destructive">Required (min 20 characters)</span>}
+                </div>
                 <Textarea
                   value={bio}
                   onChange={(e) => {

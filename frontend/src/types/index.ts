@@ -212,7 +212,36 @@ export type MaterialFulfillmentStatus =
   | 'ACCEPTED'
   | 'PREPARING'
   | 'READY'
+  | 'OUT_FOR_DELIVERY'
   | 'COMPLETED';
+
+/** Canonical batch shape (API payload.materialBatch + jobMaterialOrders). */
+export type MaterialBatchStatus =
+  | 'pending'
+  | 'accepted'
+  | 'preparing'
+  | 'ready'
+  | 'out_for_delivery'
+  | 'delivered';
+
+export interface MaterialBatchTimestamps {
+  acceptedAt?: string;
+  readyAt?: string;
+  pickedUpAt?: string;
+  deliveredAt?: string;
+}
+
+export interface MaterialBatch {
+  id: string;
+  supplierId: string;
+  items: unknown[];
+  status: MaterialBatchStatus;
+  deliveryType: 'pickup' | 'delivery';
+  pickupAddress?: string;
+  deliveryAddress?: string;
+  assignedDriverId?: string;
+  timestamps: MaterialBatchTimestamps;
+}
 
 export interface MaterialLine {
   supplierId: string;
@@ -225,6 +254,8 @@ export interface MaterialLine {
   unit: string;
   isExtra?: boolean;
   imageUrl?: string;
+  /** Set when line came from a submitted material request batch (API / job JSON). */
+  materialRequestId?: string;
 }
 
 export interface MovingItem {
@@ -407,6 +438,8 @@ export interface JobLocation {
 export interface JobStoreOrder {
   storeId: string;
   orderId: string;
+  /** Links this checkout cycle to a submitted MaterialRequest row (job meta). */
+  materialRequestId?: string;
   /** When created from acceptUserSuggestion — ties this cycle to exactly one suggestion (avoids wrong order when same product appears in multiple cycles). */
   sourceUserSuggestionId?: string;
   submissionBatchId?: string;
@@ -438,11 +471,15 @@ export interface JobMaterialOrderSnapshot {
   fulfillmentStatus: MaterialFulfillmentStatus | string;
   paymentStatus: string;
   source?: string;
+  /** Job meta `storeOrders[].orderId` when created from job materials pay flow. */
+  jobStoreOrderId?: string | null;
   total: number;
   materialsSubtotal: number;
   platformCommission: number;
   supplierEarning: number;
   items: Array<{ name?: string; quantity: number; price: number; productId?: string }>;
+  /** Canonical tracking (supplier ↔ customer); same payload as MaterialOrder.materialBatch. */
+  materialBatch?: MaterialBatch;
   createdAt: string;
 }
 
@@ -463,6 +500,10 @@ export interface Job {
   paymentPlan: PaymentPlan;
   escrow: Escrow;
   status: JobStatus;
+  /** Monotonic timeline index 0–5; advances on server. */
+  progressStep?: number;
+  /** Set when first service or material batch is paid; timeline does not return to payment step. */
+  hasStarted?: boolean;
   jobNotes: JobNote[];
   chat: ChatMessage[];
   proposedLaborPrice?: { amount: number; reason: string };
@@ -593,7 +634,8 @@ export type AppNotificationType =
   | 'category_suggestion'
   | 'support_contact'
   | 'job_chat'
-  | 'support_reply';
+  | 'support_reply'
+  | 'material_tracking';
 
 export interface AppNotification {
   id: string;

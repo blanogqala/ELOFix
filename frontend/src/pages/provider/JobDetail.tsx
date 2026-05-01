@@ -31,8 +31,8 @@ import {
 import { getSuppliers } from '@/lib/api/suppliers';
 import { Job, MaterialLine, Supplier, Measurements } from '@/types';
 import {
-  ArrowLeft, User, Calendar, Package, MessageSquare, Send, MapPin,
-  ShoppingCart, XCircle, CheckCircle, Clock, AlertTriangle, DollarSign, Check, X,
+  ArrowLeft, User, Calendar, MessageSquare, Send, MapPin,
+  XCircle, CheckCircle, Clock, AlertTriangle, DollarSign, X,
   Pencil, ExternalLink, CreditCard, Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -53,15 +53,20 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { AddMaterialsModal } from '@/components/jobs/AddMaterialsModal';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
+import { MaterialsSection } from '@/components/materials/MaterialsSection';
 import { Card, CardContent } from '@/components/ui/card';
 import {
-  getStandardizedStatusLabel,
-  getProviderStatusBadgeVariant,
-  ACTIVE_WORKFLOW_JOB_STATUSES,
-} from '@/lib/jobStatusMapping';
-import { USER_TIMELINE_STEPS, getUserTimelineViewState } from '@/lib/userJobTimeline';
-import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
+  getJobDisplayStatusLabel,
+  getProviderJobBadgeVariantForJob,
+} from '@/lib/jobProgressDisplay';
+import { ACTIVE_WORKFLOW_JOB_STATUSES } from '@/lib/jobStatusMapping';
+import {
+  getProviderJobTimelineViewState,
+  getProviderTimelineStepInsight,
+} from '@/lib/providerJobTimeline';
+import { useProviderStatus } from '@/hooks/useProviderStatus';
+import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 
@@ -99,8 +104,11 @@ export default function ProviderJobDetail() {
   const jobId = id ?? '';
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { isProfileComplete } = useProviderStatus();
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  useMaterialOrderFulfillmentSocket({ userId: user?.id, activeJobId: jobId });
 
   const syncJobsAfterMutation = useCallback(async () => {
     if (!jobId) return;
@@ -129,7 +137,6 @@ export default function ProviderJobDetail() {
   const [noteMessage, setNoteMessage] = useState('');
   const [chatMessage, setChatMessage] = useState('');
   const [commTab, setCommTab] = useState<'messages' | 'notes'>('messages');
-  const [materialViewTab, setMaterialViewTab] = useState<'orders' | 'suggestions'>('orders');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelDetails, setCancelDetails] = useState('');
@@ -243,6 +250,15 @@ export default function ProviderJobDetail() {
 
   const handleSubmitMaterials = async () => {
     if (!job) return;
+    if (!isProfileComplete) {
+      toast({
+        title: 'Complete your profile',
+        description: 'Finish onboarding before submitting materials to customers.',
+        variant: 'destructive',
+      });
+      navigate('/provider/profile');
+      return;
+    }
     const draftMr = materialRequests.find((r) => r.status === 'draft');
     if (materialsBuilder.length === 0 && !draftMr) {
       toast({ title: 'No draft materials', description: 'Save materials first before submitting to user.' });
@@ -257,7 +273,9 @@ export default function ProviderJobDetail() {
         return;
       }
       await syncJobsAfterMutation();
-      setMaterialsBuilder([]);
+      const rows = await getMaterialRequestsForJob(job.id);
+      const draft = rows.find((r) => r.status === 'draft');
+      setMaterialsBuilder(draft?.items?.length ? (draft.items as MaterialLine[]) : []);
       setAddMaterialsOpen(false);
       toast({ title: 'Materials submitted', description: 'The user can now review and pay.' });
     } catch (e) {
@@ -433,14 +451,25 @@ export default function ProviderJobDetail() {
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`
     : null;
 
-  const materialCards = (job?.storeOrders && job.storeOrders.length > 0)
-    ? job.storeOrders
-    : [];
-  const hasAnyMaterialPaid = materialCards.some(card => card.payment?.materialsPaid);
-  const allMaterialsPaid = materialCards.length > 0 && materialCards.every(card => card.payment?.materialsPaid);
-  const paidMaterialCards = materialCards.filter(card => card.payment?.materialsPaid);
-  const pendingMaterialCards = materialCards.filter(card => !card.payment?.materialsPaid);
-  const canEditMaterials = true;
+  const rawStoreOrders = job?.storeOrders && job.storeOrders.length > 0 ? job.storeOrders : [];
+  const seenMaterialOrderIds = new Set<string>();
+  const materialCards = rawStoreOrders.filter((o) => {
+    if (seenMaterialOrderIds.has(o.orderId)) return false;
+    seenMaterialOrderIds.add(o.orderId);
+    return true;
+  });
+  const materialsStackSorted = [...materialCards].sort((a, b) => {
+    const ap = a.payment?.materialsPaid ? 1 : 0;
+    const bp = b.payment?.materialsPaid ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+  });
+  const hasAnyMaterialPaid = materialCards.some((card) => card.payment?.materialsPaid);
+  const allMaterialsPaid = materialCards.length > 0 && materialCards.every((card) => card.payment?.materialsPaid);
+  const pendingMaterialCards = materialCards.filter((card) => !card.payment?.materialsPaid);
+  const paidMaterialBatches = materialsStackSorted.filter((card) => card.payment?.materialsPaid);
+  const profileBlocksWorkflow = !isProfileComplete;
+  const canEditMaterials = !profileBlocksWorkflow;
   const getPendingOrderForAcceptedSuggestion = (suggestion: NonNullable<Job['userMaterialSuggestions']>[number]) => {
     const linked = pendingMaterialCards.find(card => card.sourceUserSuggestionId === suggestion.id);
     if (linked) return linked;
@@ -455,14 +484,6 @@ export default function ProviderJobDetail() {
     if (suggestion.status === 'accepted') return !!getPendingOrderForAcceptedSuggestion(suggestion);
     return false;
   });
-  const acceptedSuggestionOrderIds = new Set(
-    customerSuggestionsForDisplay
-      .filter(suggestion => suggestion.status === 'accepted')
-      .map(suggestion => getPendingOrderForAcceptedSuggestion(suggestion)?.orderId)
-      .filter((orderId): orderId is string => !!orderId)
-  );
-  const pendingOrderCards = pendingMaterialCards.filter(card => !acceptedSuggestionOrderIds.has(card.orderId));
-  const hasCustomerMaterialSuggestions = customerSuggestionsForDisplay.length > 0;
   const draftCardsByStore = materialsBuilder.reduce((acc, material) => {
     if (!acc[material.supplierId]) {
       acc[material.supplierId] = {
@@ -476,17 +497,14 @@ export default function ProviderJobDetail() {
   const hasDraftMaterials = materialsBuilder.length > 0;
   const draftMrFromApi = materialRequests.find((r) => r.status === 'draft');
   const hasSubmittedMaterialRequests = materialRequests.some((r) => r.status === 'submitted');
-  const hasProviderPendingOrderContent =
-    pendingOrderCards.length > 0 || hasDraftMaterials || canEditMaterials;
-  const showProviderMaterialSubTabs = hasProviderPendingOrderContent && hasCustomerMaterialSuggestions;
 
   const showMarkComplete = job ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) : false;
   const showCancel = job
     ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION'
     : false;
 
-  const getStatusBadge = (status: Job['status']) => (
-    <Badge variant={getProviderStatusBadgeVariant(status)}>{getStandardizedStatusLabel(status)}</Badge>
+  const getStatusBadge = (current: Job) => (
+    <Badge variant={getProviderJobBadgeVariantForJob(current)}>{getJobDisplayStatusLabel(current)}</Badge>
   );
 
   if (isLoading) {
@@ -513,6 +531,8 @@ export default function ProviderJobDetail() {
     );
   }
 
+  const providerTimelineView = getProviderJobTimelineViewState(job, materialRequests);
+
   return (
     <DashboardLayout>
       <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
@@ -525,112 +545,21 @@ export default function ProviderJobDetail() {
             <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">{job.categoryName}</h1>
             <p className="text-xs text-muted-foreground sm:text-sm">#{job.id.slice(-8)}</p>
           </div>
-          <div className="shrink-0">{getStatusBadge(job.status)}</div>
+          <div className="shrink-0">{getStatusBadge(job)}</div>
         </div>
 
-        {/* Status Timeline */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between overflow-x-auto pb-2">
-              {(() => {
-                const view = getUserTimelineViewState(job);
-                const isCancelled = view.terminal === 'cancelled';
-                const isRejected = view.terminal === 'rejected';
-                const isTerminal = isCancelled || isRejected;
-                const pinIndex = view.pinIndex;
-                const currentIdx = view.currentIdx;
-
-                return USER_TIMELINE_STEPS.map((label, index, arr) => {
-                  const insight = getTimelineStepInsight(job, index);
-                  const isTerminalStep = isTerminal && index === pinIndex;
-                  const isFutureTerminalStep = isTerminal && index > pinIndex;
-                  const isActive =
-                    !isTerminal &&
-                    job.status !== 'COMPLETED' &&
-                    index === currentIdx;
-                  const isPast = isTerminal
-                    ? index < pinIndex
-                    : job.status === 'COMPLETED' || index < currentIdx;
-
-                  return (
-                    <div key={label} className="flex items-center">
-                      <div className="flex flex-col items-center min-w-[50px]">
-                        <Popover
-                          open={lockedTimelineStep === index || (lockedTimelineStep === null && hoveredTimelineStep === index)}
-                          onOpenChange={(open) => {
-                            if (!open && lockedTimelineStep === index) {
-                              setLockedTimelineStep(null);
-                            }
-                          }}
-                        >
-                          <PopoverTrigger asChild>
-                            <button
-                              type="button"
-                              onMouseEnter={() => {
-                                if (isFutureTerminalStep) return;
-                                if (lockedTimelineStep === null) setHoveredTimelineStep(index);
-                              }}
-                              onMouseLeave={() => {
-                                if (isFutureTerminalStep) return;
-                                if (lockedTimelineStep === null) setHoveredTimelineStep(null);
-                              }}
-                              onClick={() => {
-                                if (isFutureTerminalStep) return;
-                                setLockedTimelineStep((current) => (current === index ? null : index));
-                                setHoveredTimelineStep(null);
-                              }}
-                              disabled={isFutureTerminalStep}
-                              className={cn(
-                                "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold transition-transform hover:scale-105 focus:outline-none",
-                                isFutureTerminalStep && "opacity-40 cursor-not-allowed",
-                                isPast ? "bg-success text-success-foreground" :
-                                isTerminalStep ? "bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2" :
-                                isActive ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2" :
-                                "bg-muted text-muted-foreground"
-                              )}
-                            >
-                              {isPast ? <Check className="h-4 w-4" /> : index + 1}
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-64">
-                            <div className="space-y-1 text-xs">
-                              <p className="font-semibold">
-                                {isTerminalStep && isCancelled ? 'Cancelled' : insight.stepLabel}
-                              </p>
-                              <p className="text-muted-foreground">
-                                {isTerminalStep && isCancelled
-                                  ? `Reason: ${cancellationReasonText}`
-                                  : insight.nextAction}
-                              </p>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                        <span className={cn(
-                          "text-[10px] mt-1 text-center leading-tight",
-                          isTerminalStep ? "font-medium text-destructive" :
-                          isActive ? "font-medium" : "text-muted-foreground"
-                        )}>
-                          {isTerminalStep
-                            ? isCancelled
-                              ? `Cancelled${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
-                              : `Rejected${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
-                            : label}
-                        </span>
-                      </div>
-                      {index < arr.length - 1 && (
-                        <div className={cn(
-                          "w-6 sm:w-10 h-0.5 mx-1",
-                          isTerminal ? (index < pinIndex ? "bg-success" : "bg-muted") :
-                          (index < currentIdx ? "bg-success" : "bg-muted")
-                        )} />
-                      )}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Status Timeline (provider workflow: materials + job state) */}
+        <JobWorkflowTimeline
+          job={job}
+          view={providerTimelineView}
+          variant="provider"
+          getStepInsight={(stepIndex) => getProviderTimelineStepInsight(job, materialRequests, stepIndex)}
+          cancellationReasonText={cancellationReasonText}
+          lockedTimelineStep={lockedTimelineStep}
+          setLockedTimelineStep={setLockedTimelineStep}
+          hoveredTimelineStep={hoveredTimelineStep}
+          setHoveredTimelineStep={setHoveredTimelineStep}
+        />
 
         {/* Job Overview */}
         <div className="card-elevated p-6 space-y-4">
@@ -865,365 +794,28 @@ export default function ProviderJobDetail() {
           
         </div>
 
-        {/* Materials */}
-        <div className="card-elevated p-6 space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h2 className="font-semibold text-lg flex items-center gap-2">
-              <Package className="h-5 w-5" /> Materials
-            </h2>
-            {allMaterialsPaid && (
-              <Badge className="bg-green-600 text-white">Paid</Badge>
-            )}
-          </div>
-          {hasAnyMaterialPaid && (
-            <p className="text-sm text-green-600 font-medium">
-              User has completed material purchase for this job. You can proceed with the work.
-            </p>
-          )}
-          {job.servicePrice && job.laborPaid && (
-            <>
-              {materialCards.length > 0 ? (
-                <>
-                  {paidMaterialCards.length > 0 && (
-                    <div className="space-y-3">
-                      <h3 className="text-sm font-semibold text-muted-foreground">Paid Materials</h3>
-                      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                        {paidMaterialCards.map((card) => {
-                          const total = card.items.reduce((sum, item) => sum + (item.qty * item.unitPrice), 0);
-                          return (
-                            <div key={card.orderId} className="border border-green-500/60 bg-green-500/5 rounded-lg p-4">
-                              <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-2">
-                                  <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                  <span className="font-medium">{card.storeName || card.storeId}</span>
-                                </div>
-                                <Badge>Paid</Badge>
-                              </div>
-                              <div className="space-y-1 text-sm">
-                                {card.items.map(item => (
-                                  <div key={`${card.orderId}-${item.productId}`} className="flex justify-between">
-                                    <span>{item.name} x{item.qty}</span>
-                                    <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
-                                <span>Subtotal</span>
-                                <span>{formatCurrency(total, { decimals: 2 })}</span>
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-2">Read-only: paid material cycle is locked.</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {(job.jobMaterialOrders?.length ?? 0) > 0 && (
-                    <div className="space-y-3 pt-2 border-t border-border/60">
-                      <h3 className="text-sm font-semibold text-muted-foreground">Active orders (supplier)</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Database-backed orders suppliers fulfill after payment — same pipeline as Supplier dashboard.
-                      </p>
-                      <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
-                        {job.jobMaterialOrders!.map((mo) => (
-                          <div
-                            key={mo.id}
-                            className="border rounded-lg p-3 bg-muted/20 border-primary/20"
-                          >
-                            <div className="flex items-center justify-between gap-2 mb-2">
-                              <span className="text-sm font-medium truncate">{mo.supplierName || 'Store'}</span>
-                              <Badge variant="outline" className="shrink-0 capitalize">
-                                {String(mo.fulfillmentStatus || 'PENDING').toLowerCase().replace(/_/g, ' ')}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground mb-1">
-                              Order #{mo.id.slice(0, 8)} · Paid ({mo.paymentStatus})
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Subtotal {formatCurrency(mo.materialsSubtotal, { decimals: 2 })} · Commission{' '}
-                              {formatCurrency(mo.platformCommission, { decimals: 2 })}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {showProviderMaterialSubTabs && (
-                    <div className="inline-flex rounded-lg border border-border p-1 bg-muted/30">
-                      <Button
-                        size="sm"
-                        variant={materialViewTab === 'orders' ? 'default' : 'ghost'}
-                        className="h-8"
-                        onClick={() => setMaterialViewTab('orders')}
-                      >
-                        Pending Orders
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={materialViewTab === 'suggestions' ? 'default' : 'ghost'}
-                        className="h-8 gap-2"
-                        onClick={() => setMaterialViewTab('suggestions')}
-                      >
-                        Customer suggestions
-                        <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                          {customerSuggestionsForDisplay.length}
-                        </Badge>
-                      </Button>
-                    </div>
-                  )}
-
-                  {(!showProviderMaterialSubTabs || materialViewTab === 'orders') && (
-                    <div className="space-y-3">
-                      {hasDraftMaterials && (
-                        <>
-                          <h3 className="text-sm font-semibold text-muted-foreground">Draft Materials</h3>
-                          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                            {Object.entries(draftCardsByStore).map(([storeId, draft]) => {
-                              const total = draft.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
-                              return (
-                                <div key={`draft-${storeId}`} className="border rounded-lg p-4 border-muted-foreground/30 bg-muted/20">
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-2">
-                                      <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                      <span className="font-medium">{draft.storeName}</span>
-                                    </div>
-                                    <Badge variant="outline" className="text-muted-foreground border-muted-foreground/40">
-                                      Draft
-                                    </Badge>
-                                  </div>
-                                  <div className="space-y-1 text-sm">
-                                    {draft.items.map(item => (
-                                      <div key={`draft-${storeId}-${item.productId}`} className="flex justify-between">
-                                        <span>{item.name} x{item.qty}</span>
-                                        <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
-                                    <span>Subtotal</span>
-                                    <span>{formatCurrency(total, { decimals: 2 })}</span>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground mt-2">
-                                    Not sent to the user yet. Use Submit Materials to User when ready.
-                                  </p>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      )}
-                      {(pendingOrderCards.length > 0 || hasSubmittedMaterialRequests) && (
-                        <h3 className="text-sm font-semibold text-muted-foreground">Pending Materials</h3>
-                      )}
-                      {hasSubmittedMaterialRequests && (
-                        <p className="text-xs text-muted-foreground">
-                          Submission recorded — awaiting customer payment per store below.
-                        </p>
-                      )}
-                      {pendingOrderCards.length > 0 && (
-                        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                          {pendingOrderCards.map((card) => {
-                            const total = card.items.reduce((sum, item) => sum + (item.qty * item.unitPrice), 0);
-                            return (
-                              <div key={card.orderId} className="border border-primary/60 rounded-lg p-4">
-                                <div className="flex items-center justify-between mb-3">
-                                  <div className="flex items-center gap-2">
-                                    <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                    <span className="font-medium">{card.storeName || card.storeId}</span>
-                                  </div>
-                                  <Badge className="bg-amber-500/90 text-amber-950 hover:bg-amber-500 border-amber-600/80">Pending</Badge>
-                                </div>
-                                <div className="space-y-1 text-sm">
-                                  {card.items.map(item => (
-                                    <div key={`${card.orderId}-${item.productId}`} className="flex justify-between">
-                                      <span>{item.name} x{item.qty}</span>
-                                      <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
-                                  <span>Subtotal</span>
-                                  <span>{formatCurrency(total, { decimals: 2 })}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {canEditMaterials && (
-                        <div className="flex flex-wrap gap-2">
-                          <Button onClick={() => setAddMaterialsOpen(true)} variant="outline">
-                            Add / Edit Materials
-                          </Button>
-                          <Button
-                            onClick={handleSubmitMaterials}
-                            disabled={materialsBuilder.length === 0 && !draftMrFromApi}
-                          >
-                            Submit Materials to User
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {hasAnyMaterialPaid && (
-                    <p className="text-xs text-muted-foreground mt-2">Materials paid for one or more stores. You can still add or edit new material items.</p>
-                  )}
-                </>
-              ) : (
-                <div className="space-y-3">
-                  {showProviderMaterialSubTabs && (
-                    <div className="inline-flex rounded-lg border border-border p-1 bg-muted/30">
-                      <Button
-                        size="sm"
-                        variant={materialViewTab === 'orders' ? 'default' : 'ghost'}
-                        className="h-8"
-                        onClick={() => setMaterialViewTab('orders')}
-                      >
-                        Pending Orders
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={materialViewTab === 'suggestions' ? 'default' : 'ghost'}
-                        className="h-8 gap-2"
-                        onClick={() => setMaterialViewTab('suggestions')}
-                      >
-                        Customer suggestions
-                        <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                          {customerSuggestionsForDisplay.length}
-                        </Badge>
-                      </Button>
-                    </div>
-                  )}
-                  {(!showProviderMaterialSubTabs || materialViewTab === 'orders') && (
-                    <div className="space-y-4">
-                      {hasDraftMaterials && (
-                        <>
-                          <h3 className="text-sm font-semibold text-muted-foreground">Draft Materials</h3>
-                          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                            {Object.entries(draftCardsByStore).map(([storeId, draft]) => {
-                              const total = draft.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
-                              return (
-                                <div key={`draft-${storeId}`} className="border rounded-lg p-4 border-muted-foreground/30 bg-muted/20">
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-2">
-                                      <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                      <span className="font-medium">{draft.storeName}</span>
-                                    </div>
-                                    <Badge variant="outline" className="text-muted-foreground border-muted-foreground/40">
-                                      Draft
-                                    </Badge>
-                                  </div>
-                                  <div className="space-y-1 text-sm">
-                                    {draft.items.map(item => (
-                                      <div key={`draft-${storeId}-${item.productId}`} className="flex justify-between">
-                                        <span>{item.name} x{item.qty}</span>
-                                        <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
-                                    <span>Subtotal</span>
-                                    <span>{formatCurrency(total, { decimals: 2 })}</span>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground mt-2">
-                                    Not sent to the user yet. Use Submit Materials to User when ready.
-                                  </p>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      )}
-                      {(pendingOrderCards.length > 0 || hasSubmittedMaterialRequests) && (
-                        <h3 className="text-sm font-semibold text-muted-foreground">Pending Materials</h3>
-                      )}
-                      {hasSubmittedMaterialRequests && (
-                        <p className="text-xs text-muted-foreground">
-                          Submission recorded — awaiting customer payment per store below.
-                        </p>
-                      )}
-                      {pendingOrderCards.length > 0 && (
-                        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                          {pendingOrderCards.map((card) => {
-                            const total = card.items.reduce((sum, item) => sum + (item.qty * item.unitPrice), 0);
-                            return (
-                              <div key={card.orderId} className="border border-primary/60 rounded-lg p-4">
-                                <div className="flex items-center justify-between mb-3">
-                                  <div className="flex items-center gap-2">
-                                    <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                    <span className="font-medium">{card.storeName || card.storeId}</span>
-                                  </div>
-                                  <Badge className="bg-amber-500/90 text-amber-950 hover:bg-amber-500 border-amber-600/80">
-                                    Pending
-                                  </Badge>
-                                </div>
-                                <div className="space-y-1 text-sm">
-                                  {card.items.map(item => (
-                                    <div key={`${card.orderId}-${item.productId}`} className="flex justify-between">
-                                      <span>{item.name} x{item.qty}</span>
-                                      <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold">
-                                  <span>Subtotal</span>
-                                  <span>{formatCurrency(total, { decimals: 2 })}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <p className="text-sm text-muted-foreground">Browse stores and add materials needed for this job.</p>
-                      {canEditMaterials && (
-                        <div className="flex flex-wrap gap-2">
-                          <Button onClick={() => setAddMaterialsOpen(true)} variant="outline">
-                            Add / Edit Materials
-                          </Button>
-                          <Button
-                            onClick={handleSubmitMaterials}
-                            disabled={materialsBuilder.length === 0 && !draftMrFromApi}
-                          >
-                            Submit Materials to User
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-              {hasCustomerMaterialSuggestions && (!showProviderMaterialSubTabs || materialViewTab === 'suggestions') && (
-                <div className="mt-4 pt-4 border-t space-y-3">
-                  <h3 className="font-medium">Customer material suggestions</h3>
-                  {customerSuggestionsForDisplay.map(s => (
-                    <div key={s.id} className="p-3 bg-muted/50 rounded-lg mb-2 flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{s.suggested.name} x{s.suggested.qty}</p>
-                        {s.message && <p className="text-sm text-muted-foreground">{s.message}</p>}
-                      </div>
-                      {s.status === 'pending' ? (
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleRejectUserSuggestion(s.id)}>
-                            <X className="h-3 w-3" />
-                          </Button>
-                          <Button size="sm" onClick={() => handleAcceptUserSuggestion(s.id)}>
-                            <Check className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <Badge variant="secondary">Accepted - waiting for user payment</Badge>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {(!job.servicePrice || !job.laborPaid) && (
-            <p className="text-sm text-muted-foreground">Submit service price and wait for user payment before adding materials.</p>
-          )}
-        </div>
+        <MaterialsSection
+          job={job}
+          materialRequests={materialRequests}
+          paidBatches={paidMaterialBatches}
+          pendingOrders={pendingMaterialCards}
+          draftCardsByStore={draftCardsByStore}
+          hasDraftMaterials={hasDraftMaterials}
+          hasSubmittedMaterialRequests={hasSubmittedMaterialRequests}
+          customerSuggestionsForDisplay={customerSuggestionsForDisplay}
+          getPendingOrderForAcceptedSuggestion={getPendingOrderForAcceptedSuggestion}
+          allMaterialsPaid={allMaterialsPaid}
+          hasAnyMaterialPaid={hasAnyMaterialPaid}
+          canEditMaterials={canEditMaterials}
+          profileBlocksWorkflow={profileBlocksWorkflow}
+          materialsBuilder={materialsBuilder}
+          draftMrFromApi={draftMrFromApi}
+          onNavigateProfile={() => navigate('/provider/profile')}
+          onAddMaterials={() => setAddMaterialsOpen(true)}
+          onSubmitMaterials={handleSubmitMaterials}
+          onAcceptSuggestion={handleAcceptUserSuggestion}
+          onRejectSuggestion={handleRejectUserSuggestion}
+        />
 
         {/* Communication */}
         <div className="card-elevated p-6 space-y-4">

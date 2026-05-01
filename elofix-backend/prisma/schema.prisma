@@ -18,6 +18,7 @@ enum MaterialFulfillmentStatus {
   ACCEPTED
   PREPARING
   READY
+  OUT_FOR_DELIVERY
   COMPLETED
 }
 

@@ -12,7 +12,8 @@ import {
   DollarSign, Star, ArrowRight, AlertCircle, MapPin, Package
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
+import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { sumReleasedAmountJobs } from '@/lib/jobMoney';
 
@@ -60,9 +61,9 @@ export default function ProviderDashboard() {
     amountReleasedToYou,
   };
 
-  const getStatusBadge = (status: Job['status']) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(status))}>
-      {getStandardizedStatusLabel(status)}
+  const getStatusBadge = (job: Job) => (
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
+      {getJobDisplayStatusLabel(job)}
     </span>
   );
 
@@ -301,7 +302,7 @@ export default function ProviderDashboard() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <p className="font-medium text-sm">{job.categoryName}</p>
-                          {getStatusBadge(job.status)}
+                          {getStatusBadge(job)}
                         </div>
                         <p className="text-xs text-muted-foreground">{job.userName}</p>
                       </div>

@@ -127,7 +127,38 @@ async function getCommissions(req, res) {
 
 async function listSuppliers(req, res) {
   const suppliers = await supplierService.listSuppliersForAdminDashboard();
-  res.json({ success: true, suppliers });
+  const globalSupplierOrderAnalytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({});
+  res.json({
+    success: true,
+    suppliers,
+    globalSupplierOrderAnalytics: {
+      totalSuppliers: suppliers.length,
+      ...globalSupplierOrderAnalytics,
+    },
+  });
+}
+
+async function getAdminSupplierDetail(req, res) {
+  const supplierId = String(req.params.supplierId || "").trim();
+  if (!supplierId) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const supplier = await supplierService.getSupplierDetailsForAdmin(supplierId);
+  if (!supplier) {
+    throw new AppError("Supplier not found", 404);
+  }
+  const analytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({ supplierId });
+  res.json({ success: true, supplier, analytics });
+}
+
+async function listSupplierOrders(req, res) {
+  const supplierId = String(req.params.supplierId || "").trim();
+  if (!supplierId) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+  const orders = await materialOrderService.listRecentMaterialOrdersBySupplierForAdmin(supplierId, { limit });
+  res.json({ success: true, orders });
 }
 
 async function listSupplierMaterialOrders(req, res) {
@@ -176,6 +207,8 @@ module.exports = {
   getFinancialSummaryEndpoint,
   getCommissions,
   listSuppliers,
+  getAdminSupplierDetail,
+  listSupplierOrders,
   listSupplierMaterialOrders,
   listAllPlatformMaterialOrders,
 };

@@ -4,7 +4,7 @@ import type { JobStatus } from '@/types';
 export const UNIFIED_TIMELINE_STEPS = [
   'Pending',
   'Inspected',
-  'Service & Material Paid',
+  'Awaiting Payment',
   'In Progress',
   'Awaiting Confirmation',
   'Completed',
@@ -60,7 +60,28 @@ export function getUnifiedTimelineStepIndex(status: JobStatus): number {
   }
 }
 
-/** User-facing job status label (badges, lists). No granular backend-only names. */
+/** Single label map from persisted `progressStep` / monotonic timeline index (0–5). */
+export function getJobStatusLabelFromProgressStep(step: number): string {
+  const s = Math.max(0, Math.min(5, Math.floor(Number(step))));
+  switch (s) {
+    case 0:
+      return 'Pending';
+    case 1:
+      return 'Inspected';
+    case 2:
+      return 'Awaiting Payment';
+    case 3:
+      return 'In Progress';
+    case 4:
+      return 'Awaiting Confirmation';
+    case 5:
+      return 'Completed';
+    default:
+      return 'Pending';
+  }
+}
+
+/** User-facing job status label from backend `status` alone (when `Job` is unavailable). */
 export function getStandardizedStatusLabel(status: JobStatus): string {
   switch (status) {
     case 'CANCELLED':
@@ -68,7 +89,7 @@ export function getStandardizedStatusLabel(status: JobStatus): string {
     case 'REJECTED':
       return 'Rejected';
     default:
-      return UNIFIED_TIMELINE_STEPS[getUnifiedTimelineStepIndex(status)];
+      return getJobStatusLabelFromProgressStep(getUnifiedTimelineStepIndex(status));
   }
 }
 
@@ -102,7 +123,7 @@ export const ADMIN_JOB_STATUS_FILTER_LABELS: Record<string, string> = {
   all: 'All Statuses',
   PENDING: 'Pending',
   INSPECTED: 'Inspected',
-  SERVICE_MATERIAL_PAID: 'Service & Material Paid',
+  SERVICE_MATERIAL_PAID: 'Awaiting Payment',
   IN_PROGRESS: 'In Progress',
   AWAITING_CONFIRMATION: 'Awaiting Confirmation',
   COMPLETED: 'Completed',

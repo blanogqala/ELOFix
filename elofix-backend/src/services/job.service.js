@@ -18,6 +18,7 @@ const paymentService = require("./payment.service");
 const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
+const jobProgressUtil = require("../utils/jobProgress.util");
 
 const jobInclude = {
   customer: {
@@ -27,6 +28,17 @@ const jobInclude = {
     select: { id: true, name: true, email: true, role: true },
   },
 };
+
+function jobSiteAddressFromRow(job) {
+  const loc = job.locationDetails;
+  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
+    const parts = [loc.address, loc.suburb, loc.area, loc.city].filter(Boolean);
+    if (parts.length) return parts.join(", ");
+  }
+  const l = job.location;
+  if (l && String(l).trim() && String(l).trim() !== "UNKNOWN") return String(l).trim();
+  return "";
+}
 
 function normalizeValue(value) {
   return String(value || "").trim().toLowerCase();
@@ -1503,59 +1515,187 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
 async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  const materials = Array.isArray(job.materials)
-    ? job.materials.filter((m) => String(m.supplierId) === String(supplierId))
-    : [];
-  const amount = materials.reduce((sum, item) => sum + coerceNumber(item.qty) * coerceNumber(item.unitPrice), 0);
-  const paidAt = new Date().toISOString();
-  const meta = await mutateJobMeta(jobId, (m) => {
-    const payment = {
-      orderId: options.orderId || randomUUID(),
-      supplierId: String(supplierId),
-      supplierName: materials[0]?.supplierName || "Store",
-      amount,
-      status: "paid",
-      paidAt,
-      deliveryProviderId: options.deliveryProviderId,
-      deliveryFee: coerceNumber(options.deliveryFee, 0),
-    };
-    const idx = m.materialPayments.findIndex((p) => String(p.supplierId) === String(supplierId));
-    if (idx >= 0) m.materialPayments[idx] = payment;
-    else m.materialPayments.push(payment);
 
-    const { order } = ensureStoreOrder(m, supplierId, {
-      storeName: materials[0]?.supplierName || "Store",
-      items: materials.map((item) => ({
+  const metaPeek = await getJobMeta(jobId);
+  const storeOrders = Array.isArray(metaPeek.storeOrders) ? metaPeek.storeOrders : [];
+  const wantOrderId = options.orderId ? String(options.orderId).trim() : "";
+
+  let order =
+    wantOrderId &&
+    storeOrders.find((o) => String(o.storeId) === String(supplierId) && String(o.orderId) === wantOrderId);
+  if (!order) {
+    order = storeOrders.find((o) => String(o.storeId) === String(supplierId) && !o.payment?.materialsPaid);
+  }
+  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+    const legacyMaterials = Array.isArray(job.materials)
+      ? job.materials.filter((m) => String(m.supplierId) === String(supplierId))
+      : [];
+    if (legacyMaterials.length === 0) {
+      throw new AppError("No pending materials order found for this store.", 404);
+    }
+    const legacyAmount = legacyMaterials.reduce(
+      (sum, item) => sum + coerceNumber(item.qty) * coerceNumber(item.unitPrice),
+      0
+    );
+    const legacyPaidAt = new Date().toISOString();
+    const legacyMeta = await mutateJobMeta(jobId, (m) => {
+      const payment = {
+        orderId: options.orderId || randomUUID(),
+        supplierId: String(supplierId),
+        supplierName: legacyMaterials[0]?.supplierName || "Store",
+        amount: legacyAmount,
+        status: "paid",
+        paidAt: legacyPaidAt,
+        deliveryProviderId: options.deliveryProviderId,
+        deliveryFee: coerceNumber(options.deliveryFee, 0),
+      };
+      const idx = m.materialPayments.findIndex((p) => String(p.supplierId) === String(supplierId));
+      if (idx >= 0) m.materialPayments[idx] = payment;
+      else m.materialPayments.push(payment);
+
+      const { order: leg } = ensureStoreOrder(m, supplierId, {
+        storeName: legacyMaterials[0]?.supplierName || "Store",
+        items: legacyMaterials.map((item) => ({
+          productId: item.productId,
+          name: item.name,
+          qty: item.qty,
+          unitPrice: item.unitPrice,
+          qualityTier: item.qualityTier,
+          imageUrl: item.imageUrl,
+        })),
+        invoiceId: `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`,
+      });
+      leg.items = legacyMaterials.map((item) => ({
         productId: item.productId,
         name: item.name,
         qty: item.qty,
         unitPrice: item.unitPrice,
         qualityTier: item.qualityTier,
         imageUrl: item.imageUrl,
-      })),
-      invoiceId: `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`,
+      }));
+      leg.deliveryType = options.deliveryType || leg.deliveryType || "SELF";
+      leg.deliveryProviderId = options.deliveryProviderId || leg.deliveryProviderId;
+      leg.deliveryFee = coerceNumber(options.deliveryFee, leg.deliveryFee || 0);
+      leg.payment = { materialsPaid: true, deliveryPaid: Boolean(leg.payment?.deliveryPaid) };
+      leg.deliveryStatus = leg.deliveryType === "SELF" ? "SelfCollect" : "PendingApproval";
+      leg.delivery = {
+        type: leg.deliveryType,
+        status: leg.deliveryStatus,
+        providerId: leg.deliveryProviderId,
+        fee: leg.deliveryFee,
+      };
+      leg.invoiceId = leg.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
+      const allPaidLegacy = jobProgressUtil.allStoreMaterialOrdersPaid(m);
+      m.hasStarted = true;
+      m.statusOverride = allPaidLegacy ? "IN_PROGRESS" : "MATERIALS_SUBMITTED";
+      m.progressStep = jobProgressUtil.nextMonotonicProgressStep(m, job);
+      return m;
     });
-    order.items = materials.map((item) => ({
-      productId: item.productId,
-      name: item.name,
-      qty: item.qty,
-      unitPrice: item.unitPrice,
-      qualityTier: item.qualityTier,
-      imageUrl: item.imageUrl,
-    }));
-    order.deliveryType = options.deliveryType || order.deliveryType || "SELF";
-    order.deliveryProviderId = options.deliveryProviderId || order.deliveryProviderId;
-    order.deliveryFee = coerceNumber(options.deliveryFee, order.deliveryFee || 0);
-    order.payment = { materialsPaid: true, deliveryPaid: Boolean(order.payment?.deliveryPaid) };
-    order.deliveryStatus = order.deliveryType === "SELF" ? "SelfCollect" : "PendingApproval";
-    order.delivery = {
-      type: order.deliveryType,
-      status: order.deliveryStatus,
-      providerId: order.deliveryProviderId,
-      fee: order.deliveryFee,
+    const legacyEnriched = await finalizeJob(job, legacyMeta);
+    try {
+      const materialRequestService = require("./materialRequest.service");
+      await materialRequestService.syncSubmittedRequestsToPaid(jobId);
+    } catch (e) {
+      console.error("syncSubmittedRequestsToPaid", e);
+    }
+    try {
+      const materialOrderService = require("./materialOrder.service");
+      const metaAfter = await getJobMeta(jobId);
+      const sos = Array.isArray(metaAfter.storeOrders) ? metaAfter.storeOrders : [];
+      const so = sos.find((o) => String(o.storeId) === String(supplierId));
+      const invoiceRef = so?.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
+      await materialOrderService.ensureJobMaterialPurchaseOrder({
+        jobId,
+        customerUserId: job.customerId,
+        providerUserId: job.providerId,
+        supplierId,
+        materialsLines: legacyMaterials,
+        invoiceId: invoiceRef,
+        jobStoreOrderId: so?.orderId,
+        jobDeliveryType: options.deliveryType || so?.deliveryType || "SELF",
+        deliveryProviderId: options.deliveryProviderId || so?.deliveryProviderId,
+        jobSiteAddress: jobSiteAddressFromRow(job),
+      });
+    } catch (e) {
+      console.error("ensureJobMaterialPurchaseOrder", e);
+    }
+    if (job.providerId) {
+      await notificationEvents.notifyPaymentMade(
+        job.providerId,
+        jobId,
+        job.title,
+        "The customer paid for materials."
+      );
+    }
+    return legacyEnriched;
+  }
+
+  const storeName = order.storeName || "Store";
+  const materials = order.items.map((item) => ({
+    supplierId: String(supplierId),
+    supplierName: storeName,
+    productId: item.productId,
+    name: item.name,
+    qty: coerceNumber(item.qty, 0),
+    unitPrice: coerceNumber(item.unitPrice, 0),
+    qualityTier: item.qualityTier,
+    imageUrl: item.imageUrl,
+  }));
+
+  const amount = materials.reduce((sum, item) => sum + coerceNumber(item.qty) * coerceNumber(item.unitPrice), 0);
+  const paidAt = new Date().toISOString();
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const payment = {
+      orderId: order.orderId,
+      supplierId: String(supplierId),
+      supplierName: storeName,
+      amount,
+      status: "paid",
+      paidAt,
+      deliveryProviderId: options.deliveryProviderId,
+      deliveryFee: coerceNumber(options.deliveryFee, 0),
     };
-    order.invoiceId = order.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
-    m.statusOverride = "MATERIALS_PAID";
+    const mp = Array.isArray(m.materialPayments) ? [...m.materialPayments] : [];
+    const pIdx = mp.findIndex((p) => String(p.orderId) === String(order.orderId));
+    if (pIdx >= 0) mp[pIdx] = payment;
+    else mp.push(payment);
+    m.materialPayments = mp;
+
+    const list = Array.isArray(m.storeOrders) ? [...m.storeOrders] : [];
+    const oIdx = list.findIndex((o) => String(o.orderId) === String(order.orderId));
+    if (oIdx < 0) throw new AppError("Store order not found", 500);
+    const nextOrder = {
+      ...list[oIdx],
+      items: order.items.map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        qty: coerceNumber(item.qty, 0),
+        unitPrice: coerceNumber(item.unitPrice, 0),
+        qualityTier: item.qualityTier,
+        imageUrl: item.imageUrl,
+      })),
+      storeName,
+      deliveryType: options.deliveryType || list[oIdx].deliveryType || "SELF",
+      deliveryProviderId: options.deliveryProviderId || list[oIdx].deliveryProviderId,
+      deliveryFee: coerceNumber(options.deliveryFee, list[oIdx].deliveryFee || 0),
+      payment: { materialsPaid: true, deliveryPaid: Boolean(list[oIdx].payment?.deliveryPaid) },
+    };
+    nextOrder.deliveryStatus =
+      nextOrder.deliveryType === "SELF" ? "SelfCollect" : "PendingApproval";
+    nextOrder.delivery = {
+      type: nextOrder.deliveryType,
+      status: nextOrder.deliveryStatus,
+      providerId: nextOrder.deliveryProviderId,
+      fee: nextOrder.deliveryFee,
+    };
+    nextOrder.invoiceId =
+      list[oIdx].invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
+    list[oIdx] = nextOrder;
+    m.storeOrders = list;
+    const allPaid = jobProgressUtil.allStoreMaterialOrdersPaid(m);
+    m.hasStarted = true;
+    m.statusOverride = allPaid ? "IN_PROGRESS" : "MATERIALS_SUBMITTED";
+    m.progressStep = jobProgressUtil.nextMonotonicProgressStep(m, job);
     return m;
   });
   const enriched = await finalizeJob(job, meta);
@@ -1568,8 +1708,8 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
   try {
     const materialOrderService = require("./materialOrder.service");
     const metaAfter = await getJobMeta(jobId);
-    const storeOrders = Array.isArray(metaAfter.storeOrders) ? metaAfter.storeOrders : [];
-    const so = storeOrders.find((o) => String(o.storeId) === String(supplierId));
+    const ordersAfter = Array.isArray(metaAfter.storeOrders) ? metaAfter.storeOrders : [];
+    const so = ordersAfter.find((o) => String(o.orderId) === String(order.orderId));
     const invoiceRef = so?.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
     await materialOrderService.ensureJobMaterialPurchaseOrder({
       jobId,
@@ -1578,6 +1718,10 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
       supplierId,
       materialsLines: materials,
       invoiceId: invoiceRef,
+      jobStoreOrderId: order.orderId,
+      jobDeliveryType: options.deliveryType || order.deliveryType || "SELF",
+      deliveryProviderId: options.deliveryProviderId || order.deliveryProviderId,
+      jobSiteAddress: jobSiteAddressFromRow(job),
     });
   } catch (e) {
     console.error("ensureJobMaterialPurchaseOrder", e);

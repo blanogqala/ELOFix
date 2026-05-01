@@ -17,7 +17,8 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
+import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 
 export default function UserDashboard() {
   const { user } = useAuth();
@@ -39,9 +40,9 @@ export default function UserDashboard() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 3);
 
-  const getStatusBadge = (status: Job['status']) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(status))}>
-      {getStandardizedStatusLabel(status)}
+  const getStatusBadge = (job: Job) => (
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
+      {getJobDisplayStatusLabel(job)}
     </span>
   );
 
@@ -145,7 +146,7 @@ export default function UserDashboard() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <p className="font-medium truncate">{job.categoryName}</p>
-                        {getStatusBadge(job.status)}
+                        {getStatusBadge(job)}
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{job.description}</p>
                     </div>
