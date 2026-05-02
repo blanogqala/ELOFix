@@ -20,6 +20,9 @@ enum MaterialFulfillmentStatus {
   READY
   OUT_FOR_DELIVERY
   COMPLETED
+  FAILED
+  DELAYED
+  CANCELLED
 }
 
 enum JobStatus {
@@ -446,6 +449,7 @@ model MaterialOrder {
   supplierEarning        Decimal                    @default(0) @db.Decimal(12, 2)
   payload                Json
   createdAt              DateTime                   @default(now())
+  trackingSessions     TrackingSession[]
 
   @@index([userId])
   @@index([supplierId])
@@ -453,6 +457,32 @@ model MaterialOrder {
   @@index([createdAt])
   @@index([jobId])
   @@index([jobId, supplierId])
+}
+
+/// Public driver tracking link (supplier / courier); one active session per order when delivery starts.
+model TrackingSession {
+  id           String        @id @default(uuid())
+  orderId      String
+  order        MaterialOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  trackingId   String        @unique
+  /// Optional secret for /track/:id?token=… — null on legacy rows (link still works without token).
+  accessToken  String?       @unique
+  expiresAt    DateTime
+  isActive     Boolean       @default(true)
+  lastLat      Float?
+  lastLng      Float?
+  lastPingAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  /// "supplier" | "provider" — who may update live GPS for this session
+  currentTrackingSource String @default("supplier")
+  /// When true (opt-in via env on create), access token becomes invalid after first successful authenticated GET (public meta)
+  accessTokenSingleUse    Boolean   @default(false)
+  accessTokenConsumedAt   DateTime?
+
+  @@index([orderId])
+  @@index([orderId, isActive])
+  @@index([expiresAt])
 }
 
 model PromoSpecial {

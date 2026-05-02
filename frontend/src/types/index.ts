@@ -213,7 +213,10 @@ export type MaterialFulfillmentStatus =
   | 'PREPARING'
   | 'READY'
   | 'OUT_FOR_DELIVERY'
-  | 'COMPLETED';
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'DELAYED'
+  | 'CANCELLED';
 
 /** Canonical batch shape (API payload.materialBatch + jobMaterialOrders). */
 export type MaterialBatchStatus =
@@ -222,7 +225,10 @@ export type MaterialBatchStatus =
   | 'preparing'
   | 'ready'
   | 'out_for_delivery'
-  | 'delivered';
+  | 'delivered'
+  | 'failed'
+  | 'delayed'
+  | 'cancelled';
 
 export interface MaterialBatchTimestamps {
   acceptedAt?: string;
@@ -706,4 +712,7 @@ export interface MaterialOrder {
   invoiceId: string;
   deliveryInvoiceId?: string;
   createdAt: string;
+  /** Present when an active public tracking session exists */
+  activeTrackingId?: string;
+  activeTrackingToken?: string;
 }

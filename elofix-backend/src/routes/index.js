@@ -16,6 +16,7 @@ const providerAccountRoutes = require("./providerAccount.routes");
 const supplierPortalRoutes = require("./supplierPortal.routes");
 const materialRoutes = require("./material.routes");
 const ordersRoutes = require("./orders.routes");
+const trackingRoutes = require("./tracking.routes");
 
 const router = express.Router();
 
@@ -36,5 +37,6 @@ router.use("/files", fileRoutes);
 router.use("/provider", providerAccountRoutes);
 router.use("/supplier", supplierPortalRoutes);
 router.use("/materials", materialRoutes);
+router.use("/tracking", trackingRoutes);
 
 module.exports = router;

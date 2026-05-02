@@ -102,6 +102,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const session = authApi.getCurrentSession();
+    if (session?.token) {
+      socket.auth = { token: session.token };
+    }
     socket.connect();
     socket.emit('join', user.id);
 

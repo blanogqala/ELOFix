@@ -93,3 +93,20 @@ export async function updateMaterialOrderDeliveryStatus(
   });
   return data?.order ?? null;
 }
+
+export type ProviderFulfillmentStatus = 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'FAILED' | 'DELAYED';
+
+export async function patchProviderMaterialOrderFulfillment(
+  orderId: string,
+  status: ProviderFulfillmentStatus
+): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/provider-fulfillment`, {
+    status,
+  });
+  return data?.order ?? null;
+}
+
+export async function confirmMaterialOrderDeliveryReceipt(orderId: string): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery-receipt`, {});
+  return data?.order ?? null;
+}

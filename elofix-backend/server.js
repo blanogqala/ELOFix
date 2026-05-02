@@ -1,9 +1,12 @@
 require("dotenv/config");
 const http = require("http");
+const jwt = require("jsonwebtoken");
 const { Server } = require("socket.io");
 const app = require("./src/app");
 const prisma = require("./src/config/prisma");
 const { startStuckWithdrawalRecovery } = require("./src/jobs/stuckWithdrawalRecovery");
+const trackingService = require("./src/services/tracking.service");
+const materialOrderService = require("./src/services/materialOrder.service");
 
 const PORT = Number(process.env.PORT) || 5000;
 
@@ -33,12 +36,69 @@ const io = new Server(server, {
 });
 global.io = io;
 
+io.use((socket, next) => {
+  try {
+    const raw = socket.handshake.auth?.token;
+    if (!raw) {
+      return next();
+    }
+    const token = String(raw).replace(/^Bearer\s+/i, "");
+    if (!token || !process.env.JWT_SECRET) {
+      return next();
+    }
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = payload.sub;
+    socket.userRole = payload.role;
+  } catch {
+    /* optional auth: join_order / update_location will require socket.userId */
+  }
+  next();
+});
+
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   socket.on("join", (userId) => {
     if (!userId) return;
     socket.join(String(userId));
+  });
+
+  async function handleOrderJoin(orderId) {
+    if (!socket.userId || !orderId) return;
+    try {
+      const ok = await trackingService.canUserAccessOrderRoom(socket.userId, socket.userRole, orderId);
+      if (!ok) return;
+      socket.join(String(orderId));
+    } catch (e) {
+      console.error("order:join", e);
+    }
+  }
+
+  socket.on("join_order", (orderId) => {
+    void handleOrderJoin(orderId);
+  });
+
+  socket.on("order:join", (orderId) => {
+    void handleOrderJoin(orderId);
+  });
+
+  socket.on("update_location", async (data) => {
+    try {
+      const orderId = data?.orderId;
+      const lat = data?.lat;
+      const lng = data?.lng;
+      if (!socket.userId || !orderId) return;
+      const ok = await trackingService.canUserPostDriverLocation(socket.userId, socket.userRole, orderId);
+      if (!ok) return;
+      const role = String(socket.userRole || "").toUpperCase();
+      let source = null;
+      if (role === "PROVIDER") source = "provider";
+      else if (role === "SUPPLIER") source = "supplier";
+      else return;
+      await trackingService.persistAndEmitDriverLocation(orderId, lat, lng, { source });
+    } catch (e) {
+      console.error("update_location", e);
+    }
   });
 
   socket.on("disconnect", () => {
@@ -49,6 +109,13 @@ io.on("connection", (socket) => {
 server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
   startStuckWithdrawalRecovery();
+  void trackingService.expireOldSessions();
+  setInterval(() => {
+    void trackingService.expireOldSessions();
+  }, 5 * 60 * 1000).unref();
+  setInterval(() => {
+    void materialOrderService.autoConfirmStaleDeliveriesBatch();
+  }, 60 * 60 * 1000).unref();
 });
 
 function shutdown(signal) {

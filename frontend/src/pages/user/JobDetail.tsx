@@ -99,6 +99,9 @@ export default function JobDetail() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  /** Keep hook order stable and aligned with provider JobDetail (socket + queries + state + effects). */
+  useMaterialOrderFulfillmentSocket({ userId: user?.id, activeJobId: jobId });
+
   const syncJobsAfterMutation = useCallback(async () => {
     if (!jobId) return;
     await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(jobId) });
@@ -145,18 +148,6 @@ export default function JobDetail() {
   const [isActionPending, setIsActionPending] = useState(false);
   const [isMessageSending, setIsMessageSending] = useState(false);
 
-  useMaterialOrderFulfillmentSocket({ userId: user?.id, activeJobId: jobId });
-
-  useEffect(() => {
-    if (serviceInvoiceOpen && job?.laborPaid && !job.servicePayment) {
-      getLaborInvoiceByJobId(job.id).then(invoice => {
-        if (invoice) setLegacyInvoice({ paidAt: invoice.paidAt, cardLast4: invoice.cardLast4 });
-      });
-    } else {
-      setLegacyInvoice(null);
-    }
-  }, [serviceInvoiceOpen, job?.id, job?.laborPaid, job?.servicePayment]);
-
   const loadSuppliers = useCallback(async () => {
     try {
       const supplierData = await getSuppliers();
@@ -182,6 +173,30 @@ export default function JobDetail() {
       );
     }
   }, []);
+
+  const loadCards = useCallback(async () => {
+    if (!user) return;
+    try {
+      const cards = await getSavedCards(user.id);
+      setSavedCards(cards);
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to load saved cards.',
+        variant: 'destructive',
+      });
+    }
+  }, [toast, user]);
+
+  useEffect(() => {
+    if (serviceInvoiceOpen && job?.laborPaid && !job.servicePayment) {
+      getLaborInvoiceByJobId(job.id).then(invoice => {
+        if (invoice) setLegacyInvoice({ paidAt: invoice.paidAt, cardLast4: invoice.cardLast4 });
+      });
+    } else {
+      setLegacyInvoice(null);
+    }
+  }, [serviceInvoiceOpen, job?.id, job?.laborPaid, job?.servicePayment]);
 
   useEffect(() => {
     if (!isError || !jobError) return;
@@ -216,20 +231,6 @@ export default function JobDetail() {
       cancelled = true;
     };
   }, [job?.providerId, toast]);
-
-  const loadCards = useCallback(async () => {
-    if (!user) return;
-    try {
-      const cards = await getSavedCards(user.id);
-      setSavedCards(cards);
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to load saved cards.',
-        variant: 'destructive',
-      });
-    }
-  }, [toast, user]);
 
   useEffect(() => {
     if (jobId) {

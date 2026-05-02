@@ -21,6 +21,8 @@ export interface SupplierMaterialOrderLine {
   jobId?: string;
   source?: string;
   deliveryType?: string;
+  activeTrackingId?: string;
+  activeTrackingToken?: string;
   delivery?: Record<string, unknown>;
   supplierActivity?: Array<{
     type: string;

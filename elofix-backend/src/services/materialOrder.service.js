@@ -4,6 +4,11 @@ const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const supplierService = require("./supplier.service");
 const notificationService = require("./notification.service");
+const trackingService = require("./tracking.service");
+const {
+  payloadBackedSupplierId,
+  materialOrderBelongsToSupplierStore,
+} = require("../utils/materialOrderSupplier.util");
 
 function emitMaterialOrderFulfillmentToCustomer(userId, payload) {
   try {
@@ -23,6 +28,9 @@ function fulfillmentEnumToBatchStatus(fs) {
     READY: "ready",
     OUT_FOR_DELIVERY: "out_for_delivery",
     COMPLETED: "delivered",
+    FAILED: "failed",
+    DELAYED: "delayed",
+    CANCELLED: "cancelled",
   };
   return map[u] || "pending";
 }
@@ -91,15 +99,59 @@ async function notifyCustomerFulfillmentStep(row, next) {
         title: "Materials update",
         message: "Materials delivered successfully",
       });
+    } else if (next === "FAILED") {
+      await notificationService.addNotification({
+        userId: customerId,
+        jobId,
+        type: "material_tracking",
+        title: "Delivery issue",
+        message: "Your materials delivery could not be completed",
+      });
+    } else if (next === "DELAYED") {
+      await notificationService.addNotification({
+        userId: customerId,
+        jobId,
+        type: "material_tracking",
+        title: "Delivery delayed",
+        message: "Your materials delivery has been delayed",
+      });
+    } else if (next === "CANCELLED") {
+      await notificationService.addNotification({
+        userId: customerId,
+        jobId,
+        type: "material_tracking",
+        title: "Delivery cancelled",
+        message: "Your materials delivery was cancelled",
+      });
     }
   } catch (e) {
     console.error("notifyCustomerFulfillmentStep", e);
   }
 }
 
-function normalizeDeliveryStatus(status) {
-  const allowed = ["SelfCollect", "PendingApproval", "Approved", "Rejected", "Cancelled", "InProgress", "Delivered"];
-  return allowed.includes(status) ? status : "Processing";
+function patchPayloadForFulfillmentDelivery(payload, next) {
+  const p = payload && typeof payload === "object" ? { ...payload } : {};
+  if (next === "OUT_FOR_DELIVERY") {
+    p.delivery = { ...(p.delivery || {}), status: "InProgress" };
+    p.deliveryStatus = "out_for_delivery";
+  }
+  if (next === "COMPLETED") {
+    p.delivery = { ...(p.delivery || {}), status: "Delivered" };
+    p.deliveryStatus = "delivered";
+    p.deliveryConfirmed = false;
+  }
+  if (next === "FAILED") {
+    p.delivery = { ...(p.delivery || {}), status: "Rejected" };
+    p.deliveryStatus = "processing";
+  }
+  if (next === "DELAYED") {
+    p.delivery = { ...(p.delivery || {}), status: "InProgress" };
+  }
+  if (next === "CANCELLED") {
+    p.delivery = { ...(p.delivery || {}), status: "Cancelled" };
+    p.deliveryStatus = "processing";
+  }
+  return p;
 }
 
 function enrichOrderFromDbRow(row, payload) {
@@ -241,10 +293,71 @@ async function getMaterialOrders(userId) {
   );
 }
 
+async function maybeAutoConfirmStaleDelivery(row) {
+  if (!row || String(row.fulfillmentStatus || "") !== "COMPLETED") return row;
+  const p = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+  if (p.deliveryConfirmed === true) return row;
+  const batch = p.materialBatch && typeof p.materialBatch === "object" ? p.materialBatch : {};
+  const ts = batch.timestamps && batch.timestamps.deliveredAt ? String(batch.timestamps.deliveredAt) : null;
+  if (!ts) return row;
+  const delivered = new Date(ts).getTime();
+  if (!Number.isFinite(delivered) || Date.now() - delivered < 24 * 60 * 60 * 1000) return row;
+  const nextPayload = { ...p, deliveryConfirmed: true, deliveryAutoConfirmed: true };
+  await prisma.materialOrder.update({ where: { id: row.id }, data: { payload: nextPayload } });
+  return { ...row, payload: nextPayload };
+}
+
+async function autoConfirmStaleDeliveriesBatch() {
+  try {
+    const rows = await prisma.materialOrder.findMany({
+      where: { fulfillmentStatus: "COMPLETED" },
+      take: 300,
+      orderBy: { updatedAt: "desc" },
+    });
+    for (const row of rows) {
+      await maybeAutoConfirmStaleDelivery(row);
+    }
+  } catch (e) {
+    console.error("autoConfirmStaleDeliveriesBatch", e);
+  }
+}
+
 async function getMaterialOrderById(orderId) {
-  const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  let row = await prisma.materialOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      supplier: { select: { id: true, name: true, businessName: true, phone: true, address: true } },
+    },
+  });
   if (!row || !row.payload || typeof row.payload !== "object") return null;
-  return enrichOrderFromDbRow(row, row.payload);
+  const pb = payloadBackedSupplierId(row.payload);
+  if (!String(row.supplierId || "").trim() && pb) {
+    row = await prisma.materialOrder.update({
+      where: { id: row.id },
+      data: { supplierId: pb },
+      include: {
+        supplier: { select: { id: true, name: true, businessName: true, phone: true, address: true } },
+      },
+    });
+  }
+  row = await maybeAutoConfirmStaleDelivery(row);
+  const base = enrichOrderFromDbRow(row, row.payload);
+  if (row.supplier) {
+    base.supplierDisplayName = row.supplier.businessName || row.supplier.name || base.storeName;
+    base.supplierPhone = row.supplier.phone || undefined;
+    base.supplierAddress = row.supplier.address || undefined;
+  }
+  const track = await prisma.trackingSession.findFirst({
+    where: { orderId: String(orderId), isActive: true },
+    select: { trackingId: true, accessToken: true },
+  });
+  if (track?.trackingId) {
+    base.activeTrackingId = track.trackingId;
+    if (track.accessToken) {
+      base.activeTrackingToken = track.accessToken;
+    }
+  }
+  return base;
 }
 
 async function updateMaterialOrderDelivery(orderId, updates = {}) {
@@ -330,13 +443,28 @@ async function updateMaterialOrderDeliveryStatus(orderId, status) {
   return updateMaterialOrderDelivery(orderId, { status: mapped });
 }
 
-const FULFILLMENT_ORDER = ["PENDING", "ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "COMPLETED"];
+const FULFILLMENT_ORDER = [
+  "PENDING",
+  "ACCEPTED",
+  "PREPARING",
+  "READY",
+  "OUT_FOR_DELIVERY",
+  "COMPLETED",
+  "FAILED",
+  "DELAYED",
+  "CANCELLED",
+];
 
-function canTransition(from, to) {
-  const i = FULFILLMENT_ORDER.indexOf(from);
-  const j = FULFILLMENT_ORDER.indexOf(to);
-  if (i < 0 || j < 0) return false;
-  return j === i + 1 || (from === to && j === i);
+function canFulfillmentTransition(from, to) {
+  const f = String(from || "PENDING").toUpperCase();
+  const t = String(to || "").toUpperCase();
+  if (f === t) return true;
+  const linear = ["PENDING", "ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "COMPLETED"];
+  const i = linear.indexOf(f);
+  const j = linear.indexOf(t);
+  if (i >= 0 && j >= 0 && j === i + 1) return true;
+  if (f === "OUT_FOR_DELIVERY" && ["FAILED", "DELAYED", "CANCELLED"].includes(t)) return true;
+  return false;
 }
 
 async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
@@ -347,16 +475,30 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
 
   return prisma.$transaction(
     async (tx) => {
-      const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
+      let row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row) throw new AppError("Material order not found", 404);
-      if (String(row.supplierId || "") !== String(supplierId || "")) {
+      const expectedSup = String(supplierId || "").trim();
+      if (!materialOrderBelongsToSupplierStore(row, expectedSup)) {
         throw new AppError("Forbidden", 403);
       }
+      if (String(row.supplierId || "").trim() !== expectedSup) {
+        await tx.materialOrder.update({
+          where: { id: orderId },
+          data: { supplierId: expectedSup },
+        });
+        row = { ...row, supplierId: expectedSup };
+      }
+      const payloadPreview = row.payload && typeof row.payload === "object" ? row.payload : {};
+      if (String(payloadPreview.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER") {
+        if (["OUT_FOR_DELIVERY", "COMPLETED", "FAILED", "DELAYED", "CANCELLED"].includes(next)) {
+          throw new AppError("Courier manages delivery for this order", 403);
+        }
+      }
       const currentStatus = row.fulfillmentStatus || "PENDING";
-      if (!canTransition(currentStatus, next)) {
+      if (!canFulfillmentTransition(currentStatus, next)) {
         throw new AppError(`Cannot transition from ${currentStatus} to ${next}`, 400);
       }
-      const payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+      let payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
       payload.fulfillmentStatus = next;
       const ts = new Date().toISOString();
       const activity = Array.isArray(payload.supplierActivity) ? [...payload.supplierActivity] : [];
@@ -376,6 +518,7 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
         status: fulfillmentEnumToBatchStatus(next),
         timestamps: tsPatch,
       });
+      payload = patchPayloadForFulfillmentDelivery(payload, next);
 
       await tx.materialOrder.update({
         where: { id: orderId },
@@ -391,7 +534,116 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
   ).then(async (enriched) => {
     try {
       const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
-      if (row && ["READY", "OUT_FOR_DELIVERY", "COMPLETED"].includes(next)) {
+      if (row && ["READY", "OUT_FOR_DELIVERY", "COMPLETED", "FAILED", "DELAYED", "CANCELLED"].includes(next)) {
+        const p = enriched && typeof enriched === "object" ? enriched : {};
+        await notifyCustomerFulfillmentStep(row, next);
+        emitMaterialOrderFulfillmentToCustomer(row.userId, {
+          orderId: String(orderId),
+          jobId: row.jobId || null,
+          fulfillmentStatus: next,
+          materialBatch: p.materialBatch,
+        });
+      }
+      if (next === "OUT_FOR_DELIVERY") {
+        const pay = enriched && typeof enriched === "object" ? enriched : {};
+        if (String(pay.deliveryType || "").toUpperCase() === "STORE_DELIVERY") {
+          const singleUse = process.env.TRACKING_ACCESS_TOKEN_SINGLE_USE === "true";
+          const { trackingId, accessToken } = await trackingService.createActiveTrackingSession(orderId, {
+            trackingSource: "supplier",
+            accessTokenSingleUse: singleUse,
+          });
+          enriched.activeTrackingId = trackingId;
+          if (accessToken) {
+            enriched.activeTrackingToken = accessToken;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("postFulfillmentNotify", e);
+    }
+    try {
+      if (["COMPLETED", "FAILED", "CANCELLED"].includes(next)) {
+        await trackingService.deactivateSessionsForOrder(orderId, next);
+      }
+    } catch (e) {
+      console.error("postFulfillmentTrackingCleanup", e);
+    }
+    return enriched;
+  });
+}
+
+async function updateMaterialOrderFulfillmentByProvider(orderId, providerUserId, nextStatus) {
+  const next = String(nextStatus || "").toUpperCase();
+  if (!["OUT_FOR_DELIVERY", "COMPLETED", "FAILED", "DELAYED"].includes(next)) {
+    throw new AppError("Invalid fulfillment status for provider", 400);
+  }
+  const pid = String(providerUserId || "");
+
+  return prisma.$transaction(
+    async (tx) => {
+      const row = await tx.materialOrder.findUnique({
+        where: { id: orderId },
+        include: { job: { select: { providerId: true } } },
+      });
+      if (!row) throw new AppError("Material order not found", 404);
+      const payloadPreview = row.payload && typeof row.payload === "object" ? row.payload : {};
+      if (String(payloadPreview.deliveryType || "").toUpperCase() !== "DELIVERY_PROVIDER") {
+        throw new AppError("Not a courier delivery order", 400);
+      }
+      if (!row.jobId || !row.job || String(row.job.providerId || "") !== pid) {
+        throw new AppError("Forbidden", 403);
+      }
+      const currentStatus = row.fulfillmentStatus || "PENDING";
+      if (next === "OUT_FOR_DELIVERY" && currentStatus !== "READY") {
+        throw new AppError("Materials must be ready before pickup", 400);
+      }
+      if (next === "COMPLETED" && currentStatus !== "OUT_FOR_DELIVERY") {
+        throw new AppError("Cannot mark delivered before out for delivery", 400);
+      }
+      if (["FAILED", "DELAYED"].includes(next) && currentStatus !== "OUT_FOR_DELIVERY") {
+        throw new AppError("Can only mark failed or delayed while out for delivery", 400);
+      }
+      let payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+      payload.fulfillmentStatus = next;
+      const ts = new Date().toISOString();
+      const activity = Array.isArray(payload.supplierActivity) ? [...payload.supplierActivity] : [];
+      activity.push({
+        type: "status",
+        status: next,
+        actor: "provider",
+        createdAt: ts,
+      });
+      payload.supplierActivity = activity;
+
+      const tsPatch = {};
+      if (next === "OUT_FOR_DELIVERY") tsPatch.pickedUpAt = ts;
+      if (next === "COMPLETED") tsPatch.deliveredAt = ts;
+      if (next === "FAILED") tsPatch.failedAt = ts;
+      if (next === "DELAYED") tsPatch.delayedAt = ts;
+      payload.materialBatch = mergeMaterialBatch(payload, { ...row, fulfillmentStatus: next }, {
+        status: fulfillmentEnumToBatchStatus(next),
+        timestamps: tsPatch,
+      });
+      payload = patchPayloadForFulfillmentDelivery(payload, next);
+
+      await tx.materialOrder.update({
+        where: { id: orderId },
+        data: {
+          fulfillmentStatus: next,
+          payload,
+        },
+      });
+      const nextRow = { ...row, fulfillmentStatus: next, payload };
+      return enrichOrderFromDbRow(nextRow, payload);
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 15000 }
+  ).then(async (enriched) => {
+    try {
+      const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+      if (next === "OUT_FOR_DELIVERY") {
+        await trackingService.ensureProviderTrackingLead(orderId);
+      }
+      if (row && ["OUT_FOR_DELIVERY", "COMPLETED", "FAILED", "DELAYED"].includes(next)) {
         const p = enriched && typeof enriched === "object" ? enriched : {};
         await notifyCustomerFulfillmentStep(row, next);
         emitMaterialOrderFulfillmentToCustomer(row.userId, {
@@ -402,13 +654,54 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
         });
       }
     } catch (e) {
-      console.error("postFulfillmentNotify", e);
+      console.error("postProviderFulfillmentNotify", e);
+    }
+    try {
+      if (["COMPLETED", "FAILED"].includes(next)) {
+        await trackingService.deactivateSessionsForOrder(orderId, next);
+      }
+    } catch (e) {
+      console.error("postProviderTrackingCleanup", e);
     }
     return enriched;
   });
 }
 
-const ALLOWED_STATUS = ["PENDING", "ACCEPTED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "COMPLETED"];
+async function confirmDeliveryReceipt(orderId, customerUserId) {
+  return prisma.$transaction(
+    async (tx) => {
+      const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
+      if (!row || !row.payload || typeof row.payload !== "object") {
+        throw new AppError("Material order not found", 404);
+      }
+      if (String(row.userId) !== String(customerUserId || "")) {
+        throw new AppError("Forbidden", 403);
+      }
+      if (String(row.fulfillmentStatus || "") !== "COMPLETED") {
+        throw new AppError("Delivery is not complete yet", 400);
+      }
+      const payload = { ...row.payload, deliveryConfirmed: true };
+      await tx.materialOrder.update({
+        where: { id: orderId },
+        data: { payload },
+      });
+      return enrichOrderFromDbRow({ ...row, payload }, payload);
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
+  );
+}
+
+const ALLOWED_STATUS = [
+  "PENDING",
+  "ACCEPTED",
+  "PREPARING",
+  "READY",
+  "OUT_FOR_DELIVERY",
+  "COMPLETED",
+  "FAILED",
+  "DELAYED",
+  "CANCELLED",
+];
 
 async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = {}) {
   const raw =
@@ -417,17 +710,85 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       : null;
   const statusFilter =
     raw && ALLOWED_STATUS.includes(raw) ? { fulfillmentStatus: raw } : {};
-  const where = {
-    supplierId: String(supplierId || ""),
-    ...statusFilter,
-  };
-  const rows = await prisma.materialOrder.findMany({
-    where,
+  const sid = String(supplierId || "").trim();
+  /** Indexed path — supplierId column set correctly */
+  const byCol = await prisma.materialOrder.findMany({
+    where: { supplierId: sid, ...statusFilter },
     orderBy: { createdAt: "desc" },
     include: {
       supplier: { select: { id: true, name: true, businessName: true } },
     },
   });
+  /**
+   * Legacy rows: supplierId null but payload still carries store id (Prisma JSON filters are brittle across drivers).
+   * Scan recent null-supplier orders and match in JS (payload store id vs Supplier.id).
+   */
+  const since = new Date();
+  since.setDate(since.getDate() - 365);
+  const nullSupplierCandidates = await prisma.materialOrder.findMany({
+    where: {
+      supplierId: null,
+      ...statusFilter,
+      createdAt: { gte: since },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 800,
+    include: {
+      supplier: { select: { id: true, name: true, businessName: true } },
+    },
+  });
+  const nullMatches = nullSupplierCandidates.filter((r) => materialOrderBelongsToSupplierStore(r, sid));
+
+  /** Column set to a different Supplier.id than payload store (data drift). */
+  const wrongColWhere = {
+    AND: [
+      { supplierId: { not: null } },
+      { NOT: { supplierId: sid } },
+      { createdAt: { gte: since } },
+      ...(Object.keys(statusFilter).length ? [statusFilter] : []),
+    ],
+  };
+  const wrongColCandidates = await prisma.materialOrder.findMany({
+    where: wrongColWhere,
+    orderBy: { createdAt: "desc" },
+    take: 600,
+    include: {
+      supplier: { select: { id: true, name: true, businessName: true } },
+    },
+  });
+  const wrongColMatches = wrongColCandidates.filter((r) => materialOrderBelongsToSupplierStore(r, sid));
+
+  const toRepair = [...nullMatches, ...wrongColMatches];
+  if (toRepair.length > 0) {
+    try {
+      await Promise.all(
+        toRepair.map((r) =>
+          prisma.materialOrder.update({
+            where: { id: r.id },
+            data: { supplierId: sid },
+          })
+        )
+      );
+      for (const r of toRepair) {
+        r.supplierId = sid;
+      }
+    } catch (e) {
+      console.error("listMaterialOrdersBySupplier backfill supplierId", e);
+    }
+  }
+  const map = new Map();
+  for (const r of byCol) map.set(r.id, r);
+  for (const r of toRepair) {
+    if (!map.has(r.id)) map.set(r.id, r);
+  }
+  const rows = Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  const trackRows = await prisma.trackingSession.findMany({
+    where: { orderId: { in: rows.map((r) => r.id) }, isActive: true },
+    select: { orderId: true, trackingId: true, accessToken: true },
+  });
+  const trackMap = new Map(trackRows.map((t) => [t.orderId, t]));
   const userIds = [...new Set(rows.map((r) => r.userId))];
   const users = await prisma.user.findMany({
     where: { id: { in: userIds } },
@@ -440,6 +801,7 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       r.payload && typeof r.payload === "object" ? r.payload : {}
     );
     const u = uMap.get(r.userId);
+    const t = trackMap.get(r.id);
     return {
       ...base,
       customerId: r.userId,
@@ -449,6 +811,8 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       paymentStatus: r.paymentStatus,
       fulfillmentStatus: r.fulfillmentStatus,
       createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt || ""),
+      activeTrackingId: t?.trackingId || undefined,
+      activeTrackingToken: t?.accessToken || undefined,
     };
   });
 }
@@ -520,8 +884,14 @@ async function appendSupplierOrderNote(orderId, userId, message) {
       if (!row) {
         throw new AppError("Material order not found", 404);
       }
-      if (String(row.supplierId || "") !== String(supplier.id || "")) {
+      if (!materialOrderBelongsToSupplierStore(row, supplier.id)) {
         throw new AppError("Forbidden", 403);
+      }
+      if (String(row.supplierId || "").trim() !== String(supplier.id || "")) {
+        await tx.materialOrder.update({
+          where: { id: orderId },
+          data: { supplierId: String(supplier.id) },
+        });
       }
 
       const base = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
@@ -593,8 +963,14 @@ async function ensureJobMaterialPurchaseOrder(params) {
   const storeOrderId = jobStoreOrderId ? String(jobStoreOrderId).trim() : "";
 
   if (storeOrderId) {
-    const byId = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
+    let byId = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
     if (byId) {
+      if (!String(byId.supplierId || "").trim() && sid) {
+        byId = await prisma.materialOrder.update({
+          where: { id: byId.id },
+          data: { supplierId: sid },
+        });
+      }
       return enrichOrderFromDbRow(
         byId,
         byId.payload && typeof byId.payload === "object" ? byId.payload : {}
@@ -603,18 +979,27 @@ async function ensureJobMaterialPurchaseOrder(params) {
   }
 
   if (!storeOrderId) {
-    const existing = await prisma.materialOrder.findFirst({
+    const candidates = await prisma.materialOrder.findMany({
       where: {
         jobId: String(jobId),
-        supplierId: sid,
         userId: String(customerUserId),
         source: "job_materials",
       },
+      orderBy: { createdAt: "desc" },
+      take: 20,
     });
+    const existing = candidates.find((c) => materialOrderBelongsToSupplierStore(c, sid));
     if (existing) {
+      let ex = existing;
+      if (!String(ex.supplierId || "").trim() && sid) {
+        ex = await prisma.materialOrder.update({
+          where: { id: ex.id },
+          data: { supplierId: sid },
+        });
+      }
       return enrichOrderFromDbRow(
-        existing,
-        existing.payload && typeof existing.payload === "object" ? existing.payload : {}
+        ex,
+        ex.payload && typeof ex.payload === "object" ? ex.payload : {}
       );
     }
   }
@@ -869,6 +1254,9 @@ module.exports = {
   payMaterialOrderDelivery,
   updateMaterialOrderDeliveryStatus,
   updateMaterialOrderFulfillment,
+  updateMaterialOrderFulfillmentByProvider,
+  confirmDeliveryReceipt,
+  autoConfirmStaleDeliveriesBatch,
   appendSupplierOrderNote,
   listMaterialOrdersBySupplier,
   listMaterialOrdersBySupplierIdsForAdmin,

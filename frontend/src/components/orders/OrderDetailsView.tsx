@@ -1,10 +1,19 @@
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Truck, Store, FileText, CreditCard, RefreshCw, XCircle } from 'lucide-react';
+import { TrackingTimeline } from '@/components/tracking/TrackingTimeline';
+import { DeliveryMap } from '@/components/tracking/DeliveryMap';
+import { DeliveryStatusCard } from '@/components/tracking/DeliveryStatusCard';
+import { canonicalDeliveryLabel } from '@/lib/deliveryTypes';
+import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+
+import type { MaterialBatch } from '@/types';
+import type { CanonicalDeliveryType } from '@/lib/deliveryTypes';
 
 export type NormalizedOrderDeliveryType = 'SELF' | 'STORE' | 'PROVIDER';
 
@@ -46,10 +55,30 @@ export interface NormalizedOrder {
   estimatedArrival?: string;
   jobId?: string;
   storeId?: string;
+  /** Enriched when material order API / job snapshot is available */
+  fulfillmentStatus?: string;
+  materialBatch?: MaterialBatch | null;
+  canonicalDelivery?: CanonicalDeliveryType;
+  supplierDisplayName?: string;
+  supplierPhone?: string;
+  supplierAddress?: string;
+  activeTrackingId?: string | null;
+  activeTrackingToken?: string | null;
+  /** Canonical material order id for tracking room / poll */
+  materialOrderId?: string;
+  destinationCoords?: { lat: number; lng: number } | null;
+  driverLocation?: { lat: number; lng: number; updatedAt?: string } | null;
+  deliveryConfirmed?: boolean;
 }
 
 interface OrderDetailsViewProps {
   order: NormalizedOrder;
+  liveDriverLat?: number | null;
+  liveDriverLng?: number | null;
+  mapDisplayLat?: number | null;
+  mapDisplayLng?: number | null;
+  lastDriverPingMs?: number | null;
+  locationPollFailed?: boolean;
   onStatusChange?: (status: NormalizedOrder['deliveryStatus']) => void;
   onCancelDelivery?: () => void;
   onChangeDelivery?: () => void;
@@ -59,6 +88,8 @@ interface OrderDetailsViewProps {
   onSimulateRejection?: () => void;
   onViewMaterialInvoice?: (invoiceId: string) => void;
   onViewDeliveryInvoice?: (invoiceId: string) => void;
+  onConfirmReceipt?: () => void;
+  confirmReceiptPending?: boolean;
 }
 
 const STATUS_STEPS: NormalizedOrder['deliveryStatus'][] = [
@@ -82,8 +113,23 @@ const DELIVERY_STATE_BADGES: Record<
   Delivered: { label: 'Delivered', className: 'bg-success/20 text-success' },
 };
 
+function fulfillmentMaterialBadgeClass(fs: string | undefined): string {
+  const u = String(fs || '').toUpperCase();
+  if (u === 'FAILED') return 'bg-destructive/15 text-destructive border border-destructive/30';
+  if (u === 'DELAYED') return 'bg-amber-500/15 text-amber-900 dark:text-amber-100 border border-amber-500/35';
+  if (u === 'CANCELLED') return 'bg-muted text-muted-foreground border border-border';
+  if (u === 'COMPLETED') return 'bg-success/20 text-success border border-success/25';
+  return 'bg-secondary text-secondary-foreground border border-border';
+}
+
 export function OrderDetailsView({
   order,
+  liveDriverLat,
+  liveDriverLng,
+  mapDisplayLat,
+  mapDisplayLng,
+  lastDriverPingMs,
+  locationPollFailed,
   onCancelDelivery,
   onChangeDelivery,
   onChooseDelivery,
@@ -92,20 +138,92 @@ export function OrderDetailsView({
   onSimulateRejection,
   onViewMaterialInvoice,
   onViewDeliveryInvoice,
+  onConfirmReceipt,
+  confirmReceiptPending,
 }: OrderDetailsViewProps) {
   const currentStepIndex = STATUS_STEPS.indexOf(order.deliveryStatus);
   const progressValue = ((currentStepIndex + 1) / STATUS_STEPS.length) * 100;
 
-  const deliveryTypeLabel =
-    order.deliveryType === 'SELF'
-      ? 'Self-collection'
-      : order.deliveryType === 'STORE'
-      ? 'Store Delivery'
-      : 'Delivery Provider';
+  const canonical: CanonicalDeliveryType =
+    order.canonicalDelivery ||
+    (order.deliveryType === 'SELF'
+      ? 'pickup'
+      : order.deliveryType === 'PROVIDER'
+        ? 'provider_delivery'
+        : 'supplier_delivery');
+
+  const fulfillmentU = String(order.fulfillmentStatus || '').toUpperCase();
+  const batchSt = order.materialBatch?.status;
+  const showLiveMap =
+    canonical !== 'pickup' &&
+    !['FAILED', 'CANCELLED'].includes(fulfillmentU) &&
+    (fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED' || batchSt === 'out_for_delivery');
+
+  const mapLat = mapDisplayLat ?? liveDriverLat;
+  const mapLng = mapDisplayLng ?? liveDriverLng;
+
+  const [driverNearby, setDriverNearby] = useState(false);
+  const onDriverProximity = useCallback((v: { near: boolean }) => {
+    setDriverNearby(v.near);
+  }, []);
+
+  useEffect(() => {
+    if (!showLiveMap) setDriverNearby(false);
+  }, [showLiveMap]);
+
+  useEffect(() => {
+    if (!driverNearby) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      new Notification('EloFix', { body: 'Your driver is nearby.' });
+    } catch {
+      /* ignore */
+    }
+  }, [driverNearby]);
+
+  const hasLiveCoords =
+    (mapLat != null &&
+      mapLng != null &&
+      Number.isFinite(Number(mapLat)) &&
+      Number.isFinite(Number(mapLng))) ||
+    (liveDriverLat != null &&
+      liveDriverLng != null &&
+      Number.isFinite(Number(liveDriverLat)) &&
+      Number.isFinite(Number(liveDriverLng))) ||
+    (order.driverLocation?.lat != null &&
+      order.driverLocation?.lng != null &&
+      Number.isFinite(Number(order.driverLocation.lat)) &&
+      Number.isFinite(Number(order.driverLocation.lng)));
+
+  const OFFLINE_MS = 30_000;
+  const driverOffline =
+    showLiveMap &&
+    hasLiveCoords &&
+    lastDriverPingMs != null &&
+    Date.now() - lastDriverPingMs > OFFLINE_MS;
+  const offlineSeconds =
+    driverOffline && lastDriverPingMs != null
+      ? Math.max(0, Math.floor((Date.now() - lastDriverPingMs) / 1000))
+      : 0;
+
+  const showConfirmReceipt =
+    fulfillmentU === 'COMPLETED' && order.deliveryConfirmed !== true && Boolean(onConfirmReceipt);
 
   const deliveryState = order.deliveryState || 'Processing';
   const stateBadge = DELIVERY_STATE_BADGES[deliveryState] || DELIVERY_STATE_BADGES.Processing;
   const showTracking = order.deliveryType !== 'SELF' && order.deliveryPaid;
+
+  let trackingHint: string | null = null;
+  if (canonical !== 'pickup' && showTracking) {
+    if (fulfillmentU === 'READY' && order.deliveryType === 'PROVIDER') {
+      trackingHint = 'Waiting for driver to start delivery.';
+    } else if (['ACCEPTED', 'PREPARING'].includes(fulfillmentU)) {
+      trackingHint = 'Driver is preparing your order.';
+    } else if (fulfillmentU === 'COMPLETED') {
+      trackingHint = 'Delivery completed.';
+    }
+  }
+
   const isPendingApproval = deliveryState === 'PendingApproval';
   const isApproved = deliveryState === 'Approved' && !order.deliveryPaid;
   const isRejected = deliveryState === 'Rejected';
@@ -131,7 +249,7 @@ export function OrderDetailsView({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline">{deliveryTypeLabel}</Badge>
+              <Badge variant="outline">{canonicalDeliveryLabel(canonical)}</Badge>
               <Badge className={stateBadge.className}>{stateBadge.label}</Badge>
               {order.deliveryStatus && (
                 <Badge
@@ -146,7 +264,13 @@ export function OrderDetailsView({
                   {order.deliveryStatus === 'delivered' && 'Delivered'}
                 </Badge>
               )}
+              {order.fulfillmentStatus ? (
+                <Badge className={cn('text-xs', fulfillmentMaterialBadgeClass(order.fulfillmentStatus))}>
+                  {fulfillmentStatusBadgeLabel(order.fulfillmentStatus)}
+                </Badge>
+              ) : null}
             </div>
+            {trackingHint ? <p className="text-xs text-muted-foreground mt-2">{trackingHint}</p> : null}
           </div>
 
           <div className="space-y-2">
@@ -187,6 +311,33 @@ export function OrderDetailsView({
           )}
         </CardContent>
       </Card>
+
+      {(order.fulfillmentStatus || order.materialBatch) && (
+        <DeliveryStatusCard
+          canonicalType={canonical}
+          fulfillmentStatus={order.fulfillmentStatus}
+          supplierName={order.supplierDisplayName || order.storeName}
+          supplierPhone={order.supplierPhone}
+          supplierAddress={order.supplierAddress}
+          trackingId={order.activeTrackingId}
+          trackingToken={order.activeTrackingToken}
+        />
+      )}
+
+      {order.materialBatch ? <TrackingTimeline batch={order.materialBatch} className="mb-0" /> : null}
+
+      {showConfirmReceipt ? (
+        <Card>
+          <CardContent className="pt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Your order was marked delivered. Please confirm you received the materials.
+            </p>
+            <Button className="btn-accent shrink-0" onClick={onConfirmReceipt} disabled={confirmReceiptPending}>
+              {confirmReceiptPending ? 'Confirming…' : 'Confirm receipt'}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -303,23 +454,57 @@ export function OrderDetailsView({
               )}
               {showTracking ? (
                 <>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Status</p>
-                    <Progress value={progressValue} />
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Processing</span>
-                      <span>Out for Pickup</span>
-                      <span>Delivered</span>
+                  {order.materialBatch ? null : (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Status</p>
+                      <Progress value={progressValue} />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Processing</span>
+                        <span>Out for Pickup</span>
+                        <span>Delivered</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-4">
-                    <div className="rounded-lg border border-dashed border-border bg-muted/40 h-40 flex items-center justify-center">
-                      <p className="text-xs text-muted-foreground text-center max-w-xs">
-                        Live delivery map will show your driver moving from the store to
-                        your location. (Mock map for demo)
-                      </p>
+                  )}
+                  {showLiveMap ? (
+                    <div className="mt-4 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium">Live location</p>
+                        {driverNearby ? (
+                          <Badge className="bg-primary/15 text-primary border-primary/30">Driver is near</Badge>
+                        ) : null}
+                      </div>
+                      {locationPollFailed ? (
+                        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                          Unable to fetch live location. Check your connection or try again; tracking session may have
+                          expired.
+                        </p>
+                      ) : null}
+                      {driverOffline ? (
+                        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                          Driver connection lost. Last update {offlineSeconds} seconds ago.
+                        </p>
+                      ) : null}
+                      <DeliveryMap
+                        className="mt-1"
+                        lat={mapLat ?? order.driverLocation?.lat ?? null}
+                        lng={mapLng ?? order.driverLocation?.lng ?? null}
+                        destination={order.materialBatch?.deliveryAddress || undefined}
+                        destinationCoords={order.destinationCoords ?? undefined}
+                        showWaitingBanner={showLiveMap && !hasLiveCoords}
+                        onProximityChange={onDriverProximity}
+                      />
                     </div>
-                  </div>
+                  ) : (
+                    !order.materialBatch && (
+                      <div className="mt-4">
+                        <div className="rounded-lg border border-dashed border-border bg-muted/40 h-40 flex items-center justify-center">
+                          <p className="text-xs text-muted-foreground text-center max-w-xs">
+                            Map appears when the driver is on the way.
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">

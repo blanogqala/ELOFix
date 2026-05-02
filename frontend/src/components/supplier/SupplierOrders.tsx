@@ -5,6 +5,8 @@ import {
   postSupplierOrderNote,
   type SupplierMaterialOrderLine,
 } from '@/lib/api/supplierPortal';
+import { postTrackingLocation } from '@/lib/api/tracking';
+import { createLocationSendState, markLocationSent, shouldSendLocation } from '@/lib/geolocationSendGate';
 import type { MaterialFulfillmentStatus } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { cn } from '@/lib/utils';
-import { socket } from '@/lib/socket';
+import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
 import { useEffect, useMemo, useState } from 'react';
 import { Search, ArrowLeft } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
@@ -27,6 +29,9 @@ const STATUS_BADGE: Record<string, string> = {
   READY: 'bg-emerald-500/15 text-emerald-900 dark:text-emerald-100 border-emerald-500/30',
   OUT_FOR_DELIVERY: 'bg-sky-500/15 text-sky-900 dark:text-sky-100 border-sky-500/30',
   COMPLETED: 'bg-muted text-muted-foreground border-border',
+  FAILED: 'bg-red-500/15 text-red-900 dark:text-red-100 border-red-500/35',
+  DELAYED: 'bg-amber-500/15 text-amber-950 dark:text-amber-100 border-amber-500/40',
+  CANCELLED: 'bg-muted text-muted-foreground border-border',
 };
 
 function displayStatus(st: string | undefined): string {
@@ -35,7 +40,11 @@ function displayStatus(st: string | undefined): string {
   return u.toLowerCase().replace(/_/g, ' ');
 }
 
-function nextFulfillmentStatus(s: string | undefined): MaterialFulfillmentStatus | null {
+function nextFulfillmentStatus(
+  s: string | undefined,
+  deliveryType?: string
+): MaterialFulfillmentStatus | null {
+  const dt = String(deliveryType || '').toUpperCase();
   switch (String(s || 'PENDING').toUpperCase()) {
     case 'PENDING':
       return 'ACCEPTED';
@@ -44,6 +53,7 @@ function nextFulfillmentStatus(s: string | undefined): MaterialFulfillmentStatus
     case 'PREPARING':
       return 'READY';
     case 'READY':
+      if (dt === 'DELIVERY_PROVIDER') return null;
       return 'OUT_FOR_DELIVERY';
     case 'OUT_FOR_DELIVERY':
       return 'COMPLETED';
@@ -52,7 +62,8 @@ function nextFulfillmentStatus(s: string | undefined): MaterialFulfillmentStatus
   }
 }
 
-function actionButtonLabel(s: string | undefined): string {
+function actionButtonLabel(s: string | undefined, deliveryType?: string): string {
+  const dt = String(deliveryType || '').toUpperCase();
   switch (String(s || 'PENDING').toUpperCase()) {
     case 'PENDING':
       return 'Accept order';
@@ -61,7 +72,8 @@ function actionButtonLabel(s: string | undefined): string {
     case 'PREPARING':
       return 'Mark ready';
     case 'READY':
-      return 'Dispatch / Ready for collection';
+      if (dt === 'DELIVERY_PROVIDER') return 'Waiting for courier';
+      return 'Start delivery';
     case 'OUT_FOR_DELIVERY':
       return 'Mark delivered';
     default:
@@ -177,6 +189,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
 
   useEffect(() => {
     if (!userId) return;
+    ensureSocketAuthAndConnect();
     const onNew = () => {
       void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
     };
@@ -371,12 +384,34 @@ function DetailPanel({
   notePending: boolean;
 }) {
   const st = String(order.fulfillmentStatus || 'PENDING').toUpperCase();
-  const next = nextFulfillmentStatus(st);
+  const next = nextFulfillmentStatus(st, order.deliveryType);
   const items = Array.isArray(order.items) ? order.items : [];
   const total = Number(order.total ?? order.materialsSubtotal ?? 0);
   const src = String((order as { source?: string }).source || '');
   const jobId = (order as { jobId?: string }).jobId;
   const timeline = buildTimeline(order);
+
+  useEffect(() => {
+    const dt = String(order.deliveryType || '').toUpperCase();
+    if (dt !== 'STORE_DELIVERY' || st !== 'OUT_FOR_DELIVERY') return;
+    const tid = order.activeTrackingId;
+    if (!tid || !navigator.geolocation) return;
+    const token = order.activeTrackingToken ?? null;
+    const sendState = createLocationSendState();
+    const wid = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = Date.now();
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        if (!shouldSendLocation(now, lat, lng, sendState)) return;
+        markLocationSent(now, lat, lng, sendState);
+        void postTrackingLocation(tid, lat, lng, token);
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 12000 }
+    );
+    return () => navigator.geolocation.clearWatch(wid);
+  }, [st, order.deliveryType, order.activeTrackingId, order.activeTrackingToken]);
 
   return (
     <Card className="card-elevated overflow-hidden">
@@ -408,10 +443,50 @@ function DetailPanel({
             <Button
               type="button"
               className="btn-accent w-full sm:w-auto"
-              disabled={patching}
-              onClick={() => onPatch(next)}
+              disabled={patching || !next}
+              onClick={() => next && onPatch(next)}
             >
-              {actionButtonLabel(st)}
+              {actionButtonLabel(st, order.deliveryType)}
+            </Button>
+          </div>
+        )}
+
+        {st === 'OUT_FOR_DELIVERY' && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={patching}
+              className="border-amber-500/40"
+              onClick={() => onPatch('DELAYED')}
+            >
+              Report delay
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={patching}
+              className="border-destructive/40 text-destructive"
+              onClick={() => {
+                if (!window.confirm('Mark delivery as failed?')) return;
+                onPatch('FAILED');
+              }}
+            >
+              Mark failed
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={patching}
+              onClick={() => {
+                if (!window.confirm('Cancel this delivery?')) return;
+                onPatch('CANCELLED');
+              }}
+            >
+              Cancel delivery
             </Button>
           </div>
         )}
@@ -467,6 +542,14 @@ function DetailPanel({
               Delivery fee: {formatCurrency(Number((order as { deliveryFee?: number }).deliveryFee))}
             </p>
           )}
+          {order.activeTrackingId ? (
+            <p className="text-xs text-muted-foreground break-all mt-2">
+              Driver tracking:{' '}
+              {typeof window !== 'undefined'
+                ? `${window.location.origin}/track/${order.activeTrackingId}`
+                : `/track/${order.activeTrackingId}`}
+            </p>
+          ) : null}
         </div>
 
         <div>

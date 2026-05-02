@@ -1,6 +1,8 @@
 const materialOrderService = require("../services/materialOrder.service");
 const jobService = require("../services/job.service");
 const supplierService = require("../services/supplier.service");
+const prisma = require("../config/prisma");
+const { materialOrderBelongsToSupplierStore } = require("../utils/materialOrderSupplier.util");
 
 async function listOrdersQuery(req, res) {
   const supplierIdQ = req.query.supplierId;
@@ -56,6 +58,9 @@ async function getAllMaterialOrdersForUser(req, res) {
     if (u === "READY") return "Ready";
     if (u === "OUT_FOR_DELIVERY") return "Out for delivery";
     if (u === "COMPLETED") return "Delivered";
+    if (u === "FAILED") return "Failed";
+    if (u === "DELAYED") return "Delayed";
+    if (u === "CANCELLED") return "Cancelled";
     return u;
   };
 
@@ -100,8 +105,8 @@ async function getMaterialOrder(req, res) {
   }
   if (req.user.role === "SUPPLIER") {
     const sup = await supplierService.findSupplierRecordByUserId(req.user.userId);
-    const sid = String(order.storeId || order.supplierId || "");
-    if (!sup || !sid || String(sup.id) !== sid) {
+    const row = await prisma.materialOrder.findUnique({ where: { id: req.params.id } });
+    if (!sup || !row || !materialOrderBelongsToSupplierStore(row, sup.id)) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
   } else if (req.user.role !== "ADMIN" && String(order.userId) !== String(req.user.userId)) {
@@ -153,6 +158,20 @@ async function updateMaterialOrderDeliveryStatus(req, res) {
   res.json({ success: true, order });
 }
 
+async function patchProviderFulfillment(req, res) {
+  const order = await materialOrderService.updateMaterialOrderFulfillmentByProvider(
+    req.params.id,
+    req.user.userId,
+    req.body?.status
+  );
+  res.json({ success: true, order });
+}
+
+async function confirmDeliveryReceipt(req, res) {
+  const order = await materialOrderService.confirmDeliveryReceipt(req.params.id, req.user.userId);
+  res.json({ success: true, order });
+}
+
 module.exports = {
   listOrdersQuery,
   getMaterialOrders,
@@ -164,4 +183,6 @@ module.exports = {
   rejectMaterialOrderDelivery,
   payMaterialOrderDelivery,
   updateMaterialOrderDeliveryStatus,
+  patchProviderFulfillment,
+  confirmDeliveryReceipt,
 };

@@ -7,6 +7,7 @@ import {
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
+import { ProviderCourierActions } from '@/components/tracking/ProviderCourierActions';
 
 export interface MaterialBatchesProps {
   job: Job;
@@ -84,6 +85,12 @@ export function MaterialBatches({
                       <p className="text-xs text-muted-foreground">Deliver to: {batch.deliveryAddress}</p>
                     ) : null}
                     <MaterialTrackingMini batch={batch} />
+                    <ProviderCourierActions
+                      jobId={job.id}
+                      orderId={mo?.id || card.orderId}
+                      fulfillmentStatus={mo?.fulfillmentStatus}
+                      deliveryType={card.deliveryType}
+                    />
                   </div>
                 }
               />

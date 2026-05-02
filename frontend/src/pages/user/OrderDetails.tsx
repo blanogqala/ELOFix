@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import {
   approveMaterialOrderDelivery,
   rejectMaterialOrderDelivery,
   payMaterialOrderDelivery,
+  confirmMaterialOrderDeliveryReceipt,
 } from '@/lib/api/materialOrders';
 import {
   getJobsByUser,
@@ -24,15 +25,74 @@ import { getSavedCards, getInvoiceById } from '@/lib/api/payments';
 import { DeliveryProvider, SavedCard } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
+import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
+import { useStableMapCoords } from '@/hooks/useStableMapCoords';
 import { format, parseISO } from 'date-fns';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getDeliveryProviders } from '@/lib/api/specials';
+import type { JobMaterialOrderSnapshot } from '@/types';
+import { resolveMaterialBatchFromSnapshot } from '@/lib/materialBatchTracking';
+import { toCanonicalDeliveryType } from '@/lib/deliveryTypes';
 
 type RouteParams = {
   orderId?: string;
   jobId?: string;
   storeOrderId?: string;
 };
+
+function mergeTrackingFields(
+  normalized: NormalizedOrder,
+  mo: Record<string, unknown> | null | undefined,
+  options?: { destinationCoords?: { lat: number; lng: number } | null }
+): NormalizedOrder {
+  if (!mo) {
+    if (options?.destinationCoords === undefined) return normalized;
+    return {
+      ...normalized,
+      destinationCoords: options.destinationCoords ?? undefined,
+    };
+  }
+  const snap: JobMaterialOrderSnapshot = {
+    id: String(mo.id),
+    supplierId: mo.storeId != null ? String(mo.storeId) : null,
+    fulfillmentStatus: (mo.fulfillmentStatus as string) || 'PENDING',
+    materialBatch: mo.materialBatch as JobMaterialOrderSnapshot['materialBatch'],
+    paymentStatus: 'paid',
+    total: Number(mo.total) || 0,
+    materialsSubtotal: Number(mo.materialsSubtotal) || 0,
+    platformCommission: Number(mo.platformCommission) || 0,
+    supplierEarning: Number(mo.supplierEarning) || 0,
+    items: [],
+    createdAt: String(mo.createdAt || ''),
+    supplierName: typeof mo.supplierDisplayName === 'string' ? mo.supplierDisplayName : undefined,
+  };
+  const batch = resolveMaterialBatchFromSnapshot(snap);
+  const dl = mo.driverLocation as { lat?: unknown; lng?: unknown } | undefined;
+  const dest =
+    options?.destinationCoords !== undefined
+      ? options.destinationCoords
+      : normalized.destinationCoords;
+  return {
+    ...normalized,
+    fulfillmentStatus: String(mo.fulfillmentStatus || ''),
+    materialBatch: batch,
+    canonicalDelivery: toCanonicalDeliveryType(String(mo.deliveryType)),
+    supplierDisplayName:
+      typeof mo.supplierDisplayName === 'string' ? mo.supplierDisplayName : normalized.storeName,
+    supplierPhone: typeof mo.supplierPhone === 'string' ? mo.supplierPhone : undefined,
+    supplierAddress: typeof mo.supplierAddress === 'string' ? mo.supplierAddress : undefined,
+    activeTrackingId: typeof mo.activeTrackingId === 'string' ? mo.activeTrackingId : undefined,
+    activeTrackingToken: typeof mo.activeTrackingToken === 'string' ? mo.activeTrackingToken : undefined,
+    materialOrderId: typeof mo.id === 'string' ? mo.id : normalized.materialOrderId,
+    destinationCoords: dest ?? undefined,
+    driverLocation:
+      dl && Number.isFinite(Number(dl.lat)) && Number.isFinite(Number(dl.lng))
+        ? { lat: Number(dl.lat), lng: Number(dl.lng), updatedAt: String((dl as { updatedAt?: string }).updatedAt || '') }
+        : undefined,
+    deliveryConfirmed: Boolean(mo.deliveryConfirmed),
+  };
+}
 
 export default function OrderDetails() {
   const { user } = useAuth();
@@ -49,6 +109,36 @@ export default function OrderDetails() {
   const [deliveryChooserOpen, setDeliveryChooserOpen] = useState(false);
   const [storeHasDelivery, setStoreHasDelivery] = useState(false);
   const [storeDeliveryFee, setStoreDeliveryFee] = useState(0);
+  const [receiptPending, setReceiptPending] = useState(false);
+  const loadOrderRef = useRef<(() => Promise<void>) | null>(null);
+
+  const effectiveOrderId = orderId || storeOrderId;
+  const trackingRoomOrderId = order?.materialOrderId || effectiveOrderId;
+  const { liveLat, liveLng, lastPingAtMs, pollFailed } = useOrderLocationSocket({
+    orderId: trackingRoomOrderId,
+    enabled: Boolean(user && trackingRoomOrderId),
+  });
+  const rawMapLat = liveLat ?? order?.driverLocation?.lat ?? null;
+  const rawMapLng = liveLng ?? order?.driverLocation?.lng ?? null;
+  const { lat: mapDisplayLat, lng: mapDisplayLng } = useStableMapCoords(rawMapLat, rawMapLng);
+  const serverDriverPingMs = order?.driverLocation?.updatedAt
+    ? new Date(order.driverLocation.updatedAt).getTime()
+    : 0;
+  const mergedLastDriverPingMs = (() => {
+    const a = lastPingAtMs ?? 0;
+    const b = serverDriverPingMs || 0;
+    const m = Math.max(a, b);
+    return m > 0 ? m : null;
+  })();
+
+  useMaterialOrderFulfillmentSocket({
+    userId: user?.id,
+    activeJobId: jobContext?.jobId,
+    watchOrderId: effectiveOrderId,
+    onWatchOrderFulfillment: () => {
+      void loadOrderRef.current?.();
+    },
+  });
 
   useEffect(() => {
     if (!user) return;
@@ -110,7 +200,7 @@ export default function OrderDetails() {
           providerName: provider?.name,
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
         };
-        setOrder(normalized);
+        setOrder(mergeTrackingFields(normalized, found as unknown as Record<string, unknown>));
         setJobContext(null);
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === found.storeId);
@@ -154,7 +244,12 @@ export default function OrderDetails() {
           jobId: job.id,
           storeId: storeOrder.storeId,
         };
-        setOrder(normalized);
+        const moRow = await getMaterialOrderById(effectiveOrderId);
+        setOrder(
+          mergeTrackingFields(normalized, moRow as unknown as Record<string, unknown>, {
+            destinationCoords: job.location?.coordinates ?? null,
+          })
+        );
         setJobContext({ jobId: job.id, storeId: storeOrder.storeId });
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === storeOrder.storeId);
@@ -166,9 +261,9 @@ export default function OrderDetails() {
       // noop
     }
   };
+  loadOrderRef.current = loadOrder;
 
   const isStandalone = !jobContext;
-  const effectiveOrderId = orderId || storeOrderId;
 
   const handleCancelDelivery = async () => {
     if (!order || !effectiveOrderId) return;
@@ -350,6 +445,20 @@ export default function OrderDetails() {
     }
   };
 
+  const handleConfirmReceipt = async () => {
+    if (!effectiveOrderId) return;
+    setReceiptPending(true);
+    try {
+      await confirmMaterialOrderDeliveryReceipt(effectiveOrderId);
+      toast({ title: 'Thanks!', description: 'Delivery receipt confirmed.' });
+      await loadOrder();
+    } catch {
+      toast({ title: 'Error', description: 'Could not confirm receipt.', variant: 'destructive' });
+    } finally {
+      setReceiptPending(false);
+    }
+  };
+
   const handleBack = () => {
     if (location.key !== 'default') {
       navigate(-1);
@@ -381,6 +490,12 @@ export default function OrderDetails() {
           <>
             <OrderDetailsView
               order={order}
+              liveDriverLat={liveLat}
+              liveDriverLng={liveLng}
+              mapDisplayLat={mapDisplayLat}
+              mapDisplayLng={mapDisplayLng}
+              lastDriverPingMs={mergedLastDriverPingMs}
+              locationPollFailed={pollFailed}
               onCancelDelivery={
                 order.deliveryState === 'PendingApproval' || (order.deliveryState === 'Approved' && !order.deliveryPaid)
                   ? handleCancelDelivery
@@ -406,6 +521,8 @@ export default function OrderDetails() {
               }
               onViewMaterialInvoice={user ? handleViewInvoice : undefined}
               onViewDeliveryInvoice={user ? handleViewInvoice : undefined}
+              onConfirmReceipt={handleConfirmReceipt}
+              confirmReceiptPending={receiptPending}
             />
             <DeliveryOptionChooser
               open={deliveryChooserOpen}

@@ -18,6 +18,9 @@ export function fulfillmentDbToBatchStatus(fs: string | undefined): MaterialBatc
     READY: 'ready',
     OUT_FOR_DELIVERY: 'out_for_delivery',
     COMPLETED: 'delivered',
+    FAILED: 'failed',
+    DELAYED: 'delayed',
+    CANCELLED: 'cancelled',
   };
   return map[u] || 'pending';
 }
@@ -67,6 +70,27 @@ export function trackingLabelsForBatch(batch: MaterialBatch | null): string[] {
   ];
 }
 
+/** Four-step pickup timeline; five-step for delivery (reuse batch status as source of truth). */
+export function materialTrackingDisplay(batch: MaterialBatch | null): { labels: string[]; checks: boolean[] } {
+  const pickup = batch?.deliveryType === 'pickup';
+  if (pickup) {
+    const labels = ['Accepted', 'Preparing', 'Ready', 'Delivered'];
+    const st = batch?.status || 'pending';
+    let completed = 0;
+    if (st === 'pending') completed = 0;
+    else if (st === 'accepted') completed = 1;
+    else if (st === 'preparing') completed = 2;
+    else if (st === 'ready' || st === 'out_for_delivery') completed = 3;
+    else if (st === 'delivered') completed = 4;
+    const checks = [false, false, false, false];
+    for (let i = 0; i < Math.min(4, completed); i++) checks[i] = true;
+    return { labels, checks };
+  }
+  const labels = trackingLabelsForBatch(batch);
+  const checks = materialTrackingChecks(batch);
+  return { labels, checks };
+}
+
 export function fulfillmentStatusBadgeLabel(fs: string | undefined): string {
   const u = String(fs || 'PENDING').toUpperCase();
   if (u === 'PENDING') return 'Awaiting supplier';
@@ -75,5 +99,8 @@ export function fulfillmentStatusBadgeLabel(fs: string | undefined): string {
   if (u === 'READY') return 'Ready';
   if (u === 'OUT_FOR_DELIVERY') return 'Out for delivery';
   if (u === 'COMPLETED') return 'Delivered';
+  if (u === 'FAILED') return 'Failed';
+  if (u === 'DELAYED') return 'Delayed';
+  if (u === 'CANCELLED') return 'Cancelled';
   return u.replace(/_/g, ' ');
 }

@@ -84,4 +84,5 @@ apiClient.interceptors.response.use(
   }
 );
 
+export { ApiHttpError };
 export default apiClient;

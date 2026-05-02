@@ -12,6 +12,7 @@ import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
 import NotFound from "./pages/NotFound";
 import Unauthorized from "./pages/Unauthorized";
+import TrackDelivery from "./pages/TrackDelivery";
 
 // User pages
 import UserDashboard from "./pages/user/Dashboard";
@@ -79,6 +80,7 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
+            <Route path="/track/:trackingId" element={<TrackDelivery />} />
 
             {/* User Routes */}
             <Route path="/user/dashboard" element={<AuthGuard allowedRoles={['user']}><UserDashboard /></AuthGuard>} />
