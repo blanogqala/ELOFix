@@ -48,6 +48,18 @@ export async function getSupplierOrders(status?: string): Promise<SupplierMateri
   return Array.isArray(data?.orders) ? data.orders : [];
 }
 
+export async function postSupplierEnsureTracking(
+  orderId: string
+): Promise<{ activeTrackingId: string; activeTrackingToken?: string }> {
+  const { data } = await apiClient.post<{
+    success: boolean;
+    activeTrackingId: string;
+    activeTrackingToken?: string;
+  }>(`/supplier/orders/${encodeURIComponent(orderId)}/tracking/start`, {});
+  if (!data?.activeTrackingId) throw new Error('Could not start tracking');
+  return { activeTrackingId: data.activeTrackingId, activeTrackingToken: data.activeTrackingToken };
+}
+
 export async function patchSupplierOrderFulfillment(
   orderId: string,
   status: MaterialFulfillmentStatus

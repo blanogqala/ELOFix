@@ -2,11 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Truck, Store, FileText, CreditCard, RefreshCw, XCircle } from 'lucide-react';
-import { TrackingTimeline } from '@/components/tracking/TrackingTimeline';
 import { DeliveryMap } from '@/components/tracking/DeliveryMap';
-import { DeliveryStatusCard } from '@/components/tracking/DeliveryStatusCard';
+import { FulfillmentPhaseTimeline } from '@/components/tracking/FulfillmentPhaseTimeline';
 import { canonicalDeliveryLabel } from '@/lib/deliveryTypes';
 import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
 import { cn } from '@/lib/utils';
@@ -79,6 +77,8 @@ interface OrderDetailsViewProps {
   mapDisplayLng?: number | null;
   lastDriverPingMs?: number | null;
   locationPollFailed?: boolean;
+  /** When true, socket disconnected after a prior connect while live tracking is active */
+  socketReconnecting?: boolean;
   onStatusChange?: (status: NormalizedOrder['deliveryStatus']) => void;
   onCancelDelivery?: () => void;
   onChangeDelivery?: () => void;
@@ -91,12 +91,6 @@ interface OrderDetailsViewProps {
   onConfirmReceipt?: () => void;
   confirmReceiptPending?: boolean;
 }
-
-const STATUS_STEPS: NormalizedOrder['deliveryStatus'][] = [
-  'processing',
-  'out_for_delivery',
-  'delivered',
-];
 
 const DELIVERY_STATE_BADGES: Record<
   NormalizedDeliveryState,
@@ -112,6 +106,13 @@ const DELIVERY_STATE_BADGES: Record<
   OnTheWay: { label: 'On the way', className: 'bg-primary/20 text-primary' },
   Delivered: { label: 'Delivered', className: 'bg-success/20 text-success' },
 };
+
+function deliveryTrackingSourceLabel(order: NormalizedOrder): string {
+  if (order.deliveryType === 'SELF') return 'Pickup by You';
+  if (order.deliveryType === 'STORE') return 'Delivered by Store';
+  if (order.deliveryType === 'PROVIDER') return 'Delivered by Provider';
+  return '—';
+}
 
 function fulfillmentMaterialBadgeClass(fs: string | undefined): string {
   const u = String(fs || '').toUpperCase();
@@ -130,6 +131,7 @@ export function OrderDetailsView({
   mapDisplayLng,
   lastDriverPingMs,
   locationPollFailed,
+  socketReconnecting = false,
   onCancelDelivery,
   onChangeDelivery,
   onChooseDelivery,
@@ -141,9 +143,6 @@ export function OrderDetailsView({
   onConfirmReceipt,
   confirmReceiptPending,
 }: OrderDetailsViewProps) {
-  const currentStepIndex = STATUS_STEPS.indexOf(order.deliveryStatus);
-  const progressValue = ((currentStepIndex + 1) / STATUS_STEPS.length) * 100;
-
   const canonical: CanonicalDeliveryType =
     order.canonicalDelivery ||
     (order.deliveryType === 'SELF'
@@ -153,11 +152,10 @@ export function OrderDetailsView({
         : 'supplier_delivery');
 
   const fulfillmentU = String(order.fulfillmentStatus || '').toUpperCase();
-  const batchSt = order.materialBatch?.status;
   const showLiveMap =
+    fulfillmentU === 'OUT_FOR_DELIVERY' &&
     canonical !== 'pickup' &&
-    !['FAILED', 'CANCELLED'].includes(fulfillmentU) &&
-    (fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED' || batchSt === 'out_for_delivery');
+    !['FAILED', 'CANCELLED'].includes(fulfillmentU);
 
   const mapLat = mapDisplayLat ?? liveDriverLat;
   const mapLng = mapDisplayLng ?? liveDriverLng;
@@ -197,10 +195,7 @@ export function OrderDetailsView({
 
   const OFFLINE_MS = 30_000;
   const driverOffline =
-    showLiveMap &&
-    hasLiveCoords &&
-    lastDriverPingMs != null &&
-    Date.now() - lastDriverPingMs > OFFLINE_MS;
+    showLiveMap && lastDriverPingMs != null && Date.now() - lastDriverPingMs > OFFLINE_MS;
   const offlineSeconds =
     driverOffline && lastDriverPingMs != null
       ? Math.max(0, Math.floor((Date.now() - lastDriverPingMs) / 1000))
@@ -312,20 +307,6 @@ export function OrderDetailsView({
         </CardContent>
       </Card>
 
-      {(order.fulfillmentStatus || order.materialBatch) && (
-        <DeliveryStatusCard
-          canonicalType={canonical}
-          fulfillmentStatus={order.fulfillmentStatus}
-          supplierName={order.supplierDisplayName || order.storeName}
-          supplierPhone={order.supplierPhone}
-          supplierAddress={order.supplierAddress}
-          trackingId={order.activeTrackingId}
-          trackingToken={order.activeTrackingToken}
-        />
-      )}
-
-      {order.materialBatch ? <TrackingTimeline batch={order.materialBatch} className="mb-0" /> : null}
-
       {showConfirmReceipt ? (
         <Card>
           <CardContent className="pt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -347,6 +328,45 @@ export function OrderDetailsView({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/15 p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery status</p>
+            <p className="text-sm font-medium">{deliveryTrackingSourceLabel(order)}</p>
+            <div className="flex flex-wrap gap-2 items-center">
+              <Badge variant="outline" className="font-mono text-xs">
+                {order.deliveryType}
+              </Badge>
+              {order.fulfillmentStatus ? (
+                <Badge className={cn('text-xs', fulfillmentMaterialBadgeClass(order.fulfillmentStatus))}>
+                  {fulfillmentStatusBadgeLabel(order.fulfillmentStatus)}
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-xs">
+                  Awaiting fulfillment update
+                </Badge>
+              )}
+            </div>
+            {order.deliveryType !== 'SELF' ? (
+              <p className="text-xs text-muted-foreground">
+                Tracking source:{' '}
+                <span className="font-medium text-foreground">
+                  {order.deliveryType === 'PROVIDER' ? 'Provider' : 'Supplier'}
+                </span>
+              </p>
+            ) : null}
+            {(order.supplierDisplayName || order.supplierPhone || order.supplierAddress) && (
+              <div className="text-xs border-t border-border pt-3 space-y-1">
+                <p className="uppercase text-muted-foreground">Supplier</p>
+                {order.supplierDisplayName ? (
+                  <p className="font-medium text-foreground">{order.supplierDisplayName}</p>
+                ) : null}
+                {order.supplierPhone ? <p className="text-muted-foreground">{order.supplierPhone}</p> : null}
+                {order.supplierAddress ? <p className="text-muted-foreground">{order.supplierAddress}</p> : null}
+              </div>
+            )}
+          </div>
+
+          <FulfillmentPhaseTimeline fulfillmentStatus={order.fulfillmentStatus} />
+
           {noDeliverySelected && (
             <div className="space-y-3 p-4 bg-muted/50 border border-border rounded-lg">
               <p className="text-sm text-muted-foreground">No delivery selected.</p>
@@ -454,17 +474,6 @@ export function OrderDetailsView({
               )}
               {showTracking ? (
                 <>
-                  {order.materialBatch ? null : (
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium">Status</p>
-                      <Progress value={progressValue} />
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Processing</span>
-                        <span>Out for Pickup</span>
-                        <span>Delivered</span>
-                      </div>
-                    </div>
-                  )}
                   {showLiveMap ? (
                     <div className="mt-4 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -473,6 +482,11 @@ export function OrderDetailsView({
                           <Badge className="bg-primary/15 text-primary border-primary/30">Driver is near</Badge>
                         ) : null}
                       </div>
+                      {socketReconnecting ? (
+                        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                          Reconnecting…
+                        </p>
+                      ) : null}
                       {locationPollFailed ? (
                         <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
                           Unable to fetch live location. Check your connection or try again; tracking session may have
@@ -481,7 +495,8 @@ export function OrderDetailsView({
                       ) : null}
                       {driverOffline ? (
                         <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                          Driver connection lost. Last update {offlineSeconds} seconds ago.
+                          Driver offline
+                          {offlineSeconds > 0 ? ` · Last update ${offlineSeconds}s ago` : ''}
                         </p>
                       ) : null}
                       <DeliveryMap
@@ -495,15 +510,17 @@ export function OrderDetailsView({
                       />
                     </div>
                   ) : (
-                    !order.materialBatch && (
-                      <div className="mt-4">
-                        <div className="rounded-lg border border-dashed border-border bg-muted/40 h-40 flex items-center justify-center">
-                          <p className="text-xs text-muted-foreground text-center max-w-xs">
-                            Map appears when the driver is on the way.
-                          </p>
-                        </div>
-                      </div>
-                    )
+                    <div className="mt-4 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6">
+                      <p className="text-sm text-muted-foreground text-center max-w-md mx-auto">
+                        {fulfillmentU === 'COMPLETED'
+                          ? 'Tracking has ended for this delivery.'
+                          : fulfillmentU === 'DELAYED'
+                            ? 'This delivery was reported delayed. Live map tracking is paused for now.'
+                            : order.deliveryType === 'SELF'
+                              ? 'Live map is not used for self-pickup orders.'
+                              : 'Tracking will begin once the order is out for delivery.'}
+                      </p>
+                    </div>
                   )}
                 </>
               ) : (

@@ -11,8 +11,10 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
   const [liveLng, setLiveLng] = useState<number | null>(null);
   const [lastPingAtMs, setLastPingAtMs] = useState<number | null>(null);
   const [pollFailed, setPollFailed] = useState(false);
+  const [isSocketReconnecting, setIsSocketReconnecting] = useState(false);
   const lastPollRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const orderIdRef = useRef<string | undefined>(undefined);
+  const hadConnectedRef = useRef(false);
 
   orderIdRef.current = orderId;
 
@@ -22,8 +24,17 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
   }, []);
 
   useEffect(() => {
-    if (!orderId || !enabled) return;
+    if (!enabled) {
+      setIsSocketReconnecting(false);
+      return;
+    }
 
+    if (!orderId) {
+      setIsSocketReconnecting(false);
+      return;
+    }
+
+    hadConnectedRef.current = false;
     const oid = String(orderId);
 
     const applyCoords = (la: number, lo: number, fromPoll: boolean) => {
@@ -46,15 +57,47 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
     const joinRoom = () => {
       const id = orderIdRef.current;
       if (!id || !enabled) return;
-      const cur = String(id);
-      socket.emit('order:join', cur);
-      socket.emit('join_order', cur);
+      socket.emit('order:join', String(id));
+    };
+
+    const onConnect = () => {
+      hadConnectedRef.current = true;
+      setIsSocketReconnecting(false);
+      joinRoom();
+    };
+
+    const onDisconnect = () => {
+      if (hadConnectedRef.current) setIsSocketReconnecting(true);
+    };
+
+    const onConnectError = () => {
+      if (hadConnectedRef.current) setIsSocketReconnecting(true);
+    };
+
+    const onReconnect = () => {
+      joinRoom();
+      setIsSocketReconnecting(false);
     };
 
     ensureSocketAuthAndConnect();
-    joinRoom();
+
+    socket.off('order:location:update', onUpdate);
     socket.on('order:location:update', onUpdate);
-    socket.on('connect', joinRoom);
+    socket.off('connect', onConnect);
+    socket.on('connect', onConnect);
+    socket.off('disconnect', onDisconnect);
+    socket.on('disconnect', onDisconnect);
+    socket.off('connect_error', onConnectError);
+    socket.on('connect_error', onConnectError);
+
+    const ioMgr = socket.io;
+    ioMgr.off('reconnect', onReconnect);
+    ioMgr.on('reconnect', onReconnect);
+
+    if (socket.connected) {
+      hadConnectedRef.current = true;
+    }
+    joinRoom();
 
     const poll = async () => {
       try {
@@ -87,9 +130,12 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
     return () => {
       window.clearInterval(pollId);
       socket.off('order:location:update', onUpdate);
-      socket.off('connect', joinRoom);
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onConnectError);
+      ioMgr.off('reconnect', onReconnect);
     };
   }, [orderId, enabled, touchPing]);
 
-  return { liveLat, liveLng, lastPingAtMs, pollFailed };
+  return { liveLat, liveLng, lastPingAtMs, pollFailed, isSocketReconnecting };
 }

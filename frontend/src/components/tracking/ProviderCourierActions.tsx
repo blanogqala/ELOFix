@@ -34,6 +34,7 @@ export function ProviderCourierActions({ jobId, orderId, fulfillmentStatus, deli
     },
   });
 
+  // Live GPS only while courier is officially out for delivery (not DELAYED / COMPLETED).
   useEffect(() => {
     if (deliveryType !== 'PROVIDER' || st !== 'OUT_FOR_DELIVERY' || !orderId) return;
 

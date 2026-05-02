@@ -3,6 +3,7 @@ import {
   getSupplierOrders,
   patchSupplierOrderFulfillment,
   postSupplierOrderNote,
+  postSupplierEnsureTracking,
   type SupplierMaterialOrderLine,
 } from '@/lib/api/supplierPortal';
 import { postTrackingLocation } from '@/lib/api/tracking';
@@ -18,9 +19,10 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { cn } from '@/lib/utils';
 import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
 import { useEffect, useMemo, useState } from 'react';
-import { Search, ArrowLeft } from 'lucide-react';
+import { Search, ArrowLeft, Copy, MapPin } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Label } from '@/components/ui/label';
+import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
 
 const STATUS_BADGE: Record<string, string> = {
   PENDING: 'bg-amber-500/15 text-amber-900 dark:text-amber-100 border-amber-500/30',
@@ -346,6 +348,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
         </div>
       ) : (
         <DetailPanel
+          userId={userId}
           order={selected}
           onBack={backToList}
           onPatch={(status) => patchMut.mutate({ id: selected.id, status })}
@@ -364,7 +367,14 @@ export function SupplierOrders({ userId }: { userId: string }) {
   );
 }
 
+function buildPublicTrackingUrl(trackingId: string, token?: string | null): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const q = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${origin}/track/${encodeURIComponent(trackingId)}${q}`;
+}
+
 function DetailPanel({
+  userId,
   order,
   onBack,
   onPatch,
@@ -374,6 +384,7 @@ function DetailPanel({
   onSubmitNote,
   notePending,
 }: {
+  userId: string;
   order: SupplierMaterialOrderLine;
   onBack: () => void;
   onPatch: (s: MaterialFulfillmentStatus) => void;
@@ -383,6 +394,8 @@ function DetailPanel({
   onSubmitNote: () => void;
   notePending: boolean;
 }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const st = String(order.fulfillmentStatus || 'PENDING').toUpperCase();
   const next = nextFulfillmentStatus(st, order.deliveryType);
   const items = Array.isArray(order.items) ? order.items : [];
@@ -390,6 +403,27 @@ function DetailPanel({
   const src = String((order as { source?: string }).source || '');
   const jobId = (order as { jobId?: string }).jobId;
   const timeline = buildTimeline(order);
+  const isStoreDelivery = String(order.deliveryType || '').toUpperCase() === 'STORE_DELIVERY';
+  const trackSocketEnabled = st === 'OUT_FOR_DELIVERY' && isStoreDelivery;
+
+  const { liveLat, liveLng, lastPingAtMs, pollFailed, isSocketReconnecting } = useOrderLocationSocket({
+    orderId: order.id,
+    enabled: trackSocketEnabled,
+  });
+
+  const ensureTrackMut = useMutation({
+    mutationFn: () => postSupplierEnsureTracking(order.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
+      toast({
+        title: 'Tracking ready',
+        description: 'Session is active. Copy or share the link so the driver can open it in a browser.',
+      });
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Could not start tracking', description: e.message, variant: 'destructive' });
+    },
+  });
 
   useEffect(() => {
     const dt = String(order.deliveryType || '').toUpperCase();
@@ -491,6 +525,84 @@ function DetailPanel({
           </div>
         )}
 
+        {isStoreDelivery && st === 'OUT_FOR_DELIVERY' && (
+          <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Store delivery tracking</p>
+            <p className="text-xs text-muted-foreground">
+              Create or restore a public tracking session, then share the link. The driver opens it in a browser so GPS
+              updates flow to the customer.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="btn-accent"
+                disabled={ensureTrackMut.isPending || patching}
+                onClick={() => ensureTrackMut.mutate()}
+              >
+                {ensureTrackMut.isPending ? 'Starting…' : 'Start delivery tracking'}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!order.activeTrackingId}
+                onClick={() => {
+                  const url = buildPublicTrackingUrl(order.activeTrackingId!, order.activeTrackingToken);
+                  void navigator.clipboard.writeText(url);
+                  toast({ title: 'Copied', description: 'Tracking link copied to clipboard.' });
+                }}
+              >
+                <Copy className="h-3.5 w-3.5 mr-1" />
+                Copy tracking link
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!order.activeTrackingId}
+                onClick={() => {
+                  const url = buildPublicTrackingUrl(order.activeTrackingId!, order.activeTrackingToken);
+                  const text = `Track this delivery (open in browser): ${url}`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                }}
+              >
+                WhatsApp
+              </Button>
+            </div>
+            <div className="rounded-md border border-border bg-background/80 p-3 space-y-2 text-xs">
+              <p className="font-medium text-foreground flex items-center gap-1">
+                <MapPin className="h-3.5 w-3.5 shrink-0" />
+                Track driver
+              </p>
+              {pollFailed ? (
+                <p className="text-amber-800 dark:text-amber-200">Unable to load latest coordinates.</p>
+              ) : null}
+              {isSocketReconnecting ? <p className="text-amber-800 dark:text-amber-200">Reconnecting…</p> : null}
+              <p className="font-mono tabular-nums text-muted-foreground">
+                {liveLat != null && liveLng != null
+                  ? `${Number(liveLat).toFixed(5)}, ${Number(liveLng).toFixed(5)}`
+                  : 'No live coordinates yet'}
+              </p>
+              <p className="text-muted-foreground">
+                Last ping:{' '}
+                {lastPingAtMs != null
+                  ? new Date(lastPingAtMs).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' })
+                  : '—'}
+              </p>
+              {order.activeTrackingId ? (
+                <p className="break-all text-[11px] text-muted-foreground pt-2 border-t border-border">
+                  {buildPublicTrackingUrl(order.activeTrackingId, order.activeTrackingToken)}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Tap “Start delivery tracking” if the customer does not see live movement.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         <div>
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Items</h4>
           <ul className="divide-y divide-border rounded-md border">
@@ -542,14 +654,6 @@ function DetailPanel({
               Delivery fee: {formatCurrency(Number((order as { deliveryFee?: number }).deliveryFee))}
             </p>
           )}
-          {order.activeTrackingId ? (
-            <p className="text-xs text-muted-foreground break-all mt-2">
-              Driver tracking:{' '}
-              {typeof window !== 'undefined'
-                ? `${window.location.origin}/track/${order.activeTrackingId}`
-                : `/track/${order.activeTrackingId}`}
-            </p>
-          ) : null}
         </div>
 
         <div>

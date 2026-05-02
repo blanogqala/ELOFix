@@ -37,6 +37,12 @@ async function patchFulfillment(req, res) {
   res.json({ success: true, order });
 }
 
+async function postEnsureTracking(req, res) {
+  const row = await supplierService.requireSupplierOwnedByUserId(req.user.userId);
+  const session = await materialOrderService.ensureStoreDeliveryTrackingSession(req.params.orderId, row.id);
+  res.json({ success: true, ...session });
+}
+
 async function postOrderNote(req, res) {
   const order = await materialOrderService.appendSupplierOrderNote(
     req.params.orderId,
@@ -95,6 +101,7 @@ module.exports = {
   postInventoryCategory,
   getOrders,
   patchFulfillment,
+  postEnsureTracking,
   postOrderNote,
   postProduct,
   patchProduct,

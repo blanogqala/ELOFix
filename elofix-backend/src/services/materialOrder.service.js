@@ -1203,6 +1203,43 @@ async function listRecentMaterialOrdersBySupplierForAdmin(supplierId, { limit = 
   });
 }
 
+/**
+ * Idempotent: ensure an active supplier-led tracking session for store delivery while OUT_FOR_DELIVERY.
+ */
+async function ensureStoreDeliveryTrackingSession(orderId, supplierStoreId) {
+  const oid = String(orderId || "");
+  const sid = String(supplierStoreId || "");
+  if (!oid || !sid) throw new AppError("Invalid order", 400);
+  const row = await prisma.materialOrder.findUnique({ where: { id: oid } });
+  if (!row) throw new AppError("Material order not found", 404);
+  if (!materialOrderBelongsToSupplierStore(row, sid)) {
+    throw new AppError("Forbidden", 403);
+  }
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  if (String(payload.deliveryType || "").toUpperCase() !== "STORE_DELIVERY") {
+    throw new AppError("Tracking session applies to store delivery orders", 400);
+  }
+  if (String(row.fulfillmentStatus || "").toUpperCase() !== "OUT_FOR_DELIVERY") {
+    throw new AppError("Order must be out for delivery to start tracking", 400);
+  }
+  await trackingService.expireOldSessions();
+  const existing = await prisma.trackingSession.findFirst({
+    where: { orderId: oid, isActive: true },
+  });
+  if (existing) {
+    return {
+      activeTrackingId: existing.trackingId,
+      activeTrackingToken: existing.accessToken || undefined,
+    };
+  }
+  const singleUse = process.env.TRACKING_ACCESS_TOKEN_SINGLE_USE === "true";
+  const { trackingId, accessToken } = await trackingService.createActiveTrackingSession(oid, {
+    trackingSource: "supplier",
+    accessTokenSingleUse: singleUse,
+  });
+  return { activeTrackingId: trackingId, activeTrackingToken: accessToken };
+}
+
 async function listAllMaterialOrdersForAdmin({ limit = 200 } = {}) {
   const rows = await prisma.materialOrder.findMany({
     orderBy: { createdAt: "desc" },
@@ -1261,6 +1298,7 @@ module.exports = {
   listMaterialOrdersBySupplier,
   listMaterialOrdersBySupplierIdsForAdmin,
   listAllMaterialOrdersForAdmin,
+  ensureStoreDeliveryTrackingSession,
   normalizeOrder,
   ensureJobMaterialPurchaseOrder,
   getJobMaterialOrdersForJob,

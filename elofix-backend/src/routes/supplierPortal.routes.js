@@ -14,6 +14,7 @@ router.get("/inventory/categories", asyncHandler(portal.getInventoryCategories))
 router.post("/inventory/categories", asyncHandler(portal.postInventoryCategory));
 router.get("/orders", asyncHandler(portal.getOrders));
 router.patch("/orders/:orderId/fulfillment", asyncHandler(portal.patchFulfillment));
+router.post("/orders/:orderId/tracking/start", asyncHandler(portal.postEnsureTracking));
 router.post("/orders/:orderId/notes", asyncHandler(portal.postOrderNote));
 
 router.post(

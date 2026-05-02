@@ -114,9 +114,16 @@ export default function OrderDetails() {
 
   const effectiveOrderId = orderId || storeOrderId;
   const trackingRoomOrderId = order?.materialOrderId || effectiveOrderId;
-  const { liveLat, liveLng, lastPingAtMs, pollFailed } = useOrderLocationSocket({
+  const fulfillmentUForSocket = String(order?.fulfillmentStatus || '').toUpperCase();
+  const customerLiveTrackingEnabled = Boolean(
+    user &&
+      trackingRoomOrderId &&
+      order?.deliveryType !== 'SELF' &&
+      fulfillmentUForSocket === 'OUT_FOR_DELIVERY'
+  );
+  const { liveLat, liveLng, lastPingAtMs, pollFailed, isSocketReconnecting } = useOrderLocationSocket({
     orderId: trackingRoomOrderId,
-    enabled: Boolean(user && trackingRoomOrderId),
+    enabled: customerLiveTrackingEnabled,
   });
   const rawMapLat = liveLat ?? order?.driverLocation?.lat ?? null;
   const rawMapLng = liveLng ?? order?.driverLocation?.lng ?? null;
@@ -496,6 +503,7 @@ export default function OrderDetails() {
               mapDisplayLng={mapDisplayLng}
               lastDriverPingMs={mergedLastDriverPingMs}
               locationPollFailed={pollFailed}
+              socketReconnecting={isSocketReconnecting}
               onCancelDelivery={
                 order.deliveryState === 'PendingApproval' || (order.deliveryState === 'Approved' && !order.deliveryPaid)
                   ? handleCancelDelivery

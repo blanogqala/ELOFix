@@ -178,6 +178,39 @@ function MapBody({
     );
   }
 
+  if (!driverPos && !destForRoute) {
+    return (
+      <div className={cn('overflow-hidden rounded-lg border border-border bg-muted/20', className)}>
+        {trackingEnded ? (
+          <p className="border-b border-border bg-destructive/10 px-3 py-2 text-xs text-destructive">Tracking session ended</p>
+        ) : null}
+        {showWaitingBanner ? (
+          <p className="border-b border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            Waiting for driver location and a routable destination…
+          </p>
+        ) : null}
+        <div className="p-6 text-sm text-muted-foreground space-y-2">
+          <p className="font-medium text-foreground">Delivery map</p>
+          <p>
+            {destination
+              ? 'Destination address is loaded; once the driver shares GPS, the route will appear here.'
+              : 'Add a delivery address or enable maps API to preview the route.'}
+          </p>
+          {destination ? (
+            <p className="text-xs border-t border-border pt-2">
+              <span className="font-medium text-foreground">Address:</span> {destination}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  const nearBadge =
+    driverPos &&
+    destForRoute &&
+    haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng) < DRIVER_NEAR_METERS;
+
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
       {trackingEnded ? (
@@ -195,9 +228,9 @@ function MapBody({
           <span className="font-medium text-foreground">Delivering to:</span> {destination}
         </p>
       ) : null}
-      {etaText ? (
-        <p className="border-b border-border bg-primary/5 px-3 py-1.5 text-xs text-foreground">
-          <span className="font-medium">ETA:</span> {etaText}
+      {nearBadge ? (
+        <p className="border-b border-border bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+          Driver is near
         </p>
       ) : null}
       <GoogleMap
