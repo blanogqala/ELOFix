@@ -91,7 +91,7 @@ export default function AdminSuppliers() {
         </div>
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card className="border-border/80 shadow-sm">
+          <Card className="border-2 border-primary shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -104,7 +104,7 @@ export default function AdminSuppliers() {
               </div>
             </CardContent>
           </Card>
-          <Card className="border-border/80 shadow-sm">
+          <Card className="border-2 border-primary shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -120,7 +120,7 @@ export default function AdminSuppliers() {
               </div>
             </CardContent>
           </Card>
-          <Card className="border-border/80 shadow-sm">
+          <Card className="border-2 border-primary shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -138,7 +138,7 @@ export default function AdminSuppliers() {
               </div>
             </CardContent>
           </Card>
-          <Card className="border-border/80 shadow-sm">
+          <Card className="border-2 border-primary shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -154,7 +154,7 @@ export default function AdminSuppliers() {
           </Card>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border-2 border-primary bg-background p-2">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <Input
             placeholder="Search by store, business, or email…"
@@ -166,7 +166,7 @@ export default function AdminSuppliers() {
 
         {isLoading && <p className="text-muted-foreground">Loading…</p>}
 
-        <div className="rounded-lg border border-border overflow-hidden bg-card">
+        <div className="rounded-lg border-2 border-primary overflow-hidden bg-card">
           <Table>
             <TableHeader>
               <TableRow>
