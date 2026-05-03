@@ -59,8 +59,12 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   socket.on("join", (userId) => {
-    if (!userId) return;
-    socket.join(String(userId));
+    const requestedUserId = String(userId || "");
+    if (!requestedUserId || !socket.userId) return;
+    if (String(socket.userId) !== requestedUserId && String(socket.userRole || "").toUpperCase() !== "ADMIN") {
+      return;
+    }
+    socket.join(requestedUserId);
   });
 
   async function handleOrderJoin(orderId) {
