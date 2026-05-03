@@ -4,9 +4,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { JobLocation } from '@/types';
-import { MapPin, LocateFixed } from 'lucide-react';
+import { MapPin, LocateFixed, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { reverseGeocode } from '@/lib/api/geocode';
+import { reverseGeocode } from '@/utils/geocode';
 
 interface Step2LocationProps {
   location: Partial<JobLocation>;
@@ -37,27 +37,23 @@ export function Step2Location({ location, setLocation }: Step2LocationProps) {
         const { latitude, longitude } = pos.coords;
         try {
           const r = await reverseGeocode(latitude, longitude);
+          const areaVal = r.area ?? r.suburb ?? r.city;
           setLocation({
             ...location,
-            address: r.address,
+            address: r.fullAddress || r.address,
             city: r.city,
-            area: r.area || r.suburb,
-            suburb: r.suburb || r.area,
+            area: areaVal,
+            suburb: r.suburb ?? r.area ?? r.city,
             coordinates: r.coordinates,
           });
           toast({
             title: 'Location filled',
             description: 'Review and adjust the address if needed.',
           });
-        } catch (error) {
-          setLocation({
-            ...location,
-            coordinates: { lat: latitude, lng: longitude },
-          });
+        } catch {
           toast({
-            title: 'Could not resolve address',
-            description:
-              error instanceof Error ? error.message : 'Coordinates saved — please enter the address manually.',
+            title: 'Unable to fetch address',
+            description: 'Please enter your address manually.',
             variant: 'destructive',
           });
         } finally {
@@ -66,13 +62,16 @@ export function Step2Location({ location, setLocation }: Step2LocationProps) {
       },
       (err) => {
         setGeoLoading(false);
+        const denied = err?.code === 1;
         toast({
           title: 'Location unavailable',
-          description: err.message || 'Permission denied or timeout.',
+          description: denied
+            ? 'Location permission was denied. Enable it in your browser settings or enter the address manually.'
+            : err.message || 'Permission denied or timeout.',
           variant: 'destructive',
         });
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 60000 }
     );
   };
 
@@ -91,18 +90,17 @@ export function Step2Location({ location, setLocation }: Step2LocationProps) {
             type="button"
             variant="outline"
             size="sm"
-            className="gap-2"
+            className="gap-2 min-w-[12rem]"
             onClick={useCurrentLocation}
             disabled={geoLoading}
           >
-            <LocateFixed className="h-4 w-4" />
-            {geoLoading ? 'Getting location…' : 'Use Current Location'}
+            {geoLoading ? (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+            ) : (
+              <LocateFixed className="h-4 w-4 shrink-0" aria-hidden />
+            )}
+            {geoLoading ? 'Fetching address…' : 'Use Current Location'}
           </Button>
-          {location.coordinates && (
-            <span className="text-xs text-muted-foreground">
-              {location.coordinates.lat.toFixed(5)}, {location.coordinates.lng.toFixed(5)}
-            </span>
-          )}
         </div>
 
         <div>

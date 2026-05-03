@@ -3,6 +3,8 @@ const AppError = require("../utils/AppError");
 const UA = process.env.GEOCODE_USER_AGENT || "ELOFix/1.0";
 const CONTACT = process.env.GEOCODE_CONTACT_EMAIL || "";
 
+const FETCH_MS = Math.min(Math.max(Number(process.env.GEOCODE_FETCH_TIMEOUT_MS) || 20000, 5000), 60000);
+
 function pickCity(components) {
   if (!components || typeof components !== "object") return "";
   return (
@@ -27,40 +29,74 @@ function pickSuburb(components) {
   );
 }
 
+function buildLineFromComponents(c) {
+  if (!c || typeof c !== "object") return "";
+  const street = [c.house_number, c.road].filter(Boolean).join(" ").trim();
+  const suburb = String(pickSuburb(c) || "").trim();
+  const city = String(pickCity(c) || "").trim();
+  const state = String(c.state || "").trim();
+  const parts = [];
+  if (street) parts.push(street);
+  if (suburb) parts.push(suburb);
+  if (city) parts.push(city);
+  if (state && state !== city && !parts.includes(state)) parts.push(state);
+  return parts.filter(Boolean).join(", ");
+}
+
+/** City/town field: suburb missing → area uses city; city missing → use state */
+function deriveCityAndSuburb(components) {
+  const c = components || {};
+  let suburb = String(pickSuburb(c) || "").trim();
+  let city = String(pickCity(c) || "").trim();
+  if (!city) {
+    city = String(c.state || c.region || "").trim();
+  }
+  const area = suburb || city || undefined;
+  return { city, suburb: suburb || undefined, area };
+}
+
+function finalizeAddress(formatted, builtLine) {
+  const addr = String(formatted || builtLine || "").trim();
+  if (!addr) {
+    throw new AppError("Unable to resolve a readable address for these coordinates", 502);
+  }
+  return addr;
+}
+
 function mapOpenCage(data, lat, lng) {
   const first = data?.results?.[0];
   if (!first) {
     throw new AppError("No address found for these coordinates", 404);
   }
   const c = first.components || {};
-  const city = String(pickCity(c) || c.state || c.region || c.country || "").trim();
-  const suburb = String(pickSuburb(c) || "").trim();
-  const road = [c.house_number, c.road].filter(Boolean).join(" ").trim();
-  const address =
-    String(first.formatted || road || suburb || city || `${lat}, ${lng}`).trim() || `${lat}, ${lng}`;
+  const { city, suburb, area } = deriveCityAndSuburb(c);
+  const builtLine = buildLineFromComponents(c);
+  const formatted = String(first.formatted || "").trim();
+  const address = finalizeAddress(formatted || builtLine, builtLine);
 
   return {
+    fullAddress: address,
     address,
-    city: city || suburb || address.split(",")[0]?.trim() || "",
-    area: suburb || undefined,
-    suburb: suburb || undefined,
+    city: city || area || address.split(",")[0]?.trim() || "",
+    suburb,
+    area,
     coordinates: { lat, lng },
   };
 }
 
 function mapNominatim(data, lat, lng) {
   const a = data?.address || {};
-  const city = String(pickCity(a) || a.state || a.region || a.country || "").trim();
-  const suburb = String(pickSuburb(a) || "").trim();
-  const road = [a.house_number, a.road].filter(Boolean).join(" ").trim();
+  const { city, suburb, area } = deriveCityAndSuburb(a);
+  const builtLine = buildLineFromComponents(a);
   const display = String(data?.display_name || "").trim();
-  const address = road || display || `${lat}, ${lng}`;
+  const address = finalizeAddress(display || builtLine, builtLine);
 
   return {
-    address: display || address,
-    city: city || suburb || (display ? display.split(",")[1]?.trim() : "") || "",
-    area: suburb || undefined,
-    suburb: suburb || undefined,
+    fullAddress: address,
+    address,
+    city: city || area || (display ? display.split(",")[1]?.trim() : "") || "",
+    suburb,
+    area,
     coordinates: { lat, lng },
   };
 }
@@ -73,7 +109,10 @@ async function reverseGeocode(lat, lng) {
       const url = `https://api.opencagedata.com/geocode/v1/json?q=${q}&key=${encodeURIComponent(
         key.trim()
       )}&no_annotations=1`;
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(FETCH_MS),
+      });
       if (!res.ok) {
         throw new AppError(`OpenCage error (${res.status})`, 502);
       }
@@ -83,42 +122,29 @@ async function reverseGeocode(lat, lng) {
       }
       return mapOpenCage(data, lat, lng);
     } catch (err) {
-      // Fall through to Nominatim; do not fail user flow on provider issues.
       console.warn("[geocode] OpenCage reverse failed, trying fallback:", err?.message || err);
     }
   }
 
-  try {
-    const emailQuery = CONTACT ? `&email=${encodeURIComponent(CONTACT)}` : "";
-    const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(
-      lat
-    )}&lon=${encodeURIComponent(lng)}&format=json${emailQuery}`;
-    const res = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": UA,
-      },
-    });
-    if (!res.ok) {
-      throw new AppError(`Nominatim error (${res.status})`, 502);
-    }
-    const data = await res.json();
-    if (data.error) {
-      throw new AppError(String(data.error), 502);
-    }
-    return mapNominatim(data, lat, lng);
-  } catch (err) {
-    // Last-resort graceful fallback for production uptime.
-    console.warn("[geocode] Nominatim reverse failed, returning coordinate fallback:", err?.message || err);
-    const fallback = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    return {
-      address: fallback,
-      city: "",
-      area: undefined,
-      suburb: undefined,
-      coordinates: { lat, lng },
-    };
+  const emailQuery = CONTACT ? `&email=${encodeURIComponent(CONTACT)}` : "";
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(
+    lat
+  )}&lon=${encodeURIComponent(lng)}&format=json${emailQuery}`;
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": UA,
+    },
+    signal: AbortSignal.timeout(FETCH_MS),
+  });
+  if (!res.ok) {
+    throw new AppError("Unable to fetch address", 502);
   }
+  const data = await res.json();
+  if (data.error) {
+    throw new AppError("Unable to fetch address", 502);
+  }
+  return mapNominatim(data, lat, lng);
 }
 
 module.exports = {
