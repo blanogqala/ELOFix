@@ -16,10 +16,7 @@ export function resolveMaterialOrderForStoreOrder(
   if (byLink) return byLink;
   const byId = mos.find((m) => String(m.id) === String(storeOrder.orderId));
   if (byId) return byId;
-  const sameSupplier = mos
-    .filter((m) => String(m.supplierId) === String(storeOrder.storeId))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return sameSupplier[0] ?? null;
+  return null;
 }
 
 export function supplierFacingStatus(mo: JobMaterialOrderSnapshot | null): string {

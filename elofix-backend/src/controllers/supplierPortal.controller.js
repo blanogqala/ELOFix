@@ -27,6 +27,20 @@ async function getOrders(req, res) {
   const orders = await materialOrderService.listMaterialOrdersBySupplier(row.id, {
     fulfillmentStatus: status,
   });
+  try {
+    console.log(
+      JSON.stringify({
+        ns: "supplier_portal",
+        event: "get_orders_response",
+        supplierId: row.id,
+        count: orders.length,
+        statusFilter: status ?? null,
+        at: new Date().toISOString(),
+      })
+    );
+  } catch (_) {
+    /* ignore */
+  }
   res.json({ success: true, orders });
 }
 

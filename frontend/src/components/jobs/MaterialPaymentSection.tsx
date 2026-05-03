@@ -535,6 +535,7 @@ export function MaterialPaymentSection({
                     : job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId);
                   const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
                   const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
+                  const materialOrderKey = mo?.id ? String(mo.id) : storeOrder.orderId;
                   const batch = resolveMaterialBatchFromSnapshot(mo);
                   const driverLabel =
                     batch?.assignedDriverId &&
@@ -549,10 +550,12 @@ export function MaterialPaymentSection({
                     activeTrackingId?: string;
                     activeTrackingToken?: string;
                   };
+                  const trackingU = String(mo?.fulfillmentStatus || '').toUpperCase();
+                  const trackingEligibleForStore = trackingU === 'OUT_FOR_DELIVERY';
                   const fullHref = `/user/jobs/${job.id}/store-orders/${encodeURIComponent(storeOrder.orderId)}`;
                   return (
                     <MaterialCard
-                      key={storeOrder.orderId}
+                      key={materialOrderKey}
                       status="paid"
                       supplierName={storeName}
                       subtotal={itemsTotal}
@@ -613,8 +616,8 @@ export function MaterialPaymentSection({
                             mapLng={null}
                             destination={batch?.deliveryAddress || undefined}
                             destinationCoords={job.location?.coordinates ?? null}
-                            activeTrackingId={moExtra.activeTrackingId ?? null}
-                            activeTrackingToken={moExtra.activeTrackingToken ?? null}
+                            activeTrackingId={trackingEligibleForStore ? moExtra.activeTrackingId ?? null : null}
+                            activeTrackingToken={trackingEligibleForStore ? moExtra.activeTrackingToken ?? null : null}
                             supplierDisplayName={mo?.supplierName || storeName}
                             supplierAddress={
                               batch?.pickupAddress && batch.pickupAddress.trim() !== ''

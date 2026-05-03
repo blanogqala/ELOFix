@@ -170,6 +170,22 @@ function coerceAmt(v, d = 0) {
   return Number.isFinite(n) ? n : d;
 }
 
+function normalizeDeliveryStatus(status) {
+  const s = String(status || "Processing").trim();
+  const allowed = new Set([
+    "SelfCollect",
+    "PendingApproval",
+    "Approved",
+    "Rejected",
+    "Cancelled",
+    "InProgress",
+    "Processing",
+    "OnTheWay",
+    "Delivered",
+  ]);
+  return allowed.has(s) ? s : "Processing";
+}
+
 function normalizeOrder(input) {
   const items = Array.isArray(input.items) ? input.items : [];
   const delivery = input.delivery || {};
@@ -344,14 +360,17 @@ async function getMaterialOrderById(orderId) {
     base.supplierPhone = row.supplier.phone || undefined;
     base.supplierAddress = row.supplier.address || undefined;
   }
-  const track = await prisma.trackingSession.findFirst({
-    where: { orderId: String(orderId), isActive: true },
-    select: { trackingId: true, accessToken: true },
-  });
-  if (track?.trackingId) {
-    base.activeTrackingId = track.trackingId;
-    if (track.accessToken) {
-      base.activeTrackingToken = track.accessToken;
+  const fs = String(row.fulfillmentStatus || "").toUpperCase();
+  if (fs === "OUT_FOR_DELIVERY") {
+    const track = await prisma.trackingSession.findFirst({
+      where: { orderId: String(orderId), isActive: true },
+      select: { trackingId: true, accessToken: true },
+    });
+    if (track?.trackingId) {
+      base.activeTrackingId = track.trackingId;
+      if (track.accessToken) {
+        base.activeTrackingToken = track.accessToken;
+      }
     }
   }
 
@@ -414,6 +433,17 @@ async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
       if (!row || !row.payload || typeof row.payload !== "object") {
         throw new AppError("Material order not found", 404);
       }
+      if (String(row.fulfillmentStatus || "").toUpperCase() === "COMPLETED") {
+        throw new AppError("Cannot attach payment to completed order", 400);
+      }
+      console.log(
+        JSON.stringify({
+          ns: "material_order",
+          event: "delivery_payment_attach",
+          orderId: String(orderId),
+          at: new Date().toISOString(),
+        })
+      );
       const current = row.payload;
       const safeFee = Number(fee || current.deliveryFee || 0);
       const updated = {
@@ -545,6 +575,7 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
       if (next === "OUT_FOR_DELIVERY") {
         const pay = enriched && typeof enriched === "object" ? enriched : {};
         if (String(pay.deliveryType || "").toUpperCase() === "STORE_DELIVERY") {
+          await trackingService.deactivateSessionsForOrder(orderId, "before_supplier_out_for_delivery");
           const singleUse = process.env.TRACKING_ACCESS_TOKEN_SINGLE_USE === "true";
           const { trackingId, accessToken } = await trackingService.createActiveTrackingSession(orderId, {
             trackingSource: "supplier",
@@ -639,6 +670,7 @@ async function updateMaterialOrderFulfillmentByProvider(orderId, providerUserId,
     try {
       const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
       if (next === "OUT_FOR_DELIVERY") {
+        await trackingService.deactivateSessionsForOrder(orderId, "before_provider_out_for_delivery");
         await trackingService.ensureProviderTrackingLead(orderId);
       }
       if (row && ["OUT_FOR_DELIVERY", "COMPLETED", "FAILED", "DELAYED"].includes(next)) {
@@ -782,6 +814,15 @@ const ALLOWED_STATUS = [
 ];
 
 async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = {}) {
+  console.log(
+    JSON.stringify({
+      ns: "material_order",
+      event: "supplier_list_orders",
+      supplierId: String(supplierId || ""),
+      fulfillmentStatusFilter: fulfillmentStatus ?? null,
+      at: new Date().toISOString(),
+    })
+  );
   const raw =
     fulfillmentStatus !== undefined && fulfillmentStatus !== null && String(fulfillmentStatus).trim() !== ""
       ? String(fulfillmentStatus).toUpperCase()
@@ -873,13 +914,15 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
     select: { id: true, name: true, email: true, phone: true },
   });
   const uMap = new Map(users.map((u) => [u.id, u]));
-  return rows.map((r) => {
+  const result = rows.map((r) => {
     const base = enrichOrderFromDbRow(
       r,
       r.payload && typeof r.payload === "object" ? r.payload : {}
     );
     const u = uMap.get(r.userId);
     const t = trackMap.get(r.id);
+    const fs = String(r.fulfillmentStatus || "").toUpperCase();
+    const trackingAllowed = fs === "OUT_FOR_DELIVERY";
     return {
       ...base,
       customerId: r.userId,
@@ -889,10 +932,24 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       paymentStatus: r.paymentStatus,
       fulfillmentStatus: r.fulfillmentStatus,
       createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt || ""),
-      activeTrackingId: t?.trackingId || undefined,
-      activeTrackingToken: t?.accessToken || undefined,
+      activeTrackingId: trackingAllowed ? t?.trackingId || undefined : undefined,
+      activeTrackingToken: trackingAllowed ? t?.accessToken || undefined : undefined,
     };
   });
+  try {
+    console.log(
+      JSON.stringify({
+        ns: "material_order",
+        event: "supplier_list_orders_result",
+        supplierId: sid,
+        count: result.length,
+        at: new Date().toISOString(),
+      })
+    );
+  } catch (_) {
+    /* ignore */
+  }
+  return result;
 }
 
 async function listMaterialOrdersBySupplierIdsForAdmin(supplierIds) {
@@ -1018,7 +1075,8 @@ async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId) {
 
 /**
  * After customer pays job materials for a store: persist MaterialOrder for supplier dashboard & fulfillment.
- * Idempotent on (jobId, supplierId, customer userId, source=job_materials).
+ * Always uses job meta `storeOrders[].orderId` as the MaterialOrder primary key (one independent row per batch).
+ * Idempotent when the same store order id is paid again while the row is not yet completed.
  */
 async function ensureJobMaterialPurchaseOrder(params) {
   const {
@@ -1039,47 +1097,46 @@ async function ensureJobMaterialPurchaseOrder(params) {
   }
 
   const storeOrderId = jobStoreOrderId ? String(jobStoreOrderId).trim() : "";
-
-  if (storeOrderId) {
-    let byId = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
-    if (byId) {
-      if (!String(byId.supplierId || "").trim() && sid) {
-        byId = await prisma.materialOrder.update({
-          where: { id: byId.id },
-          data: { supplierId: sid },
-        });
-      }
-      return enrichOrderFromDbRow(
-        byId,
-        byId.payload && typeof byId.payload === "object" ? byId.payload : {}
-      );
-    }
+  if (!storeOrderId) {
+    throw new AppError("jobStoreOrderId is required to create a job material order", 400);
   }
 
-  if (!storeOrderId) {
-    const candidates = await prisma.materialOrder.findMany({
-      where: {
-        jobId: String(jobId),
-        userId: String(customerUserId),
-        source: "job_materials",
-      },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-    });
-    const existing = candidates.find((c) => materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(c, sid));
-    if (existing) {
-      let ex = existing;
-      if (!String(ex.supplierId || "").trim() && sid) {
-        ex = await prisma.materialOrder.update({
-          where: { id: ex.id },
-          data: { supplierId: sid },
-        });
-      }
-      return enrichOrderFromDbRow(
-        ex,
-        ex.payload && typeof ex.payload === "object" ? ex.payload : {}
-      );
+  const byId = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
+  if (byId) {
+    const fs = String(byId.fulfillmentStatus || "").toUpperCase();
+    if (fs === "COMPLETED") {
+      throw new AppError("Cannot attach payment to completed material order; a new store order id is required", 409);
     }
+    if (String(byId.userId || "") !== String(customerUserId)) {
+      throw new AppError("Material order customer mismatch", 403);
+    }
+    if (byId.jobId && String(byId.jobId) !== String(jobId)) {
+      throw new AppError("Material order job mismatch", 400);
+    }
+    if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(byId, sid)) {
+      throw new AppError("Material order supplier mismatch", 400);
+    }
+    let row = byId;
+    if (!String(row.supplierId || "").trim() && sid) {
+      row = await prisma.materialOrder.update({
+        where: { id: row.id },
+        data: { supplierId: sid },
+      });
+    }
+    console.log(
+      JSON.stringify({
+        ns: "material_order",
+        event: "ensure_job_material_order_idempotent",
+        materialOrderId: row.id,
+        jobId: String(jobId),
+        storeOrderId,
+        at: new Date().toISOString(),
+      })
+    );
+    return enrichOrderFromDbRow(
+      row,
+      row.payload && typeof row.payload === "object" ? row.payload : {}
+    );
   }
 
   const lines = Array.isArray(materialsLines) ? materialsLines : [];
@@ -1151,6 +1208,18 @@ async function ensureJobMaterialPurchaseOrder(params) {
       payload: finalPayload,
     },
   });
+
+  console.log(
+    JSON.stringify({
+      ns: "material_order",
+      event: "job_material_order_created",
+      materialOrderId: prismaRow.id,
+      jobId: String(jobId),
+      supplierId: sid,
+      storeOrderId,
+      at: new Date().toISOString(),
+    })
+  );
 
   await emitSupplierMaterialOrderCreated(sid, prismaRow.id);
   return finalPayload;

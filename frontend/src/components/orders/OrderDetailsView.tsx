@@ -371,7 +371,14 @@ export function OrderDetailsView({
           )}
 
           {showUnified ? (
-            <UnifiedTrackingSection
+            <>
+              {unifiedMode !== 'self_pickup' &&
+              !['OUT_FOR_DELIVERY', 'COMPLETED', 'FAILED', 'CANCELLED', 'DELAYED'].includes(fulfillmentU) ? (
+                <p className="text-sm text-muted-foreground rounded-md border border-border/80 bg-muted/20 px-3 py-2">
+                  Waiting for the supplier to prepare your order. Live tracking will be available once dispatch starts.
+                </p>
+              ) : null}
+              <UnifiedTrackingSection
               mode={unifiedMode}
               fulfillmentStatus={order.fulfillmentStatus}
               materialBatch={order.materialBatch ?? null}
@@ -383,8 +390,8 @@ export function OrderDetailsView({
               lastDriverPingMs={lastDriverPingMs ?? null}
               locationPollFailed={locationPollFailed}
               socketReconnecting={socketReconnecting}
-              activeTrackingId={order.activeTrackingId ?? null}
-              activeTrackingToken={order.activeTrackingToken ?? null}
+              activeTrackingId={fulfillmentU === 'OUT_FOR_DELIVERY' ? order.activeTrackingId ?? null : null}
+              activeTrackingToken={fulfillmentU === 'OUT_FOR_DELIVERY' ? order.activeTrackingToken ?? null : null}
               supplierDisplayName={order.supplierDisplayName || order.storeName}
               supplierPhone={order.supplierPhone}
               supplierAddress={order.supplierAddress}
@@ -398,6 +405,7 @@ export function OrderDetailsView({
               confirmDeliveryPending={confirmReceiptPending}
               confirmDeliveryLabel={confirmLabel}
             />
+            </>
           ) : null}
 
           {!noDeliverySelected &&

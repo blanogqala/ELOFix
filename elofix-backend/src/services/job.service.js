@@ -1517,7 +1517,10 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
     wantOrderId &&
     storeOrders.find((o) => String(o.storeId) === String(supplierId) && String(o.orderId) === wantOrderId);
   if (!order) {
-    order = storeOrders.find((o) => String(o.storeId) === String(supplierId) && !o.payment?.materialsPaid);
+    const unpaidForSupplier = storeOrders.filter(
+      (o) => String(o.storeId) === String(supplierId) && !o.payment?.materialsPaid
+    );
+    order = unpaidForSupplier.length ? unpaidForSupplier[unpaidForSupplier.length - 1] : undefined;
   }
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
     const legacyMaterials = Array.isArray(job.materials)
@@ -1531,6 +1534,7 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
       0
     );
     const legacyPaidAt = new Date().toISOString();
+    const legacyPaidOrderRef = { orderId: null };
     const legacyMeta = await mutateJobMeta(jobId, (m) => {
       const payment = {
         orderId: options.orderId || randomUUID(),
@@ -1558,6 +1562,7 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
         })),
         invoiceId: `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`,
       });
+      legacyPaidOrderRef.orderId = leg.orderId;
       leg.items = legacyMaterials.map((item) => ({
         productId: item.productId,
         name: item.name,
@@ -1595,7 +1600,10 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
       const materialOrderService = require("./materialOrder.service");
       const metaAfter = await getJobMeta(jobId);
       const sos = Array.isArray(metaAfter.storeOrders) ? metaAfter.storeOrders : [];
-      const so = sos.find((o) => String(o.storeId) === String(supplierId));
+      const so =
+        (legacyPaidOrderRef.orderId &&
+          sos.find((o) => String(o.orderId) === String(legacyPaidOrderRef.orderId))) ||
+        sos.find((o) => String(o.storeId) === String(supplierId));
       const invoiceRef = so?.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
       await materialOrderService.ensureJobMaterialPurchaseOrder({
         jobId,
@@ -1604,7 +1612,7 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
         supplierId,
         materialsLines: legacyMaterials,
         invoiceId: invoiceRef,
-        jobStoreOrderId: so?.orderId,
+        jobStoreOrderId: legacyPaidOrderRef.orderId || so?.orderId,
         jobDeliveryType: options.deliveryType || so?.deliveryType || "SELF",
         deliveryProviderId: options.deliveryProviderId || so?.deliveryProviderId,
         jobSiteAddress: jobSiteAddressFromRow(job),
