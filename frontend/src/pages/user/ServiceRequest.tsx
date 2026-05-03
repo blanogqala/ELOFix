@@ -461,6 +461,9 @@ export default function ServiceRequest() {
                           <span className="flex items-center gap-1">
                             <Star className="h-4 w-4 fill-accent text-accent" />
                             {provider.rating.toFixed(1)}
+                            <span className="text-muted-foreground text-xs">
+                              ({provider.totalReviews ?? provider.reviews?.length ?? 0})
+                            </span>
                           </span>
                           <span className="flex items-center gap-1 text-muted-foreground">
                             <Briefcase className="h-4 w-4" />

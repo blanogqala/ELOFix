@@ -88,6 +88,9 @@ interface OrderDetailsViewProps {
   onViewDeliveryInvoice?: (invoiceId: string) => void;
   onConfirmReceipt?: () => void;
   confirmReceiptPending?: boolean;
+  /** Brief highlight after successful customer confirmation */
+  highlightDeliveryComplete?: boolean;
+  onDismissDeliveryHighlight?: () => void;
 }
 
 const DELIVERY_STATE_BADGES: Record<
@@ -140,6 +143,8 @@ export function OrderDetailsView({
   onViewDeliveryInvoice,
   onConfirmReceipt,
   confirmReceiptPending,
+  highlightDeliveryComplete,
+  onDismissDeliveryHighlight,
 }: OrderDetailsViewProps) {
   const canonical: CanonicalDeliveryType =
     order.canonicalDelivery ||
@@ -160,8 +165,15 @@ export function OrderDetailsView({
   const mapLat = mapLatRaw != null && Number.isFinite(Number(mapLatRaw)) ? Number(mapLatRaw) : null;
   const mapLng = mapLngRaw != null && Number.isFinite(Number(mapLngRaw)) ? Number(mapLngRaw) : null;
 
+  const isPickupCanonical = canonical === 'pickup';
   const showConfirmReceipt =
-    fulfillmentU === 'COMPLETED' && order.deliveryConfirmed !== true && Boolean(onConfirmReceipt);
+    Boolean(onConfirmReceipt) &&
+    order.deliveryConfirmed !== true &&
+    ((fulfillmentU === 'READY' && isPickupCanonical) || fulfillmentU === 'COMPLETED');
+
+  const confirmLabel = isPickupCanonical ? 'Confirm collection' : 'Confirm delivery';
+
+  const trackingLocked = fulfillmentU === 'COMPLETED' && order.deliveryConfirmed === true;
 
   const deliveryState = order.deliveryState || 'Processing';
   const stateBadge = DELIVERY_STATE_BADGES[deliveryState] || DELIVERY_STATE_BADGES.Processing;
@@ -378,9 +390,13 @@ export function OrderDetailsView({
               supplierAddress={order.supplierAddress}
               courierName={order.providerName ?? null}
               courierVehicle={order.providerVehicle ?? null}
+              trackingLocked={trackingLocked}
+              showDeliverySuccessHighlight={Boolean(highlightDeliveryComplete)}
+              onDismissDeliverySuccess={onDismissDeliveryHighlight}
               showConfirmDelivery={showConfirmReceipt}
               onConfirmDelivery={onConfirmReceipt}
               confirmDeliveryPending={confirmReceiptPending}
+              confirmDeliveryLabel={confirmLabel}
             />
           ) : null}
 

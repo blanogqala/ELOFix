@@ -26,5 +26,10 @@ router.patch(
   authorizeRoles("CUSTOMER"),
   asyncHandler(materialOrderController.confirmDeliveryReceipt)
 );
+router.patch(
+  "/:id/confirm-collection",
+  authorizeRoles("CUSTOMER"),
+  asyncHandler(materialOrderController.confirmDeliveryReceipt)
+);
 
 module.exports = router;

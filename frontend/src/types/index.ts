@@ -80,6 +80,8 @@ export interface Provider {
   /** Backend-computed; all required sections complete */
   profileCompleted?: boolean;
   rating: number;
+  /** Job reviews + material delivery ratings combined (matches provider API). */
+  totalReviews?: number;
   completedJobs: number;
   responseTime: string;
   bio?: string;

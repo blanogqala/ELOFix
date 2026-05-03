@@ -106,7 +106,13 @@ export async function patchProviderMaterialOrderFulfillment(
   return data?.order ?? null;
 }
 
-export async function confirmMaterialOrderDeliveryReceipt(orderId: string): Promise<MaterialOrder | null> {
-  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery-receipt`, {});
+/** Customer confirms pickup (READY→COMPLETED) or delivery receipt after COMPLETED. */
+export async function confirmMaterialOrderCollection(orderId: string): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/confirm-collection`, {});
   return data?.order ?? null;
+}
+
+/** @deprecated Use confirmMaterialOrderCollection — same backend, legacy path. */
+export async function confirmMaterialOrderDeliveryReceipt(orderId: string): Promise<MaterialOrder | null> {
+  return confirmMaterialOrderCollection(orderId);
 }

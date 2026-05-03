@@ -1,13 +1,20 @@
 import { cn } from '@/lib/utils';
-import { Check } from 'lucide-react';
+import {
+  BadgeCheck,
+  Check,
+  ClipboardList,
+  CircleCheck,
+  Package,
+  Truck,
+} from 'lucide-react';
 import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
 
 const STEPS = [
-  { key: 'ACCEPTED', label: 'Accepted' },
-  { key: 'PREPARING', label: 'Preparing' },
-  { key: 'READY', label: 'Ready for collection' },
-  { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
-  { key: 'COMPLETED', label: 'Completed' },
+  { key: 'ACCEPTED', label: 'Accepted', Icon: BadgeCheck },
+  { key: 'PREPARING', label: 'Preparing', Icon: ClipboardList },
+  { key: 'READY', label: 'Ready for collection', Icon: Package },
+  { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery', Icon: Truck },
+  { key: 'COMPLETED', label: 'Completed', Icon: CircleCheck },
 ] as const;
 
 /** Monotonic progress for the five customer-facing fulfillment phases (DELAYED shares “out for delivery”). */
@@ -69,6 +76,7 @@ export function FulfillmentPhaseTimeline({
         {STEPS.map((step, i) => {
           const done = stepDone(rank, i);
           const active = stepCurrent(rank, i);
+          const Glyph = step.Icon;
           return (
             <li key={step.key} className="flex items-center gap-2 text-xs">
               <span
@@ -81,7 +89,11 @@ export function FulfillmentPhaseTimeline({
                       : 'border-muted-foreground/30 text-muted-foreground'
                 )}
               >
-                {done ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
+                {done ? (
+                  <Check className="h-3 w-3" strokeWidth={3} />
+                ) : (
+                  <Glyph className={cn('h-3 w-3', active ? 'opacity-100' : 'opacity-40')} aria-hidden />
+                )}
               </span>
               <span
                 className={cn(

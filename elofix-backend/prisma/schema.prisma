@@ -78,7 +78,9 @@ model Provider {
   skills            String[]
   location          String    @default("UNKNOWN")
   bio               String?
+  /// Combined average: job reviews + material-order delivery ratings (see providerAggregateRating sync)
   rating            Float     @default(0)
+  totalReviews      Int       @default(0)
   approved          Boolean   @default(false)
   profileCompleted  Boolean   @default(false)
   onboardingStep    Int?
@@ -100,6 +102,7 @@ model Provider {
   withdrawalRequests     WithdrawalRequest[]
   categorySuggestions    CategorySuggestion[]    @relation("ProviderCategorySuggestions")
   earnings               Earning[]
+  materialOrderRatings   MaterialOrderRating[]
 }
 
 model WorkPost {
@@ -450,6 +453,7 @@ model MaterialOrder {
   payload                Json
   createdAt              DateTime                   @default(now())
   trackingSessions     TrackingSession[]
+  materialRating       MaterialOrderRating?
 
   @@index([userId])
   @@index([supplierId])
@@ -457,6 +461,21 @@ model MaterialOrder {
   @@index([createdAt])
   @@index([jobId])
   @@index([jobId, supplierId])
+}
+
+/// Customer rating for a completed / confirmed material-order delivery (courier / delivery experience).
+model MaterialOrderRating {
+  id         String        @id @default(uuid())
+  orderId    String        @unique
+  order      MaterialOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  providerId String
+  provider   Provider      @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  rating     Int
+  comment    String?
+  createdAt  DateTime      @default(now())
+
+  @@index([providerId])
+  @@index([createdAt])
 }
 
 /// Public driver tracking link (supplier / courier); one active session per order when delivery starts.

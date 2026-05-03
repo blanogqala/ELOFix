@@ -71,7 +71,8 @@ export function ProviderDetailModal({
                   <Star className="h-4 w-4 fill-accent text-accent" />
                   <span className="font-medium">{provider.rating.toFixed(1)}</span>
                   <span className="text-muted-foreground text-sm">
-                    ({provider.reviews?.length || 0} reviews)
+                    ({provider.totalReviews ?? provider.reviews?.length ?? 0}{' '}
+                    {(provider.totalReviews ?? provider.reviews?.length ?? 0) === 1 ? 'review' : 'reviews'})
                   </span>
                 </span>
                 <span className="flex items-center gap-1 text-sm text-muted-foreground">

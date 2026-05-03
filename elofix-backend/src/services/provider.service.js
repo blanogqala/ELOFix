@@ -233,6 +233,7 @@ function toProviderResponse(
     profileCompleted: profile.profileCompleted,
     blocked: profile.blocked,
     rating: Number(profile.rating) || 0,
+    totalReviews: Number(profile.totalReviews) || 0,
     completedJobs,
     responseTime: "N/A",
     bio: profile.bio || "",

@@ -19,6 +19,7 @@ const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
+const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
 
 const jobInclude = {
   customer: {
@@ -1367,15 +1368,7 @@ async function confirmJobCompletion(jobId, rating, review) {
       select: { id: true },
     });
     if (pRow2) {
-      const agg = await prisma.review.aggregate({
-        where: { job: { providerId: job.providerId } },
-        _avg: { rating: true },
-      });
-      const nextRating = agg._avg.rating != null ? Number(agg._avg.rating) : r;
-      await prisma.provider.update({
-        where: { id: pRow2.id },
-        data: { rating: nextRating },
-      });
+      await syncProviderAggregateRating(pRow2.id);
     }
   }
 

@@ -5,10 +5,7 @@ const prisma = require("../config/prisma");
 const supplierService = require("./supplier.service");
 const notificationService = require("./notification.service");
 const trackingService = require("./tracking.service");
-const {
-  payloadBackedSupplierId,
-  materialOrderBelongsToSupplierStore,
-} = require("../utils/materialOrderSupplier.util");
+const materialOrderSupplierUtil = require("../utils/materialOrderSupplier.util");
 
 function emitMaterialOrderFulfillmentToCustomer(userId, payload) {
   try {
@@ -312,7 +309,7 @@ async function autoConfirmStaleDeliveriesBatch() {
     const rows = await prisma.materialOrder.findMany({
       where: { fulfillmentStatus: "COMPLETED" },
       take: 300,
-      orderBy: { updatedAt: "desc" },
+      orderBy: { createdAt: "desc" },
     });
     for (const row of rows) {
       await maybeAutoConfirmStaleDelivery(row);
@@ -330,7 +327,7 @@ async function getMaterialOrderById(orderId) {
     },
   });
   if (!row || !row.payload || typeof row.payload !== "object") return null;
-  const pb = payloadBackedSupplierId(row.payload);
+  const pb = materialOrderSupplierUtil.payloadBackedSupplierId(row.payload);
   if (!String(row.supplierId || "").trim() && pb) {
     row = await prisma.materialOrder.update({
       where: { id: row.id },
@@ -357,6 +354,7 @@ async function getMaterialOrderById(orderId) {
       base.activeTrackingToken = track.accessToken;
     }
   }
+
   return base;
 }
 
@@ -478,7 +476,7 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
       let row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row) throw new AppError("Material order not found", 404);
       const expectedSup = String(supplierId || "").trim();
-      if (!materialOrderBelongsToSupplierStore(row, expectedSup)) {
+      if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(row, expectedSup)) {
         throw new AppError("Forbidden", 403);
       }
       if (String(row.supplierId || "").trim() !== expectedSup) {
@@ -667,28 +665,108 @@ async function updateMaterialOrderFulfillmentByProvider(orderId, providerUserId,
   });
 }
 
+function orderIsPickupFromRow(row) {
+  if (!row || !row.payload || typeof row.payload !== "object") return false;
+  const payload = row.payload;
+  const batch = payload.materialBatch && typeof payload.materialBatch === "object" ? payload.materialBatch : {};
+  const fromBatch = String(batch.deliveryType || "").toLowerCase();
+  if (fromBatch === "pickup") return true;
+  if (fromBatch === "delivery") return false;
+  return deliveryJobTypeToCanonical(payload.delivery?.type || payload.deliveryType) === "pickup";
+}
+
 async function confirmDeliveryReceipt(orderId, customerUserId) {
-  return prisma.$transaction(
+  const oid = String(orderId || "").trim();
+  const trxResult = await prisma.$transaction(
     async (tx) => {
-      const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
+      const row = await tx.materialOrder.findUnique({ where: { id: oid } });
       if (!row || !row.payload || typeof row.payload !== "object") {
         throw new AppError("Material order not found", 404);
       }
       if (String(row.userId) !== String(customerUserId || "")) {
         throw new AppError("Forbidden", 403);
       }
-      if (String(row.fulfillmentStatus || "") !== "COMPLETED") {
-        throw new AppError("Delivery is not complete yet", 400);
+      const fs = String(row.fulfillmentStatus || "").toUpperCase();
+      const pickup = orderIsPickupFromRow(row);
+
+      if (fs === "COMPLETED") {
+        const payload = { ...row.payload, deliveryConfirmed: true };
+        await tx.materialOrder.update({
+          where: { id: oid },
+          data: { payload },
+        });
+        return { mode: "receipt_ack", row, payload };
       }
-      const payload = { ...row.payload, deliveryConfirmed: true };
-      await tx.materialOrder.update({
-        where: { id: orderId },
-        data: { payload },
-      });
-      return enrichOrderFromDbRow({ ...row, payload }, payload);
+
+      if (fs === "READY" && pickup) {
+        const ts = new Date().toISOString();
+        let payload = { ...row.payload };
+        payload = patchPayloadForFulfillmentDelivery(payload, "COMPLETED");
+        payload.deliveryConfirmed = true;
+        const mb = mergeMaterialBatch(payload, { ...row, fulfillmentStatus: "COMPLETED" }, {
+          status: "delivered",
+          timestamps: { deliveredAt: ts, pickedUpAt: ts },
+        });
+        payload.materialBatch = mb;
+        await tx.materialOrder.update({
+          where: { id: oid },
+          data: {
+            fulfillmentStatus: "COMPLETED",
+            payload,
+          },
+        });
+        return {
+          mode: "pickup_to_completed",
+          row: { ...row, fulfillmentStatus: "COMPLETED", payload },
+          payload,
+        };
+      }
+
+      throw new AppError("Delivery is not ready to confirm yet", 400);
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
   );
+
+  if (trxResult.mode === "pickup_to_completed") {
+    try {
+      const fullRow = await prisma.materialOrder.findUnique({ where: { id: oid } });
+      if (fullRow) {
+        await notifyCustomerFulfillmentStep(fullRow, "COMPLETED");
+        const p =
+          trxResult.payload && typeof trxResult.payload === "object"
+            ? trxResult.payload
+            : {};
+        emitMaterialOrderFulfillmentToCustomer(fullRow.userId, {
+          orderId: oid,
+          jobId: fullRow.jobId || null,
+          fulfillmentStatus: "COMPLETED",
+          materialBatch: p.materialBatch,
+        });
+      }
+    } catch (e) {
+      console.error("confirmDeliveryReceipt notify emit", e);
+    }
+    try {
+      await trackingService.deactivateSessionsForOrder(oid, "COMPLETED");
+    } catch (e) {
+      console.error("confirmDeliveryReceipt tracking cleanup", e);
+    }
+  }
+
+  const mergedRow =
+    trxResult.mode === "pickup_to_completed"
+      ? {
+          ...trxResult.row,
+          fulfillmentStatus: "COMPLETED",
+          payload: trxResult.payload,
+          id: oid,
+        }
+      : {
+          ...trxResult.row,
+          payload: trxResult.payload,
+          id: oid,
+        };
+  return enrichOrderFromDbRow(mergedRow, trxResult.payload);
 }
 
 const ALLOWED_STATUS = [
@@ -737,7 +815,7 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       supplier: { select: { id: true, name: true, businessName: true } },
     },
   });
-  const nullMatches = nullSupplierCandidates.filter((r) => materialOrderBelongsToSupplierStore(r, sid));
+  const nullMatches = nullSupplierCandidates.filter((r) => materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(r, sid));
 
   /** Column set to a different Supplier.id than payload store (data drift). */
   const wrongColWhere = {
@@ -756,7 +834,7 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       supplier: { select: { id: true, name: true, businessName: true } },
     },
   });
-  const wrongColMatches = wrongColCandidates.filter((r) => materialOrderBelongsToSupplierStore(r, sid));
+  const wrongColMatches = wrongColCandidates.filter((r) => materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(r, sid));
 
   const toRepair = [...nullMatches, ...wrongColMatches];
   if (toRepair.length > 0) {
@@ -884,7 +962,7 @@ async function appendSupplierOrderNote(orderId, userId, message) {
       if (!row) {
         throw new AppError("Material order not found", 404);
       }
-      if (!materialOrderBelongsToSupplierStore(row, supplier.id)) {
+      if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(row, supplier.id)) {
         throw new AppError("Forbidden", 403);
       }
       if (String(row.supplierId || "").trim() !== String(supplier.id || "")) {
@@ -988,7 +1066,7 @@ async function ensureJobMaterialPurchaseOrder(params) {
       orderBy: { createdAt: "desc" },
       take: 20,
     });
-    const existing = candidates.find((c) => materialOrderBelongsToSupplierStore(c, sid));
+    const existing = candidates.find((c) => materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(c, sid));
     if (existing) {
       let ex = existing;
       if (!String(ex.supplierId || "").trim() && sid) {
@@ -1212,7 +1290,7 @@ async function ensureStoreDeliveryTrackingSession(orderId, supplierStoreId) {
   if (!oid || !sid) throw new AppError("Invalid order", 400);
   const row = await prisma.materialOrder.findUnique({ where: { id: oid } });
   if (!row) throw new AppError("Material order not found", 404);
-  if (!materialOrderBelongsToSupplierStore(row, sid)) {
+  if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(row, sid)) {
     throw new AppError("Forbidden", 403);
   }
   const payload = row.payload && typeof row.payload === "object" ? row.payload : {};

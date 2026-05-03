@@ -48,6 +48,7 @@ import {
   FileText, 
   Clock, 
   CheckCircle,
+  Star,
   User,
   XCircle,
   X,
@@ -813,7 +814,21 @@ export default function JobDetail() {
                     </div>
                     <div>
                       <p className="font-medium">{job.providerName}</p>
-                      <p className="text-sm text-muted-foreground">Click to view profile</p>
+                      {provider ? (
+                        <p className="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1 text-foreground font-medium tabular-nums">
+                            <Star className="h-3.5 w-3.5 fill-accent text-accent shrink-0" aria-hidden />
+                            {provider.rating.toFixed(1)}
+                          </span>
+                          <span>
+                            {(provider.totalReviews ?? provider.reviews?.length ?? 0).toLocaleString()} review
+                            {(provider.totalReviews ?? provider.reviews?.length ?? 0) === 1 ? '' : 's'}
+                          </span>
+                          <span className="text-muted-foreground">· Tap for full profile</span>
+                        </p>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Click to view profile</p>
+                      )}
                     </div>
                   </div>
                 ) : (

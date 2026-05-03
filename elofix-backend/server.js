@@ -7,6 +7,7 @@ const prisma = require("./src/config/prisma");
 const { startStuckWithdrawalRecovery } = require("./src/jobs/stuckWithdrawalRecovery");
 const trackingService = require("./src/services/tracking.service");
 const materialOrderService = require("./src/services/materialOrder.service");
+const { ensureProviderTotalReviewsColumn } = require("./src/utils/ensureDbSchemaPatches");
 
 const PORT = Number(process.env.PORT) || 5000;
 
@@ -106,8 +107,7 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+function startIntervalsAfterListen() {
   startStuckWithdrawalRecovery();
   void trackingService.expireOldSessions();
   setInterval(() => {
@@ -116,6 +116,18 @@ server.listen(PORT, () => {
   setInterval(() => {
     void materialOrderService.autoConfirmStaleDeliveriesBatch();
   }, 60 * 60 * 1000).unref();
+}
+
+(async () => {
+  await ensureProviderTotalReviewsColumn();
+
+  server.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+    startIntervalsAfterListen();
+  });
+})().catch((e) => {
+  console.error("[startup] prereq failed", e);
+  process.exit(1);
 });
 
 function shutdown(signal) {

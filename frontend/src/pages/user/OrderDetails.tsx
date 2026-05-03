@@ -12,7 +12,7 @@ import {
   approveMaterialOrderDelivery,
   rejectMaterialOrderDelivery,
   payMaterialOrderDelivery,
-  confirmMaterialOrderDeliveryReceipt,
+  confirmMaterialOrderCollection,
 } from '@/lib/api/materialOrders';
 import {
   getJobsByUser,
@@ -86,6 +86,7 @@ function mergeTrackingFields(
     activeTrackingId: typeof mo.activeTrackingId === 'string' ? mo.activeTrackingId : undefined,
     activeTrackingToken: typeof mo.activeTrackingToken === 'string' ? mo.activeTrackingToken : undefined,
     materialOrderId: typeof mo.id === 'string' ? mo.id : normalized.materialOrderId,
+    jobId: typeof mo.jobId === 'string' && mo.jobId.trim() ? mo.jobId : normalized.jobId,
     destinationCoords: dest ?? undefined,
     driverLocation:
       dl && Number.isFinite(Number(dl.lat)) && Number.isFinite(Number(dl.lng))
@@ -112,6 +113,7 @@ export default function OrderDetails() {
   const [storeDeliveryFee, setStoreDeliveryFee] = useState(0);
   const [receiptPending, setReceiptPending] = useState(false);
   const [deliveryFeedbackOpen, setDeliveryFeedbackOpen] = useState(false);
+  const [deliveryJustCompleted, setDeliveryJustCompleted] = useState(false);
   const loadOrderRef = useRef<(() => Promise<void>) | null>(null);
 
   const effectiveOrderId = orderId || storeOrderId;
@@ -208,6 +210,7 @@ export default function OrderDetails() {
           deliveryInvoiceId: found.deliveryInvoiceId,
           providerName: provider?.name,
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
+          jobId: typeof (found as { jobId?: string }).jobId === 'string' ? (found as { jobId?: string }).jobId : undefined,
         };
         setOrder(mergeTrackingFields(normalized, found as unknown as Record<string, unknown>));
         setJobContext(null);
@@ -458,12 +461,16 @@ export default function OrderDetails() {
     if (!effectiveOrderId) return;
     setReceiptPending(true);
     try {
-      await confirmMaterialOrderDeliveryReceipt(effectiveOrderId);
-      toast({ title: 'Thanks!', description: 'Delivery receipt confirmed.' });
+      await confirmMaterialOrderCollection(effectiveOrderId);
+      toast({
+        title: 'Delivery completed successfully',
+        description: 'Thanks — share quick feedback below if you have a moment.',
+      });
+      setDeliveryJustCompleted(true);
       await loadOrder();
       setDeliveryFeedbackOpen(true);
     } catch {
-      toast({ title: 'Error', description: 'Could not confirm receipt.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Could not confirm.', variant: 'destructive' });
     } finally {
       setReceiptPending(false);
     }
@@ -507,6 +514,8 @@ export default function OrderDetails() {
               lastDriverPingMs={mergedLastDriverPingMs}
               locationPollFailed={pollFailed}
               socketReconnecting={isSocketReconnecting}
+              highlightDeliveryComplete={deliveryJustCompleted}
+              onDismissDeliveryHighlight={() => setDeliveryJustCompleted(false)}
               onCancelDelivery={
                 order.deliveryState === 'PendingApproval' || (order.deliveryState === 'Approved' && !order.deliveryPaid)
                   ? handleCancelDelivery
@@ -554,12 +563,12 @@ export default function OrderDetails() {
                   ? order.providerName || 'your courier'
                   : order.supplierDisplayName || order.storeName || 'the store'
               }
-              onSubmitFeedback={() => {
-                toast({
-                  title: 'Feedback submitted',
-                  description: 'Thank you — your ratings help everyone on EloFix.',
-                });
-              }}
+              materialOrderId={order.materialOrderId || effectiveOrderId || null}
+              canSubmit={
+                Boolean(order.jobId) &&
+                String(order.fulfillmentStatus || '').toUpperCase() === 'COMPLETED' &&
+                order.deliveryConfirmed === true
+              }
             />
           </>
         ) : (
