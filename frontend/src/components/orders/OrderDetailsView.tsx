@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Truck, Store, FileText, CreditCard, RefreshCw, XCircle } from 'lucide-react';
-import { DeliveryMap } from '@/components/tracking/DeliveryMap';
-import { FulfillmentPhaseTimeline } from '@/components/tracking/FulfillmentPhaseTimeline';
+import { UnifiedTrackingSection, type UnifiedDeliveryMode } from '@/components/tracking/UnifiedTrackingSection';
 import { canonicalDeliveryLabel } from '@/lib/deliveryTypes';
 import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
 import { cn } from '@/lib/utils';
@@ -108,7 +106,7 @@ const DELIVERY_STATE_BADGES: Record<
 };
 
 function deliveryTrackingSourceLabel(order: NormalizedOrder): string {
-  if (order.deliveryType === 'SELF') return 'Pickup by You';
+  if (order.deliveryType === 'SELF') return 'Pickup';
   if (order.deliveryType === 'STORE') return 'Delivered by Store';
   if (order.deliveryType === 'PROVIDER') return 'Delivered by Provider';
   return '—';
@@ -152,54 +150,15 @@ export function OrderDetailsView({
         : 'supplier_delivery');
 
   const fulfillmentU = String(order.fulfillmentStatus || '').toUpperCase();
-  const showLiveMap =
+  const fulfillmentAllowsLiveMap =
     fulfillmentU === 'OUT_FOR_DELIVERY' &&
     canonical !== 'pickup' &&
-    !['FAILED', 'CANCELLED'].includes(fulfillmentU);
+    !['FAILED', 'CANCELLED', 'DELAYED'].includes(fulfillmentU);
 
-  const mapLat = mapDisplayLat ?? liveDriverLat;
-  const mapLng = mapDisplayLng ?? liveDriverLng;
-
-  const [driverNearby, setDriverNearby] = useState(false);
-  const onDriverProximity = useCallback((v: { near: boolean }) => {
-    setDriverNearby(v.near);
-  }, []);
-
-  useEffect(() => {
-    if (!showLiveMap) setDriverNearby(false);
-  }, [showLiveMap]);
-
-  useEffect(() => {
-    if (!driverNearby) return;
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    try {
-      new Notification('EloFix', { body: 'Your driver is nearby.' });
-    } catch {
-      /* ignore */
-    }
-  }, [driverNearby]);
-
-  const hasLiveCoords =
-    (mapLat != null &&
-      mapLng != null &&
-      Number.isFinite(Number(mapLat)) &&
-      Number.isFinite(Number(mapLng))) ||
-    (liveDriverLat != null &&
-      liveDriverLng != null &&
-      Number.isFinite(Number(liveDriverLat)) &&
-      Number.isFinite(Number(liveDriverLng))) ||
-    (order.driverLocation?.lat != null &&
-      order.driverLocation?.lng != null &&
-      Number.isFinite(Number(order.driverLocation.lat)) &&
-      Number.isFinite(Number(order.driverLocation.lng)));
-
-  const OFFLINE_MS = 30_000;
-  const driverOffline =
-    showLiveMap && lastDriverPingMs != null && Date.now() - lastDriverPingMs > OFFLINE_MS;
-  const offlineSeconds =
-    driverOffline && lastDriverPingMs != null
-      ? Math.max(0, Math.floor((Date.now() - lastDriverPingMs) / 1000))
-      : 0;
+  const mapLatRaw = mapDisplayLat ?? liveDriverLat ?? order.driverLocation?.lat ?? null;
+  const mapLngRaw = mapDisplayLng ?? liveDriverLng ?? order.driverLocation?.lng ?? null;
+  const mapLat = mapLatRaw != null && Number.isFinite(Number(mapLatRaw)) ? Number(mapLatRaw) : null;
+  const mapLng = mapLngRaw != null && Number.isFinite(Number(mapLngRaw)) ? Number(mapLngRaw) : null;
 
   const showConfirmReceipt =
     fulfillmentU === 'COMPLETED' && order.deliveryConfirmed !== true && Boolean(onConfirmReceipt);
@@ -208,23 +167,19 @@ export function OrderDetailsView({
   const stateBadge = DELIVERY_STATE_BADGES[deliveryState] || DELIVERY_STATE_BADGES.Processing;
   const showTracking = order.deliveryType !== 'SELF' && order.deliveryPaid;
 
-  let trackingHint: string | null = null;
-  if (canonical !== 'pickup' && showTracking) {
-    if (fulfillmentU === 'READY' && order.deliveryType === 'PROVIDER') {
-      trackingHint = 'Waiting for driver to start delivery.';
-    } else if (['ACCEPTED', 'PREPARING'].includes(fulfillmentU)) {
-      trackingHint = 'Driver is preparing your order.';
-    } else if (fulfillmentU === 'COMPLETED') {
-      trackingHint = 'Delivery completed.';
-    }
-  }
+  const unifiedMode: UnifiedDeliveryMode =
+    canonical === 'pickup' ? 'self_pickup' : canonical === 'supplier_delivery' ? 'store_delivery' : 'provider_delivery';
 
   const isPendingApproval = deliveryState === 'PendingApproval';
   const isApproved = deliveryState === 'Approved' && !order.deliveryPaid;
   const isRejected = deliveryState === 'Rejected';
   const isCancelled = deliveryState === 'Cancelled';
   const noDeliverySelected = isCancelled || !order.deliveryType;
-  const isInProgressOrDelivered = deliveryState === 'InProgress' || deliveryState === 'Delivered' || deliveryState === 'OnTheWay';
+  const isInProgressOrDelivered =
+    deliveryState === 'InProgress' || deliveryState === 'Delivered' || deliveryState === 'OnTheWay';
+  const materialsOk = order.materialsPaid !== false;
+  const showUnified = !noDeliverySelected && materialsOk;
+  const unifiedMapActive = Boolean(showTracking && fulfillmentAllowsLiveMap);
 
   return (
     <div className="space-y-6">
@@ -265,7 +220,6 @@ export function OrderDetailsView({
                 </Badge>
               ) : null}
             </div>
-            {trackingHint ? <p className="text-xs text-muted-foreground mt-2">{trackingHint}</p> : null}
           </div>
 
           <div className="space-y-2">
@@ -307,66 +261,17 @@ export function OrderDetailsView({
         </CardContent>
       </Card>
 
-      {showConfirmReceipt ? (
-        <Card>
-          <CardContent className="pt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Your order was marked delivered. Please confirm you received the materials.
-            </p>
-            <Button className="btn-accent shrink-0" onClick={onConfirmReceipt} disabled={confirmReceiptPending}>
-              {confirmReceiptPending ? 'Confirming…' : 'Confirm receipt'}
-            </Button>
-          </CardContent>
-        </Card>
-      ) : null}
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Truck className="h-5 w-5 text-primary" />
             <span>Delivery</span>
           </CardTitle>
+          <p className="text-xs text-muted-foreground pt-1">
+            {canonicalDeliveryLabel(canonical)} · {deliveryTrackingSourceLabel(order)}
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="rounded-lg border border-border bg-muted/15 p-4 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery status</p>
-            <p className="text-sm font-medium">{deliveryTrackingSourceLabel(order)}</p>
-            <div className="flex flex-wrap gap-2 items-center">
-              <Badge variant="outline" className="font-mono text-xs">
-                {order.deliveryType}
-              </Badge>
-              {order.fulfillmentStatus ? (
-                <Badge className={cn('text-xs', fulfillmentMaterialBadgeClass(order.fulfillmentStatus))}>
-                  {fulfillmentStatusBadgeLabel(order.fulfillmentStatus)}
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="text-xs">
-                  Awaiting fulfillment update
-                </Badge>
-              )}
-            </div>
-            {order.deliveryType !== 'SELF' ? (
-              <p className="text-xs text-muted-foreground">
-                Tracking source:{' '}
-                <span className="font-medium text-foreground">
-                  {order.deliveryType === 'PROVIDER' ? 'Provider' : 'Supplier'}
-                </span>
-              </p>
-            ) : null}
-            {(order.supplierDisplayName || order.supplierPhone || order.supplierAddress) && (
-              <div className="text-xs border-t border-border pt-3 space-y-1">
-                <p className="uppercase text-muted-foreground">Supplier</p>
-                {order.supplierDisplayName ? (
-                  <p className="font-medium text-foreground">{order.supplierDisplayName}</p>
-                ) : null}
-                {order.supplierPhone ? <p className="text-muted-foreground">{order.supplierPhone}</p> : null}
-                {order.supplierAddress ? <p className="text-muted-foreground">{order.supplierAddress}</p> : null}
-              </div>
-            )}
-          </div>
-
-          <FulfillmentPhaseTimeline fulfillmentStatus={order.fulfillmentStatus} />
-
           {noDeliverySelected && (
             <div className="space-y-3 p-4 bg-muted/50 border border-border rounded-lg">
               <p className="text-sm text-muted-foreground">No delivery selected.</p>
@@ -453,89 +358,57 @@ export function OrderDetailsView({
             </div>
           )}
 
-          {!noDeliverySelected && deliveryState === 'SelfCollect' && (
-            <p className="text-sm text-muted-foreground">
-              Collect your items at the store when ready.
-            </p>
-          )}
+          {showUnified ? (
+            <UnifiedTrackingSection
+              mode={unifiedMode}
+              fulfillmentStatus={order.fulfillmentStatus}
+              materialBatch={order.materialBatch ?? null}
+              showLiveMap={unifiedMapActive}
+              mapLat={mapLat}
+              mapLng={mapLng}
+              destination={order.materialBatch?.deliveryAddress || undefined}
+              destinationCoords={order.destinationCoords ?? null}
+              lastDriverPingMs={lastDriverPingMs ?? null}
+              locationPollFailed={locationPollFailed}
+              socketReconnecting={socketReconnecting}
+              activeTrackingId={order.activeTrackingId ?? null}
+              activeTrackingToken={order.activeTrackingToken ?? null}
+              supplierDisplayName={order.supplierDisplayName || order.storeName}
+              supplierPhone={order.supplierPhone}
+              supplierAddress={order.supplierAddress}
+              courierName={order.providerName ?? null}
+              courierVehicle={order.providerVehicle ?? null}
+              showConfirmDelivery={showConfirmReceipt}
+              onConfirmDelivery={onConfirmReceipt}
+              confirmDeliveryPending={confirmReceiptPending}
+            />
+          ) : null}
 
-          {!noDeliverySelected && (showTracking || isInProgressOrDelivered) && (
-            <>
-              {order.deliveryInvoiceId && onViewDeliveryInvoice && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mb-3"
-                  onClick={() => onViewDeliveryInvoice(order.deliveryInvoiceId!)}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  View Delivery Invoice
-                </Button>
-              )}
-              {showTracking ? (
-                <>
-                  {showLiveMap ? (
-                    <div className="mt-4 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium">Live location</p>
-                        {driverNearby ? (
-                          <Badge className="bg-primary/15 text-primary border-primary/30">Driver is near</Badge>
-                        ) : null}
-                      </div>
-                      {socketReconnecting ? (
-                        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                          Reconnecting…
-                        </p>
-                      ) : null}
-                      {locationPollFailed ? (
-                        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                          Unable to fetch live location. Check your connection or try again; tracking session may have
-                          expired.
-                        </p>
-                      ) : null}
-                      {driverOffline ? (
-                        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                          Driver offline
-                          {offlineSeconds > 0 ? ` · Last update ${offlineSeconds}s ago` : ''}
-                        </p>
-                      ) : null}
-                      <DeliveryMap
-                        className="mt-1"
-                        lat={mapLat ?? order.driverLocation?.lat ?? null}
-                        lng={mapLng ?? order.driverLocation?.lng ?? null}
-                        destination={order.materialBatch?.deliveryAddress || undefined}
-                        destinationCoords={order.destinationCoords ?? undefined}
-                        showWaitingBanner={showLiveMap && !hasLiveCoords}
-                        onProximityChange={onDriverProximity}
-                      />
-                    </div>
-                  ) : (
-                    <div className="mt-4 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6">
-                      <p className="text-sm text-muted-foreground text-center max-w-md mx-auto">
-                        {fulfillmentU === 'COMPLETED'
-                          ? 'Tracking has ended for this delivery.'
-                          : fulfillmentU === 'DELAYED'
-                            ? 'This delivery was reported delayed. Live map tracking is paused for now.'
-                            : order.deliveryType === 'SELF'
-                              ? 'Live map is not used for self-pickup orders.'
-                              : 'Tracking will begin once the order is out for delivery.'}
-                      </p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Delivery is in progress or completed. Contact support if you need assistance.
-                </p>
-              )}
-            </>
-          )}
+          {!noDeliverySelected &&
+            order.deliveryInvoiceId &&
+            onViewDeliveryInvoice &&
+            (showTracking || isInProgressOrDelivered) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => onViewDeliveryInvoice(order.deliveryInvoiceId!)}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                View Delivery Invoice
+              </Button>
+            )}
 
-          {!noDeliverySelected && !isPendingApproval && !isApproved && !isRejected && deliveryState !== 'SelfCollect' && !showTracking && !isInProgressOrDelivered && (
-            <p className="text-sm text-muted-foreground">
-              Delivery details will appear here once your order is processed.
-            </p>
-          )}
+          {!noDeliverySelected &&
+            deliveryState !== 'SelfCollect' &&
+            !isPendingApproval &&
+            !isApproved &&
+            !isRejected &&
+            !showUnified && (
+              <p className="text-sm text-muted-foreground">
+                Delivery details will appear here once your order is processed.
+              </p>
+            )}
         </CardContent>
       </Card>
     </div>

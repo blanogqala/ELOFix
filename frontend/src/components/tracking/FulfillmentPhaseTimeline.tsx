@@ -5,7 +5,7 @@ import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
 const STEPS = [
   { key: 'ACCEPTED', label: 'Accepted' },
   { key: 'PREPARING', label: 'Preparing' },
-  { key: 'READY', label: 'Ready' },
+  { key: 'READY', label: 'Ready for collection' },
   { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
   { key: 'COMPLETED', label: 'Completed' },
 ] as const;
@@ -44,12 +44,22 @@ export function FulfillmentPhaseTimeline({
 }) {
   const rank = fulfillmentRank(fulfillmentStatus);
   const terminalBad = rank < 0;
+  const u = String(fulfillmentStatus || '').toUpperCase();
+  const delayedOverlay = u === 'DELAYED';
 
   return (
     <div className={cn('rounded-lg border border-border bg-muted/20 px-3 py-3', className)}>
       <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Tracking timeline
       </p>
+      {delayedOverlay && !terminalBad ? (
+        <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100">
+          <p className="font-medium">Delivery delayed</p>
+          <p className="mt-1 text-muted-foreground">
+            Progress stays on “Out for delivery”. We’ll notify you when the driver is moving again.
+          </p>
+        </div>
+      ) : null}
       {terminalBad ? (
         <p className="mb-2 text-xs text-destructive">
           Order {fulfillmentStatusBadgeLabel(fulfillmentStatus)} — tracking steps are frozen for this order.

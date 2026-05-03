@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { MaterialTrackingMini } from '@/components/materials/MaterialTrackingMini';
+import { UnifiedTrackingSection } from '@/components/tracking/UnifiedTrackingSection';
 import {
   fulfillmentStatusBadgeLabel,
   resolveMaterialBatchFromSnapshot,
@@ -539,6 +539,17 @@ export function MaterialPaymentSection({
                   const driverLabel =
                     batch?.assignedDriverId &&
                     deliveryProviders.find((d) => d.id === batch.assignedDriverId)?.name;
+                  const chosenCourier = storeOrder.deliveryProviderId
+                    ? deliveryProviders.find((d) => d.id === storeOrder.deliveryProviderId)
+                    : undefined;
+                  const courierVehicleStr = chosenCourier
+                    ? [chosenCourier.vehicleType, chosenCourier.numberPlate].filter(Boolean).join(' · ')
+                    : undefined;
+                  const moExtra = mo as unknown as {
+                    activeTrackingId?: string;
+                    activeTrackingToken?: string;
+                  };
+                  const fullHref = `/user/jobs/${job.id}/store-orders/${encodeURIComponent(storeOrder.orderId)}`;
                   return (
                     <MaterialCard
                       key={storeOrder.orderId}
@@ -586,7 +597,36 @@ export function MaterialPaymentSection({
                       }
                       footer={
                         <div className="text-xs text-muted-foreground space-y-2">
-                          <MaterialTrackingMini batch={batch} />
+                          <UnifiedTrackingSection
+                            variant="embedded"
+                            mode={
+                              storeOrder.deliveryType === 'SELF'
+                                ? 'self_pickup'
+                                : storeOrder.deliveryType === 'STORE'
+                                  ? 'store_delivery'
+                                  : 'provider_delivery'
+                            }
+                            fulfillmentStatus={String(mo?.fulfillmentStatus || '')}
+                            materialBatch={batch}
+                            showLiveMap={false}
+                            mapLat={null}
+                            mapLng={null}
+                            destination={batch?.deliveryAddress || undefined}
+                            destinationCoords={job.location?.coordinates ?? null}
+                            activeTrackingId={moExtra.activeTrackingId ?? null}
+                            activeTrackingToken={moExtra.activeTrackingToken ?? null}
+                            supplierDisplayName={mo?.supplierName || storeName}
+                            supplierAddress={
+                              batch?.pickupAddress && batch.pickupAddress.trim() !== ''
+                                ? batch.pickupAddress
+                                : undefined
+                            }
+                            assignedDriverName={driverLabel ?? null}
+                            courierName={chosenCourier?.name ?? null}
+                            courierVehicle={courierVehicleStr || null}
+                            showConfirmDelivery={false}
+                            fullTrackingHref={fullHref}
+                          />
                           <p>Invoice: {storeOrder.invoiceId || 'Pending assignment'}</p>
                           <p>Paid at: {paymentRecord?.paidAt ? new Date(paymentRecord.paidAt).toLocaleString() : 'N/A'}</p>
                           <Button variant="outline" size="sm" className="mt-1" onClick={() => onViewStoreOrder(storeOrder.orderId)}>

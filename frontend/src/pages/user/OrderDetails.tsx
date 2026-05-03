@@ -34,6 +34,7 @@ import { getDeliveryProviders } from '@/lib/api/specials';
 import type { JobMaterialOrderSnapshot } from '@/types';
 import { resolveMaterialBatchFromSnapshot } from '@/lib/materialBatchTracking';
 import { toCanonicalDeliveryType } from '@/lib/deliveryTypes';
+import { DeliveryExperienceFeedbackDialog } from '@/components/tracking/DeliveryExperienceFeedbackDialog';
 
 type RouteParams = {
   orderId?: string;
@@ -110,6 +111,7 @@ export default function OrderDetails() {
   const [storeHasDelivery, setStoreHasDelivery] = useState(false);
   const [storeDeliveryFee, setStoreDeliveryFee] = useState(0);
   const [receiptPending, setReceiptPending] = useState(false);
+  const [deliveryFeedbackOpen, setDeliveryFeedbackOpen] = useState(false);
   const loadOrderRef = useRef<(() => Promise<void>) | null>(null);
 
   const effectiveOrderId = orderId || storeOrderId;
@@ -459,6 +461,7 @@ export default function OrderDetails() {
       await confirmMaterialOrderDeliveryReceipt(effectiveOrderId);
       toast({ title: 'Thanks!', description: 'Delivery receipt confirmed.' });
       await loadOrder();
+      setDeliveryFeedbackOpen(true);
     } catch {
       toast({ title: 'Error', description: 'Could not confirm receipt.', variant: 'destructive' });
     } finally {
@@ -542,6 +545,21 @@ export default function OrderDetails() {
               deliveryProviders={deliveryProviders}
               deliveryProvidersError={deliveryProvidersError}
               onSelect={handleDeliveryOptionSelected}
+            />
+            <DeliveryExperienceFeedbackDialog
+              open={deliveryFeedbackOpen}
+              onOpenChange={setDeliveryFeedbackOpen}
+              merchantLabel={
+                order.deliveryType === 'PROVIDER'
+                  ? order.providerName || 'your courier'
+                  : order.supplierDisplayName || order.storeName || 'the store'
+              }
+              onSubmitFeedback={() => {
+                toast({
+                  title: 'Feedback submitted',
+                  description: 'Thank you — your ratings help everyone on EloFix.',
+                });
+              }}
             />
           </>
         ) : (

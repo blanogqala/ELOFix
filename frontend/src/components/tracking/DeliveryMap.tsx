@@ -4,6 +4,13 @@ import { cn } from '@/lib/utils';
 import { haversineMeters } from '@/lib/geolocationSendGate';
 
 const DRIVER_NEAR_METERS = 500;
+const DRIVER_ARRIVING_METERS = 120;
+
+export type DriverProximityPayload = {
+  near: boolean;
+  arriving: boolean;
+  distanceMeters: number | null;
+};
 
 const defaultCenter = { lat: -26.2, lng: 28.05 };
 
@@ -17,7 +24,7 @@ export interface DeliveryMapProps {
   showWaitingBanner?: boolean;
   /** Session no longer valid (customer view) */
   trackingEnded?: boolean;
-  onProximityChange?: (v: { near: boolean; distanceMeters: number | null }) => void;
+  onProximityChange?: (v: DriverProximityPayload) => void;
   onEtaChange?: (etaText: string | null) => void;
 }
 
@@ -33,7 +40,7 @@ function MapBody({
   onEtaChange,
 }: Omit<DeliveryMapProps, 'className'> & { className?: string }) {
   const mapRef = useRef<google.maps.Map | null>(null);
-  const proximityRef = useRef({ near: false });
+  const proximityRef = useRef({ near: false, arriving: false, distanceMeters: null as number | null });
   const onProximityChangeRef = useRef(onProximityChange);
   onProximityChangeRef.current = onProximityChange;
   const onEtaChangeRef = useRef(onEtaChange);
@@ -137,19 +144,36 @@ function MapBody({
 
   useEffect(() => {
     if (!driverPos || !destForRoute) {
-      if (proximityRef.current.near) {
-        proximityRef.current.near = false;
-        onProximityChangeRef.current?.({ near: false, distanceMeters: null });
+      const prev = proximityRef.current;
+      if (prev.near || prev.arriving || prev.distanceMeters != null) {
+        proximityRef.current = { near: false, arriving: false, distanceMeters: null };
+        onProximityChangeRef.current?.({ near: false, arriving: false, distanceMeters: null });
       }
       return;
     }
     const d = haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng);
     const near = d < DRIVER_NEAR_METERS;
-    if (near !== proximityRef.current.near) {
-      proximityRef.current.near = near;
-      onProximityChangeRef.current?.({ near, distanceMeters: d });
+    const arriving = d < DRIVER_ARRIVING_METERS;
+    const prev = proximityRef.current;
+    if (
+      near !== prev.near ||
+      arriving !== prev.arriving ||
+      prev.distanceMeters == null ||
+      Math.abs(prev.distanceMeters - d) > 5
+    ) {
+      proximityRef.current = { near, arriving, distanceMeters: d };
+      onProximityChangeRef.current?.({ near, arriving, distanceMeters: d });
     }
   }, [driverPos, destForRoute]);
+
+  const nearBanner =
+    driverPos &&
+    destForRoute &&
+    haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng) < DRIVER_NEAR_METERS;
+  const arrivingBanner =
+    driverPos &&
+    destForRoute &&
+    haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng) < DRIVER_ARRIVING_METERS;
 
   if (loadError) {
     return (
@@ -206,11 +230,6 @@ function MapBody({
     );
   }
 
-  const nearBadge =
-    driverPos &&
-    destForRoute &&
-    haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng) < DRIVER_NEAR_METERS;
-
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
       {trackingEnded ? (
@@ -228,9 +247,18 @@ function MapBody({
           <span className="font-medium text-foreground">Delivering to:</span> {destination}
         </p>
       ) : null}
-      {nearBadge ? (
+      {arrivingBanner ? (
+        <p className="border-b border-border bg-primary/15 px-3 py-1.5 text-xs font-semibold text-primary">
+          Driver arriving
+        </p>
+      ) : nearBanner ? (
         <p className="border-b border-border bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
           Driver is near
+        </p>
+      ) : null}
+      {driverPos && destForRoute && etaText ? (
+        <p className="border-b border-border bg-muted/40 px-3 py-1.5 text-xs font-medium tabular-nums">
+          ETA {etaText}
         </p>
       ) : null}
       <GoogleMap

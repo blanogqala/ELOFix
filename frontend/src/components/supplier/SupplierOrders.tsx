@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { buildPublicTrackingUrl } from '@/lib/publicTrackingUrl';
 import { cn } from '@/lib/utils';
 import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
 import { useEffect, useMemo, useState } from 'react';
@@ -365,12 +366,6 @@ export function SupplierOrders({ userId }: { userId: string }) {
       )}
     </div>
   );
-}
-
-function buildPublicTrackingUrl(trackingId: string, token?: string | null): string {
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const q = token ? `?token=${encodeURIComponent(token)}` : '';
-  return `${origin}/track/${encodeURIComponent(trackingId)}${q}`;
 }
 
 function DetailPanel({
