@@ -1,8 +1,36 @@
 const materialOrderService = require("../services/materialOrder.service");
 const jobService = require("../services/job.service");
 const supplierService = require("../services/supplier.service");
+const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const { materialOrderBelongsToSupplierStore } = require("../utils/materialOrderSupplier.util");
+
+async function findMaterialOrderOrNull(orderId) {
+  return prisma.materialOrder.findUnique({ where: { id: String(orderId || "") } });
+}
+
+async function assertCanReadMaterialOrder(req, orderId) {
+  const row = await findMaterialOrderOrNull(orderId);
+  if (!row) return null;
+  if (req.user.role === "ADMIN") return row;
+  if (String(row.userId) === String(req.user.userId)) return row;
+  if (req.user.role === "SUPPLIER") {
+    const sup = await supplierService.findSupplierRecordByUserId(req.user.userId);
+    if (sup && materialOrderBelongsToSupplierStore(row, sup.id)) return row;
+  }
+  throw new AppError("Forbidden", 403);
+}
+
+async function assertCanMutateCustomerDelivery(req, orderId) {
+  const row = await findMaterialOrderOrNull(orderId);
+  if (!row) {
+    throw new AppError("Material order not found", 404);
+  }
+  if (req.user.role === "ADMIN" || String(row.userId) === String(req.user.userId)) {
+    return row;
+  }
+  throw new AppError("Forbidden", 403);
+}
 
 async function listOrdersQuery(req, res) {
   const supplierIdQ = req.query.supplierId;
@@ -99,19 +127,11 @@ async function getAllMaterialOrdersForUser(req, res) {
 }
 
 async function getMaterialOrder(req, res) {
-  const order = await materialOrderService.getMaterialOrderById(req.params.id);
-  if (!order) {
+  const row = await assertCanReadMaterialOrder(req, req.params.id);
+  if (!row) {
     return res.json({ success: true, order: null });
   }
-  if (req.user.role === "SUPPLIER") {
-    const sup = await supplierService.findSupplierRecordByUserId(req.user.userId);
-    const row = await prisma.materialOrder.findUnique({ where: { id: req.params.id } });
-    if (!sup || !row || !materialOrderBelongsToSupplierStore(row, sup.id)) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-  } else if (req.user.role !== "ADMIN" && String(order.userId) !== String(req.user.userId)) {
-    return res.status(403).json({ success: false, message: "Forbidden" });
-  }
+  const order = await materialOrderService.getMaterialOrderById(req.params.id);
   res.json({ success: true, order });
 }
 
@@ -134,26 +154,31 @@ async function createMaterialOrder(req, res) {
 }
 
 async function updateMaterialOrderDelivery(req, res) {
+  await assertCanMutateCustomerDelivery(req, req.params.id);
   const order = await materialOrderService.updateMaterialOrderDelivery(req.params.id, req.body || {});
   res.json({ success: true, order });
 }
 
 async function approveMaterialOrderDelivery(req, res) {
+  await assertCanMutateCustomerDelivery(req, req.params.id);
   const order = await materialOrderService.approveMaterialOrderDelivery(req.params.id);
   res.json({ success: true, order });
 }
 
 async function rejectMaterialOrderDelivery(req, res) {
+  await assertCanMutateCustomerDelivery(req, req.params.id);
   const order = await materialOrderService.rejectMaterialOrderDelivery(req.params.id);
   res.json({ success: true, order });
 }
 
 async function payMaterialOrderDelivery(req, res) {
+  await assertCanMutateCustomerDelivery(req, req.params.id);
   const order = await materialOrderService.payMaterialOrderDelivery(req.params.id, req.body?.cardLast4, req.body?.fee);
   res.json({ success: true, order });
 }
 
 async function updateMaterialOrderDeliveryStatus(req, res) {
+  await assertCanMutateCustomerDelivery(req, req.params.id);
   const order = await materialOrderService.updateMaterialOrderDeliveryStatus(req.params.id, req.body?.status);
   res.json({ success: true, order });
 }
