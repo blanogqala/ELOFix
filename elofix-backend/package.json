@@ -16,7 +16,7 @@
     "backfill:escrow-v2": "node scripts/backfill-escrow-v2.js",
     "backfill:earnings": "node scripts/backfill-earnings.js",
     "migrate:bank-encrypt": "node scripts/migrate-bank-encrypt.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
