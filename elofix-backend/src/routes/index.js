@@ -5,6 +5,7 @@ const categoryRoutes = require("./category.routes");
 const providerRoutes = require("./provider.routes");
 const adminRoutes = require("./admin.routes");
 const supplierRoutes = require("./supplier.routes");
+const storeRoutes = require("./store.routes");
 const paymentRoutes = require("./payment.routes");
 const materialOrderRoutes = require("./materialOrder.routes");
 const notificationRoutes = require("./notification.routes");
@@ -18,6 +19,7 @@ const materialRoutes = require("./material.routes");
 const ordersRoutes = require("./orders.routes");
 const trackingRoutes = require("./tracking.routes");
 const ratingRoutes = require("./rating.routes");
+const branchRoutes = require("./branch.routes");
 
 const router = express.Router();
 
@@ -28,6 +30,8 @@ router.use("/categories", categoryRoutes);
 router.use("/providers", providerRoutes);
 router.use("/admin", adminRoutes);
 router.use("/suppliers", supplierRoutes);
+router.use("/branches", branchRoutes);
+router.use("/stores", storeRoutes);
 router.use("/payments", paymentRoutes);
 router.use("/material-orders", materialOrderRoutes);
 router.use("/orders", ordersRoutes);

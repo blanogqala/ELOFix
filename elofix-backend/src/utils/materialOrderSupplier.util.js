@@ -1,19 +1,21 @@
-/**
- * Resolve supplier store id when DB column is null but payload still carries storeId (legacy / partial writes).
- */
+const prisma = require("../config/prisma");
 
-function payloadBackedSupplierId(payload) {
+/**
+ * Read branch id from payload only (explicit branchId / storeId / materialBatch.branchId).
+ * Legacy paths that stored branch uuid in materialBatch.supplierId have been migrated at DB level.
+ */
+function payloadBackedBranchId(payload) {
   const p = payload && typeof payload === "object" ? payload : {};
-  const fromRoot = String(p.storeId || "").trim();
+  const fromRoot = String(p.branchId || p.storeId || "").trim();
   if (fromRoot) return fromRoot;
   const mb = p.materialBatch && typeof p.materialBatch === "object" ? p.materialBatch : {};
-  const fromMb = String(mb.supplierId || "").trim();
+  const fromMb = String(mb.branchId || "").trim();
   if (fromMb) return fromMb;
   const scanItems = (arr) => {
     if (!Array.isArray(arr)) return "";
     for (const it of arr) {
       if (!it || typeof it !== "object") continue;
-      const s = String(it.supplierId || "").trim();
+      const s = String(it.branchId || "").trim();
       if (s) return s;
     }
     return "";
@@ -23,25 +25,41 @@ function payloadBackedSupplierId(payload) {
   return scanItems(mb.items);
 }
 
-function effectiveMaterialOrderSupplierId(row) {
+function effectiveMaterialOrderBranchId(row) {
   if (!row) return "";
-  const col = String(row.supplierId || "").trim();
+  const col = String(row.branchId || "").trim();
   if (col) return col;
   const pl = row.payload && typeof row.payload === "object" ? row.payload : {};
-  return payloadBackedSupplierId(pl);
+  return payloadBackedBranchId(pl);
 }
 
-/** Portal / tracking: column may be null or wrong while payload still names the store (Supplier.id). */
-function materialOrderBelongsToSupplierStore(row, supplierStoreId) {
-  const sid = String(supplierStoreId || "").trim();
-  if (!row || !sid) return false;
-  if (String(row.supplierId || "").trim() === sid) return true;
-  const pl = row.payload && typeof row.payload === "object" ? row.payload : {};
-  return payloadBackedSupplierId(pl) === sid;
+/** @deprecated use payloadBackedBranchId */
+function payloadBackedSupplierId(payload) {
+  return payloadBackedBranchId(payload);
+}
+
+/** @deprecated use effectiveMaterialOrderBranchId */
+function effectiveMaterialOrderSupplierId(row) {
+  return effectiveMaterialOrderBranchId(row);
+}
+
+/**
+ * Portal: order belongs to supplier organization (MaterialOrder.supplierId or branch ownership).
+ */
+async function materialOrderBelongsToSupplierStore(row, supplierOrgId) {
+  const org = String(supplierOrgId || "").trim();
+  if (!row || !org) return false;
+  if (String(row.supplierId || "").trim() === org) return true;
+  const bid = String(row.branchId || "").trim();
+  if (!bid) return false;
+  const b = await prisma.branch.findUnique({ where: { id: bid }, select: { supplierId: true } });
+  return Boolean(b && String(b.supplierId) === org);
 }
 
 module.exports = {
+  payloadBackedBranchId,
   payloadBackedSupplierId,
+  effectiveMaterialOrderBranchId,
   effectiveMaterialOrderSupplierId,
   materialOrderBelongsToSupplierStore,
 };

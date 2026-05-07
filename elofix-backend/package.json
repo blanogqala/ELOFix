@@ -11,6 +11,7 @@
     "prisma:migrate": "node scripts/prisma-migrate-dev.js",
     "prisma:db-push": "node scripts/prisma-db-push-dev-only.js",
     "prisma:deploy": "prisma migrate deploy",
+    "migrate:repair-failed-material-order-cancellation": "node scripts/repair-failed-migration-material-order-cancellation.js",
     "prisma:seed": "node prisma/seed.js",
     "backfill:escrow": "node scripts/backfill-escrow.js",
     "backfill:escrow-v2": "node scripts/backfill-escrow-v2.js",

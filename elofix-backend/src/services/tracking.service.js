@@ -390,10 +390,22 @@ async function canUserAccessOrderRoom(userId, role, orderId) {
   if (r === "SUPPLIER") {
     try {
       const sup = await supplierService.findSupplierRecordByUserId(uid);
-      if (sup && materialOrderBelongsToSupplierStore(row, sup.id)) return true;
+      if (sup && (await materialOrderBelongsToSupplierStore(row, sup.id))) return true;
     } catch (_) {
       return false;
     }
+  }
+
+  if (r === "BRANCH_STAFF") {
+    const bu = await prisma.branchUser.findUnique({
+      where: { id: uid },
+      include: { branch: { select: { supplierId: true } } },
+    });
+    if (!bu) return false;
+    return (
+      String(row.branchId || "") === String(bu.branchId) &&
+      String(row.supplierId || "") === String(bu.branch.supplierId)
+    );
   }
 
   return false;
@@ -422,12 +434,24 @@ async function canUserPostDriverLocation(userId, role, orderId) {
   if (r === "SUPPLIER") {
     try {
       const sup = await supplierService.findSupplierRecordByUserId(uid);
-      if (sup && materialOrderBelongsToSupplierStore(row, sup.id)) {
+      if (sup && (await materialOrderBelongsToSupplierStore(row, sup.id))) {
         if (deliveryType === "STORE_DELIVERY") return true;
       }
     } catch (_) {
       return false;
     }
+  }
+
+  if (r === "BRANCH_STAFF") {
+    const bu = await prisma.branchUser.findUnique({
+      where: { id: uid },
+      include: { branch: { select: { supplierId: true } } },
+    });
+    if (!bu) return false;
+    const okOrder =
+      String(row.branchId || "") === String(bu.branchId) &&
+      String(row.supplierId || "") === String(bu.branch.supplierId);
+    if (okOrder && deliveryType === "STORE_DELIVERY") return true;
   }
 
   return false;

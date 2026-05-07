@@ -1,10 +1,11 @@
 import apiClient from '@/api/client';
-import type { MaterialFulfillmentStatus, Product, SupplierAccountProfile } from '@/types';
+import type { MaterialFulfillmentStatus, Product, SupplierAccountProfile, SupplierBranchProfile } from '@/types';
 
 export interface SupplierMaterialOrderLine {
   id: string;
   userId: string;
   storeId?: string;
+  branchId?: string;
   storeName?: string;
   items?: Array<Record<string, unknown>>;
   total?: number;
@@ -17,6 +18,21 @@ export interface SupplierMaterialOrderLine {
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string | null;
+  customerAddress?: string;
+  customerLocation?: {
+    address?: string;
+    city?: string;
+    area?: string;
+    suburb?: string;
+    coordinates?: { lat: number; lng: number };
+  };
+  cancelledBy?: 'supplier' | 'customer' | string;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  refundStatus?: string;
+  refundAmount?: number;
+  refundProcessedAt?: string;
+  commissionReversed?: number;
   /** Job materials payment pipeline */
   jobId?: string;
   source?: string;
@@ -28,6 +44,8 @@ export interface SupplierMaterialOrderLine {
     type: string;
     status?: string;
     message?: string;
+    actor?: string;
+    reason?: string;
     createdAt?: string;
   }>;
   paymentStatus?: string;
@@ -40,10 +58,18 @@ export async function getSupplierMe(): Promise<SupplierAccountProfile | null> {
   return data?.profile ?? null;
 }
 
-export async function getSupplierOrders(status?: string): Promise<SupplierMaterialOrderLine[]> {
+export async function getSupplierOrders(
+  status?: string,
+  filters?: { from?: string; to?: string; branchId?: string }
+): Promise<SupplierMaterialOrderLine[]> {
+  const params: Record<string, string> = {};
+  if (status) params.status = status;
+  if (filters?.from) params.from = filters.from;
+  if (filters?.to) params.to = filters.to;
+  if (filters?.branchId) params.branchId = filters.branchId;
   const { data } = await apiClient.get<{ success: boolean; orders: SupplierMaterialOrderLine[] }>(
     '/supplier/orders',
-    status ? { params: { status } } : undefined
+    Object.keys(params).length > 0 ? { params } : undefined
   );
   return Array.isArray(data?.orders) ? data.orders : [];
 }
@@ -81,6 +107,75 @@ export async function postSupplierOrderNote(orderId: string, message: string): P
   return data.order;
 }
 
+export async function cancelSupplierOrder(orderId: string, reason: string): Promise<{
+  order: SupplierMaterialOrderLine;
+  refund: { amount: number; status: string; processedAt?: string };
+}> {
+  const { data } = await apiClient.post<{
+    success: boolean;
+    order: SupplierMaterialOrderLine;
+    refund: { amount: number; status: string; processedAt?: string };
+  }>(`/supplier/orders/${encodeURIComponent(orderId)}/cancel`, { reason });
+  if (!data?.order) throw new Error('Cancel order failed');
+  return { order: data.order, refund: data.refund };
+}
+
+export interface SupplierOrdersExportRow {
+  orderId: string;
+  status: string;
+  totalAmount: number;
+  commission: number;
+  netEarnings: number;
+  revenueImpact: number;
+  commissionImpact: number;
+  netImpact: number;
+  isCancelled: boolean;
+  cancellationReason?: string | null;
+  cancelledBy?: string | null;
+  createdAt?: string | null;
+  refundAmount?: number;
+  refundStatus?: string | null;
+}
+
+export async function getSupplierOrdersExport(filters?: { from?: string; to?: string; branchId?: string }): Promise<{
+  rows: SupplierOrdersExportRow[];
+  summary: {
+    orderCount: number;
+    cancelledCount: number;
+    totalRevenueImpact: number;
+    totalCommissionImpact: number;
+    totalNetImpact: number;
+  };
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    rows: SupplierOrdersExportRow[];
+    summary: {
+      orderCount: number;
+      cancelledCount: number;
+      totalRevenueImpact: number;
+      totalCommissionImpact: number;
+      totalNetImpact: number;
+    };
+  }>('/supplier/orders/export', {
+    params: {
+      ...(filters?.from ? { from: filters.from } : {}),
+      ...(filters?.to ? { to: filters.to } : {}),
+      ...(filters?.branchId ? { branchId: filters.branchId } : {}),
+    },
+  });
+  return {
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    summary: data?.summary || {
+      orderCount: 0,
+      cancelledCount: 0,
+      totalRevenueImpact: 0,
+      totalCommissionImpact: 0,
+      totalNetImpact: 0,
+    },
+  };
+}
+
 export async function uploadSupplierProductImage(file: File): Promise<{ fileId: string; url: string }> {
   const fd = new FormData();
   fd.append('file', file);
@@ -107,7 +202,9 @@ export async function uploadSupplierProfileLogo(
   return { fileId: data.fileId, url: data.url, profile: data.profile };
 }
 
-export async function postSupplierProduct(product: Partial<Product> & { name: string; category: string; price: number }) {
+export async function postSupplierProduct(
+  product: Partial<Product> & { name: string; category: string; price: number; branchId: string }
+) {
   const { data } = await apiClient.post<{ success: boolean; supplier: SupplierAccountProfile }>(
     '/supplier/products',
     product
@@ -115,7 +212,10 @@ export async function postSupplierProduct(product: Partial<Product> & { name: st
   return data?.supplier ?? null;
 }
 
-export async function patchSupplierProduct(productId: string, patch: Partial<Product>) {
+export async function patchSupplierProduct(
+  productId: string,
+  patch: Partial<Product> & { branchId?: string }
+) {
   const { data } = await apiClient.patch<{ success: boolean; supplier: SupplierAccountProfile }>(
     `/supplier/products/${productId}`,
     patch
@@ -123,9 +223,10 @@ export async function patchSupplierProduct(productId: string, patch: Partial<Pro
   return data?.supplier ?? null;
 }
 
-export async function deleteSupplierProduct(productId: string) {
+export async function deleteSupplierProduct(productId: string, branchId: string) {
   const { data } = await apiClient.delete<{ success: boolean; supplier: SupplierAccountProfile }>(
-    `/supplier/products/${productId}`
+    `/supplier/products/${productId}`,
+    { params: { branchId } }
   );
   return data?.supplier ?? null;
 }
@@ -136,20 +237,157 @@ export interface SupplierInventoryCategoryRow {
   name: string;
 }
 
-export async function getSupplierInventoryCategories(): Promise<SupplierInventoryCategoryRow[]> {
+export async function getSupplierInventoryCategories(branchId: string): Promise<SupplierInventoryCategoryRow[]> {
   const { data } = await apiClient.get<{ success: boolean; categories: SupplierInventoryCategoryRow[] }>(
-    '/supplier/inventory/categories'
+    '/supplier/inventory/categories',
+    { params: { branchId } }
   );
   return Array.isArray(data?.categories) ? data.categories : [];
 }
 
-export async function postSupplierInventoryCategory(name: string): Promise<SupplierInventoryCategoryRow> {
+export async function postSupplierInventoryCategory(
+  name: string,
+  branchId: string
+): Promise<SupplierInventoryCategoryRow> {
   const { data } = await apiClient.post<{ success: boolean; category: SupplierInventoryCategoryRow }>(
     '/supplier/inventory/categories',
-    { name }
+    { name },
+    { params: { branchId } }
   );
   if (!data?.category) throw new Error('Failed to create category');
   return data.category;
+}
+
+export interface SupplierBranchCreateBody {
+  name: string;
+  address?: string;
+  city?: string;
+  area?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  branchPhone?: string | null;
+  branchEmail?: string | null;
+  hasDelivery?: boolean;
+  deliveryFee?: number;
+  latitude?: number | null;
+  longitude?: number | null;
+  isActive?: boolean;
+}
+
+export async function getSupplierBranch(branchId: string): Promise<SupplierBranchProfile | null> {
+  const { data } = await apiClient.get<{ success: boolean; branch: SupplierBranchProfile }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}`
+  );
+  return data?.branch ?? null;
+}
+
+export async function getSupplierBranches(): Promise<SupplierBranchProfile[]> {
+  const { data } = await apiClient.get<{ success: boolean; branches: SupplierBranchProfile[] }>('/supplier/branches');
+  return Array.isArray(data?.branches) ? data.branches : [];
+}
+
+export async function postSupplierBranch(body: SupplierBranchCreateBody): Promise<SupplierBranchProfile | null> {
+  const { data } = await apiClient.post<{ success: boolean; branch: SupplierBranchProfile }>(
+    '/supplier/branches',
+    body
+  );
+  return data?.branch ?? null;
+}
+
+export interface SupplierBranchPortalUser {
+  id: string;
+  branchId: string;
+  email: string;
+  role: 'MANAGER' | 'STAFF';
+  createdAt?: string;
+}
+
+export async function getSupplierBranchUsers(branchId: string): Promise<SupplierBranchPortalUser[]> {
+  const { data } = await apiClient.get<{ success: boolean; users: SupplierBranchPortalUser[] }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/users`
+  );
+  return Array.isArray(data?.users) ? data.users : [];
+}
+
+export async function postSupplierBranchUser(
+  branchId: string,
+  body: { email: string; password: string; role?: 'MANAGER' | 'STAFF' }
+): Promise<SupplierBranchPortalUser | null> {
+  const { data } = await apiClient.post<{ success: boolean; user: SupplierBranchPortalUser }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/users`,
+    body
+  );
+  return data?.user ?? null;
+}
+
+export async function patchSupplierBranchUser(
+  branchId: string,
+  branchUserId: string,
+  body: Partial<{ email: string; password: string; role: 'MANAGER' | 'STAFF' }>
+): Promise<SupplierBranchPortalUser | null> {
+  try {
+    const { data } = await apiClient.patch<{ success: boolean; user: SupplierBranchPortalUser }>(
+      `/supplier/branches/${encodeURIComponent(branchId)}/users/${encodeURIComponent(branchUserId)}`,
+      body
+    );
+    return data?.user ?? null;
+  } catch (e: unknown) {
+    const ax = e as { response?: { data?: { message?: string } }; message?: string };
+    const msg = ax.response?.data?.message || ax.message || 'Could not update staff';
+    throw new Error(msg);
+  }
+}
+
+export async function deleteSupplierBranchUser(branchId: string, branchUserId: string): Promise<void> {
+  try {
+    await apiClient.delete(
+      `/supplier/branches/${encodeURIComponent(branchId)}/users/${encodeURIComponent(branchUserId)}`
+    );
+  } catch (e: unknown) {
+    const ax = e as { response?: { data?: { message?: string } }; message?: string };
+    const msg = ax.response?.data?.message || ax.message || 'Could not remove staff';
+    throw new Error(msg);
+  }
+}
+
+export type SupplierBranchUpdateBody = Partial<
+  Pick<
+    SupplierBranchCreateBody,
+    | 'name'
+    | 'address'
+    | 'city'
+    | 'area'
+    | 'contactPhone'
+    | 'contactEmail'
+    | 'branchPhone'
+    | 'branchEmail'
+    | 'hasDelivery'
+    | 'deliveryFee'
+    | 'latitude'
+    | 'longitude'
+    | 'isActive'
+  >
+>;
+
+export async function patchSupplierBranch(
+  branchId: string,
+  body: SupplierBranchUpdateBody
+): Promise<SupplierBranchProfile | null> {
+  const { data } = await apiClient.patch<{ success: boolean; branch: SupplierBranchProfile }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}`,
+    body
+  );
+  return data?.branch ?? null;
+}
+
+export async function deleteSupplierBranch(branchId: string): Promise<void> {
+  try {
+    await apiClient.delete(`/supplier/branches/${encodeURIComponent(branchId)}`);
+  } catch (e: unknown) {
+    const ax = e as { response?: { data?: { message?: string } }; message?: string };
+    const msg = ax.response?.data?.message || ax.message || 'Could not delete branch';
+    throw new Error(msg);
+  }
 }
 
 export async function patchSupplierProfile(body: {
@@ -161,9 +399,102 @@ export async function patchSupplierProfile(body: {
   accountPhone?: string;
   logo?: string | null;
   accountEmail?: string;
+  hasDelivery?: boolean;
+  deliveryFee?: number;
+  latitude?: number | null;
+  longitude?: number | null;
 }) {
   const { data } = await apiClient.patch<{ success: boolean; profile: SupplierAccountProfile }>(
     '/supplier/profile',
+    body
+  );
+  return data?.profile ?? null;
+}
+
+export interface SupplierAnalyticsOverview {
+  totalBranches: number;
+  sumNetEarningsAllBranches: number;
+  totalOrders: number;
+}
+
+export async function getSupplierAnalyticsOverview(): Promise<SupplierAnalyticsOverview | null> {
+  const { data } = await apiClient.get<
+    { success: boolean } & Partial<SupplierAnalyticsOverview>
+  >('/supplier/analytics/overview');
+  if (!data?.success) return null;
+  return {
+    totalBranches: data.totalBranches ?? 0,
+    sumNetEarningsAllBranches: data.sumNetEarningsAllBranches ?? 0,
+    totalOrders: data.totalOrders ?? 0,
+  };
+}
+
+export interface SupplierBranchAnalyticsRow {
+  branchId: string;
+  name: string;
+  city?: string;
+  area?: string;
+  address?: string;
+  isActive: boolean;
+  totalOrders: number;
+  pendingOrders: number;
+  netEarnings: number;
+  managerEmails?: string[];
+}
+
+export async function getSupplierAnalyticsBranches(params?: {
+  city?: string;
+  q?: string;
+}): Promise<SupplierBranchAnalyticsRow[]> {
+  const { data } = await apiClient.get<{ success: boolean; branches: SupplierBranchAnalyticsRow[] }>(
+    '/supplier/analytics/branches',
+    { params: { ...params } }
+  );
+  return Array.isArray(data?.branches) ? data.branches : [];
+}
+
+export interface SupplierBranchInventoryInsightProduct {
+  id: string;
+  name: string;
+  category: string;
+  quantity: number;
+  price: number;
+  unitsSold: number;
+  unitsAddedApprox: number | null;
+}
+
+export async function getSupplierAnalyticsBranchInventory(branchId: string): Promise<{
+  branchId: string;
+  products: SupplierBranchInventoryInsightProduct[];
+  categories: string[];
+} | null> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    branchId: string;
+    products: SupplierBranchInventoryInsightProduct[];
+    categories: string[];
+  }>(`/supplier/analytics/branch/${encodeURIComponent(branchId)}/inventory`);
+  if (!data?.success) return null;
+  return {
+    branchId: data.branchId,
+    products: data.products ?? [],
+    categories: data.categories ?? [],
+  };
+}
+
+export async function patchBranchStaffProfile(body: {
+  address?: string | null;
+  city?: string | null;
+  area?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  hasDelivery?: boolean;
+  deliveryFee?: number;
+  latitude?: number | null;
+  longitude?: number | null;
+}): Promise<SupplierAccountProfile | null> {
+  const { data } = await apiClient.patch<{ success: boolean; profile: SupplierAccountProfile }>(
+    '/supplier/branch/me',
     body
   );
   return data?.profile ?? null;

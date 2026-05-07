@@ -16,6 +16,7 @@ async function listProviders(req, res) {
   const providers = await providerService.listProviders({
     category: req.query.category,
     forAdmin: false,
+    nearCity: req.query.city || req.query.nearCity,
   });
   res.json({ success: true, providers });
 }

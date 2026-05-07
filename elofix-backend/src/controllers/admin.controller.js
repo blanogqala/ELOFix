@@ -127,7 +127,19 @@ async function getCommissions(req, res) {
 
 async function listSuppliers(req, res) {
   const suppliers = await supplierService.listSuppliersForAdminDashboard();
-  const globalSupplierOrderAnalytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({});
+  let globalSupplierOrderAnalytics;
+  try {
+    globalSupplierOrderAnalytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({});
+  } catch (err) {
+    console.error("[admin.listSuppliers] aggregate material orders failed", err);
+    globalSupplierOrderAnalytics = {
+      orderCount: 0,
+      totalRevenue: 0,
+      totalCommission: 0,
+      averageOrderValue: 0,
+      commissionRate: 0.07,
+    };
+  }
   res.json({
     success: true,
     suppliers,
@@ -136,6 +148,12 @@ async function listSuppliers(req, res) {
       ...globalSupplierOrderAnalytics,
     },
   });
+}
+
+/** Admin provisions supplier login + org + default branch (same as POST /suppliers). */
+async function createSupplier(req, res) {
+  const supplier = await supplierService.provisionSupplierByAdmin(req.body || {});
+  res.status(201).json({ success: true, supplier });
 }
 
 async function getAdminSupplierDetail(req, res) {
@@ -147,7 +165,19 @@ async function getAdminSupplierDetail(req, res) {
   if (!supplier) {
     throw new AppError("Supplier not found", 404);
   }
-  const analytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({ supplierId });
+  let analytics;
+  try {
+    analytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({ supplierId });
+  } catch (err) {
+    console.error("[admin.getAdminSupplierDetail] aggregate failed", err);
+    analytics = {
+      orderCount: 0,
+      totalRevenue: 0,
+      totalCommission: 0,
+      averageOrderValue: 0,
+      commissionRate: 0.07,
+    };
+  }
   res.json({ success: true, supplier, analytics });
 }
 
@@ -207,6 +237,7 @@ module.exports = {
   getFinancialSummaryEndpoint,
   getCommissions,
   listSuppliers,
+  createSupplier,
   getAdminSupplierDetail,
   listSupplierOrders,
   listSupplierMaterialOrders,

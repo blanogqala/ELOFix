@@ -11,9 +11,12 @@ interface BackendUser {
   id: string;
   email: string;
   name: string;
-  role: 'CUSTOMER' | 'PROVIDER' | 'ADMIN' | 'SUPPLIER';
+  role: 'CUSTOMER' | 'PROVIDER' | 'ADMIN' | 'SUPPLIER' | 'BRANCH_STAFF';
   phone?: string | null;
   createdAt: string;
+  branchId?: string;
+  supplierOrgId?: string;
+  branchUserRole?: 'MANAGER' | 'STAFF';
   approved?: boolean;
   profileCompleted?: boolean;
   businessName?: string;
@@ -49,6 +52,7 @@ function mapBackendRole(role: BackendUser['role']): UserRole {
   if (role === 'ADMIN') return 'admin';
   if (role === 'PROVIDER') return 'provider';
   if (role === 'SUPPLIER') return 'supplier';
+  if (role === 'BRANCH_STAFF') return 'branch_staff';
   return 'user';
 }
 
@@ -115,6 +119,19 @@ function toAuthUser(user: BackendUser): AuthUser {
       supplierProfile: user.supplierProfile ?? null,
     };
     return su;
+  }
+
+  if (role === 'branch_staff') {
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: 'branch_staff',
+      createdAt: user.createdAt ?? new Date().toISOString(),
+      branchId: String(user.branchId || ''),
+      supplierOrgId: String(user.supplierOrgId || ''),
+      branchUserRole: user.branchUserRole,
+    };
   }
 
   return {

@@ -1,7 +1,12 @@
 const prisma = require("../config/prisma");
 const notificationService = require("../services/notification.service");
+const branchStaffNotificationService = require("../services/branchStaffNotification.service");
 
 async function getNotifications(req, res) {
+  if (req.user.role === "BRANCH_STAFF") {
+    const notifications = await branchStaffNotificationService.listForBranchUser(req.user.userId);
+    return res.json({ success: true, notifications });
+  }
   const requested = String(req.query.userId || req.user.userId);
   if (req.user.role !== "ADMIN" && requested !== req.user.userId) {
     return res.status(403).json({ success: false, message: "Forbidden" });
@@ -71,6 +76,10 @@ async function replySupportAsAdmin(req, res) {
 }
 
 async function markAsRead(req, res) {
+  if (req.user.role === "BRANCH_STAFF") {
+    await branchStaffNotificationService.markAsRead(req.user.userId, req.params.notificationId);
+    return res.json({ success: true });
+  }
   const userId = String(req.body?.userId || req.user.userId);
   if (req.user.role !== "ADMIN" && userId !== req.user.userId) {
     return res.status(403).json({ success: false, message: "Forbidden" });
@@ -80,6 +89,10 @@ async function markAsRead(req, res) {
 }
 
 async function markAllAsRead(req, res) {
+  if (req.user.role === "BRANCH_STAFF") {
+    await branchStaffNotificationService.markAllAsRead(req.user.userId);
+    return res.json({ success: true });
+  }
   const userId = String(req.body?.userId || req.user.userId);
   if (req.user.role !== "ADMIN" && userId !== req.user.userId) {
     return res.status(403).json({ success: false, message: "Forbidden" });
@@ -89,6 +102,10 @@ async function markAllAsRead(req, res) {
 }
 
 async function getUnreadCount(req, res) {
+  if (req.user.role === "BRANCH_STAFF") {
+    const count = await branchStaffNotificationService.getUnreadCount(req.user.userId);
+    return res.json({ success: true, count });
+  }
   const userId = String(req.query.userId || req.user.userId);
   if (req.user.role !== "ADMIN" && userId !== req.user.userId) {
     return res.status(403).json({ success: false, message: "Forbidden" });

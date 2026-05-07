@@ -58,6 +58,14 @@ export interface NormalizedOrder {
   supplierDisplayName?: string;
   supplierPhone?: string;
   supplierAddress?: string;
+  /** Branch public contact / delivery (material orders API) */
+  branchContactEmail?: string;
+  branchCity?: string;
+  branchArea?: string;
+  branchHasDelivery?: boolean;
+  branchDeliveryFee?: number;
+  cancelledBy?: string;
+  cancellationReason?: string;
   activeTrackingId?: string | null;
   activeTrackingToken?: string | null;
   /** Canonical material order id for tracking room / poll */
@@ -81,6 +89,7 @@ interface OrderDetailsViewProps {
   onCancelDelivery?: () => void;
   onChangeDelivery?: () => void;
   onChooseDelivery?: () => void;
+  onCancelOrder?: () => void;
   onPayDelivery?: () => void;
   onSimulateApproval?: () => void;
   onSimulateRejection?: () => void;
@@ -136,6 +145,7 @@ export function OrderDetailsView({
   onCancelDelivery,
   onChangeDelivery,
   onChooseDelivery,
+  onCancelOrder,
   onPayDelivery,
   onSimulateApproval,
   onSimulateRejection,
@@ -192,6 +202,7 @@ export function OrderDetailsView({
   const materialsOk = order.materialsPaid !== false;
   const showUnified = !noDeliverySelected && materialsOk;
   const unifiedMapActive = Boolean(showTracking && fulfillmentAllowsLiveMap);
+  const cancellationReason = order.cancellationReason || undefined;
 
   return (
     <div className="space-y-6">
@@ -246,6 +257,58 @@ export function OrderDetailsView({
                 <span>${(item.qty * item.unitPrice).toFixed(2)}</span>
               </div>
             ))}
+            {(order.supplierAddress ||
+              order.branchCity ||
+              order.branchArea ||
+              order.supplierPhone ||
+              order.branchContactEmail ||
+              order.branchHasDelivery === true) && (
+              <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-sm space-y-1.5">
+                <p className="font-medium text-foreground">Store contact and pickup</p>
+                {order.supplierAddress && (
+                  <p className="text-muted-foreground">
+                    <span className="text-foreground/80">Address: </span>
+                    {order.supplierAddress}
+                    {(order.branchCity || order.branchArea) && (
+                      <span>
+                        {order.branchCity ? ` · ${order.branchCity}` : ''}
+                        {order.branchArea ? ` · ${order.branchArea}` : ''}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {!order.supplierAddress && (order.branchCity || order.branchArea) && (
+                  <p className="text-muted-foreground">
+                    {[order.branchCity, order.branchArea].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                {order.supplierPhone && (
+                  <p className="text-muted-foreground">
+                    <span className="text-foreground/80">Phone: </span>
+                    <a href={`tel:${order.supplierPhone}`} className="text-primary underline-offset-4 hover:underline">
+                      {order.supplierPhone}
+                    </a>
+                  </p>
+                )}
+                {order.branchContactEmail && (
+                  <p className="text-muted-foreground">
+                    <span className="text-foreground/80">Email: </span>
+                    <a
+                      href={`mailto:${order.branchContactEmail}`}
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      {order.branchContactEmail}
+                    </a>
+                  </p>
+                )}
+                {order.branchHasDelivery === true && order.branchDeliveryFee != null && (
+                  <p className="text-muted-foreground">
+                    <span className="text-foreground/80">Store delivery: </span>
+                    available from {formatCurrency(order.branchDeliveryFee, { decimals: 2 })} (branch rate; your order may differ)
+                  </p>
+                )}
+              </div>
+            )}
             <div className="border-t border-border pt-2 space-y-1">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Material Total</span>
@@ -284,6 +347,19 @@ export function OrderDetailsView({
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {onCancelOrder && (
+            <div className="space-y-2 ">
+              <Button size="sm" variant="destructive" onClick={onCancelOrder}>
+                Cancel Order
+              </Button>
+            </div>
+          )}
+          {String(order.fulfillmentStatus || '').toUpperCase() === 'CANCELLED' && (
+            <div className=" p-3 text-sm">
+              <p className="font-medium">Order cancelled</p>
+              {cancellationReason && <p className="text-muted-foreground mt-1">Reason: {cancellationReason}</p>}
+            </div>
+          )}
           {noDeliverySelected && (
             <div className="space-y-3 p-4 bg-muted/50 border border-border rounded-lg">
               <p className="text-sm text-muted-foreground">No delivery selected.</p>
@@ -329,7 +405,7 @@ export function OrderDetailsView({
           )}
 
           {!noDeliverySelected && isApproved && order.deliveryFee > 0 && (
-            <div className="space-y-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
+            <div className="space-y-3 p-4 bg-primary/5 border border-primary rounded-lg">
               <div>
                 <p className="font-medium">Delivery Information</p>
                 <p className="text-sm text-muted-foreground">
@@ -374,7 +450,7 @@ export function OrderDetailsView({
             <>
               {unifiedMode !== 'self_pickup' &&
               !['OUT_FOR_DELIVERY', 'COMPLETED', 'FAILED', 'CANCELLED', 'DELAYED'].includes(fulfillmentU) ? (
-                <p className="text-sm text-muted-foreground rounded-md border border-border/80 bg-muted/20 px-3 py-2">
+                <p className="text-sm text-muted-foreground rounded-md border border-primary bg-muted/20 px-3 py-2">
                   Waiting for the supplier to prepare your order. Live tracking will be available once dispatch starts.
                 </p>
               ) : null}

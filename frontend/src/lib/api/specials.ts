@@ -1,6 +1,5 @@
 import { Special, DeliveryProvider, Provider } from '@/types';
 import apiClient from '@/api/client';
-import { getProvidersByCategory } from '@/lib/api/providers';
 
 interface SpecialsResponse {
   success: boolean;
@@ -48,7 +47,28 @@ function providerToDeliveryCard(p: Provider): DeliveryProvider {
 }
 
 /** Couriers: approved providers with skill/category `delivery` (see seed categories). */
-export async function getDeliveryProviders(): Promise<DeliveryProvider[]> {
-  const providers = await getProvidersByCategory('delivery');
-  return providers.map(providerToDeliveryCard);
+export async function getDeliveryProviders(options?: {
+  city?: string;
+  lat?: number;
+  lng?: number;
+}): Promise<DeliveryProvider[]> {
+  const { data } = await apiClient.get<{ success: boolean; providers: Provider[] }>(
+    '/providers',
+    {
+      params: {
+        category: 'delivery',
+        city: options?.city?.trim() || undefined,
+      },
+    }
+  );
+  const providers = Array.isArray(data?.providers) ? data.providers : [];
+  const eligible = providers.filter(
+    (p) =>
+      p.approved &&
+      p.profileCompleted !== false &&
+      !p.blocked &&
+      !p.deletedAt &&
+      p.settings?.availability !== false
+  );
+  return eligible.map(providerToDeliveryCard);
 }

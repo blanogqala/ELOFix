@@ -16,6 +16,8 @@ function authenticate(req, res, next) {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
+      branchId: payload.branchId || null,
+      supplierOrgId: payload.supplierOrgId || null,
     };
     next();
   } catch {
@@ -39,4 +41,17 @@ function authorizeRoles(allowedRoles) {
   };
 }
 
-module.exports = { authenticate, authorizeRoles };
+/** Supplier portal: primary supplier account or branch-level staff. */
+function authorizeSupplierPortal() {
+  return (req, res, next) => {
+    if (!req.user?.role) {
+      return next(new AppError("Authentication required", 401));
+    }
+    if (req.user.role === "SUPPLIER" || req.user.role === "BRANCH_STAFF") {
+      return next();
+    }
+    return next(new AppError("Forbidden", 403));
+  };
+}
+
+module.exports = { authenticate, authorizeRoles, authorizeSupplierPortal };

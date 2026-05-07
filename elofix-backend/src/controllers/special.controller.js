@@ -3,6 +3,7 @@ const specialService = require("../services/special.service");
 async function getSpecials(req, res) {
   const specials = await specialService.listSpecials({
     supplierId: req.query.supplierId,
+    branchId: req.query.branchId,
     category: req.query.category,
   });
   res.json({ success: true, specials });

@@ -38,6 +38,7 @@ router.patch("/withdrawals/:id/mark-paid", asyncHandler(adminController.markWith
 router.patch("/withdrawals/:id/mark-failed", asyncHandler(adminController.markWithdrawalFailed));
 
 router.get("/suppliers", asyncHandler(adminController.listSuppliers));
+router.post("/suppliers", asyncHandler(adminController.createSupplier));
 router.get("/suppliers/:supplierId/material-orders", asyncHandler(adminController.listSupplierMaterialOrders));
 router.get("/suppliers/:supplierId/orders", asyncHandler(adminController.listSupplierOrders));
 router.get("/suppliers/:supplierId", asyncHandler(adminController.getAdminSupplierDetail));

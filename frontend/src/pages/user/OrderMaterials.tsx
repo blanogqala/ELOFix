@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
-import { getSuppliers } from '@/lib/api/suppliers';
+import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { getSavedCards } from '@/lib/api/payments';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
 import { Supplier, Product, SavedCard, DeliveryProvider } from '@/types';
@@ -23,14 +23,19 @@ import {
   Trash2,
   Truck,
   CreditCard,
-  Check,
   Lock,
   AlertCircle,
   Package,
+  MapPin,
+  Loader2,
+  Navigation,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getDeliveryProviders } from '@/lib/api/specials';
+import { reverseGeocode } from '@/lib/api/geocode';
+import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
+import { readCachedUserCoords, writeCachedUserCoords } from '@/lib/geo/sessionUserLocation';
 
 interface CartItem {
   product: Product;
@@ -39,13 +44,58 @@ interface CartItem {
   qty: number;
 }
 
+function sortStoresByDistance(
+  list: StoreRow[],
+  userCoords: { lat: number; lng: number } | null
+): StoreRow[] {
+  const distKm = (s: StoreRow): number | null => {
+    if (typeof s.distanceKm === 'number' && Number.isFinite(s.distanceKm)) {
+      return s.distanceKm;
+    }
+    if (
+      !userCoords ||
+      typeof s.latitude !== 'number' ||
+      typeof s.longitude !== 'number' ||
+      !Number.isFinite(s.latitude) ||
+      !Number.isFinite(s.longitude)
+    ) {
+      return null;
+    }
+    return haversineKm(userCoords.lat, userCoords.lng, s.latitude, s.longitude);
+  };
+
+  return [...list].sort((a, b) => {
+    const dA = distKm(a);
+    const dB = distKm(b);
+
+    if (dA != null && dB != null && dA !== dB) return dA - dB;
+    if (dA != null && dB == null) return -1;
+    if (dA == null && dB != null) return 1;
+    return String(a.displayName || a.name).localeCompare(String(b.displayName || b.name));
+  });
+}
+
+function geolocationMessage(code?: number): string {
+  switch (code) {
+    case 1:
+      return 'Location permission was denied. Enable it in your browser settings or enter your address manually.';
+    case 2:
+      return 'Your position could not be determined. Try again or enter your address manually.';
+    case 3:
+      return 'Location request timed out. Try again or enter your address manually.';
+    default:
+      return 'Could not access your location. Enter your address manually.';
+  }
+}
+
 export default function OrderMaterials() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const [step, setStep] = useState(1);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [stores, setStores] = useState<StoreRow[]>([]);
+  const [storesLoading, setStoresLoading] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -57,36 +107,63 @@ export default function OrderMaterials() {
   const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState('');
   const [cvc, setCvc] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryCity, setDeliveryCity] = useState('');
+  const [deliveryArea, setDeliveryArea] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storeSearch, setStoreSearch] = useState('');
+  const [userGeo, setUserGeo] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+
+  const geocodeCacheRef = useRef<Map<string, Awaited<ReturnType<typeof reverseGeocode>>>>(new Map());
 
   const loadData = useCallback(async () => {
     try {
-      const [sups, cards] = await Promise.all([
-        getSuppliers(),
-        user ? getSavedCards(user.id) : Promise.resolve([]),
-      ]);
-      setSuppliers(sups);
+      const cards = user ? await getSavedCards(user.id) : [];
       setSavedCards(cards);
       const def = cards.find(c => c.isDefault) || cards[0];
       if (def) setSelectedCardId(def.id);
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to load stores or payment cards.');
-    }
-    try {
-      setDeliveryProvidersError(null);
-      const providers = await getDeliveryProviders();
-      setDeliveryProviders(providers);
-    } catch (error) {
-      setDeliveryProviders([]);
-      setDeliveryProvidersError(error instanceof Error ? error.message : 'Delivery providers are unavailable.');
+      setError(error instanceof Error ? error.message : 'Failed to load payment cards.');
     }
   }, [user]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const loadStores = useCallback(async () => {
+    setStoresLoading(true);
+    try {
+      setError(null);
+      const list = await getBranchesNearby({
+        city: deliveryCity.trim() || undefined,
+        lat: userGeo?.lat,
+        lng: userGeo?.lng,
+        q: storeSearch.trim() || undefined,
+      });
+      setStores(list);
+    } catch (err) {
+      setStores([]);
+      setError(err instanceof Error ? err.message : 'Failed to load stores.');
+    } finally {
+      setStoresLoading(false);
+    }
+  }, [deliveryCity, userGeo, storeSearch]);
+
+  useEffect(() => {
+    if (step !== 1) return;
+    const t = window.setTimeout(() => {
+      void loadStores();
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [step, loadStores]);
+
+  useEffect(() => {
+    const cached = readCachedUserCoords();
+    if (cached) setUserGeo({ lat: cached.lat, lng: cached.lng });
+  }, []);
 
   useEffect(() => {
     if (deliveryProviders.length === 0) {
@@ -95,9 +172,104 @@ export default function OrderMaterials() {
     }
   }, [deliveryProviders.length]);
 
-  const filteredStores = suppliers.filter(s =>
-    s.name.toLowerCase().includes(storeSearch.toLowerCase())
+  useEffect(() => {
+    if (step !== 3) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        setDeliveryProvidersError(null);
+        const providers = await getDeliveryProviders({
+          city: deliveryCity.trim() || undefined,
+          lat: userGeo?.lat,
+          lng: userGeo?.lng,
+        });
+        if (!cancelled) setDeliveryProviders(providers);
+      } catch (e) {
+        if (!cancelled) {
+          setDeliveryProviders([]);
+          setDeliveryProvidersError(e instanceof Error ? e.message : 'Delivery providers are unavailable.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, deliveryCity, userGeo?.lat, userGeo?.lng]);
+
+  const sortedStoresStep1 = useMemo(
+    () => sortStoresByDistance(stores, userGeo),
+    [stores, userGeo]
   );
+
+  const applyCoordsAndFillAddress = useCallback(
+    async (lat: number, lng: number) => {
+      setUserGeo({ lat, lng });
+      writeCachedUserCoords(lat, lng);
+      const cacheKey = `${lat.toFixed(5)}_${lng.toFixed(5)}`;
+      let geo = geocodeCacheRef.current.get(cacheKey);
+      if (!geo) {
+        geo = await reverseGeocode(lat, lng);
+        geocodeCacheRef.current.set(cacheKey, geo);
+      }
+      const street = (geo.street || '').trim();
+      const line1 = street || (geo.address || '').split(',')[0]?.trim() || '';
+      setDeliveryAddress(line1);
+      setDeliveryCity((geo.city || '').trim());
+      const area = (geo.area || geo.suburb || '').trim();
+      setDeliveryArea(area);
+    },
+    []
+  );
+
+  const handleUseMyLocation = useCallback(async () => {
+    if (!navigator.geolocation) {
+      toast({
+        title: 'Location not supported',
+        description: 'Your browser does not support geolocation.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setLocationLoading(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 20000,
+          maximumAge: 120000,
+        });
+      });
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      try {
+        await applyCoordsAndFillAddress(lat, lng);
+        toast({
+          title: 'Address updated',
+          description: 'Review the fields and edit if needed.',
+        });
+      } catch (geErr) {
+        setUserGeo({ lat, lng });
+        writeCachedUserCoords(lat, lng);
+        toast({
+          title: 'Location saved for nearby stores',
+          description:
+            geErr instanceof Error
+              ? `${geErr.message} Enter your street, city and area manually.`
+              : 'We could not resolve your address. Enter your details manually.',
+          variant: 'destructive',
+        });
+      }
+    } catch (err) {
+      const code = err instanceof GeolocationPositionError ? err.code : undefined;
+      toast({
+        title: 'Location unavailable',
+        description: geolocationMessage(code),
+        variant: 'destructive',
+      });
+    } finally {
+      setLocationLoading(false);
+    }
+  }, [applyCoordsAndFillAddress, toast]);
 
   const filteredProducts = selectedSupplier?.products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -115,7 +287,7 @@ export default function OrderMaterials() {
       if (existing) {
         return prev.map(c => c.product.id === product.id ? { ...c, qty: c.qty + 1 } : c);
       }
-      return [...prev, { product, supplierId: selectedSupplier!.id, supplierName: selectedSupplier!.name, qty: 1 }];
+      return [...prev, { product, supplierId: selectedSupplier!.id, supplierName: selectedSupplier!.displayName || selectedSupplier!.name, qty: 1 }];
     });
   };
 
@@ -147,6 +319,8 @@ export default function OrderMaterials() {
     if (!user || !selectedSupplier) return;
     if (!selectedCardId) { setError('Select a card'); return; }
     if (!/^\d{3,4}$/.test(cvc)) { setError('Enter valid CVC (3-4 digits)'); return; }
+    if (!deliveryAddress.trim()) { setError('Delivery address is required.'); return; }
+    if (!deliveryCity.trim()) { setError('City is required.'); return; }
 
     setIsProcessing(true);
     setError(null);
@@ -157,7 +331,8 @@ export default function OrderMaterials() {
       const order = await createMaterialOrder({
         userId: user.id,
         storeId: selectedSupplier.id,
-        storeName: selectedSupplier.name,
+        branchId: selectedSupplier.id,
+        storeName: selectedSupplier.displayName || selectedSupplier.name,
         items: cart.map(c => ({
           productId: c.product.id,
           name: c.product.name,
@@ -170,6 +345,14 @@ export default function OrderMaterials() {
           status: deliveryStatus,
           providerId: deliveryType === 'DELIVERY_PROVIDER' ? selectedDeliveryProvider : undefined,
           fee: deliveryFee,
+          address: deliveryAddress.trim(),
+          city: deliveryCity.trim(),
+          area: deliveryArea.trim() || undefined,
+        },
+        customerLocation: {
+          address: deliveryAddress.trim(),
+          city: deliveryCity.trim(),
+          area: deliveryArea.trim() || undefined,
         },
         materialsTotal,
         cardLast4: card?.last4 || '****',
@@ -201,33 +384,179 @@ export default function OrderMaterials() {
           {/* Step 1: Choose Store */}
           {step === 1 && (
             <div className="space-y-6">
-              <h2 className="text-xl font-semibold">Choose a Store</h2>
+              <div>
+                <h2 className="text-xl font-semibold">Delivery address</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  We use your city and optional GPS to list nearby branches. Enter at least city for best results.
+                </p>
+              </div>
+
+              <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <Label className="text-sm font-medium">Street address</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full shrink-0 sm:w-auto"
+                    disabled={locationLoading}
+                    onClick={() => void handleUseMyLocation()}
+                  >
+                    {locationLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Locating…
+                      </>
+                    ) : (
+                      <>
+                        <Navigation className="mr-2 h-4 w-4" />
+                        Use my location
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <Input
+                  placeholder="Street address"
+                  value={deliveryAddress}
+                  onChange={(e) => setDeliveryAddress(e.target.value)}
+                  autoComplete="street-address"
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="om-step1-city" className="mb-1.5 block text-xs text-muted-foreground">
+                      City
+                    </Label>
+                    <Input
+                      id="om-step1-city"
+                      placeholder="City"
+                      value={deliveryCity}
+                      onChange={(e) => setDeliveryCity(e.target.value)}
+                      autoComplete="address-level2"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="om-step1-area" className="mb-1.5 block text-xs text-muted-foreground">
+                      Area / suburb (optional)
+                    </Label>
+                    <Input
+                      id="om-step1-area"
+                      placeholder="Area or suburb"
+                      value={deliveryArea}
+                      onChange={(e) => setDeliveryArea(e.target.value)}
+                    />
+                  </div>
+                </div>
+                {userGeo && (
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <MapPin className="h-3.5 w-3.5 shrink-0" />
+                    Location remembered for this session (nearby ordering).
+                  </p>
+                )}
+              </div>
+
+              <div className="border-t border-border pt-4">
+                <h2 className="text-xl font-semibold">Choose a store branch</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Branches are sorted by distance when your location is known. Search by store name to find your brand.
+                </p>
+              </div>
+
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search stores..." value={storeSearch} onChange={e => setStoreSearch(e.target.value)} className="pl-10" />
+                <Input
+                  placeholder="Search stores…"
+                  value={storeSearch}
+                  onChange={(e) => setStoreSearch(e.target.value)}
+                  className="pl-10"
+                />
               </div>
+
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
-                {filteredStores.map(sup => (
-                  <div
-                    key={sup.id}
-                    onClick={() => { setSelectedSupplier(sup); setStep(2); }}
-                    className={cn("card-elevated cursor-pointer p-4 transition-all hover:border-primary/30 sm:p-5",
-                      selectedSupplier?.id === sup.id && "border-primary"
-                    )}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-2xl">
-                        {sup.logo || <Store className="h-5 w-5 text-primary sm:h-6 sm:w-6" />}
-                      </div>
-                      <div>
-                        <p className="font-semibold">{sup.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {sup.products.length} products • {sup.hasDelivery ? 'Delivers' : 'Pickup only'}
-                        </p>
-                      </div>
-                    </div>
+                {storesLoading && (
+                  <div className="col-span-full flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading nearby stores…
                   </div>
-                ))}
+                )}
+                {!storesLoading &&
+                  sortedStoresStep1.map((sup) => {
+                    const distKm =
+                      typeof sup.distanceKm === 'number' && Number.isFinite(sup.distanceKm)
+                        ? sup.distanceKm
+                        : userGeo &&
+                            typeof sup.latitude === 'number' &&
+                            typeof sup.longitude === 'number' &&
+                            Number.isFinite(sup.latitude) &&
+                            Number.isFinite(sup.longitude)
+                          ? haversineKm(userGeo.lat, userGeo.lng, sup.latitude, sup.longitude)
+                          : null;
+                    const addressLine = sup.address?.trim();
+                    const title = sup.displayName || sup.name;
+                    return (
+                      <div
+                        key={sup.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelectedSupplier(sup);
+                          setStep(2);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedSupplier(sup);
+                            setStep(2);
+                          }
+                        }}
+                        className={cn(
+                          'cursor-pointer rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-primary/40 sm:p-5',
+                          selectedSupplier?.id === sup.id && 'border-primary ring-1 ring-primary/20'
+                        )}
+                      >
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-2xl">
+                            {sup.logo || <Store className="h-5 w-5 text-primary sm:h-6 sm:w-6" />}
+                          </div>
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <p className="font-semibold leading-tight">{title}</p>
+                            {addressLine ? (
+                              <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                <span className="min-w-0 break-words">{addressLine}</span>
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                Address not listed — contact the store if needed.
+                              </p>
+                            )}
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                              {distKm != null && (
+                                <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+                                  <Navigation className="h-3 w-3" />
+                                  {formatDistanceKm(distKm)}
+                                </span>
+                              )}
+                              <span className="inline-flex items-center gap-1">
+                                <Truck className="h-3 w-3" />
+                                {sup.hasDelivery ? 'Delivery available' : 'Pickup only'}
+                              </span>
+                              {sup.hasDelivery && (
+                                <span className="inline-flex items-center gap-1">
+                                  Fee: {formatCurrency(sup.deliveryFee || 0)}
+                                </span>
+                              )}
+                              <span>· {sup.products.length} products</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                {!storesLoading && sortedStoresStep1.length === 0 && (
+                  <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                    No stores match this area or search. Try another city or clear the search.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -236,7 +565,7 @@ export default function OrderMaterials() {
           {step === 2 && selectedSupplier && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">{selectedSupplier.name}</h2>
+                <h2 className="text-xl font-semibold">{selectedSupplier.displayName || selectedSupplier.name}</h2>
                 {cart.length > 0 && (
                   <Badge className="bg-accent text-accent-foreground">
                     <ShoppingCart className="h-3 w-3 mr-1" />
@@ -332,7 +661,7 @@ export default function OrderMaterials() {
                     <RadioGroupItem value="SELF" id="self" />
                     <Label htmlFor="self" className="cursor-pointer flex-1">
                       <p className="font-medium">I will collect myself</p>
-                      <p className="text-sm text-muted-foreground">Free - Pick up from {selectedSupplier?.name}</p>
+                      <p className="text-sm text-muted-foreground">Free - Pick up from {selectedSupplier?.displayName || selectedSupplier?.name}</p>
                     </Label>
                   </div>
                 </div>
@@ -345,7 +674,7 @@ export default function OrderMaterials() {
                         <div className="flex justify-between">
                           <div>
                             <p className="font-medium">Store Delivery</p>
-                            <p className="text-sm text-muted-foreground">Delivered by {selectedSupplier.name}</p>
+                            <p className="text-sm text-muted-foreground">Delivered by {selectedSupplier.displayName || selectedSupplier.name}</p>
                           </div>
                           <p className="font-medium">{formatCurrency(selectedSupplier.deliveryFee)}</p>
                         </div>
@@ -366,6 +695,12 @@ export default function OrderMaterials() {
                   </div>
                 )}
               </RadioGroup>
+
+              {!deliveryProvidersError && deliveryProviders.length === 0 && deliveryCity.trim() !== '' && (
+                <p className="text-sm text-muted-foreground rounded-md border border-border bg-muted/30 px-3 py-2">
+                  No delivery providers available in your area. You can still collect from the store or use store delivery if this branch offers it.
+                </p>
+              )}
 
               {deliveryProviders.length > 0 && deliveryType === 'DELIVERY_PROVIDER' && (
                 <div className="space-y-3">
@@ -395,9 +730,6 @@ export default function OrderMaterials() {
                   {deliveryProvidersError && (
                     <p className="text-xs text-destructive">{deliveryProvidersError}</p>
                   )}
-                  {!deliveryProvidersError && deliveryProviders.length === 0 && (
-                    <p className="text-xs text-muted-foreground">No delivery providers available.</p>
-                  )}
                 </div>
               )}
 
@@ -423,7 +755,7 @@ export default function OrderMaterials() {
               <h2 className="text-xl font-semibold">Order Summary & Payment</h2>
 
               <div className="p-4 bg-muted/50 rounded-lg space-y-2">
-                <p className="font-medium mb-2">{selectedSupplier?.name}</p>
+                <p className="font-medium mb-2">{selectedSupplier?.displayName || selectedSupplier?.name}</p>
                 {cart.map(c => (
                   <div key={c.product.id} className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{c.product.name} × {c.qty}</span>
@@ -448,7 +780,6 @@ export default function OrderMaterials() {
                 </div>
               </div>
 
-              {/* Card Selection */}
               <div>
                 <Label className="mb-2 block">Payment Method</Label>
                 <RadioGroup value={selectedCardId} onValueChange={setSelectedCardId}>

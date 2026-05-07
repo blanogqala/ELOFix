@@ -40,6 +40,7 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
 import { Plus, Trash2, Pencil, ChevronDown, Search, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
+import { useAuth } from '@/contexts/AuthContext';
 
 const CATEGORY_NEW = '__create_new__';
 
@@ -58,6 +59,9 @@ function formatCategoryLabel(cat: string): string {
 export function SupplierInventory({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isBranchStaff = user?.role === 'branch_staff';
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastPositiveQtyRef = useRef<Map<string, number>>(new Map());
@@ -95,21 +99,41 @@ export function SupplierInventory({ userId }: { userId: string }) {
     enabled: Boolean(userId),
   });
 
+  const branches = useMemo(() => profile?.branches ?? [], [profile?.branches]);
+
+  useEffect(() => {
+    if (isBranchStaff && user && 'branchId' in user && user.branchId) {
+      setSelectedBranchId(user.branchId);
+      return;
+    }
+    if (!branches.length) return;
+    setSelectedBranchId((prev) => {
+      if (prev && branches.some((b) => b.id === prev)) return prev;
+      const next = branches.find((b) => b.isActive !== false) ?? branches[0];
+      return next?.id ?? '';
+    });
+  }, [branches, isBranchStaff, user]);
+
+  const branchProducts = useMemo(() => {
+    const b = branches.find((x) => x.id === selectedBranchId);
+    return b?.products?.length ? b.products : profile?.products ?? [];
+  }, [branches, selectedBranchId, profile?.products]);
+
   const { data: inventoryCategories = [] } = useQuery({
-    queryKey: ['supplier', 'inventoryCategories', userId],
-    queryFn: () => getSupplierInventoryCategories(),
-    enabled: Boolean(userId),
+    queryKey: ['supplier', 'inventoryCategories', userId, selectedBranchId],
+    queryFn: () => getSupplierInventoryCategories(selectedBranchId),
+    enabled: Boolean(userId && selectedBranchId),
   });
 
   useEffect(() => {
-    if (!profile?.products?.length) return;
-    for (const p of profile.products) {
+    if (!branchProducts.length) return;
+    for (const p of branchProducts) {
       const q = Number(p.quantity ?? 0);
       if (q > 0 && q < 500_000) {
         lastPositiveQtyRef.current.set(p.id, Math.floor(q));
       }
     }
-  }, [profile?.products]);
+  }, [branchProducts]);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['supplier', 'profile', userId] });
@@ -123,17 +147,18 @@ export function SupplierInventory({ userId }: { userId: string }) {
     for (const c of inventoryCategories) {
       keys.add(canonicalInventoryCategory(c.name));
     }
-    for (const p of profile?.products || []) {
+    for (const p of branchProducts) {
       keys.add(canonicalInventoryCategory(String(p.category ?? 'general')));
     }
     return [...keys].sort((a, b) => a.localeCompare(b));
-  }, [inventoryCategories, profile?.products]);
+  }, [inventoryCategories, branchProducts]);
 
   /** Alias kept for parity with cached HMR/old bundles that referenced `categoryOptions`. Same as mergedCategoryKeys. */
   const categoryOptions = mergedCategoryKeys;
 
   const mutPatch = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<Product> }) => patchSupplierProduct(id, patch),
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Product> }) =>
+      patchSupplierProduct(id, { ...patch, branchId: selectedBranchId }),
     onSuccess: () => {
       invalidate();
       toast({ title: 'Updated' });
@@ -142,7 +167,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
   });
 
   const mutDel = useMutation({
-    mutationFn: (id: string) => deleteSupplierProduct(id),
+    mutationFn: (id: string) => deleteSupplierProduct(id, selectedBranchId),
     onSuccess: () => {
       invalidate();
       toast({ title: 'Removed' });
@@ -241,7 +266,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
     if (categorySelect === CATEGORY_NEW) {
       const raw = newCategoryDraft.trim();
       try {
-        const row = await postSupplierInventoryCategory(raw);
+        const row = await postSupplierInventoryCategory(raw, selectedBranchId);
         resolvedCategory = row.name;
       } catch (e: unknown) {
         if (axios.isAxiosError(e) && e.response?.status === 409) {
@@ -260,6 +285,11 @@ export function SupplierInventory({ userId }: { userId: string }) {
     const price = parseFloat(form.price);
     const qty = Math.max(0, parseInt(form.quantity, 10) || 0);
 
+    if (!selectedBranchId) {
+      toast({ title: 'Select a branch', description: 'Choose a branch before saving products.', variant: 'destructive' });
+      return;
+    }
+
     setIsSaving(true);
     try {
       let imageUrl: string | undefined;
@@ -273,6 +303,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
         imageUrl !== undefined ? { image: imageUrl } : ({} as { image?: string });
       if (editId) {
         await patchSupplierProduct(editId, {
+          branchId: selectedBranchId,
           name: form.name.trim(),
           category: resolvedCategory,
           price,
@@ -295,6 +326,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
           quantity: qty,
           inStock: qty > 0,
           description: form.description.trim() || undefined,
+          branchId: selectedBranchId,
           ...(imageUrl !== undefined ? { image: imageUrl } : {}),
         });
         toast({ title: 'Product saved' });
@@ -314,7 +346,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
   };
 
   const productsFiltered = useMemo(() => {
-    const raw = profile?.products || [];
+    const raw = branchProducts;
     const q = search.trim().toLowerCase();
     return raw.filter((p) => {
       const cat = canonicalInventoryCategory(String(p.category ?? 'general'));
@@ -323,7 +355,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
       const hay = `${p.name} ${cat}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [profile?.products, search, categoryFilter]);
+  }, [branchProducts, search, categoryFilter]);
 
   const byCategory = useMemo(() => {
     const m = new Map<string, Product[]>();
@@ -410,8 +442,38 @@ export function SupplierInventory({ userId }: { userId: string }) {
     return <p className="text-sm text-muted-foreground">Loading inventory…</p>;
   }
 
+  if (!branches.length || !selectedBranchId) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No branches on your account yet. Add a branch from My Branches, then return here to manage stock.
+      </p>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {!isBranchStaff && (
+        <div className="flex flex-col gap-2 sm:max-w-md">
+          <Label htmlFor="supplier-inv-branch">Branch</Label>
+          <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
+            <SelectTrigger id="supplier-inv-branch">
+              <SelectValue placeholder="Select branch" />
+            </SelectTrigger>
+            <SelectContent>
+              {branches.map((b) => (
+                <SelectItem key={b.id} value={b.id}>
+                  {b.displayName || b.name}
+                  {b.isActive === false ? ' (inactive)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {isBranchStaff && (
+        <p className="text-xs text-muted-foreground">You can only edit inventory for your assigned branch.</p>
+      )}
+
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:max-w-md sm:flex-row sm:items-center sm:gap-3">
           <div className="relative min-w-0 flex-1">
@@ -449,7 +511,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
           <CardHeader>
             <CardTitle className="text-base">No items match</CardTitle>
             <p className="text-sm text-muted-foreground">
-              {profile.products?.length
+              {branchProducts.length
                 ? 'Try another search or category.'
                 : 'Add your first SKU to appear in the customer storefront.'}
             </p>

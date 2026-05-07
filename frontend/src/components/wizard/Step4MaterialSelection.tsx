@@ -52,18 +52,21 @@ export function Step4MaterialSelection({
       const byId = new Map<string, Supplier>();
       for (const row of rows) {
         if (!row.inStock) continue;
-        const sid = row.supplierId;
-        if (!byId.has(sid)) {
-          byId.set(sid, {
-            id: sid,
+        const bid = String((row as { branchId?: string }).branchId || row.supplierId);
+        if (!byId.has(bid)) {
+          byId.set(bid, {
+            id: bid,
             name: row.supplierName,
             hasDelivery: true,
             deliveryFee: 0,
             products: [],
+            supplierId: row.supplierId,
           });
         }
-        const { supplierId: _sid, supplierName: _sn, ...product } = row;
-        byId.get(sid)!.products.push(product as Product);
+        const { supplierId: _sid, supplierName: _sn, branchId: _bid, ...product } = row as typeof row & {
+          branchId?: string;
+        };
+        byId.get(bid)!.products.push(product as Product);
       }
       setSuppliers([...byId.values()].filter((s) => s.products.length > 0));
     } catch (error) {
@@ -91,6 +94,7 @@ export function Step4MaterialSelection({
       ));
     } else {
       setMaterials([...materials, {
+        branchId: supplier.id,
         supplierId: supplier.id,
         supplierName: supplier.name,
         productId: product.id,

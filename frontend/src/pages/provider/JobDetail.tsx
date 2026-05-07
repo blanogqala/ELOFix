@@ -28,8 +28,7 @@ import {
   createMaterialRequestDraft,
   submitMaterialRequestPayload,
 } from '@/lib/api/materialRequests';
-import { getSuppliers } from '@/lib/api/suppliers';
-import { Job, MaterialLine, Supplier, Measurements } from '@/types';
+import { Job, MaterialLine, Measurements } from '@/types';
 import {
   ArrowLeft, User, Calendar, MessageSquare, Send, MapPin,
   XCircle, CheckCircle, Clock, AlertTriangle, DollarSign, X,
@@ -144,7 +143,6 @@ export default function ProviderJobDetail() {
   const [servicePriceAmount, setServicePriceAmount] = useState('');
   const [servicePriceNote, setServicePriceNote] = useState('');
   const [addMaterialsOpen, setAddMaterialsOpen] = useState(false);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [editRequirementsOpen, setEditRequirementsOpen] = useState(false);
   const [editMeasurements, setEditMeasurements] = useState<Partial<Measurements>>({});
   const [editRequirementNotes, setEditRequirementNotes] = useState('');
@@ -196,20 +194,6 @@ export default function ProviderJobDetail() {
       alive = false;
     };
   }, [jobId]);
-
-  useEffect(() => {
-    if (jobId) {
-      void getSuppliers()
-        .then(setSuppliers)
-        .catch((error) => {
-          toast({
-            title: 'Error',
-            description: error instanceof Error ? error.message : 'Failed to load suppliers.',
-            variant: 'destructive',
-          });
-        });
-    }
-  }, [jobId, toast]);
 
   useEffect(() => {
     const handleStorageUpdate = (event: StorageEvent) => {
@@ -939,7 +923,7 @@ export default function ProviderJobDetail() {
         <AddMaterialsModal
           open={addMaterialsOpen}
           onOpenChange={setAddMaterialsOpen}
-          suppliers={suppliers}
+          jobLocation={job.location ?? undefined}
           jobCategory={job.category}
           existingMaterials={materialsBuilder}
           onAddMaterials={(mats) => {

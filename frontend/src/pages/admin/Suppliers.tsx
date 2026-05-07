@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { getAdminSuppliers } from '@/lib/api/admin';
-import { provisionSupplier } from '@/lib/api/suppliers';
+import { getAdminSuppliers, provisionAdminSupplier } from '@/lib/api/admin';
 import { Search, Plus, Eye, Store, TrendingUp, Percent, PackageCheck } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -48,7 +47,7 @@ export default function AdminSuppliers() {
 
   const provisionMut = useMutation({
     mutationFn: () =>
-      provisionSupplier({
+      provisionAdminSupplier({
         email: form.email.trim(),
         password: form.password,
         name: form.name.trim() || undefined,

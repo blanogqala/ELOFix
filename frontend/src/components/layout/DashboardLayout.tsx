@@ -7,7 +7,9 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Button } from '@/components/ui/button';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getUnreadCount } from '@/lib/api/notifications';
+import { getSupplierMe } from '@/lib/api/supplierPortal';
 import { socket } from '@/lib/socket';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -29,6 +31,7 @@ import {
   Activity,
   Wallet,
   Store,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -68,8 +71,16 @@ const adminNavItems: NavItem[] = [
   { label: 'Withdrawals', path: '/admin/withdrawals', icon: <Wallet className="h-4 w-4 shrink-0" /> },
 ];
 
+const branchStaffNavItems: NavItem[] = [
+  { label: 'Dashboard', path: '/supplier/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'Orders', path: '/supplier/orders', icon: <ClipboardList className="h-4 w-4 shrink-0" /> },
+  { label: 'Inventory', path: '/supplier/inventory', icon: <Store className="h-4 w-4 shrink-0" /> },
+  { label: 'Earnings', path: '/supplier/earnings', icon: <DollarSign className="h-4 w-4 shrink-0" /> },
+];
+
 const supplierNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/supplier/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { label: 'Branches', path: '/supplier/branches', icon: <Building2 className="h-4 w-4 shrink-0" /> },
   { label: 'Orders', path: '/supplier/orders', icon: <ClipboardList className="h-4 w-4 shrink-0" /> },
   { label: 'Inventory', path: '/supplier/inventory', icon: <Store className="h-4 w-4 shrink-0" /> },
   { label: 'Earnings', path: '/supplier/earnings', icon: <DollarSign className="h-4 w-4 shrink-0" /> },
@@ -82,6 +93,7 @@ function notificationsPathForRole(role: string | undefined): string {
     case 'provider':
       return '/provider/notifications';
     case 'supplier':
+    case 'branch_staff':
       return '/supplier/notifications';
     default:
       return '/user/notifications';
@@ -98,9 +110,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const notificationsHref = useMemo(() => notificationsPathForRole(user?.role), [user?.role]);
 
+  const { data: branchStaffProfile } = useQuery({
+    queryKey: ['supplier', 'profile', user?.id],
+    queryFn: () => getSupplierMe(),
+    enabled: Boolean(user?.id && user?.role === 'branch_staff'),
+  });
+  const branchAvatarUrl = resolveUploadUrl(branchStaffProfile?.supplierLogo || branchStaffProfile?.logo);
+
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications', 'unread-count', user?.id],
-    queryFn: () => getUnreadCount(),
+    queryFn: () => getUnreadCount(user?.role),
     enabled: Boolean(user?.id),
     refetchOnWindowFocus: true,
     staleTime: 5_000,
@@ -139,6 +158,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         return providerNavItems;
       case 'supplier':
         return supplierNavItems;
+      case 'branch_staff':
+        return branchStaffNavItems;
       default:
         return userNavItems;
     }
@@ -159,6 +180,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         return 'Service Provider';
       case 'supplier':
         return 'Hardware supplier';
+      case 'branch_staff':
+        return 'Branch staff';
       default:
         return 'Customer';
     }
@@ -192,20 +215,26 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
           {/* User Info — customer/provider: link to profile */}
           <div className="mt-16 shrink-0 border-b border-border p-4 lg:mt-0">
-            {user?.role === 'user' || user?.role === 'provider' || user?.role === 'supplier' ? (
+            {user?.role === 'user' || user?.role === 'provider' || user?.role === 'supplier' || user?.role === 'branch_staff' ? (
               <Link
                 to={
                   user.role === 'provider'
                     ? '/provider/profile'
                     : user.role === 'supplier'
                       ? '/supplier/profile'
-                      : '/user/profile'
+                      : user.role === 'branch_staff'
+                        ? '/supplier/branch-profile'
+                        : '/user/profile'
                 }
                 onClick={() => setSidebarOpen(false)}
                 className="flex min-w-0 items-center gap-3 rounded-md p-1 -m-1 transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
-                  <User className="h-4 w-4 text-primary" />
+                <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+                  {user.role === 'branch_staff' && branchAvatarUrl ? (
+                    <img src={branchAvatarUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <User className="h-4 w-4 text-primary" />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-1.5">

@@ -31,5 +31,10 @@ router.patch(
   authorizeRoles("CUSTOMER"),
   asyncHandler(materialOrderController.confirmDeliveryReceipt)
 );
+router.post(
+  "/:id/cancel",
+  authorizeRoles("CUSTOMER"),
+  asyncHandler(materialOrderController.cancelMaterialOrder)
+);
 
 module.exports = router;

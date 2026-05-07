@@ -1,6 +1,6 @@
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { SupplierEarnings } from '@/components/supplier/SupplierEarnings';
+import { SupplierEarningsEnhanced } from '@/components/supplier/SupplierEarningsEnhanced';
 
 export default function SupplierEarningsPage() {
   const { user } = useAuth();
@@ -12,7 +12,7 @@ export default function SupplierEarningsPage() {
         <div>
           <h1 className="text-xl font-semibold sm:text-2xl">Earnings</h1>
         </div>
-        <SupplierEarnings userId={userId} />
+        <SupplierEarningsEnhanced userId={userId} />
       </div>
     </DashboardLayout>
   );

@@ -555,8 +555,9 @@ async function publicUrlFromUploadedFile(requestUserId, file) {
   return { url: stored.url, fileId: stored.fileId };
 }
 
-async function listProviders({ category, forAdmin = false } = {}) {
+async function listProviders({ category, forAdmin = false, nearCity } = {}) {
   const normalizedCategory = String(category || "").trim();
+  const nearCityTrim = String(nearCity || "").trim();
 
   const baseWhere = forAdmin
     ? {}
@@ -637,6 +638,19 @@ async function listProviders({ category, forAdmin = false } = {}) {
       });
     })
   );
+
+  if (normalizedCategory === "delivery" && nearCityTrim) {
+    const needle = nearCityTrim.toLowerCase();
+    return providers.filter((p) => {
+      const c = String(p.city || "")
+        .trim()
+        .toLowerCase();
+      if (c && c.includes(needle)) return true;
+      const areas = Array.isArray(p.serviceAreas) ? p.serviceAreas : [];
+      if (areas.some((a) => String(a).toLowerCase().includes(needle))) return true;
+      return false;
+    });
+  }
 
   return providers;
 }

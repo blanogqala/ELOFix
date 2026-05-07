@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getSupplierOrders,
+  getSupplierMe,
   patchSupplierOrderFulfillment,
   postSupplierOrderNote,
   postSupplierEnsureTracking,
+  cancelSupplierOrder,
+  getSupplierAnalyticsBranches,
   type SupplierMaterialOrderLine,
 } from '@/lib/api/supplierPortal';
 import { postTrackingLocation } from '@/lib/api/tracking';
@@ -19,11 +22,27 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { buildPublicTrackingUrl } from '@/lib/publicTrackingUrl';
 import { cn } from '@/lib/utils';
 import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
-import { useEffect, useMemo, useState } from 'react';
-import { Search, ArrowLeft, Copy, MapPin } from 'lucide-react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Search, ArrowLeft, Copy, MapPin, Building2 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Label } from '@/components/ui/label';
 import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const STATUS_BADGE: Record<string, string> = {
   PENDING: 'bg-amber-500/15 text-amber-900 dark:text-amber-100 border-amber-500/30',
@@ -158,6 +177,14 @@ function buildTimeline(order: SupplierMaterialOrderLine): { key: string; label: 
         label: `Note: ${e.message}`,
         at: e.createdAt,
       });
+    } else if (e.type === 'cancellation') {
+      const actor = String((e as { actor?: string }).actor || 'system');
+      const reason = (e as { reason?: string }).reason;
+      rows.push({
+        key: `c-${e.createdAt}-${actor}`,
+        label: `Cancelled by ${actor}${reason ? `: ${reason}` : ''}`,
+        at: e.createdAt,
+      });
     }
   }
   rows.sort((a, b) => new Date(a.at || 0).getTime() - new Date(b.at || 0).getTime());
@@ -166,16 +193,100 @@ function buildTimeline(order: SupplierMaterialOrderLine): { key: string; label: 
 
 export function SupplierOrders({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isBranchStaff = user?.role === 'branch_staff';
+  const isSupplierReadOnly = user?.role === 'supplier';
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const orderIdFromUrl = searchParams.get('orderId') ?? '';
+  const branchIdFromUrl = searchParams.get('branchId') ?? '';
+  const [ordersBranchFilter, setOrdersBranchFilter] = useState<'all' | string>('all');
+  const [supplierBrowse, setSupplierBrowse] = useState<'branches' | 'list'>(() =>
+    branchIdFromUrl ? 'list' : 'branches'
+  );
+  const defaultedBranchRef = useRef(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [noteDraft, setNoteDraft] = useState('');
+  const [cancelReasonDraft, setCancelReasonDraft] = useState('');
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+
+  const { data: profile } = useQuery({
+    queryKey: ['supplier', 'profile', userId],
+    queryFn: () => getSupplierMe(),
+    enabled: Boolean(userId),
+  });
+
+  const branches = profile?.branches ?? [];
+
+  const [ordCityFilter, setOrdCityFilter] = useState('');
+  const [ordSearchQ, setOrdSearchQ] = useState('');
+
+  const { data: orderBranchCards = [] } = useQuery({
+    queryKey: ['supplier', 'analytics', 'branches', 'orders-page', userId, ordCityFilter, ordSearchQ],
+    queryFn: () =>
+      getSupplierAnalyticsBranches({
+        ...(ordCityFilter ? { city: ordCityFilter } : {}),
+        ...(ordSearchQ.trim() ? { q: ordSearchQ.trim() } : {}),
+      }),
+    enabled: Boolean(userId) && isSupplierReadOnly,
+  });
+
+  const distinctOrdCities = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of orderBranchCards) {
+      const c = (b.city || '').trim();
+      if (c) s.add(c);
+    }
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [orderBranchCards]);
+
+  useEffect(() => {
+    if (!isSupplierReadOnly) return;
+    if (branchIdFromUrl) {
+      setOrdersBranchFilter(branchIdFromUrl);
+      setSupplierBrowse('list');
+      defaultedBranchRef.current = true;
+    }
+  }, [isSupplierReadOnly, branchIdFromUrl]);
+
+  useEffect(() => {
+    if (!isBranchStaff || !user || user.role !== 'branch_staff') return;
+    const bid = user.branchId;
+    if (bid) {
+      setOrdersBranchFilter(bid);
+      defaultedBranchRef.current = true;
+    }
+  }, [isBranchStaff, user]);
+
+  useEffect(() => {
+    if (isBranchStaff) return;
+    if (isSupplierReadOnly) return;
+    if (!branches.length || defaultedBranchRef.current) return;
+    const first = branches.find((b) => b.isActive !== false)?.id ?? branches[0]?.id;
+    if (first) {
+      setOrdersBranchFilter(first);
+      defaultedBranchRef.current = true;
+    }
+  }, [branches, isBranchStaff, isSupplierReadOnly]);
+
+  useEffect(() => {
+    if (isBranchStaff) return;
+    if (ordersBranchFilter !== 'all' && branches.length && !branches.some((b) => b.id === ordersBranchFilter)) {
+      setOrdersBranchFilter('all');
+    }
+  }, [branches, ordersBranchFilter, isBranchStaff]);
+
+  const shouldLoadOrders =
+    Boolean(userId) && (isBranchStaff || !isSupplierReadOnly || (isSupplierReadOnly && supplierBrowse === 'list'));
 
   const { data: orders = [], isLoading } = useQuery({
-    queryKey: ['supplier', 'orders', userId],
-    queryFn: () => getSupplierOrders(),
+    queryKey: ['supplier', 'orders', userId, ordersBranchFilter],
+    queryFn: () =>
+      getSupplierOrders(undefined, {
+        branchId: ordersBranchFilter === 'all' ? undefined : ordersBranchFilter,
+      }),
+    enabled: shouldLoadOrders,
   });
 
   const selected = useMemo(() => {
@@ -186,9 +297,11 @@ export function SupplierOrders({ userId }: { userId: string }) {
   useEffect(() => {
     if (!orderIdFromUrl || !orders.length) return;
     if (!orders.some((o) => o.id === orderIdFromUrl)) {
-      setSearchParams({}, { replace: true });
+      const next = new URLSearchParams(searchParams);
+      next.delete('orderId');
+      setSearchParams(next, { replace: true });
     }
-  }, [orders, orderIdFromUrl, setSearchParams]);
+  }, [orders, orderIdFromUrl, setSearchParams, searchParams]);
 
   useEffect(() => {
     if (!userId) return;
@@ -239,25 +352,141 @@ export function SupplierOrders({ userId }: { userId: string }) {
     },
   });
 
-  const openOrder = (id: string) => {
-    setSearchParams({ orderId: id });
+  const cancelMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => cancelSupplierOrder(id, reason),
+    onSuccess: ({ refund }) => {
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
+      setCancelReasonDraft('');
+      setCancelDialogOpen(false);
+      toast({
+        title: 'Order cancelled',
+        description: `Refund recorded: ${formatCurrency(Number(refund?.amount || 0))}`,
+      });
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Cancel failed', description: e.message, variant: 'destructive' });
+    },
+  });
+
+  const openSupplierBranchOrders = (branchId: string) => {
+    setOrdersBranchFilter(branchId);
+    setSupplierBrowse('list');
+    setSearchParams({ branchId });
   };
 
-  const backToList = () => {
+  const backToSupplierBranchCards = () => {
+    setSupplierBrowse('branches');
+    setOrdersBranchFilter('all');
     setSearchParams({});
   };
 
-  if (isLoading) {
+  const openOrder = (id: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('orderId', id);
+    if (isSupplierReadOnly && ordersBranchFilter !== 'all') {
+      next.set('branchId', ordersBranchFilter);
+    }
+    setSearchParams(next);
+  };
+
+  const backToList = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('orderId');
+    setSearchParams(next);
+  };
+
+  if (isSupplierReadOnly && supplierBrowse === 'branches' && !orderIdFromUrl) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Read-only overview. Pick a branch to view its orders.
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="flex w-full flex-col gap-1.5 sm:w-56">
+            <Label className="text-xs text-muted-foreground">City</Label>
+            <Select value={ordCityFilter || '__all__'} onValueChange={(v) => setOrdCityFilter(v === '__all__' ? '' : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="All cities" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All cities</SelectItem>
+                {distinctOrdCities.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="relative w-full flex-1 sm:max-w-sm">
+            <Label className="text-xs text-muted-foreground">Search</Label>
+            <Input
+              className="mt-1.5"
+              placeholder="Branch, address, area, manager email…"
+              value={ordSearchQ}
+              onChange={(e) => setOrdSearchQ(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {orderBranchCards.length === 0 && (
+            <p className="text-sm text-muted-foreground sm:col-span-2">No branches match filters.</p>
+          )}
+          {orderBranchCards.map((b) => (
+            <Card key={b.branchId} className="card-elevated">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Building2 className="h-4 w-4 shrink-0" />
+                  {b.name}
+                </CardTitle>
+                <CardDescription className="line-clamp-2">
+                  {[b.city, b.area].filter(Boolean).join(' · ') || b.address || '—'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 text-xs">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Orders</span>
+                  <span className="font-medium">{b.totalOrders}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Pending</span>
+                  <span className="font-medium">{b.pendingOrders}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Net</span>
+                  <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                    {formatCurrency(b.netEarnings)}
+                  </span>
+                </div>
+                <Button type="button" size="sm" className="w-full mt-2 btn-accent" onClick={() => openSupplierBranchOrders(b.branchId)}>
+                  View orders
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading && shouldLoadOrders) {
     return <p className="text-sm text-muted-foreground">Loading orders…</p>;
   }
 
-  if (orders.length === 0) {
+  if (orders.length === 0 && shouldLoadOrders) {
     return (
       <Card className="card-elevated border-dashed">
         <CardHeader>
           <CardTitle className="text-base">No orders yet</CardTitle>
           <CardDescription>New customer orders appear here in real time.</CardDescription>
         </CardHeader>
+        {isSupplierReadOnly && (
+          <CardContent>
+            <Button type="button" variant="outline" size="sm" onClick={backToSupplierBranchCards}>
+              Back to branches
+            </Button>
+          </CardContent>
+        )}
       </Card>
     );
   }
@@ -272,8 +501,37 @@ export function SupplierOrders({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-4">
+      {!selected && isSupplierReadOnly && supplierBrowse === 'list' && (
+        <Button type="button" variant="ghost" size="sm" className="gap-1 -ml-2" onClick={backToSupplierBranchCards}>
+          <ArrowLeft className="h-4 w-4" />
+          All branches
+        </Button>
+      )}
       {!selected && (
         <>
+          {branches.length > 0 && !isBranchStaff && (
+            <div className="flex flex-col gap-2 sm:max-w-xs">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Branch</span>
+              <Select
+                value={ordersBranchFilter}
+                onValueChange={(v) => setOrdersBranchFilter(v as 'all' | string)}
+                disabled={isSupplierReadOnly}
+              >
+                <SelectTrigger aria-label="Filter orders by branch">
+                  <SelectValue placeholder="Branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  {!isSupplierReadOnly && <SelectItem value="all">All branches</SelectItem>}
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.displayName || b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative max-w-md flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -350,6 +608,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
       ) : (
         <DetailPanel
           userId={userId}
+          readOnly={isSupplierReadOnly}
           order={selected}
           onBack={backToList}
           onPatch={(status) => patchMut.mutate({ id: selected.id, status })}
@@ -362,6 +621,23 @@ export function SupplierOrders({ userId }: { userId: string }) {
             noteMut.mutate({ id: selected.id, message: t });
           }}
           notePending={noteMut.isPending}
+          cancelReasonDraft={cancelReasonDraft}
+          onCancelReasonChange={setCancelReasonDraft}
+          cancelDialogOpen={cancelDialogOpen}
+          onCancelDialogOpenChange={(open) => {
+            setCancelDialogOpen(open);
+            if (!open) setCancelReasonDraft('');
+          }}
+          onOpenCancelDialog={() => setCancelDialogOpen(true)}
+          onCancelOrder={() => {
+            const reason = cancelReasonDraft.trim();
+            if (!reason) {
+              toast({ title: 'Reason required', description: 'Enter cancellation reason first.', variant: 'destructive' });
+              return;
+            }
+            cancelMut.mutate({ id: selected.id, reason });
+          }}
+          cancelPending={cancelMut.isPending}
         />
       )}
     </div>
@@ -370,6 +646,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
 
 function DetailPanel({
   userId,
+  readOnly = false,
   order,
   onBack,
   onPatch,
@@ -378,8 +655,16 @@ function DetailPanel({
   onNoteChange,
   onSubmitNote,
   notePending,
+  cancelReasonDraft,
+  onCancelReasonChange,
+  cancelDialogOpen,
+  onCancelDialogOpenChange,
+  onOpenCancelDialog,
+  onCancelOrder,
+  cancelPending,
 }: {
   userId: string;
+  readOnly?: boolean;
   order: SupplierMaterialOrderLine;
   onBack: () => void;
   onPatch: (s: MaterialFulfillmentStatus) => void;
@@ -388,6 +673,13 @@ function DetailPanel({
   onNoteChange: (v: string) => void;
   onSubmitNote: () => void;
   notePending: boolean;
+  cancelReasonDraft: string;
+  onCancelReasonChange: (v: string) => void;
+  cancelDialogOpen: boolean;
+  onCancelDialogOpenChange: (open: boolean) => void;
+  onOpenCancelDialog: () => void;
+  onCancelOrder: () => void;
+  cancelPending: boolean;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -399,7 +691,8 @@ function DetailPanel({
   const jobId = (order as { jobId?: string }).jobId;
   const timeline = buildTimeline(order);
   const isStoreDelivery = String(order.deliveryType || '').toUpperCase() === 'STORE_DELIVERY';
-  const trackSocketEnabled = st === 'OUT_FOR_DELIVERY' && isStoreDelivery;
+  const trackSocketEnabled = st === 'OUT_FOR_DELIVERY' && isStoreDelivery && !readOnly;
+  const canCancelOrder = !['CANCELLED', 'COMPLETED', 'FAILED'].includes(st);
 
   const { liveLat, liveLng, lastPingAtMs, pollFailed, isSocketReconnecting } = useOrderLocationSocket({
     orderId: order.id,
@@ -421,6 +714,7 @@ function DetailPanel({
   });
 
   useEffect(() => {
+    if (readOnly) return;
     const dt = String(order.deliveryType || '').toUpperCase();
     if (dt !== 'STORE_DELIVERY' || st !== 'OUT_FOR_DELIVERY') return;
     const tid = order.activeTrackingId;
@@ -440,11 +734,11 @@ function DetailPanel({
       { enableHighAccuracy: true, maximumAge: 12000 }
     );
     return () => navigator.geolocation.clearWatch(wid);
-  }, [st, order.deliveryType, order.activeTrackingId, order.activeTrackingToken]);
+  }, [readOnly, st, order.deliveryType, order.activeTrackingId, order.activeTrackingToken]);
 
   return (
     <Card className="card-elevated overflow-hidden">
-      <CardHeader className="border-b bg-background/80 py-4">
+      <CardHeader className="border-b-2 border-primary bg-background/80 py-4">
         <div className="mb-3">
           <Button type="button" variant="ghost" size="sm" className="-ml-2 gap-1 text-muted-foreground" onClick={onBack}>
             <ArrowLeft className="h-4 w-4" />
@@ -466,9 +760,15 @@ function DetailPanel({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-6 pt-6">
-        {next && (
-          <div>
+      <CardContent className="space-y-6 pt-6 ">
+        {readOnly && (
+          <p className="rounded-md border border-muted bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+            Read-only view. Branch staff accept, fulfill, and update orders at the branch.
+          </p>
+        )}
+        <div className="grid grid-cols-2 gap-0">
+        {next && !readOnly && (
+          <div className="col-span-1">
             <Button
               type="button"
               className="btn-accent w-full sm:w-auto"
@@ -480,7 +780,67 @@ function DetailPanel({
           </div>
         )}
 
-        {st === 'OUT_FOR_DELIVERY' && (
+        {canCancelOrder && !readOnly && (
+          <>
+            <div className="ml-auto">
+              <Button type="button" variant="destructive" size="sm" disabled={cancelPending} onClick={onOpenCancelDialog}>
+                Cancel Order
+              </Button>
+            </div>
+            <Dialog open={cancelDialogOpen} onOpenChange={onCancelDialogOpenChange}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Cancel Order</DialogTitle>
+                  <DialogDescription>
+                    Enter a reason before cancelling this order.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-2">
+                  <Label htmlFor="supplier-cancel-reason">Reason for cancellation</Label>
+                  <Textarea
+                    id="supplier-cancel-reason"
+                    rows={3}
+                    placeholder="Reason is required"
+                    value={cancelReasonDraft}
+                    onChange={(e) => onCancelReasonChange(e.target.value)}
+                    className="resize-none"
+                  />
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => onCancelDialogOpenChange(false)}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={cancelPending || !cancelReasonDraft.trim()}
+                    onClick={onCancelOrder}
+                  >
+                    {cancelPending ? 'Cancelling…' : 'Submit cancellation'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </>
+        )}
+        </div>
+        {st === 'CANCELLED' && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm space-y-1">
+            <p className="font-medium">Cancelled</p>
+            {(order as { cancelledBy?: string }).cancelledBy && (
+              <p className="text-muted-foreground">
+                By: {String((order as { cancelledBy?: string }).cancelledBy)}
+              </p>
+            )}
+            {(order as { cancellationReason?: string }).cancellationReason && (
+              <p className="text-muted-foreground">
+                Reason: {String((order as { cancellationReason?: string }).cancellationReason)}
+              </p>
+            )}
+          </div>
+        )}
+
+        {st === 'OUT_FOR_DELIVERY' && !readOnly && (
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
@@ -524,10 +884,12 @@ function DetailPanel({
           <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">Store delivery tracking</p>
             <p className="text-xs text-muted-foreground">
-              Create or restore a public tracking session, then share the link. The driver opens it in a browser so GPS
-              updates flow to the customer.
+              {readOnly
+                ? 'Tracking link (if active). Branch staff start or manage live tracking.'
+                : 'Create or restore a public tracking session, then share the link. The driver opens it in a browser so GPS updates flow to the customer.'}
             </p>
             <div className="flex flex-wrap gap-2">
+              {!readOnly && (
               <Button
                 type="button"
                 size="sm"
@@ -537,6 +899,7 @@ function DetailPanel({
               >
                 {ensureTrackMut.isPending ? 'Starting…' : 'Start delivery tracking'}
               </Button>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -551,20 +914,23 @@ function DetailPanel({
                 <Copy className="h-3.5 w-3.5 mr-1" />
                 Copy tracking link
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={!order.activeTrackingId}
-                onClick={() => {
-                  const url = buildPublicTrackingUrl(order.activeTrackingId!, order.activeTrackingToken);
-                  const text = `Track this delivery (open in browser): ${url}`;
-                  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
-                }}
-              >
-                WhatsApp
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!order.activeTrackingId}
+                  onClick={() => {
+                    const url = buildPublicTrackingUrl(order.activeTrackingId!, order.activeTrackingToken);
+                    const text = `Track this delivery (open in browser): ${url}`;
+                    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  WhatsApp
+                </Button>
+              )}
             </div>
+            {!readOnly && (
             <div className="rounded-md border border-border bg-background/80 p-3 space-y-2 text-xs">
               <p className="font-medium text-foreground flex items-center gap-1">
                 <MapPin className="h-3.5 w-3.5 shrink-0" />
@@ -595,12 +961,18 @@ function DetailPanel({
                 </p>
               )}
             </div>
+            )}
+            {readOnly && order.activeTrackingId && (
+              <p className="break-all text-[11px] text-muted-foreground">
+                {buildPublicTrackingUrl(order.activeTrackingId, order.activeTrackingToken)}
+              </p>
+            )}
           </div>
         )}
 
         <div>
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Items</h4>
-          <ul className="divide-y divide-border rounded-md border">
+          <ul className="divide-y divide-border rounded-md border border-primary">
             {items.map((line, i) => {
               const rec = line as Record<string, unknown>;
               const qty = lineQty(rec);
@@ -623,13 +995,18 @@ function DetailPanel({
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border border-border p-4">
+          <div className="rounded-lg border border-primary p-4">
             <p className="text-xs font-medium uppercase text-muted-foreground">Customer</p>
             <p className="mt-1 font-medium">{order.customerName || '—'}</p>
             <p className="text-sm text-muted-foreground">{order.customerEmail || '—'}</p>
             {order.customerPhone && <p className="text-sm text-muted-foreground">{order.customerPhone}</p>}
+            {(order as { customerAddress?: string }).customerAddress && (
+              <p className="text-sm text-muted-foreground">
+                Address: {String((order as { customerAddress?: string }).customerAddress)}
+              </p>
+            )}
           </div>
-          <div className="rounded-lg border border-border p-4">
+          <div className="rounded-lg border border-primary p-4">
             <p className="text-xs font-medium uppercase text-muted-foreground">Totals</p>
             <p className="mt-1 text-sm">
               Order total: <span className="font-semibold">{formatCurrency(total)}</span>
@@ -641,7 +1018,7 @@ function DetailPanel({
           </div>
         </div>
 
-        <div className="rounded-lg border border-border p-4">
+        <div className="rounded-lg border border-primary p-4">
           <p className="text-xs font-medium uppercase text-muted-foreground">Delivery / pickup</p>
           <p className="mt-2 text-sm">{formatDeliverySummary(order)}</p>
           {(order as { deliveryFee?: number }).deliveryFee != null && Number((order as { deliveryFee?: number }).deliveryFee) > 0 && (
@@ -653,12 +1030,12 @@ function DetailPanel({
 
         <div>
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Activity / updates</h4>
-          <ul className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-border p-3 text-sm">
+          <ul className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-primary p-3 text-sm">
             {timeline.length === 0 ? (
               <li className="text-muted-foreground">No activity yet.</li>
             ) : (
               timeline.map((row) => (
-                <li key={row.key} className="flex flex-col gap-0.5 border-b border-border/60 pb-2 last:border-0 last:pb-0">
+                <li key={row.key} className="flex flex-col gap-0.5 border-b border-primary/30 pb-2 last:border-0 last:pb-0">
                   <span>{row.label}</span>
                   {row.at && (
                     <span className="text-xs text-muted-foreground">
@@ -669,26 +1046,28 @@ function DetailPanel({
               ))
             )}
           </ul>
-          <div className="mt-3 space-y-2">
-            <Label htmlFor="supplier-order-note">Add an update</Label>
-            <Textarea
-              id="supplier-order-note"
-              rows={2}
-              placeholder="e.g. Order ready, delayed 10 min"
-              value={noteDraft}
-              onChange={(e) => onNoteChange(e.target.value)}
-              className="resize-none"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={notePending || !noteDraft.trim()}
-              onClick={onSubmitNote}
-            >
-              {notePending ? 'Sending…' : 'Post update'}
-            </Button>
-          </div>
+          {!readOnly && (
+            <div className="mt-3 space-y-2">
+              <Label htmlFor="supplier-order-note">Add an update</Label>
+              <Textarea
+                id="supplier-order-note"
+                rows={2}
+                placeholder="e.g. Order ready, delayed 10 min"
+                value={noteDraft}
+                onChange={(e) => onNoteChange(e.target.value)}
+                className="resize-none"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={notePending || !noteDraft.trim()}
+                onClick={onSubmitNote}
+              >
+                {notePending ? 'Sending…' : 'Post update'}
+              </Button>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

@@ -38,6 +38,7 @@ export async function getMaterialOrderById(orderId: string): Promise<MaterialOrd
 export async function createMaterialOrder(params: {
   userId: string;
   storeId: string;
+  branchId?: string;
   storeName: string;
   items: MaterialOrder['items'];
   delivery: {
@@ -45,13 +46,44 @@ export async function createMaterialOrder(params: {
     status: 'SelfCollect' | 'PendingApproval';
     providerId?: string;
     fee: number;
+    address?: string;
+    city?: string;
+    area?: string;
+    suburb?: string;
+    coordinates?: { lat: number; lng: number };
   };
   materialsTotal: number;
   cardLast4: string;
+  customerLocation?: {
+    address: string;
+    city?: string;
+    area?: string;
+    suburb?: string;
+    coordinates?: { lat: number; lng: number };
+  };
 }): Promise<MaterialOrder> {
-  const { data } = await apiClient.post<OrderResponse>('/material-orders', params);
+  const { data } = await apiClient.post<OrderResponse>('/material-orders', {
+    ...params,
+    branchId: params.branchId ?? params.storeId,
+  });
   if (!data?.order) throw new Error('Failed to create material order');
   return data.order;
+}
+
+export async function cancelMaterialOrder(
+  orderId: string,
+  reason?: string
+): Promise<{
+  order: MaterialOrder;
+  refund: { amount: number; status: string; processedAt?: string };
+}> {
+  const { data } = await apiClient.post<{
+    success: boolean;
+    order: MaterialOrder | null;
+    refund: { amount: number; status: string; processedAt?: string };
+  }>(`/material-orders/${orderId}/cancel`, { reason });
+  if (!data?.order) throw new Error('Cancel order failed');
+  return { order: data.order, refund: data.refund };
 }
 
 export async function updateMaterialOrderDelivery(

@@ -1,6 +1,6 @@
 // FixMate Domain Types
 
-export type UserRole = 'user' | 'provider' | 'admin' | 'supplier';
+export type UserRole = 'user' | 'provider' | 'admin' | 'supplier' | 'branch_staff';
 
 export interface User {
   id: string;
@@ -125,6 +125,29 @@ export interface Admin {
   role: 'admin';
 }
 
+/** Branch (storefront) under a supplier org — catalog + geo. */
+export interface SupplierBranchProfile {
+  id: string;
+  supplierId: string;
+  name: string;
+  displayName?: string;
+  brandName?: string;
+  address?: string;
+  city?: string;
+  area?: string;
+  /** Customer-facing; API may mirror branchPhone */
+  contactPhone?: string;
+  contactEmail?: string;
+  hasDelivery: boolean;
+  deliveryFee?: number;
+  products: Product[];
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 /** Supplier storefront + inventory (from GET /supplier/me or nested in /auth/me). */
 export interface SupplierAccountProfile {
   id: string;
@@ -132,14 +155,21 @@ export interface SupplierAccountProfile {
   logo?: string;
   hasDelivery: boolean;
   deliveryFee?: number;
+  /** Legacy; catalog lives on `branches[].products`. */
   products: Product[];
+  branches?: SupplierBranchProfile[];
   businessName?: string;
   address?: string;
+  /** WGS84 store / warehouse pin (optional — improves nearest-store ordering for customers). */
+  latitude?: number;
+  longitude?: number;
   phone?: string;
   createdAt?: string;
   createdByAdmin?: boolean;
   userId?: string;
   accountEmail?: string | null;
+  loginEmail?: string | null;
+  supplierLogo?: string | null;
   displayName?: string | null;
   accountPhone?: string | null;
   role?: string;
@@ -155,7 +185,18 @@ export interface SupplierUser {
   supplierProfile: SupplierAccountProfile | null;
 }
 
-export type AuthUser = User | Provider | Admin | SupplierUser;
+export interface BranchStaffUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'branch_staff';
+  createdAt: string;
+  branchId: string;
+  supplierOrgId: string;
+  branchUserRole?: 'MANAGER' | 'STAFF';
+}
+
+export type AuthUser = User | Provider | Admin | SupplierUser | BranchStaffUser;
 
 export interface Category {
   id: string;
@@ -194,12 +235,20 @@ export interface Product {
 export interface Supplier {
   id: string;
   name: string;
+  /** Brand + branch label from API when set (e.g. "Build It - Bellville"). */
+  displayName?: string;
+  brandName?: string;
+  branchName?: string;
+  /** Store city / area for matching customer location (optional). */
+  city?: string;
   logo?: string;
   hasDelivery: boolean;
   deliveryFee?: number;
   products: Product[];
   businessName?: string;
   address?: string;
+  latitude?: number;
+  longitude?: number;
   phone?: string;
   createdAt?: string;
   createdByAdmin?: boolean;
@@ -207,6 +256,11 @@ export interface Supplier {
   linkedUserEmail?: string | null;
   linkedUserName?: string | null;
   linkedUserId?: string | null;
+  /** Org id — multiple branches share this. */
+  supplierId?: string;
+  /** Branch id — same as `id` on branch listing / stores. */
+  branchId?: string;
+  distanceKm?: number | null;
 }
 
 export type MaterialFulfillmentStatus =
@@ -252,6 +306,8 @@ export interface MaterialBatch {
 }
 
 export interface MaterialLine {
+  /** Branch fulfilling the line (same as supplierId when using branch architecture). */
+  branchId?: string;
   supplierId: string;
   supplierName: string;
   productId: string;
@@ -694,6 +750,8 @@ export interface MaterialOrder {
   id: string;
   userId: string;
   storeId: string;
+  /** Branch that fulfills the order (same value as storeId for new API). */
+  branchId?: string;
   storeName: string;
   items: {
     productId: string;
@@ -706,7 +764,7 @@ export interface MaterialOrder {
   deliveryProviderId?: string;
   deliveryFee: number;
   total: number;
-  paymentStatus: 'paid' | 'pending';
+  paymentStatus: 'paid' | 'pending' | 'refunded';
   deliveryStatus: 'processing' | 'out_for_delivery' | 'delivered';
   // New nested delivery/payment state; legacy fields above mirror these
   delivery?: OrderDelivery;
@@ -717,4 +775,22 @@ export interface MaterialOrder {
   /** Present when an active public tracking session exists */
   activeTrackingId?: string;
   activeTrackingToken?: string;
+  cancelledBy?: 'supplier' | 'customer' | string;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  refundStatus?: string;
+  refundAmount?: number;
+  refundProcessedAt?: string;
+  customerLocation?: JobLocation;
+  customerAddress?: string;
+  /** Customer-facing branch contact (from live Branch row) */
+  supplierDisplayName?: string;
+  supplierPhone?: string;
+  supplierAddress?: string;
+  branchContactEmail?: string;
+  branchCity?: string;
+  branchArea?: string;
+  branchHasDelivery?: boolean;
+  branchDeliveryFee?: number;
+  branchCoordinates?: { lat: number; lng: number };
 }

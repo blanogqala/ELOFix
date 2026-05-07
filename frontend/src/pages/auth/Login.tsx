@@ -30,6 +30,7 @@ export default function Login() {
       case 'provider':
         return '/provider/dashboard';
       case 'supplier':
+      case 'branch_staff':
         return '/supplier/dashboard';
       default:
         return '/user/dashboard';
@@ -49,7 +50,7 @@ export default function Login() {
     if (role === 'provider') {
       return attemptedPath.startsWith('/provider/') ? attemptedPath : defaultPath;
     }
-    if (role === 'supplier') {
+    if (role === 'supplier' || role === 'branch_staff') {
       return attemptedPath.startsWith('/supplier/') ? attemptedPath : defaultPath;
     }
     return attemptedPath.startsWith('/user/') ? attemptedPath : defaultPath;

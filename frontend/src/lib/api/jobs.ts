@@ -595,9 +595,10 @@ export async function payStoreOrderDelivery(
   return ensureJob(data, 'pay store order delivery');
 }
 
+/** `branchId` is the job store-order key (same id as nearby `/stores` / branch row). */
 export async function payForStoreMaterials(
   jobId: string,
-  supplierId: string,
+  branchId: string,
   cardId: string,
   cardLast4: string,
   options?: {
@@ -608,7 +609,7 @@ export async function payForStoreMaterials(
   }
 ): Promise<Job> {
   const { data } = await apiClient.post<BackendJobResponse>(
-    `/jobs/${jobId}/store-orders/${supplierId}/pay-materials`,
+    `/jobs/${jobId}/store-orders/${branchId}/pay-materials`,
     { cardId, cardLast4, ...options }
   );
   return ensureJob(data, 'pay for store materials');

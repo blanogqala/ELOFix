@@ -78,6 +78,23 @@ export async function getAdminSuppliers(): Promise<{
   };
 }
 
+/** Admin provisions supplier login + org + default branch (JWT + ADMIN role). */
+export async function provisionAdminSupplier(payload: {
+  email: string;
+  password: string;
+  name?: string;
+  businessName?: string;
+  phone?: string;
+  address?: string;
+}): Promise<Supplier> {
+  const { data } = await apiClient.post<{ success: boolean; supplier: Supplier | null }>(
+    '/admin/suppliers',
+    payload
+  );
+  if (!data?.supplier) throw new Error('Failed to provision supplier');
+  return data.supplier;
+}
+
 export async function getAdminSupplierDetail(supplierId: string): Promise<{
   supplier: Supplier & {
     linkedUserEmail?: string | null;

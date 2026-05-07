@@ -4,6 +4,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const providerService = require("./provider.service");
 const supplierService = require("./supplier.service");
+const branchUserService = require("./branchUser.service");
 
 const VALID_ROLES = ["CUSTOMER", "PROVIDER", "ADMIN"];
 
@@ -36,6 +37,20 @@ function parseRole(role) {
 function signToken(user) {
   return jwt.sign(
     { sub: user.id, email: user.email, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+  );
+}
+
+function signBranchStaffToken(branchUser, supplierOrgId) {
+  return jwt.sign(
+    {
+      sub: branchUser.id,
+      email: branchUser.email,
+      role: "BRANCH_STAFF",
+      branchId: branchUser.branchId,
+      supplierOrgId: String(supplierOrgId || ""),
+    },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
   );
@@ -96,13 +111,40 @@ async function login(body) {
     throw new AppError("Email and password are required");
   }
 
+  const normalizedEmail = String(email).toLowerCase().trim();
+
   const user = await prisma.user.findUnique({
-    where: { email: String(email).toLowerCase().trim() },
+    where: { email: normalizedEmail },
     select: { ...userPublicSelect, password: true },
   });
 
   if (!user) {
-    throw new AppError("Invalid email or password", 401);
+    const branchUser = await prisma.branchUser.findUnique({
+      where: { email: normalizedEmail },
+      include: { branch: { select: { supplierId: true } } },
+    });
+    if (!branchUser) {
+      throw new AppError("Invalid email or password", 401);
+    }
+    const matchBu = await bcrypt.compare(password, branchUser.password);
+    if (!matchBu) {
+      throw new AppError("Invalid email or password", 401);
+    }
+    const token = signBranchStaffToken(branchUser, branchUser.branch.supplierId);
+    return {
+      user: {
+        id: branchUser.id,
+        email: branchUser.email,
+        name: branchUser.email,
+        phone: null,
+        role: "BRANCH_STAFF",
+        createdAt: branchUser.createdAt,
+        branchId: branchUser.branchId,
+        supplierOrgId: branchUser.branch.supplierId,
+        branchUserRole: branchUser.role,
+      },
+      token,
+    };
   }
 
   const match = await bcrypt.compare(password, user.password);
@@ -116,9 +158,32 @@ async function login(body) {
   return { user: safe, token };
 }
 
-async function getMe(userId) {
+async function getMe(ctx) {
+  if (ctx.role === "BRANCH_STAFF") {
+    const bu = await prisma.branchUser.findUnique({
+      where: { id: ctx.userId },
+      include: { branch: { include: { supplier: true } } },
+    });
+    if (!bu) {
+      throw new AppError("User not found", 404);
+    }
+    return {
+      user: {
+        id: bu.id,
+        email: bu.email,
+        name: bu.email,
+        phone: null,
+        role: "BRANCH_STAFF",
+        createdAt: bu.createdAt,
+        branchId: bu.branchId,
+        supplierOrgId: bu.branch.supplierId,
+        branchUserRole: bu.role,
+      },
+    };
+  }
+
   const user = await prisma.user.findUnique({
-    where: { id: userId },
+    where: { id: ctx.userId },
     select: { ...userPublicSelect, password: true },
   });
 
@@ -127,7 +192,7 @@ async function getMe(userId) {
   }
 
   if (user.role === "PROVIDER") {
-    const profile = await providerService.getProviderByUserId(userId);
+    const profile = await providerService.getProviderByUserId(ctx.userId);
     return {
       user: {
         ...profile,
@@ -137,7 +202,7 @@ async function getMe(userId) {
   }
 
   if (user.role === "SUPPLIER") {
-    const supplier = await supplierService.getSupplierProfileByUserId(userId);
+    const supplier = await supplierService.getSupplierProfileByUserId(ctx.userId);
     const { password: _p2, ...base } = user;
     return {
       user: {
@@ -152,7 +217,10 @@ async function getMe(userId) {
   return { user: safe };
 }
 
-async function changePassword(userId, body = {}) {
+async function changePassword(ctx, body = {}) {
+  if (ctx.role === "BRANCH_STAFF") {
+    return branchUserService.updateBranchStaffPassword(ctx.userId, body);
+  }
   const currentPassword = body.currentPassword ?? body.oldPassword;
   const newPassword = body.newPassword ?? body.password;
   if (!currentPassword || !newPassword) {
@@ -162,7 +230,7 @@ async function changePassword(userId, body = {}) {
     throw new AppError("New password must be at least 8 characters", 400);
   }
   const user = await prisma.user.findUnique({
-    where: { id: userId },
+    where: { id: ctx.userId },
     select: { password: true },
   });
   if (!user?.password) {
@@ -173,7 +241,7 @@ async function changePassword(userId, body = {}) {
     throw new AppError("Current password is incorrect", 401);
   }
   await prisma.user.update({
-    where: { id: userId },
+    where: { id: ctx.userId },
     data: { password: await bcrypt.hash(String(newPassword), 12) },
   });
   return true;

@@ -13,6 +13,7 @@ import {
   rejectMaterialOrderDelivery,
   payMaterialOrderDelivery,
   confirmMaterialOrderCollection,
+  cancelMaterialOrder,
 } from '@/lib/api/materialOrders';
 import {
   getJobsByUser,
@@ -22,7 +23,7 @@ import {
   payStoreOrderDelivery,
 } from '@/lib/api/jobs';
 import { getSavedCards, getInvoiceById } from '@/lib/api/payments';
-import { DeliveryProvider, SavedCard } from '@/types';
+import { DeliveryProvider, SavedCard, MaterialOrder } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
@@ -41,6 +42,18 @@ type RouteParams = {
   jobId?: string;
   storeOrderId?: string;
 };
+
+const CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES = new Set([
+  'PENDING',
+  'ACCEPTED',
+  'PREPARING',
+  'READY',
+]);
+
+function toFulfillmentStatusU(status: string | undefined): string {
+  const normalized = String(status || 'PENDING').toUpperCase().trim();
+  return normalized || 'PENDING';
+}
 
 function mergeTrackingFields(
   normalized: NormalizedOrder,
@@ -88,6 +101,13 @@ function mergeTrackingFields(
       typeof mo.supplierDisplayName === 'string' ? mo.supplierDisplayName : normalized.storeName,
     supplierPhone: typeof mo.supplierPhone === 'string' ? mo.supplierPhone : undefined,
     supplierAddress: typeof mo.supplierAddress === 'string' ? mo.supplierAddress : undefined,
+    branchContactEmail: typeof mo.branchContactEmail === 'string' ? mo.branchContactEmail : undefined,
+    branchCity: typeof mo.branchCity === 'string' ? mo.branchCity : undefined,
+    branchArea: typeof mo.branchArea === 'string' ? mo.branchArea : undefined,
+    branchHasDelivery: typeof mo.branchHasDelivery === 'boolean' ? mo.branchHasDelivery : undefined,
+    branchDeliveryFee: typeof mo.branchDeliveryFee === 'number' && Number.isFinite(mo.branchDeliveryFee) ? mo.branchDeliveryFee : undefined,
+    cancellationReason: typeof mo.cancellationReason === 'string' ? mo.cancellationReason : undefined,
+    cancelledBy: typeof mo.cancelledBy === 'string' ? mo.cancelledBy : undefined,
     activeTrackingId,
     activeTrackingToken,
     materialOrderId: typeof mo.id === 'string' ? mo.id : normalized.materialOrderId,
@@ -221,8 +241,18 @@ export default function OrderDetails() {
         setJobContext(null);
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === found.storeId);
-        setStoreHasDelivery(supplier?.hasDelivery ?? false);
-        setStoreDeliveryFee(supplier?.deliveryFee ?? 0);
+        const f = found as MaterialOrder & {
+          branchHasDelivery?: boolean;
+          branchDeliveryFee?: number;
+        };
+        setStoreHasDelivery(
+          typeof f.branchHasDelivery === 'boolean' ? f.branchHasDelivery : supplier?.hasDelivery ?? false
+        );
+        setStoreDeliveryFee(
+          typeof f.branchDeliveryFee === 'number' && Number.isFinite(f.branchDeliveryFee)
+            ? f.branchDeliveryFee
+            : supplier?.deliveryFee ?? 0
+        );
         return;
       }
 
@@ -270,8 +300,15 @@ export default function OrderDetails() {
         setJobContext({ jobId: job.id, storeId: storeOrder.storeId });
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === storeOrder.storeId);
-        setStoreHasDelivery(supplier?.hasDelivery ?? false);
-        setStoreDeliveryFee(supplier?.deliveryFee ?? 0);
+        const m = moRow as MaterialOrder | null;
+        setStoreHasDelivery(
+          m && typeof m.branchHasDelivery === 'boolean' ? m.branchHasDelivery : supplier?.hasDelivery ?? false
+        );
+        setStoreDeliveryFee(
+          m && typeof m.branchDeliveryFee === 'number' && Number.isFinite(m.branchDeliveryFee)
+            ? m.branchDeliveryFee
+            : supplier?.deliveryFee ?? 0
+        );
         return;
       }
     } catch {
@@ -281,6 +318,8 @@ export default function OrderDetails() {
   loadOrderRef.current = loadOrder;
 
   const isStandalone = !jobContext;
+  const orderFulfillmentStatusU = toFulfillmentStatusU(order?.fulfillmentStatus);
+  const canCustomerCancelOrder = CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES.has(orderFulfillmentStatusU);
 
   const handleCancelDelivery = async () => {
     if (!order || !effectiveOrderId) return;
@@ -326,6 +365,28 @@ export default function OrderDetails() {
       loadOrder();
     } catch {
       toast({ title: 'Error', description: 'Failed to reject.', variant: 'destructive' });
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!order || !effectiveOrderId) return;
+    const statusU = toFulfillmentStatusU(order.fulfillmentStatus);
+    if (!CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES.has(statusU)) return;
+    if (!window.confirm('Cancel this order?')) return;
+    const reason = window.prompt('Optional cancellation reason:') || '';
+    try {
+      const out = await cancelMaterialOrder(effectiveOrderId, reason.trim() || undefined);
+      toast({
+        title: 'Order cancelled',
+        description: `Refund recorded: ${formatCurrency(Number(out.refund?.amount || 0), { decimals: 2 })}`,
+      });
+      await loadOrder();
+    } catch (e) {
+      toast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Failed to cancel order.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -533,6 +594,7 @@ export default function OrderDetails() {
                   : undefined
               }
               onChooseDelivery={handleChooseDelivery}
+              onCancelOrder={canCustomerCancelOrder ? handleCancelOrder : undefined}
               onPayDelivery={
                 order.deliveryState === 'Approved' && !order.deliveryPaid && order.deliveryFee > 0
                   ? handlePayDelivery

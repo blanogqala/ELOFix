@@ -50,6 +50,7 @@ io.use((socket, next) => {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     socket.userId = payload.sub;
     socket.userRole = payload.role;
+    socket.branchId = payload.branchId || null;
   } catch {
     /* optional auth: join_order / update_location will require socket.userId */
   }
@@ -62,6 +63,9 @@ io.on("connection", (socket) => {
   socket.on("join", (userId) => {
     if (!userId) return;
     socket.join(String(userId));
+    if (String(socket.userRole || "") === "BRANCH_STAFF" && socket.branchId) {
+      socket.join(`branch:${String(socket.branchId)}`);
+    }
   });
 
   async function handleOrderJoin(orderId) {
@@ -94,7 +98,7 @@ io.on("connection", (socket) => {
       const role = String(socket.userRole || "").toUpperCase();
       let source = null;
       if (role === "PROVIDER") source = "provider";
-      else if (role === "SUPPLIER") source = "supplier";
+      else if (role === "SUPPLIER" || role === "BRANCH_STAFF") source = "supplier";
       else return;
       await trackingService.persistAndEmitDriverLocation(orderId, lat, lng, { source });
     } catch (e) {

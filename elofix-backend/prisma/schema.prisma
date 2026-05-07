@@ -51,6 +51,20 @@ enum MaterialRequestStatus {
   paid
 }
 
+enum BranchUserRole {
+  MANAGER
+  STAFF
+}
+
+enum NotificationCategory {
+  ORDERS
+  DELIVERY
+  INVENTORY
+  SYSTEM
+  REFUNDS
+  STAFF
+}
+
 model User {
   id                  String               @id @default(uuid())
   email               String               @unique
@@ -308,12 +322,14 @@ model Notification {
   jobId           String?
   conversationId  String?
   conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  notificationCategory NotificationCategory @default(SYSTEM)
   createdAt       DateTime      @default(now())
 
   @@index([userId])
   @@index([userId, createdAt])
   @@index([senderId])
   @@index([conversationId])
+  @@index([notificationCategory])
 }
 
 model Review {
@@ -405,8 +421,17 @@ model Supplier {
   userId                String?                      @unique
   user                  User?                        @relation(fields: [userId], references: [id], onDelete: SetNull)
   name                  String
+  /// Brand label when multiple branches exist (e.g. "Build It").
+  brandName             String?
+  /// Branch label (e.g. "Bellville"); paired with brandName for display.
+  branchName            String?
+  /// Normalized service area / city for matching customer address (optional).
+  city                  String?
   businessName          String?
   address               String?
+  /** WGS84 — optional pin for storefront / warehouse location (nearest-store UX). */
+  latitude              Float?
+  longitude             Float?
   phone                 String?
   logo                  String?
   hasDelivery           Boolean                      @default(true)
@@ -415,28 +440,95 @@ model Supplier {
   createdByAdmin        Boolean                      @default(false)
   createdAt             DateTime                     @default(now())
   materialOrders        MaterialOrder[]
-  inventoryCategories   SupplierInventoryCategory[]
+  branches              Branch[]
 
   @@index([createdAt])
 }
 
-/// Per-supplier catalog categories (normalized lowercase unique per store)
-model SupplierInventoryCategory {
-  id         String   @id @default(uuid())
-  supplierId String
-  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  name       String
-  createdAt  DateTime @default(now())
+/// Physical storefront / warehouse under a supplier org (catalog + geo + fees live here).
+model Branch {
+  id           String                    @id @default(uuid())
+  supplierId   String
+  supplier     Supplier                  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  name         String
+  address      String?
+  /// Normalized service area / city for matching customer address (optional).
+  city         String?
+  /// Suburb / area within city (optional).
+  area         String?
+  /// Public contact phone for this branch (customer-facing).
+  branchPhone  String?
+  /// Public contact email for this branch (customer-facing).
+  branchEmail  String?
+  latitude     Float?
+  longitude    Float?
+  hasDelivery  Boolean                   @default(true)
+  deliveryFee  Decimal                   @default(0) @db.Decimal(12, 2)
+  products     Json                      @default("[]")
+  isActive     Boolean                   @default(true)
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  materialOrders        MaterialOrder[]
+  inventoryCategories   BranchInventoryCategory[]
+  branchUsers           BranchUser[]
 
-  @@unique([supplierId, name])
   @@index([supplierId])
+  @@index([supplierId, isActive])
+  @@index([isActive])
+}
+
+model BranchUser {
+  id        String         @id @default(uuid())
+  branchId  String
+  branch    Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  email     String         @unique
+  password  String
+  role      BranchUserRole @default(STAFF)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  branchStaffNotifications BranchStaffNotification[]
+
+  @@index([branchId])
+}
+
+model BranchStaffNotification {
+  id              String               @id @default(uuid())
+  branchUserId    String
+  branchUser      BranchUser           @relation(fields: [branchUserId], references: [id], onDelete: Cascade)
+  category        NotificationCategory @default(SYSTEM)
+  type            String
+  title           String
+  message         String
+  read            Boolean              @default(false)
+  metadata        Json?
+  materialOrderId String?
+  createdAt       DateTime             @default(now())
+
+  @@index([branchUserId])
+  @@index([branchUserId, createdAt])
+  @@index([category])
+}
+
+/// Per-branch catalog categories (normalized lowercase unique per branch)
+model BranchInventoryCategory {
+  id        String   @id @default(uuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+
+  @@unique([branchId, name])
+  @@index([branchId])
 }
 
 model MaterialOrder {
   id                     String                     @id @default(uuid())
   userId                 String
-  supplierId             String?
-  supplier               Supplier?                  @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  supplierId             String
+  supplier               Supplier                   @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  branchId               String
+  branch                 Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
   /// Job-linked purchase (customer paid from job flow)
   jobId                  String?
   job                    Job?                       @relation("JobMaterialOrders", fields: [jobId], references: [id], onDelete: SetNull)
@@ -450,6 +542,14 @@ model MaterialOrder {
   materialsSubtotal      Decimal                    @default(0) @db.Decimal(12, 2)
   platformCommission     Decimal                    @default(0) @db.Decimal(12, 2)
   supplierEarning        Decimal                    @default(0) @db.Decimal(12, 2)
+  cancelledBy            String?
+  cancellationReason     String?
+  cancelledAt            DateTime?
+  refundStatus           String                     @default("none")
+  refundAmount           Decimal                    @default(0) @db.Decimal(12, 2)
+  refundProcessedAt      DateTime?
+  refundReference        String?
+  commissionReversed     Decimal                    @default(0) @db.Decimal(12, 2)
   payload                Json
   createdAt              DateTime                   @default(now())
   trackingSessions     TrackingSession[]
@@ -458,9 +558,12 @@ model MaterialOrder {
   @@index([userId])
   @@index([supplierId])
   @@index([supplierId, fulfillmentStatus])
+  @@index([branchId])
+  @@index([branchId, fulfillmentStatus])
   @@index([createdAt])
   @@index([jobId])
   @@index([jobId, supplierId])
+  @@index([jobId, branchId])
 }
 
 /// Customer rating for a completed / confirmed material-order delivery (courier / delivery experience).

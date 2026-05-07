@@ -29,9 +29,20 @@ function pickSuburb(components) {
   );
 }
 
+/** Street-level line only (building + road); for form autofills. */
+function pickStreetOnly(c) {
+  if (!c || typeof c !== "object") return "";
+  const num = String(c.house_number || "").trim();
+  const road = String(c.road || "").trim();
+  const line = [num, road].filter(Boolean).join(" ").trim();
+  if (line) return line;
+  const poi = String(c.amenity || c.building || c.retail || "").trim();
+  return poi || "";
+}
+
 function buildLineFromComponents(c) {
   if (!c || typeof c !== "object") return "";
-  const street = [c.house_number, c.road].filter(Boolean).join(" ").trim();
+  const street = pickStreetOnly(c);
   const suburb = String(pickSuburb(c) || "").trim();
   const city = String(pickCity(c) || "").trim();
   const state = String(c.state || "").trim();
@@ -74,9 +85,18 @@ function mapOpenCage(data, lat, lng) {
   const formatted = String(first.formatted || "").trim();
   const address = finalizeAddress(formatted || builtLine, builtLine);
 
+  const streetOnly = pickStreetOnly(c);
+
   return {
     fullAddress: address,
     address,
+    street:
+      streetOnly ||
+      (formatted || builtLine)
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)[0] ||
+      "",
     city: city || area || address.split(",")[0]?.trim() || "",
     suburb,
     area,
@@ -91,9 +111,18 @@ function mapNominatim(data, lat, lng) {
   const display = String(data?.display_name || "").trim();
   const address = finalizeAddress(display || builtLine, builtLine);
 
+  const streetOnly = pickStreetOnly(a);
+
   return {
     fullAddress: address,
     address,
+    street:
+      streetOnly ||
+      (display || builtLine)
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)[0] ||
+      "",
     city: city || area || (display ? display.split(",")[1]?.trim() : "") || "",
     suburb,
     area,

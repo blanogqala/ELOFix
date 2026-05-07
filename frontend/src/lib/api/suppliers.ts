@@ -13,7 +13,7 @@ interface SupplierResponse {
 
 interface ProductsResponse {
   success: boolean;
-  products: Array<Product & { supplierId: string; supplierName: string }>;
+  products: Array<Product & { supplierId: string; supplierName: string; branchId?: string }>;
 }
 
 export async function getSuppliers(): Promise<Supplier[]> {
@@ -28,23 +28,10 @@ export async function getSupplierById(id: string): Promise<Supplier | null> {
 
 export async function getProductsByCategory(
   category: string
-): Promise<Array<Product & { supplierId: string; supplierName: string }>> {
+): Promise<Array<Product & { supplierId: string; supplierName: string; branchId?: string }>> {
   const { data } = await apiClient.get<ProductsResponse>('/suppliers/products', {
     params: category ? { category } : undefined,
   });
   return Array.isArray(data?.products) ? data.products : [];
 }
 
-/** Admin provisions a supplier login + storefront (JWT required, ADMIN role). */
-export async function provisionSupplier(payload: {
-  email: string;
-  password: string;
-  name?: string;
-  businessName?: string;
-  phone?: string;
-  address?: string;
-}): Promise<Supplier> {
-  const { data } = await apiClient.post<SupplierResponse>('/suppliers', payload);
-  if (!data?.supplier) throw new Error('Failed to provision supplier');
-  return data.supplier;
-}

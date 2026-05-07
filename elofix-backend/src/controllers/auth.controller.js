@@ -11,12 +11,12 @@ async function login(req, res) {
 }
 
 async function getMe(req, res) {
-  const result = await authService.getMe(req.user.userId);
+  const result = await authService.getMe(req.user);
   res.json({ success: true, ...result });
 }
 
 async function changePassword(req, res) {
-  await authService.changePassword(req.user.userId, req.body || {});
+  await authService.changePassword(req.user, req.body || {});
   res.json({ success: true });
 }
 

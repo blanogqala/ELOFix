@@ -5,7 +5,24 @@ const prisma = require("../config/prisma");
 const supplierService = require("./supplier.service");
 const notificationService = require("./notification.service");
 const trackingService = require("./tracking.service");
-const materialOrderSupplierUtil = require("../utils/materialOrderSupplier.util");
+const { logAudit } = require("./auditLog.service");
+const paymentService = require("./payment.service");
+const branchService = require("./branch.service");
+const branchStaffNotificationService = require("./branchStaffNotification.service");
+
+async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
+  const org = String(supplierOrgId || "").trim();
+  if (!row || !org) throw new AppError("Forbidden", 403);
+  if (String(row.supplierId || "").trim() === org) return;
+  const bid = String(row.branchId || "").trim();
+  if (!bid) throw new AppError("Forbidden", 403);
+  const b = await tx.branch.findUnique({ where: { id: bid }, select: { supplierId: true } });
+  if (!b || String(b.supplierId) !== org) throw new AppError("Forbidden", 403);
+}
+
+async function assertOrderOwnedBySupplierOrg(row, supplierOrgId) {
+  return assertOrderOwnedBySupplierOrgTx(prisma, row, supplierOrgId);
+}
 
 function emitMaterialOrderFulfillmentToCustomer(userId, payload) {
   try {
@@ -38,10 +55,28 @@ function deliveryJobTypeToCanonical(dt) {
   return "delivery";
 }
 
+function stripClientTrackingFromOrderInput(raw = {}) {
+  const input = raw && typeof raw === "object" ? { ...raw } : {};
+  delete input.activeTrackingId;
+  delete input.activeTrackingToken;
+  delete input.driverLocation;
+  if (input.materialBatch && typeof input.materialBatch === "object") {
+    const mb = { ...input.materialBatch };
+    delete mb.activeTrackingId;
+    delete mb.activeTrackingToken;
+    delete mb.driverLocation;
+    input.materialBatch = mb;
+  }
+  return input;
+}
+
 function mergeMaterialBatch(payload, row, overrides = {}) {
   const base = payload.materialBatch && typeof payload.materialBatch === "object" ? { ...payload.materialBatch } : {};
   const id = base.id || row.id;
-  const supplierId = base.supplierId || row.supplierId || payload.storeId || "";
+  const branchId = String(
+    base.branchId || row.branchId || payload.branchId || payload.storeId || ""
+  ).trim();
+  const supplierOrgId = String(row.supplierId || "").trim();
   const items = Array.isArray(base.items) && base.items.length > 0 ? base.items : (Array.isArray(payload.items) ? payload.items : []);
   const deliveryType =
     base.deliveryType || deliveryJobTypeToCanonical(payload.delivery?.type || payload.deliveryType);
@@ -53,10 +88,12 @@ function mergeMaterialBatch(payload, row, overrides = {}) {
     deliveredAt: base.timestamps?.deliveredAt,
     ...(overrides.timestamps || {}),
   };
+  const batchSupplierOrg = supplierOrgId || String(base.supplierId || "").trim();
   return {
     ...base,
     id,
-    supplierId: String(supplierId || ""),
+    branchId,
+    supplierId: batchSupplierOrg,
     items,
     status: nextStatus,
     deliveryType,
@@ -154,6 +191,7 @@ function patchPayloadForFulfillmentDelivery(payload, next) {
 function enrichOrderFromDbRow(row, payload) {
   const p = payload && typeof payload === "object" ? { ...payload } : {};
   if (row.supplierId) p.supplierId = row.supplierId;
+  if (row.branchId) p.branchId = row.branchId;
   if (row.jobId) p.jobId = row.jobId;
   if (row.providerId) p.providerId = row.providerId;
   if (row.source) p.source = row.source;
@@ -162,6 +200,14 @@ function enrichOrderFromDbRow(row, payload) {
   if (row.materialsSubtotal != null) p.materialsSubtotal = Number(row.materialsSubtotal);
   if (row.platformCommission != null) p.platformCommission = Number(row.platformCommission);
   if (row.supplierEarning != null) p.supplierEarning = Number(row.supplierEarning);
+  if (row.cancelledBy != null) p.cancelledBy = String(row.cancelledBy);
+  if (row.cancellationReason != null) p.cancellationReason = String(row.cancellationReason);
+  if (row.cancelledAt != null) p.cancelledAt = row.cancelledAt instanceof Date ? row.cancelledAt.toISOString() : String(row.cancelledAt);
+  if (row.refundStatus != null) p.refundStatus = String(row.refundStatus);
+  if (row.refundAmount != null) p.refundAmount = Number(row.refundAmount);
+  if (row.refundProcessedAt != null) p.refundProcessedAt = row.refundProcessedAt instanceof Date ? row.refundProcessedAt.toISOString() : String(row.refundProcessedAt);
+  if (row.refundReference != null) p.refundReference = String(row.refundReference);
+  if (row.commissionReversed != null) p.commissionReversed = Number(row.commissionReversed);
   return p;
 }
 
@@ -191,16 +237,47 @@ function normalizeOrder(input) {
   const delivery = input.delivery || {};
   const materialsTotal = Number(input.materialsTotal || 0);
   const deliveryFee = Number(delivery.fee || 0);
+  const customerLocation =
+    input.customerLocation && typeof input.customerLocation === "object" && !Array.isArray(input.customerLocation)
+      ? {
+          address: String(input.customerLocation.address || "").trim() || undefined,
+          city: String(input.customerLocation.city || "").trim() || undefined,
+          area: String(input.customerLocation.area || "").trim() || undefined,
+          suburb: String(input.customerLocation.suburb || "").trim() || undefined,
+          coordinates:
+            input.customerLocation.coordinates &&
+            typeof input.customerLocation.coordinates === "object" &&
+            Number.isFinite(Number(input.customerLocation.coordinates.lat)) &&
+            Number.isFinite(Number(input.customerLocation.coordinates.lng))
+              ? {
+                  lat: Number(input.customerLocation.coordinates.lat),
+                  lng: Number(input.customerLocation.coordinates.lng),
+                }
+              : undefined,
+        }
+      : {
+          address: String(delivery.address || input.deliveryAddress || "").trim() || undefined,
+          city: String(delivery.city || "").trim() || undefined,
+          area: String(delivery.area || "").trim() || undefined,
+          suburb: String(delivery.suburb || "").trim() || undefined,
+          coordinates:
+            delivery.coordinates &&
+            typeof delivery.coordinates === "object" &&
+            Number.isFinite(Number(delivery.coordinates.lat)) &&
+            Number.isFinite(Number(delivery.coordinates.lng))
+              ? { lat: Number(delivery.coordinates.lat), lng: Number(delivery.coordinates.lng) }
+              : undefined,
+        };
 
   const { materialsSubtotal, platformCommission, supplierEarning } = supplierService.splitMaterialsCommission(materialsTotal);
-  const storeId = String(input.storeId || "");
-
+  const branchId = String(input.branchId || input.storeId || "").trim();
   const id = typeof input.id === "string" ? input.id : randomUUID();
 
   const orderCore = {
     id,
     userId: String(input.userId || ""),
-    storeId,
+    storeId: branchId,
+    branchId,
     storeName: String(input.storeName || "Store"),
     items,
     deliveryType:
@@ -236,15 +313,17 @@ function normalizeOrder(input) {
     jobId: input.jobId ? String(input.jobId) : undefined,
     providerId: input.providerId ? String(input.providerId) : undefined,
     source: input.source === "job_materials" ? "job_materials" : "store_checkout",
+    customerLocation,
     supplierActivity: [{ type: "created", createdAt: new Date().toISOString() }],
     materialBatch: {
       id,
-      supplierId: storeId,
+      branchId,
+      supplierId: "",
       items,
       status: "pending",
       deliveryType: deliveryJobTypeToCanonical(delivery.type || "SELF"),
       pickupAddress: "",
-      deliveryAddress: "",
+      deliveryAddress: String(customerLocation.address || ""),
       assignedDriverId: delivery.providerId || undefined,
       timestamps: {},
     },
@@ -253,7 +332,7 @@ function normalizeOrder(input) {
   const prismaRow = {
     id: orderCore.id,
     userId: orderCore.userId,
-    supplierId: storeId || null,
+    branchId,
     jobId: input.jobId ? String(input.jobId) : null,
     providerId: input.providerId ? String(input.providerId) : null,
     paymentStatus:
@@ -275,13 +354,54 @@ function normalizeOrder(input) {
 }
 
 async function createMaterialOrder(params) {
-  const { prismaRow, order } = normalizeOrder(params || {});
+  const clean = stripClientTrackingFromOrderInput(params || {});
+  const { prismaRow, order } = normalizeOrder(clean);
+  if (prismaRow.source === "store_checkout" && !String(order.customerLocation?.address || "").trim()) {
+    throw new AppError("Delivery address is required to order materials", 400);
+  }
+
+  const branchId = String(prismaRow.branchId || order.branchId || order.storeId || "").trim();
+  if (!branchId) {
+    throw new AppError("branchId or storeId is required", 400);
+  }
+
+  const branch = await prisma.branch.findUnique({
+    where: { id: branchId },
+    include: { supplier: true },
+  });
+  if (!branch || !branch.isActive) {
+    throw new AppError("Invalid store — branch not found", 400);
+  }
+
+  const orgId = branch.supplierId;
+  prismaRow.supplierId = orgId;
+  prismaRow.branchId = branchId;
+  order.storeId = branchId;
+  order.branchId = branchId;
+  order.storeName = branchService.branchPublicDisplay(branch, branch.supplier);
+
+  const nextPayload = {
+    ...order,
+    storeName: order.storeName,
+    activeTrackingId: undefined,
+    activeTrackingToken: undefined,
+    driverLocation: undefined,
+    materialBatch: mergeMaterialBatch(
+      order,
+      { id: prismaRow.id, branchId, supplierId: orgId, fulfillmentStatus: "PENDING" },
+      {}
+    ),
+  };
+  delete nextPayload.activeTrackingId;
+  delete nextPayload.activeTrackingToken;
+  delete nextPayload.driverLocation;
 
   await prisma.materialOrder.create({
     data: {
       id: prismaRow.id,
       userId: prismaRow.userId,
-      supplierId: prismaRow.supplierId,
+      supplierId: orgId,
+      branchId,
       jobId: prismaRow.jobId,
       providerId: prismaRow.providerId,
       paymentStatus: prismaRow.paymentStatus,
@@ -290,10 +410,15 @@ async function createMaterialOrder(params) {
       materialsSubtotal: prismaRow.materialsSubtotal,
       platformCommission: prismaRow.platformCommission,
       supplierEarning: prismaRow.supplierEarning,
-      payload: order,
+      payload: nextPayload,
     },
   });
-  return order;
+  try {
+    await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, branchId);
+  } catch (_) {
+    /* non-fatal socket */
+  }
+  return nextPayload;
 }
 
 async function getMaterialOrders(userId) {
@@ -339,27 +464,76 @@ async function getMaterialOrderById(orderId) {
   let row = await prisma.materialOrder.findUnique({
     where: { id: orderId },
     include: {
-      supplier: { select: { id: true, name: true, businessName: true, phone: true, address: true } },
+      supplier: { select: { id: true, name: true, businessName: true, phone: true, address: true, brandName: true } },
+      branch: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          city: true,
+          area: true,
+          branchPhone: true,
+          branchEmail: true,
+          hasDelivery: true,
+          deliveryFee: true,
+          latitude: true,
+          longitude: true,
+        },
+      },
     },
   });
   if (!row || !row.payload || typeof row.payload !== "object") return null;
-  const pb = materialOrderSupplierUtil.payloadBackedSupplierId(row.payload);
-  if (!String(row.supplierId || "").trim() && pb) {
-    row = await prisma.materialOrder.update({
-      where: { id: row.id },
-      data: { supplierId: pb },
-      include: {
-        supplier: { select: { id: true, name: true, businessName: true, phone: true, address: true } },
-      },
-    });
-  }
   row = await maybeAutoConfirmStaleDelivery(row);
   const base = enrichOrderFromDbRow(row, row.payload);
-  if (row.supplier) {
+  if (row.branch && row.supplier) {
+    base.supplierDisplayName = branchService.branchPublicDisplay(row.branch, row.supplier);
+    const branchPhone =
+      row.branch.branchPhone != null && String(row.branch.branchPhone).trim()
+        ? String(row.branch.branchPhone).trim()
+        : null;
+    base.supplierPhone = branchPhone || row.supplier.phone || undefined;
+    base.supplierAddress = row.branch.address || row.supplier.address || undefined;
+    const branchEmail =
+      row.branch.branchEmail != null && String(row.branch.branchEmail).trim()
+        ? String(row.branch.branchEmail).trim()
+        : null;
+    if (branchEmail) base.branchContactEmail = branchEmail;
+    const city = row.branch.city != null && String(row.branch.city).trim() ? String(row.branch.city).trim() : null;
+    if (city) base.branchCity = city;
+    const area = row.branch.area != null && String(row.branch.area).trim() ? String(row.branch.area).trim() : null;
+    if (area) base.branchArea = area;
+    base.branchHasDelivery = Boolean(row.branch.hasDelivery);
+    const bdf = Number(row.branch.deliveryFee ?? 0);
+    base.branchDeliveryFee = Number.isFinite(bdf) ? bdf : 0;
+    const latNum =
+      row.branch.latitude !== undefined && row.branch.latitude !== null && String(row.branch.latitude) !== ""
+        ? Number(row.branch.latitude)
+        : NaN;
+    const lngNum =
+      row.branch.longitude !== undefined && row.branch.longitude !== null && String(row.branch.longitude) !== ""
+        ? Number(row.branch.longitude)
+        : NaN;
+    if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
+      base.branchCoordinates = { lat: latNum, lng: lngNum };
+    }
+  } else if (row.supplier) {
     base.supplierDisplayName = row.supplier.businessName || row.supplier.name || base.storeName;
     base.supplierPhone = row.supplier.phone || undefined;
     base.supplierAddress = row.supplier.address || undefined;
   }
+  const customerLocation =
+    row.payload && typeof row.payload.customerLocation === "object" && !Array.isArray(row.payload.customerLocation)
+      ? row.payload.customerLocation
+      : undefined;
+  const fallbackDeliveryAddress =
+    row.payload &&
+    row.payload.materialBatch &&
+    typeof row.payload.materialBatch === "object" &&
+    row.payload.materialBatch.deliveryAddress
+      ? String(row.payload.materialBatch.deliveryAddress)
+      : undefined;
+  base.customerLocation = customerLocation;
+  base.customerAddress = customerLocation?.address || fallbackDeliveryAddress;
   const fs = String(row.fulfillmentStatus || "").toUpperCase();
   if (fs === "OUT_FOR_DELIVERY") {
     const track = await prisma.trackingSession.findFirst({
@@ -495,7 +669,161 @@ function canFulfillmentTransition(from, to) {
   return false;
 }
 
-async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
+const CUSTOMER_CANCEL_ALLOWED = new Set(["ACCEPTED", "PREPARING", "READY"]);
+const CANCEL_TERMINAL = new Set(["CANCELLED", "COMPLETED", "FAILED"]);
+
+function safeMoney2(value) {
+  return Math.max(0, roundMoney2(Number(value || 0)));
+}
+
+function buildCancelOutcome({ actor, row, payload }) {
+  const total = safeMoney2(payload.total ?? row.materialsSubtotal ?? 0);
+  const commission7 = safeMoney2(total * 0.07);
+  if (actor === "supplier") {
+    return {
+      refundAmount: total,
+      commissionReversed: commission7,
+      keptCommission: 0,
+      nextSupplierEarning: 0,
+      refundKind: "full_supplier_cancel",
+    };
+  }
+  const refundAmount = safeMoney2(total - commission7);
+  return {
+    refundAmount,
+    commissionReversed: 0,
+    keptCommission: commission7,
+    nextSupplierEarning: safeMoney2(total - commission7),
+    refundKind: "customer_cancel_keep_commission",
+  };
+}
+
+function assertCanCancel({ actor, currentStatus }) {
+  if (CANCEL_TERMINAL.has(currentStatus)) {
+    throw new AppError(`Cannot cancel order in ${currentStatus} state`, 400);
+  }
+  if (actor === "customer" && !CUSTOMER_CANCEL_ALLOWED.has(currentStatus)) {
+    throw new AppError("Customer can cancel only when status is Accepted, Preparing, or Ready", 400);
+  }
+  if (currentStatus === "OUT_FOR_DELIVERY" && actor === "customer") {
+    throw new AppError("Cannot cancel when order is out for delivery", 400);
+  }
+}
+
+async function cancelMaterialOrderInTransaction(tx, { orderId, actor, actorUserId, reason, expectedSupplierId, branchScopeId }) {
+  let row = await tx.materialOrder.findUnique({ where: { id: orderId } });
+  if (!row) throw new AppError("Material order not found", 404);
+
+  if (expectedSupplierId) {
+    await assertOrderOwnedBySupplierOrgTx(tx, row, expectedSupplierId);
+  }
+  const expectedBranch = branchScopeId != null && String(branchScopeId).trim() !== "" ? String(branchScopeId).trim() : null;
+  if (expectedBranch && String(row.branchId || "") !== expectedBranch) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (actor === "customer" && String(row.userId || "") !== String(actorUserId || "")) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+  const currentStatus = String(row.fulfillmentStatus || "PENDING").toUpperCase();
+  assertCanCancel({ actor, currentStatus });
+
+  if (String(row.refundStatus || "").toLowerCase() === "processed") {
+    return {
+      order: enrichOrderFromDbRow(row, payload),
+      refund: {
+        amount: Number(row.refundAmount || 0),
+        status: String(row.refundStatus || "processed"),
+        processedAt: row.refundProcessedAt ? row.refundProcessedAt.toISOString() : undefined,
+        reference: row.refundReference || undefined,
+      },
+      duplicate: true,
+    };
+  }
+
+  const outcome = buildCancelOutcome({ actor, row, payload });
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const refundReference = `mat-${orderId}-cancel-${now.getTime()}`;
+  const activity = Array.isArray(payload.supplierActivity) ? [...payload.supplierActivity] : [];
+  activity.push({
+    type: "cancellation",
+    actor,
+    reason: reason || null,
+    createdAt: nowIso,
+  });
+
+  const nextPayload = patchPayloadForFulfillmentDelivery(
+    {
+      ...payload,
+      supplierActivity: activity,
+      cancellation: {
+        by: actor,
+        reason: reason || null,
+        at: nowIso,
+      },
+    },
+    "CANCELLED"
+  );
+
+  row = await tx.materialOrder.update({
+    where: { id: orderId },
+    data: {
+      fulfillmentStatus: "CANCELLED",
+      paymentStatus: outcome.refundAmount > 0 ? "refunded" : row.paymentStatus,
+      cancelledBy: actor,
+      cancellationReason: reason || null,
+      cancelledAt: now,
+      refundStatus: "processed",
+      refundAmount: new Prisma.Decimal(outcome.refundAmount),
+      refundProcessedAt: now,
+      refundReference,
+      commissionReversed: new Prisma.Decimal(outcome.commissionReversed),
+      supplierEarning: new Prisma.Decimal(outcome.nextSupplierEarning),
+      payload: nextPayload,
+    },
+  });
+
+  if (outcome.refundAmount > 0) {
+    await paymentService.createRefundInvoiceInTransaction(tx, {
+      userId: row.userId,
+      jobId: row.jobId || undefined,
+      laborRefund: 0,
+      materialsRefund: outcome.refundAmount,
+      lineItems: [
+        {
+          description: actor === "supplier" ? "Supplier order cancellation refund" : "Customer order cancellation refund",
+          quantity: 1,
+          unitPrice: outcome.refundAmount,
+          total: outcome.refundAmount,
+        },
+      ],
+      meta: {
+        materialOrderId: orderId,
+        cancelledBy: actor,
+        refundReference,
+        reason: reason || null,
+      },
+    });
+  }
+
+  return {
+    order: enrichOrderFromDbRow(row, nextPayload),
+    refund: {
+      amount: outcome.refundAmount,
+      status: "processed",
+      processedAt: nowIso,
+      reference: refundReference,
+      kind: outcome.refundKind,
+      keptCommission: outcome.keptCommission,
+      commissionReversed: outcome.commissionReversed,
+    },
+    duplicate: false,
+  };
+}
+
+async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus, options = {}) {
   const next = String(nextStatus || "").toUpperCase();
   if (!FULFILLMENT_ORDER.includes(next)) {
     throw new AppError("Invalid fulfillment status", 400);
@@ -506,15 +834,10 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus) {
       let row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row) throw new AppError("Material order not found", 404);
       const expectedSup = String(supplierId || "").trim();
-      if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(row, expectedSup)) {
+      await assertOrderOwnedBySupplierOrgTx(tx, row, expectedSup);
+      const bScope = options.branchScopeId != null && String(options.branchScopeId).trim() !== "" ? String(options.branchScopeId).trim() : null;
+      if (bScope && String(row.branchId || "") !== bScope) {
         throw new AppError("Forbidden", 403);
-      }
-      if (String(row.supplierId || "").trim() !== expectedSup) {
-        await tx.materialOrder.update({
-          where: { id: orderId },
-          data: { supplierId: expectedSup },
-        });
-        row = { ...row, supplierId: expectedSup };
       }
       const payloadPreview = row.payload && typeof row.payload === "object" ? row.payload : {};
       if (String(payloadPreview.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER") {
@@ -813,12 +1136,26 @@ const ALLOWED_STATUS = [
   "CANCELLED",
 ];
 
-async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = {}) {
+function parseDateBound(value, endOfDay = false) {
+  if (!value) return null;
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return null;
+  if (endOfDay) {
+    d.setHours(23, 59, 59, 999);
+  } else {
+    d.setHours(0, 0, 0, 0);
+  }
+  return d;
+}
+
+async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus, from, to, branchId } = {}) {
+  const branchFilter = String(branchId || "").trim();
   console.log(
     JSON.stringify({
       ns: "material_order",
       event: "supplier_list_orders",
       supplierId: String(supplierId || ""),
+      branchIdFilter: branchFilter || null,
       fulfillmentStatusFilter: fulfillmentStatus ?? null,
       at: new Date().toISOString(),
     })
@@ -829,80 +1166,31 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
       : null;
   const statusFilter =
     raw && ALLOWED_STATUS.includes(raw) ? { fulfillmentStatus: raw } : {};
+  const fromDate = parseDateBound(from, false);
+  const toDate = parseDateBound(to, true);
+  const createdAtFilter =
+    fromDate || toDate
+      ? {
+          createdAt: {
+            ...(fromDate ? { gte: fromDate } : {}),
+            ...(toDate ? { lte: toDate } : {}),
+          },
+        }
+      : {};
   const sid = String(supplierId || "").trim();
-  /** Indexed path — supplierId column set correctly */
-  const byCol = await prisma.materialOrder.findMany({
-    where: { supplierId: sid, ...statusFilter },
-    orderBy: { createdAt: "desc" },
-    include: {
-      supplier: { select: { id: true, name: true, businessName: true } },
-    },
-  });
-  /**
-   * Legacy rows: supplierId null but payload still carries store id (Prisma JSON filters are brittle across drivers).
-   * Scan recent null-supplier orders and match in JS (payload store id vs Supplier.id).
-   */
-  const since = new Date();
-  since.setDate(since.getDate() - 365);
-  const nullSupplierCandidates = await prisma.materialOrder.findMany({
-    where: {
-      supplierId: null,
-      ...statusFilter,
-      createdAt: { gte: since },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 800,
-    include: {
-      supplier: { select: { id: true, name: true, businessName: true } },
-    },
-  });
-  const nullMatches = nullSupplierCandidates.filter((r) => materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(r, sid));
-
-  /** Column set to a different Supplier.id than payload store (data drift). */
-  const wrongColWhere = {
-    AND: [
-      { supplierId: { not: null } },
-      { NOT: { supplierId: sid } },
-      { createdAt: { gte: since } },
-      ...(Object.keys(statusFilter).length ? [statusFilter] : []),
-    ],
+  const where = {
+    branch: { supplierId: sid },
+    ...(branchFilter ? { branchId: branchFilter } : {}),
+    ...statusFilter,
+    ...createdAtFilter,
   };
-  const wrongColCandidates = await prisma.materialOrder.findMany({
-    where: wrongColWhere,
+  const rows = await prisma.materialOrder.findMany({
+    where,
     orderBy: { createdAt: "desc" },
-    take: 600,
     include: {
       supplier: { select: { id: true, name: true, businessName: true } },
     },
   });
-  const wrongColMatches = wrongColCandidates.filter((r) => materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(r, sid));
-
-  const toRepair = [...nullMatches, ...wrongColMatches];
-  if (toRepair.length > 0) {
-    try {
-      await Promise.all(
-        toRepair.map((r) =>
-          prisma.materialOrder.update({
-            where: { id: r.id },
-            data: { supplierId: sid },
-          })
-        )
-      );
-      for (const r of toRepair) {
-        r.supplierId = sid;
-      }
-    } catch (e) {
-      console.error("listMaterialOrdersBySupplier backfill supplierId", e);
-    }
-  }
-  const map = new Map();
-  for (const r of byCol) map.set(r.id, r);
-  for (const r of toRepair) {
-    if (!map.has(r.id)) map.set(r.id, r);
-  }
-  const rows = Array.from(map.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
   const trackRows = await prisma.trackingSession.findMany({
     where: { orderId: { in: rows.map((r) => r.id) }, isActive: true },
     select: { orderId: true, trackingId: true, accessToken: true },
@@ -923,12 +1211,27 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus } = 
     const t = trackMap.get(r.id);
     const fs = String(r.fulfillmentStatus || "").toUpperCase();
     const trackingAllowed = fs === "OUT_FOR_DELIVERY";
+    const payload = r.payload && typeof r.payload === "object" ? r.payload : {};
+    const customerLocation =
+      payload.customerLocation && typeof payload.customerLocation === "object" && !Array.isArray(payload.customerLocation)
+        ? payload.customerLocation
+        : undefined;
+    const customerAddress =
+      customerLocation?.address ||
+      (payload.materialBatch &&
+      typeof payload.materialBatch === "object" &&
+      payload.materialBatch.deliveryAddress
+        ? String(payload.materialBatch.deliveryAddress)
+        : undefined);
     return {
       ...base,
+      branchId: r.branchId,
       customerId: r.userId,
       customerName: u?.name,
       customerEmail: u?.email,
       customerPhone: u?.phone,
+      customerLocation,
+      customerAddress,
       paymentStatus: r.paymentStatus,
       fulfillmentStatus: r.fulfillmentStatus,
       createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt || ""),
@@ -959,7 +1262,7 @@ async function listMaterialOrdersBySupplierIdsForAdmin(supplierIds) {
       ? [String(supplierIds)]
       : [];
 
-  const where = ids.length === 0 ? {} : { supplierId: { in: ids } };
+  const where = ids.length === 0 ? {} : { branch: { supplierId: { in: ids } } };
 
   const rows = await prisma.materialOrder.findMany({
     where,
@@ -1003,7 +1306,7 @@ async function listMaterialOrdersBySupplierIdsForAdmin(supplierIds) {
   });
 }
 
-async function appendSupplierOrderNote(orderId, userId, message) {
+async function appendSupplierOrderNote(orderId, userId, message, options = {}) {
   const raw = String(message ?? "").trim();
   if (!raw) {
     throw new AppError("Message is required", 400);
@@ -1014,19 +1317,20 @@ async function appendSupplierOrderNote(orderId, userId, message) {
 
   return prisma.$transaction(
     async (tx) => {
-      const supplier = await supplierService.requireSupplierOwnedByUserId(userId);
       const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row) {
         throw new AppError("Material order not found", 404);
       }
-      if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(row, supplier.id)) {
-        throw new AppError("Forbidden", 403);
-      }
-      if (String(row.supplierId || "").trim() !== String(supplier.id || "")) {
-        await tx.materialOrder.update({
-          where: { id: orderId },
-          data: { supplierId: String(supplier.id) },
-        });
+      const branchScope = options.branchScopeId != null && String(options.branchScopeId).trim() !== "" ? String(options.branchScopeId).trim() : null;
+      const supplierOrg = options.supplierOrgId != null && String(options.supplierOrgId).trim() !== "" ? String(options.supplierOrgId).trim() : null;
+      if (branchScope && supplierOrg) {
+        await assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrg);
+        if (String(row.branchId || "") !== branchScope) {
+          throw new AppError("Forbidden", 403);
+        }
+      } else {
+        const supplier = await supplierService.requireSupplierOwnedByUserId(userId);
+        await assertOrderOwnedBySupplierOrgTx(tx, row, supplier.id);
       }
 
       const base = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
@@ -1055,17 +1359,114 @@ async function appendSupplierOrderNote(orderId, userId, message) {
   );
 }
 
-async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId) {
+async function cancelMaterialOrderAsSupplier(orderId, supplierId, supplierUserId, reason, options = {}) {
+  const outcome = await prisma.$transaction(
+    async (tx) =>
+      cancelMaterialOrderInTransaction(tx, {
+        orderId,
+        actor: "supplier",
+        actorUserId: supplierUserId,
+        expectedSupplierId: String(supplierId || ""),
+        branchScopeId: options.branchScopeId,
+        reason: String(reason || "").trim(),
+      }),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 20000 }
+  );
+  try {
+    const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+    if (row) {
+      await notifyCustomerFulfillmentStep(row, "CANCELLED");
+    }
+    if (row?.branchId) {
+      void branchStaffNotificationService.createForBranchUsers(row.branchId, {
+        category: "REFUNDS",
+        type: "material_order_cancelled",
+        title: "Order cancelled",
+        message: `Order #${String(orderId).slice(0, 8)} was cancelled by the store. Reason: ${reason || "—"}`,
+        materialOrderId: String(orderId),
+      });
+    }
+  } catch (e) {
+    console.error("notifySupplierCancelMaterialOrder", e);
+  }
+  await logAudit("material_order.cancel.supplier", {
+    userId: supplierUserId,
+    metadata: {
+      orderId,
+      supplierId,
+      reason: reason || null,
+      refundAmount: outcome.refund.amount,
+      refundStatus: outcome.refund.status,
+      duplicate: outcome.duplicate,
+    },
+  });
+  return outcome;
+}
+
+async function cancelMaterialOrderAsCustomer(orderId, customerUserId, reason) {
+  const outcome = await prisma.$transaction(
+    async (tx) =>
+      cancelMaterialOrderInTransaction(tx, {
+        orderId,
+        actor: "customer",
+        actorUserId: customerUserId,
+        reason: String(reason || "").trim() || null,
+      }),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 20000 }
+  );
+  try {
+    const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+    if (row) {
+      await notifyCustomerFulfillmentStep(row, "CANCELLED");
+    }
+    if (row?.branchId) {
+      void branchStaffNotificationService.createForBranchUsers(row.branchId, {
+        category: "REFUNDS",
+        type: "material_order_cancelled",
+        title: "Order cancelled",
+        message: `Order #${String(orderId).slice(0, 8)} was cancelled by the customer.`,
+        materialOrderId: String(orderId),
+      });
+    }
+  } catch (e) {
+    console.error("notifyCustomerCancelMaterialOrder", e);
+  }
+  await logAudit("material_order.cancel.customer", {
+    userId: customerUserId,
+    metadata: {
+      orderId,
+      reason: reason || null,
+      refundAmount: outcome.refund.amount,
+      refundStatus: outcome.refund.status,
+      duplicate: outcome.duplicate,
+    },
+  });
+  return outcome;
+}
+
+async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId, branchIdOpt) {
   try {
     if (!global.io || !supplierIdStr) return;
+    const payload = {
+      orderId,
+      supplierId: String(supplierIdStr),
+      ...(branchIdOpt ? { branchId: String(branchIdOpt) } : {}),
+    };
     const row = await prisma.supplier.findUnique({
       where: { id: String(supplierIdStr) },
       select: { userId: true },
     });
     if (row?.userId) {
-      global.io.to(String(row.userId)).emit("supplier:material_order:new", {
-        orderId,
-        supplierId: String(supplierIdStr),
+      global.io.to(String(row.userId)).emit("supplier:material_order:new", payload);
+    }
+    if (branchIdOpt) {
+      global.io.to(`branch:${String(branchIdOpt)}`).emit("supplier:material_order:new", payload);
+      void branchStaffNotificationService.createForBranchUsers(String(branchIdOpt), {
+        category: "ORDERS",
+        type: "material_order_new",
+        title: "New material order",
+        message: `Order #${String(orderId).slice(0, 8)} — open Orders to fulfill.`,
+        materialOrderId: String(orderId),
       });
     }
   } catch (e) {
@@ -1113,16 +1514,14 @@ async function ensureJobMaterialPurchaseOrder(params) {
     if (byId.jobId && String(byId.jobId) !== String(jobId)) {
       throw new AppError("Material order job mismatch", 400);
     }
-    if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(byId, sid)) {
+    const branchRef = await prisma.branch.findUnique({ where: { id: sid }, select: { supplierId: true } });
+    const branchOk =
+      String(byId.branchId || "") === sid ||
+      (branchRef && String(byId.supplierId || "") === String(branchRef.supplierId));
+    if (!branchOk) {
       throw new AppError("Material order supplier mismatch", 400);
     }
-    let row = byId;
-    if (!String(row.supplierId || "").trim() && sid) {
-      row = await prisma.materialOrder.update({
-        where: { id: row.id },
-        data: { supplierId: sid },
-      });
-    }
+    const row = byId;
     console.log(
       JSON.stringify({
         ns: "material_order",
@@ -1154,6 +1553,16 @@ async function ensureJobMaterialPurchaseOrder(params) {
     supplierName: m.supplierName,
   }));
 
+  const branch = await prisma.branch.findUnique({
+    where: { id: sid },
+    include: { supplier: true },
+  });
+  if (!branch) {
+    throw new AppError("Branch not found", 400);
+  }
+  const orgId = branch.supplierId;
+  const pickupAddr = branch.address ? String(branch.address) : "";
+
   const jd = String(jobDeliveryType || "SELF").toUpperCase();
   const apiDel = jd === "STORE" ? "STORE" : jd === "PROVIDER" || jd === "DELIVERY_PROVIDER" ? "PROVIDER" : "SELF";
 
@@ -1171,20 +1580,19 @@ async function ensureJobMaterialPurchaseOrder(params) {
     source: "job_materials",
   });
 
-  const supplierRow = await prisma.supplier.findUnique({
-    where: { id: sid },
-    select: { address: true },
-  });
-  const pickupAddr = supplierRow?.address ? String(supplierRow.address) : "";
-
   const finalPayload = {
     ...order,
+    storeName: branchService.branchPublicDisplay(branch, branch.supplier) || lines[0]?.supplierName || order.storeName,
     invoiceId: invoiceId || order.invoiceId,
     jobStoreOrderId: storeOrderId || order.id,
   };
-  finalPayload.materialBatch = mergeMaterialBatch(finalPayload, { id: prismaRow.id, supplierId: sid, fulfillmentStatus: "PENDING" }, {
-    status: "pending",
-  });
+  finalPayload.materialBatch = mergeMaterialBatch(
+    finalPayload,
+    { id: prismaRow.id, branchId: sid, supplierId: orgId, fulfillmentStatus: "PENDING" },
+    {
+      status: "pending",
+    }
+  );
   finalPayload.materialBatch.pickupAddress = pickupAddr;
   finalPayload.materialBatch.deliveryAddress = String(jobSiteAddress || "");
   finalPayload.materialBatch.deliveryType = deliveryJobTypeToCanonical(apiDel);
@@ -1196,7 +1604,8 @@ async function ensureJobMaterialPurchaseOrder(params) {
     data: {
       id: prismaRow.id,
       userId: prismaRow.userId,
-      supplierId: prismaRow.supplierId,
+      supplierId: orgId,
+      branchId: sid,
       jobId: prismaRow.jobId,
       providerId: prismaRow.providerId,
       paymentStatus: prismaRow.paymentStatus,
@@ -1215,13 +1624,14 @@ async function ensureJobMaterialPurchaseOrder(params) {
       event: "job_material_order_created",
       materialOrderId: prismaRow.id,
       jobId: String(jobId),
-      supplierId: sid,
+      branchId: sid,
+      supplierOrgId: orgId,
       storeOrderId,
       at: new Date().toISOString(),
     })
   );
 
-  await emitSupplierMaterialOrderCreated(sid, prismaRow.id);
+  await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, sid);
   return finalPayload;
 }
 
@@ -1286,20 +1696,22 @@ async function aggregateCompletedPaidMaterialOrders({ supplierId } = {}) {
     paymentStatus: "paid",
     fulfillmentStatus: "COMPLETED",
     ...(supplierId != null && String(supplierId).trim() !== ""
-      ? { supplierId: String(supplierId) }
-      : { supplierId: { not: null } }),
+      ? { branch: { supplierId: String(supplierId) } }
+      : {}),
   };
   const rows = await prisma.materialOrder.findMany({
     where,
-    select: { materialsSubtotal: true, payload: true },
+    select: { materialsSubtotal: true, payload: true, platformCommission: true },
   });
   let totalRevenue = 0;
+  let totalCommission = 0;
   for (const row of rows) {
     totalRevenue += orderTotalFromRow(row);
+    totalCommission += Number(row.platformCommission || 0);
   }
   totalRevenue = roundMoney2(totalRevenue);
   const orderCount = rows.length;
-  const totalCommission = roundMoney2(totalRevenue * ADMIN_ANALYTICS_COMMISSION_RATE);
+  totalCommission = roundMoney2(totalCommission);
   const averageOrderValue = orderCount > 0 ? roundMoney2(totalRevenue / orderCount) : 0;
   return {
     orderCount,
@@ -1310,6 +1722,80 @@ async function aggregateCompletedPaidMaterialOrders({ supplierId } = {}) {
   };
 }
 
+function computeSupplierExportFinancials(order) {
+  const status = String(order.fulfillmentStatus || "").toUpperCase();
+  const totalAmount = roundMoney2(Number(order.total ?? order.materialsSubtotal ?? 0));
+  const commission = roundMoney2(totalAmount * 0.07);
+  const netEarnings = roundMoney2(totalAmount - commission);
+  const cancelled = status === "CANCELLED";
+  const cancelledBy = String(order.cancelledBy || "").toLowerCase();
+  const completedPaid = status === "COMPLETED" && String(order.paymentStatus || "").toLowerCase() === "paid";
+
+  if (cancelled) {
+    return {
+      totalAmount,
+      commission,
+      netEarnings,
+      revenueImpact: roundMoney2(-totalAmount),
+      commissionImpact: cancelledBy === "supplier" ? roundMoney2(-commission) : commission,
+      netImpact: roundMoney2(-netEarnings),
+    };
+  }
+  if (!completedPaid) {
+    return {
+      totalAmount,
+      commission,
+      netEarnings,
+      revenueImpact: 0,
+      commissionImpact: 0,
+      netImpact: 0,
+    };
+  }
+  return {
+    totalAmount,
+    commission,
+    netEarnings,
+    revenueImpact: totalAmount,
+    commissionImpact: commission,
+    netImpact: netEarnings,
+  };
+}
+
+async function buildSupplierOrdersExport(supplierId, { from, to, branchId } = {}) {
+  const orders = await listMaterialOrdersBySupplier(supplierId, { from, to, branchId });
+  const rows = orders.map((o) => {
+    const fx = computeSupplierExportFinancials(o);
+    return {
+      orderId: o.id,
+      status: String(o.fulfillmentStatus || "PENDING"),
+      totalAmount: fx.totalAmount,
+      commission: fx.commission,
+      netEarnings: fx.netEarnings,
+      revenueImpact: fx.revenueImpact,
+      commissionImpact: fx.commissionImpact,
+      netImpact: fx.netImpact,
+      isCancelled: String(o.fulfillmentStatus || "").toUpperCase() === "CANCELLED",
+      cancellationReason: o.cancellationReason || null,
+      cancelledBy: o.cancelledBy || null,
+      createdAt: o.createdAt || null,
+      refundAmount: Number(o.refundAmount || 0),
+      refundStatus: o.refundStatus || null,
+    };
+  });
+  const summary = rows.reduce(
+    (acc, row) => {
+      acc.orderCount += 1;
+      acc.totalRevenueImpact = roundMoney2(acc.totalRevenueImpact + row.revenueImpact);
+      acc.totalCommissionImpact = roundMoney2(acc.totalCommissionImpact + row.commissionImpact);
+      acc.totalNetImpact = roundMoney2(acc.totalNetImpact + row.netImpact);
+      if (row.isCancelled) acc.cancelledCount += 1;
+      return acc;
+    },
+    { orderCount: 0, cancelledCount: 0, totalRevenueImpact: 0, totalCommissionImpact: 0, totalNetImpact: 0 }
+  );
+  return { rows, summary };
+}
+
 /** Recent material orders for admin supplier view (newest first). */
 async function listRecentMaterialOrdersBySupplierForAdmin(supplierId, { limit = 10 } = {}) {
   const sid = String(supplierId || "").trim();
@@ -1318,7 +1804,7 @@ async function listRecentMaterialOrdersBySupplierForAdmin(supplierId, { limit = 
   }
   const take = Math.min(50, Math.max(1, Number(limit) || 10));
   const rows = await prisma.materialOrder.findMany({
-    where: { supplierId: sid },
+    where: { branch: { supplierId: sid } },
     orderBy: { createdAt: "desc" },
     take,
     include: { supplier: true },
@@ -1353,13 +1839,15 @@ async function listRecentMaterialOrdersBySupplierForAdmin(supplierId, { limit = 
 /**
  * Idempotent: ensure an active supplier-led tracking session for store delivery while OUT_FOR_DELIVERY.
  */
-async function ensureStoreDeliveryTrackingSession(orderId, supplierStoreId) {
+async function ensureStoreDeliveryTrackingSession(orderId, supplierStoreId, options = {}) {
   const oid = String(orderId || "");
   const sid = String(supplierStoreId || "");
   if (!oid || !sid) throw new AppError("Invalid order", 400);
   const row = await prisma.materialOrder.findUnique({ where: { id: oid } });
   if (!row) throw new AppError("Material order not found", 404);
-  if (!materialOrderSupplierUtil.materialOrderBelongsToSupplierStore(row, sid)) {
+  await assertOrderOwnedBySupplierOrg(row, sid);
+  const bScope = options.branchScopeId != null && String(options.branchScopeId).trim() !== "" ? String(options.branchScopeId).trim() : null;
+  if (bScope && String(row.branchId || "") !== bScope) {
     throw new AppError("Forbidden", 403);
   }
   const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
@@ -1427,6 +1915,7 @@ async function listAllMaterialOrdersForAdmin({ limit = 200 } = {}) {
 
 module.exports = {
   aggregateCompletedPaidMaterialOrders,
+  buildSupplierOrdersExport,
   listRecentMaterialOrdersBySupplierForAdmin,
   orderTotalFromRow,
   createMaterialOrder,
@@ -1442,6 +1931,8 @@ module.exports = {
   confirmDeliveryReceipt,
   autoConfirmStaleDeliveriesBatch,
   appendSupplierOrderNote,
+  cancelMaterialOrderAsSupplier,
+  cancelMaterialOrderAsCustomer,
   listMaterialOrdersBySupplier,
   listMaterialOrdersBySupplierIdsForAdmin,
   listAllMaterialOrdersForAdmin,

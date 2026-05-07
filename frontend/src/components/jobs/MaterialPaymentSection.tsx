@@ -68,15 +68,21 @@ interface MaterialPaymentSectionProps {
   onViewStoreOrder: (orderId: string) => void;
 }
 
+/** Canonical storefront key: branch id when present (job materials / migrated JSON). */
+function lineStoreKey(m: MaterialLine): string {
+  return String(m.branchId ?? m.supplierId);
+}
+
 function uniqueMaterialLines(materials: MaterialLine[]): MaterialLine[] {
   return Array.from(
     new Map(
       materials.map((m) => {
         const id = (m as { id?: string }).id;
+        const store = lineStoreKey(m);
         const key =
           id && String(id).trim() !== ''
             ? String(id)
-            : `${m.supplierId}|${m.productId}|${m.materialRequestId ?? ''}|${m.name}`;
+            : `${store}|${m.productId}|${m.materialRequestId ?? ''}|${m.name}`;
         return [key, m];
       })
     ).values()
@@ -85,6 +91,7 @@ function uniqueMaterialLines(materials: MaterialLine[]): MaterialLine[] {
 
 function lineFromOrderItem(storeId: string, storeName: string, item: JobStoreOrder['items'][number]): MaterialLine {
   return {
+    branchId: storeId,
     supplierId: storeId,
     supplierName: storeName,
     productId: item.productId,
@@ -155,22 +162,23 @@ export function MaterialPaymentSection({
   // Group materials by store (deduped lines so pending / paid views do not double-list)
   const materials = uniqueMaterialLines(job.materials || []);
   const materialsByStore = materials.reduce((acc, m) => {
-    if (!acc[m.supplierId]) {
-      acc[m.supplierId] = {
-        id: m.supplierId,
+    const sid = lineStoreKey(m);
+    if (!acc[sid]) {
+      acc[sid] = {
+        id: sid,
         name: m.supplierName,
         materials: [],
         total: 0,
       };
     }
-    acc[m.supplierId].materials.push(m);
-    acc[m.supplierId].total += m.qty * m.unitPrice;
+    acc[sid].materials.push(m);
+    acc[sid].total += m.qty * m.unitPrice;
     return acc;
   }, {} as Record<string, { id: string; name: string; materials: MaterialLine[]; total: number }>);
 
   // Check payment status from job.materialPayments
   const getStorePaymentStatus = (storeId: string) => {
-    return job.materialPayments?.find(p => p.supplierId === storeId);
+    return job.materialPayments?.find((p) => String(p.supplierId) === String(storeId));
   };
 
   const isStorePaid = (storeId: string) => {

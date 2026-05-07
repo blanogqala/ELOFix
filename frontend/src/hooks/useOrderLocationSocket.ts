@@ -37,6 +37,11 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
     hadConnectedRef.current = false;
     const oid = String(orderId);
 
+    setLiveLat(null);
+    setLiveLng(null);
+    setLastPingAtMs(null);
+    lastPollRef.current = { lat: null, lng: null };
+
     const applyCoords = (la: number, lo: number, fromPoll: boolean) => {
       if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
       setLiveLat(la);

@@ -281,6 +281,15 @@ async function createJob(userId, body) {
   if (normalizedDescription.length < 10) {
     throw new AppError("description must be at least 10 characters", 400);
   }
+  const locationAddress =
+    typeof location === "string"
+      ? String(location).trim()
+      : location && typeof location === "object" && !Array.isArray(location)
+        ? String(location.address || "").trim()
+        : "";
+  if (!locationAddress) {
+    throw new AppError("location address is required", 400);
+  }
 
   let normalizedImages = [];
   if (images !== undefined) {

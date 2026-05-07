@@ -144,6 +144,30 @@ async function getInvoiceById(userId, invoiceId) {
 }
 
 async function createRefundInvoice(userId, jobId, laborRefund, materialsRefund, cardLast4) {
+  return prisma.$transaction(async (tx) =>
+    createRefundInvoiceInTransaction(tx, {
+      userId,
+      jobId,
+      laborRefund,
+      materialsRefund,
+      cardLast4,
+    })
+  );
+}
+
+/**
+ * Records a refund invoice inside an existing financial transaction.
+ * Supports both labor/material and material-order-only refunds.
+ */
+async function createRefundInvoiceInTransaction(tx, {
+  userId,
+  jobId,
+  laborRefund = 0,
+  materialsRefund = 0,
+  cardLast4,
+  lineItems,
+  meta,
+}) {
   const totalAmount = Number(laborRefund || 0) + Number(materialsRefund || 0);
   const invoice = normalizeInvoice({
     jobId,
@@ -152,19 +176,22 @@ async function createRefundInvoice(userId, jobId, laborRefund, materialsRefund, 
     status: "refunded",
     totalAmount,
     refundedAmount: totalAmount,
-    lineItems: [
-      { description: "Labor refund", quantity: 1, unitPrice: Number(laborRefund || 0), total: Number(laborRefund || 0) },
-      {
-        description: "Materials refund",
-        quantity: 1,
-        unitPrice: Number(materialsRefund || 0),
-        total: Number(materialsRefund || 0),
-      },
-    ],
+    lineItems: Array.isArray(lineItems) && lineItems.length > 0
+      ? lineItems
+      : [
+          { description: "Labor refund", quantity: 1, unitPrice: Number(laborRefund || 0), total: Number(laborRefund || 0) },
+          {
+            description: "Materials refund",
+            quantity: 1,
+            unitPrice: Number(materialsRefund || 0),
+            total: Number(materialsRefund || 0),
+          },
+        ],
     paymentMethod: "Card",
     cardLast4,
+    meta: meta && typeof meta === "object" ? meta : undefined,
   });
-  await prisma.invoice.create({
+  await tx.invoice.create({
     data: {
       id: invoice.id,
       userId: invoice.userId,
@@ -771,6 +798,7 @@ module.exports = {
   getInvoiceById,
   createInvoice,
   createRefundInvoice,
+  createRefundInvoiceInTransaction,
   assertCardExists,
   // escrow / Paystack
   toPrismaDecimal,

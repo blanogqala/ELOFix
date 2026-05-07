@@ -1,19 +1,43 @@
 const express = require("express");
+const AppError = require("../utils/AppError");
 const portal = require("../controllers/supplierPortal.controller");
+const supplierBranch = require("../controllers/supplierBranch.controller");
 const asyncHandler = require("../middleware/asyncHandler");
-const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
+const { authenticate, authorizeSupplierPortal } = require("../middleware/auth.middleware");
 const { uploadSupplierProductImage, uploadSupplierLogo } = require("../middleware/upload.middleware");
 
 const router = express.Router();
 
 router.use(authenticate);
-router.use(authorizeRoles(["SUPPLIER"]));
+router.use(authorizeSupplierPortal());
+
+function ownerOnly(req, res, next) {
+  if (req.user.role !== "SUPPLIER") {
+    return next(new AppError("Forbidden", 403));
+  }
+  next();
+}
 
 router.get("/me", asyncHandler(portal.getMe));
+router.patch("/branch/me", asyncHandler(portal.patchBranchMe));
+router.get("/analytics/overview", ownerOnly, asyncHandler(portal.getAnalyticsOverview));
+router.get("/analytics/branches", ownerOnly, asyncHandler(portal.getAnalyticsBranches));
+router.get("/analytics/branch/:branchId/inventory", ownerOnly, asyncHandler(portal.getAnalyticsBranchInventory));
+router.get("/branches", ownerOnly, asyncHandler(supplierBranch.listBranches));
+router.post("/branches", ownerOnly, asyncHandler(supplierBranch.createBranch));
+router.get("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.getBranch));
+router.delete("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.deleteBranch));
+router.patch("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.patchBranch));
+router.get("/branches/:branchId/users", ownerOnly, asyncHandler(supplierBranch.listBranchUsers));
+router.post("/branches/:branchId/users", ownerOnly, asyncHandler(supplierBranch.createBranchUser));
+router.patch("/branches/:branchId/users/:branchUserId", ownerOnly, asyncHandler(supplierBranch.patchBranchUser));
+router.delete("/branches/:branchId/users/:branchUserId", ownerOnly, asyncHandler(supplierBranch.deleteBranchUser));
 router.get("/inventory/categories", asyncHandler(portal.getInventoryCategories));
 router.post("/inventory/categories", asyncHandler(portal.postInventoryCategory));
 router.get("/orders", asyncHandler(portal.getOrders));
+router.get("/orders/export", asyncHandler(portal.getOrdersExport));
 router.patch("/orders/:orderId/fulfillment", asyncHandler(portal.patchFulfillment));
+router.post("/orders/:orderId/cancel", asyncHandler(portal.cancelOrder));
 router.post("/orders/:orderId/tracking/start", asyncHandler(portal.postEnsureTracking));
 router.post("/orders/:orderId/notes", asyncHandler(portal.postOrderNote));
 
@@ -27,10 +51,11 @@ router.post("/products", asyncHandler(portal.postProduct));
 router.patch("/products/:productId", asyncHandler(portal.patchProduct));
 router.delete("/products/:productId", asyncHandler(portal.deleteProduct));
 
-router.patch("/profile", asyncHandler(portal.patchProfile));
+router.patch("/profile", ownerOnly, asyncHandler(portal.patchProfile));
 
 router.post(
   "/profile/upload-logo",
+  ownerOnly,
   uploadSupplierLogo.single("file"),
   asyncHandler(portal.uploadLogo)
 );

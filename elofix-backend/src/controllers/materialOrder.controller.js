@@ -106,7 +106,7 @@ async function getMaterialOrder(req, res) {
   if (req.user.role === "SUPPLIER") {
     const sup = await supplierService.findSupplierRecordByUserId(req.user.userId);
     const row = await prisma.materialOrder.findUnique({ where: { id: req.params.id } });
-    if (!sup || !row || !materialOrderBelongsToSupplierStore(row, sup.id)) {
+    if (!sup || !row || !(await materialOrderBelongsToSupplierStore(row, sup.id))) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
   } else if (req.user.role !== "ADMIN" && String(order.userId) !== String(req.user.userId)) {
@@ -122,13 +122,6 @@ async function createMaterialOrder(req, res) {
   }
 
   const order = await materialOrderService.createMaterialOrder(req.body || {});
-
-  try {
-    const storeId = order.storeId ? String(order.storeId) : "";
-    if (storeId) await materialOrderService.emitSupplierMaterialOrderCreated(storeId, order.id);
-  } catch (_) {
-    /* non-fatal socket */
-  }
 
   res.status(201).json({ success: true, order });
 }
@@ -172,6 +165,16 @@ async function confirmDeliveryReceipt(req, res) {
   res.json({ success: true, order });
 }
 
+async function cancelMaterialOrder(req, res) {
+  const reason = req.body?.reason;
+  const out = await materialOrderService.cancelMaterialOrderAsCustomer(
+    req.params.id,
+    req.user.userId,
+    reason
+  );
+  res.json({ success: true, order: out.order, refund: out.refund });
+}
+
 module.exports = {
   listOrdersQuery,
   getMaterialOrders,
@@ -185,4 +188,5 @@ module.exports = {
   updateMaterialOrderDeliveryStatus,
   patchProviderFulfillment,
   confirmDeliveryReceipt,
+  cancelMaterialOrder,
 };

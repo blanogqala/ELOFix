@@ -27,7 +27,7 @@ import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import { getSavedCards } from '@/lib/api/payments';
-import { getSuppliers } from '@/lib/api/suppliers';
+import { getStores } from '@/lib/api/stores';
 import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
 import { JobCompletionDialog } from '@/components/jobs/JobCompletionDialog';
@@ -149,22 +149,27 @@ export default function JobDetail() {
   const [isActionPending, setIsActionPending] = useState(false);
   const [isMessageSending, setIsMessageSending] = useState(false);
 
-  const loadSuppliers = useCallback(async () => {
+  const loadStoresForJob = useCallback(async () => {
+    if (!job) return;
     try {
-      const supplierData = await getSuppliers();
-      setSuppliers(supplierData);
+      const list = await getStores({
+        city: job.location?.city?.trim(),
+        lat: job.location?.coordinates?.lat,
+        lng: job.location?.coordinates?.lng,
+      });
+      setSuppliers(list);
     } catch (error) {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to load suppliers.',
+        description: error instanceof Error ? error.message : 'Failed to load stores.',
         variant: 'destructive',
       });
     }
-  }, [toast]);
+  }, [job, toast]);
 
   const loadDeliveryProviders = useCallback(async () => {
     try {
-      const providers = await getDeliveryProviders();
+      const providers = await getDeliveryProviders({ city: job?.location?.city?.trim() });
       setDeliveryProviders(providers);
       setDeliveryProvidersError(null);
     } catch (error) {
@@ -173,7 +178,7 @@ export default function JobDetail() {
         error instanceof Error ? error.message : 'Delivery providers are unavailable.'
       );
     }
-  }, []);
+  }, [job?.location?.city]);
 
   const loadCards = useCallback(async () => {
     if (!user) return;
@@ -236,10 +241,14 @@ export default function JobDetail() {
   useEffect(() => {
     if (jobId) {
       void loadCards();
-      void loadSuppliers();
-      void loadDeliveryProviders();
     }
-  }, [jobId, loadCards, loadDeliveryProviders, loadSuppliers]);
+  }, [jobId, loadCards]);
+
+  useEffect(() => {
+    if (!job) return;
+    void loadStoresForJob();
+    void loadDeliveryProviders();
+  }, [job, loadStoresForJob, loadDeliveryProviders]);
 
   useEffect(() => {
     const handleStorageUpdate = (event: StorageEvent) => {
@@ -1057,7 +1066,7 @@ export default function JobDetail() {
       <SuggestAlternativeMaterialsModal
         open={suggestMaterialsOpen}
         onOpenChange={setSuggestMaterialsOpen}
-        suppliers={suppliers}
+        jobLocation={job.location ?? undefined}
         jobCategory={job.category}
         onSuggest={handleSuggestMaterial}
       />
