@@ -74,8 +74,11 @@ async function patchBranchMe(req, res) {
 }
 
 async function getAnalyticsOverview(req, res) {
-  const row = await supplierService.requireSupplierOwnedByUserId(req.user.userId);
-  const data = await supplierAnalyticsService.getSupplierOverview(row.id);
+  const actor = await portalActor(req);
+  const data =
+    actor.kind === "SUPPLIER"
+      ? await supplierAnalyticsService.getSupplierOverview(actor.supplierOrgId)
+      : await supplierAnalyticsService.getBranchStaffOverview(actor.supplierOrgId, actor.branchScopeId);
   res.json({ success: true, ...data });
 }
 
@@ -84,6 +87,8 @@ async function getAnalyticsBranches(req, res) {
   const branches = await supplierAnalyticsService.listBranchesWithStats(row.id, {
     city: req.query.city,
     q: req.query.q,
+    from: req.query.from,
+    to: req.query.to,
   });
   res.json({ success: true, branches });
 }

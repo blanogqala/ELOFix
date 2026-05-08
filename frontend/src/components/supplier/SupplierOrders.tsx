@@ -7,6 +7,7 @@ import {
   postSupplierEnsureTracking,
   cancelSupplierOrder,
   getSupplierAnalyticsBranches,
+  getSupplierAnalyticsOverview,
   type SupplierMaterialOrderLine,
 } from '@/lib/api/supplierPortal';
 import { postTrackingLocation } from '@/lib/api/tracking';
@@ -55,6 +56,50 @@ const STATUS_BADGE: Record<string, string> = {
   DELAYED: 'bg-amber-500/15 text-amber-950 dark:text-amber-100 border-amber-500/40',
   CANCELLED: 'bg-muted text-muted-foreground border-border',
 };
+
+function SupplierPortalOrderKpis({
+  totalOrders,
+  totalPending,
+  netEarnings,
+}: {
+  totalOrders: number | null | undefined;
+  totalPending: number | null | undefined;
+  netEarnings: number | null | undefined;
+}) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-3">
+      <Card className="card-elevated">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Total orders</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-2xl font-bold tabular-nums">{totalOrders ?? '—'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Across your scope</p>
+        </CardContent>
+      </Card>
+      <Card className="card-elevated">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Pending orders</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-2xl font-bold tabular-nums">{totalPending ?? '—'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Awaiting acceptance</p>
+        </CardContent>
+      </Card>
+      <Card className="card-elevated">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Net earnings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+            {netEarnings == null ? '—' : formatCurrency(netEarnings)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Excludes cancelled</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 function displayStatus(st: string | undefined): string {
   const u = String(st || 'PENDING').toUpperCase();
@@ -232,6 +277,12 @@ export function SupplierOrders({ userId }: { userId: string }) {
     enabled: Boolean(userId) && isSupplierReadOnly,
   });
 
+  const { data: portalOverview } = useQuery({
+    queryKey: ['supplier', 'analytics-overview', userId],
+    queryFn: () => getSupplierAnalyticsOverview(),
+    enabled: Boolean(userId) && (isBranchStaff || isSupplierReadOnly),
+  });
+
   const distinctOrdCities = useMemo(() => {
     const s = new Set<string>();
     for (const b of orderBranchCards) {
@@ -308,6 +359,8 @@ export function SupplierOrders({ userId }: { userId: string }) {
     ensureSocketAuthAndConnect();
     const onNew = () => {
       void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics-overview', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics', 'branches'] });
     };
     socket.on('supplier:material_order:new', onNew);
     return () => {
@@ -333,6 +386,8 @@ export function SupplierOrders({ userId }: { userId: string }) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
       void queryClient.invalidateQueries({ queryKey: ['supplier', 'profile', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics-overview', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics', 'branches'] });
       toast({ title: 'Order updated' });
     },
     onError: (e: Error) => {
@@ -356,6 +411,8 @@ export function SupplierOrders({ userId }: { userId: string }) {
     mutationFn: ({ id, reason }: { id: string; reason: string }) => cancelSupplierOrder(id, reason),
     onSuccess: ({ refund }) => {
       void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics-overview', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics', 'branches'] });
       setCancelReasonDraft('');
       setCancelDialogOpen(false);
       toast({
@@ -398,6 +455,11 @@ export function SupplierOrders({ userId }: { userId: string }) {
   if (isSupplierReadOnly && supplierBrowse === 'branches' && !orderIdFromUrl) {
     return (
       <div className="space-y-4">
+        <SupplierPortalOrderKpis
+          totalOrders={portalOverview?.totalOrders}
+          totalPending={portalOverview?.totalPendingOrders}
+          netEarnings={portalOverview?.sumNetEarningsAllBranches}
+        />
         <p className="text-sm text-muted-foreground">
           Read-only overview. Pick a branch to view its orders.
         </p>
@@ -475,6 +537,14 @@ export function SupplierOrders({ userId }: { userId: string }) {
 
   if (orders.length === 0 && shouldLoadOrders) {
     return (
+      <div className="space-y-4">
+        {(isBranchStaff || isSupplierReadOnly) && (
+          <SupplierPortalOrderKpis
+            totalOrders={portalOverview?.totalOrders}
+            totalPending={portalOverview?.totalPendingOrders}
+            netEarnings={portalOverview?.sumNetEarningsAllBranches}
+          />
+        )}
       <Card className="card-elevated border-dashed">
         <CardHeader>
           <CardTitle className="text-base">No orders yet</CardTitle>
@@ -488,6 +558,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
           </CardContent>
         )}
       </Card>
+      </div>
     );
   }
 
@@ -501,6 +572,13 @@ export function SupplierOrders({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-4">
+      {(isBranchStaff || isSupplierReadOnly) && (
+        <SupplierPortalOrderKpis
+          totalOrders={portalOverview?.totalOrders}
+          totalPending={portalOverview?.totalPendingOrders}
+          netEarnings={portalOverview?.sumNetEarningsAllBranches}
+        />
+      )}
       {!selected && isSupplierReadOnly && supplierBrowse === 'list' && (
         <Button type="button" variant="ghost" size="sm" className="gap-1 -ml-2" onClick={backToSupplierBranchCards}>
           <ArrowLeft className="h-4 w-4" />

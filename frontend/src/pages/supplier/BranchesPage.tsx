@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { getSupplierBranches, postSupplierBranch } from '@/lib/api/supplierPortal';
+import { getSupplierBranches, postSupplierBranch, getSupplierAnalyticsOverview } from '@/lib/api/supplierPortal';
 import type { SupplierBranchProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { MapPin, ChevronRight, Plus } from 'lucide-react';
+import { SupplierSupportFab } from '@/components/supplier/SupplierSupportFab';
+import { formatCurrency } from '@/lib/formatCurrency';
 import {
   Select,
   SelectContent,
@@ -55,6 +57,12 @@ export default function SupplierBranchesPage() {
     enabled: Boolean(userId),
   });
 
+  const { data: analytics } = useQuery({
+    queryKey: ['supplier', 'analytics-overview', userId],
+    queryFn: () => getSupplierAnalyticsOverview(),
+    enabled: Boolean(userId),
+  });
+
   const distinctCities = useMemo(() => {
     const s = new Set<string>();
     for (const b of branches) {
@@ -78,6 +86,7 @@ export default function SupplierBranchesPage() {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['supplier', 'branches', userId] });
     void queryClient.invalidateQueries({ queryKey: ['supplier', 'profile', userId] });
+    void queryClient.invalidateQueries({ queryKey: ['supplier', 'analytics-overview', userId] });
   };
 
   const resetCreateForm = () => {
@@ -127,7 +136,7 @@ export default function SupplierBranchesPage() {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-3xl space-y-8 animate-fade-in">
+      <div className="max-w-3xl space-y-8 animate-fade-in md:max-w-5xl p-4 pb-24">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">My branches</h1>
@@ -137,6 +146,37 @@ export default function SupplierBranchesPage() {
             <Plus className="mr-2 h-4 w-4" />
             New branch
           </Button>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Card className="card-elevated">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total branches</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums">{analytics?.totalBranches ?? '—'}</p>
+            </CardContent>
+          </Card>
+          <Card className="card-elevated">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Net earnings (all branches)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {analytics != null ? formatCurrency(analytics.sumNetEarningsAllBranches) : '—'}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Excludes cancelled orders</p>
+            </CardContent>
+          </Card>
+          <Card className="card-elevated">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total orders</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums">{analytics?.totalOrders ?? '—'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">All-time across branches</p>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
@@ -266,7 +306,7 @@ export default function SupplierBranchesPage() {
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filteredBranches.map((b) => (
               <BranchListCard key={b.id} branch={b} />
             ))}
@@ -279,6 +319,7 @@ export default function SupplierBranchesPage() {
           </div>
         )}
       </div>
+      <SupplierSupportFab />
     </DashboardLayout>
   );
 }

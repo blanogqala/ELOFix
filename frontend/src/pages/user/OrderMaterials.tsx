@@ -353,6 +353,9 @@ export default function OrderMaterials() {
           address: deliveryAddress.trim(),
           city: deliveryCity.trim(),
           area: deliveryArea.trim() || undefined,
+          ...(userGeo
+            ? { coordinates: { lat: userGeo.lat, lng: userGeo.lng } }
+            : {}),
         },
         materialsTotal,
         cardLast4: card?.last4 || '****',

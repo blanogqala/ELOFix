@@ -251,6 +251,8 @@ async function getProductsByCategory(category) {
           branchId: b.id,
           supplierId: supplierRow.id,
           supplierName: supplierRow.name,
+          branchLatitude: typeof api.latitude === "number" ? api.latitude : undefined,
+          branchLongitude: typeof api.longitude === "number" ? api.longitude : undefined,
         });
       }
     }

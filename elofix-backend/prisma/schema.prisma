@@ -320,6 +320,8 @@ model Notification {
   message         String
   read            Boolean       @default(false)
   jobId           String?
+  /** Store material-order id for supplier portal notifications (distinct from Job). */
+  materialOrderId String?
   conversationId  String?
   conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   notificationCategory NotificationCategory @default(SYSTEM)

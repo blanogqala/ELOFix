@@ -30,13 +30,44 @@ async function createSupportNotifications(req, res) {
   if (message.length < 1 || message.length > 2000) {
     return res.status(400).json({ success: false, message: "Message must be 1–2000 characters" });
   }
-  const sender = await prisma.user.findUnique({ where: { id: req.user.userId } });
-  if (!sender) {
-    return res.status(404).json({ success: false, message: "User not found" });
-  }
   const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
   const title = "Support message";
-  const fullMessage = `${sender.name} (${sender.email}): ${message}`;
+
+  let senderName;
+  /** Must reference User.id when set — BranchUser IDs are not valid FK targets. */
+  let senderUserIdForNotify = null;
+  let senderRoleFormatted;
+  let fullMessage;
+
+  if (req.user.role === "BRANCH_STAFF") {
+    const bu = await prisma.branchUser.findUnique({
+      where: { id: String(req.user.userId) },
+    });
+    if (!bu) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    senderName = bu.email || "Branch staff";
+    senderRoleFormatted = "branch_staff";
+    fullMessage = `${senderName}: ${message}`;
+  } else {
+    const sender = await prisma.user.findUnique({ where: { id: req.user.userId } });
+    if (!sender) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    senderName = sender.name;
+    senderUserIdForNotify = sender.id;
+    const roleUp = String(sender.role || "").toUpperCase();
+    senderRoleFormatted =
+      roleUp === "CUSTOMER"
+        ? "customer"
+        : roleUp === "SUPPLIER"
+          ? "supplier"
+          : roleUp === "PROVIDER"
+            ? "provider"
+            : String(sender.role || "user").toLowerCase();
+    fullMessage = `${sender.name} (${sender.email}): ${message}`;
+  }
+
   await Promise.all(
     admins.map((admin) =>
       notificationService.addNotification({
@@ -44,9 +75,9 @@ async function createSupportNotifications(req, res) {
         type: "support_contact",
         title,
         message: fullMessage,
-        senderId: sender.id,
-        senderName: sender.name,
-        senderRole: sender.role === "CUSTOMER" ? "customer" : String(sender.role || "user").toLowerCase(),
+        ...(senderUserIdForNotify ? { senderId: senderUserIdForNotify } : {}),
+        senderName,
+        senderRole: senderRoleFormatted,
       })
     )
   );

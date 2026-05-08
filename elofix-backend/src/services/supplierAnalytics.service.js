@@ -25,8 +25,10 @@ async function getSupplierOverview(supplierOrgId) {
   });
 
   let sumNetEarnings = 0;
+  let totalPendingOrders = 0;
   for (const o of orders) {
     const st = String(o.fulfillmentStatus || "").toUpperCase();
+    if (st === "PENDING") totalPendingOrders += 1;
     if (st === "CANCELLED") continue;
     sumNetEarnings += moneyNum(o.supplierEarning);
   }
@@ -35,7 +37,66 @@ async function getSupplierOverview(supplierOrgId) {
     totalBranches,
     sumNetEarningsAllBranches: Math.round(sumNetEarnings * 100) / 100,
     totalOrders: orders.length,
+    totalPendingOrders,
   };
+}
+
+/**
+ * Portal overview for branch staff — metrics scoped to one branch only.
+ */
+async function getBranchStaffOverview(supplierOrgId, branchId) {
+  const sid = String(supplierOrgId || "").trim();
+  const bid = String(branchId || "").trim();
+  if (!sid || !bid) throw new AppError("Invalid supplier", 400);
+
+  const exists = await prisma.branch.findFirst({
+    where: { id: bid, supplierId: sid },
+    select: { id: true },
+  });
+  if (!exists) throw new AppError("Branch not found", 404);
+
+  const orders = await prisma.materialOrder.findMany({
+    where: { supplierId: sid, branchId: bid },
+    select: {
+      supplierEarning: true,
+      fulfillmentStatus: true,
+    },
+  });
+
+  let sumNetEarnings = 0;
+  let totalPendingOrders = 0;
+  for (const o of orders) {
+    const st = String(o.fulfillmentStatus || "").toUpperCase();
+    if (st === "PENDING") totalPendingOrders += 1;
+    if (st === "CANCELLED") continue;
+    sumNetEarnings += moneyNum(o.supplierEarning);
+  }
+
+  return {
+    totalBranches: 1,
+    sumNetEarningsAllBranches: Math.round(sumNetEarnings * 100) / 100,
+    totalOrders: orders.length,
+    totalPendingOrders,
+  };
+}
+
+function ordersDateWhere(query = {}) {
+  const fromRaw = query.from != null ? String(query.from).trim() : "";
+  const toRaw = query.to != null ? String(query.to).trim() : "";
+  if (!fromRaw && !toRaw) return {};
+  const createdAt = {};
+  if (fromRaw) {
+    const d = new Date(fromRaw);
+    if (!Number.isNaN(d.getTime())) createdAt.gte = d;
+  }
+  if (toRaw) {
+    const d = new Date(toRaw);
+    if (!Number.isNaN(d.getTime())) {
+      d.setHours(23, 59, 59, 999);
+      createdAt.lte = d;
+    }
+  }
+  return Object.keys(createdAt).length ? { createdAt } : {};
 }
 
 /**
@@ -56,12 +117,15 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
     },
   });
 
+  const dateFilter = ordersDateWhere(query);
+
   const orders = await prisma.materialOrder.findMany({
-    where: { supplierId: sid },
+    where: { supplierId: sid, ...dateFilter },
     select: {
       branchId: true,
       fulfillmentStatus: true,
       supplierEarning: true,
+      createdAt: true,
     },
   });
 
@@ -173,6 +237,7 @@ async function getBranchInventoryInsights(supplierOrgId, branchId) {
 
 module.exports = {
   getSupplierOverview,
+  getBranchStaffOverview,
   listBranchesWithStats,
   getBranchInventoryInsights,
 };

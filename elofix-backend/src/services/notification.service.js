@@ -22,6 +22,7 @@ function toApiShape(row) {
     message: row.message,
     read: row.read,
     jobId: row.jobId || undefined,
+    materialOrderId: row.materialOrderId || undefined,
     conversationId: row.conversationId || undefined,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
@@ -70,6 +71,10 @@ async function addNotification(notification) {
       message: String(notification.message || ""),
       read: false,
       jobId: notification.jobId || null,
+      materialOrderId:
+        notification.materialOrderId != null && String(notification.materialOrderId).trim() !== ""
+          ? String(notification.materialOrderId).trim()
+          : null,
       conversationId,
     },
   });
@@ -100,10 +105,34 @@ async function getUnreadCount(userId) {
   });
 }
 
+/**
+ * In-app notification for the supplier org owner (User row) for material-order events.
+ */
+async function notifySupplierOrgOwnerMaterialEvent(supplierOrgId, { type, title, message, materialOrderId, jobId }) {
+  const sid = String(supplierOrgId || "").trim();
+  if (!sid) return null;
+  const supplier = await prisma.supplier.findUnique({
+    where: { id: sid },
+    select: { userId: true },
+  });
+  const ownerUserId = supplier?.userId ? String(supplier.userId) : null;
+  if (!ownerUserId) return null;
+
+  return addNotification({
+    userId: ownerUserId,
+    type,
+    title,
+    message,
+    ...(materialOrderId ? { materialOrderId: String(materialOrderId) } : {}),
+    ...(jobId ? { jobId: String(jobId) } : {}),
+  });
+}
+
 module.exports = {
   getNotifications,
   addNotification,
   markAsRead,
   markAllAsRead,
   getUnreadCount,
+  notifySupplierOrgOwnerMaterialEvent,
 };

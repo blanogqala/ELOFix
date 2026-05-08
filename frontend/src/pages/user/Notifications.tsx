@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow, format, isToday, isYesterday, parseISO } from 'date-fns';
-import { useNavigate, type NavigateFunction } from 'react-router-dom';
+import { useNavigate, useLocation, type NavigateFunction } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -53,6 +53,10 @@ function getThreadKey(
   n: AppNotification,
   ctx: { role: UserRole; currentUserId: string }
 ): string {
+  const mat = n.materialOrderId?.trim();
+  if (mat) {
+    return `material:${mat}`;
+  }
   if (n.jobId) {
     return `job:${n.jobId}`;
   }
@@ -87,7 +91,8 @@ function formatDisplayRole(r?: string): string {
   if (!r) return '';
   const x = r.toLowerCase();
   if (x === 'customer') return 'user';
-  if (x === 'provider' || x === 'user' || x === 'admin') return x;
+  if (x === 'branch_staff') return 'branch staff';
+  if (x === 'provider' || x === 'user' || x === 'admin' || x === 'supplier') return x;
   return r;
 }
 
@@ -109,6 +114,11 @@ function navigateForNotification(n: AppNotification, role: UserRole, navigate: N
     return;
   }
   if (n.type === 'support_contact' || n.type === 'support_reply') return;
+  const mat = n.materialOrderId?.trim();
+  if ((role === 'supplier' || role === 'branch_staff') && mat) {
+    navigate(`/supplier/orders?orderId=${encodeURIComponent(mat)}`);
+    return;
+  }
   if (!n.jobId) return;
   if (role === 'user') navigate(`/user/jobs/${n.jobId}`);
   else if (role === 'provider') navigate(`/provider/jobs/${n.jobId}`);
@@ -151,6 +161,12 @@ function getNotificationIcon(type: AppNotification['type']) {
       return <MessageSquare className="h-4 w-4 text-primary" />;
     case 'support_reply':
       return <LifeBuoy className="h-4 w-4 text-primary" />;
+    case 'supplier_material_order_new':
+    case 'material_order_new':
+      return <ClipboardList className="h-4 w-4 text-primary" />;
+    case 'supplier_material_order_cancelled':
+    case 'material_order_cancelled':
+      return <AlertCircle className="h-4 w-4 text-warning" />;
     default:
       return <Bell className="h-4 w-4 text-muted-foreground" />;
   }
@@ -158,15 +174,17 @@ function getNotificationIcon(type: AppNotification['type']) {
 
 const PANEL_H = 'min-h-[min(70vh,560px)] max-h-[min(70vh,640px)]';
 
-function parseKey(key: string): { kind: 'job' | 'support' | 'general' } {
+function parseKey(key: string): { kind: 'job' | 'support' | 'general' | 'material' } {
   if (key.startsWith('job:')) return { kind: 'job' };
   if (key.startsWith('support:')) return { kind: 'support' };
+  if (key.startsWith('material:')) return { kind: 'material' };
   return { kind: 'general' };
 }
 
 export default function NotificationsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -256,7 +274,13 @@ export default function NotificationsPage() {
 
   const displayThreadKeys = useMemo(() => {
     const keys = new Set<string>(threadMap.keys());
-    if ((role === 'user' || role === 'provider') && supportKey) {
+    if (
+      supportKey &&
+      (role === 'user' ||
+        role === 'provider' ||
+        role === 'supplier' ||
+        role === 'branch_staff')
+    ) {
       keys.add(supportKey);
     }
     const out = [...keys];
@@ -279,6 +303,20 @@ export default function NotificationsPage() {
       setSelectedThreadKey(displayThreadKeys[0]!);
     }
   }, [displayThreadKeys, selectedThreadKey]);
+
+  /** Open support composer when navigated from FAB (state or ?support=1). */
+  useEffect(() => {
+    if (!supportKey || !user?.id) return;
+    const state = location.state as { openSupport?: boolean } | undefined;
+    const params = new URLSearchParams(location.search);
+    const wantsOpen = Boolean(state?.openSupport) || params.get('support') === '1';
+    if (!wantsOpen) return;
+    setSelectedThreadKey(supportKey);
+    if (isMobile) setMobileMessageView(true);
+    params.delete('support');
+    const qs = params.toString();
+    navigate(`${location.pathname}${qs ? `?${qs}` : ''}`, { replace: true, state: {} });
+  }, [location.pathname, location.search, location.state, supportKey, navigate, isMobile, user?.id]);
 
   const selectedThreadMessages = selectedThreadKey
     ? threadMap.get(selectedThreadKey) ?? (selectedThreadKey === supportKey ? [] : [])
@@ -349,7 +387,7 @@ export default function NotificationsPage() {
     const last = msgs[msgs.length - 1];
     const { kind } = parseKey(key);
 
-    if (kind === 'support' && (role === 'user' || role === 'provider')) {
+    if (kind === 'support' && (role === 'user' || role === 'provider' || role === 'supplier' || role === 'branch_staff')) {
       return {
         primary: 'Support',
         secondary: '' as string | undefined,
@@ -379,6 +417,17 @@ export default function NotificationsPage() {
         secondary: jobLabel,
         tertiary: last.senderRole ? formatDisplayRole(last.senderRole) : '',
         avatarLabel: initialFromName(last.senderName ?? 'J'),
+        preview: last.message,
+        time: parseISO(last.createdAt),
+      };
+    }
+
+    if (kind === 'material' && last) {
+      return {
+        primary: last.title || 'Order activity',
+        secondary: undefined as string | undefined,
+        tertiary: '',
+        avatarLabel: 'O',
         preview: last.message,
         time: parseISO(last.createdAt),
       };
@@ -425,7 +474,7 @@ export default function NotificationsPage() {
     supportKey && selectedThreadKey === supportKey && role !== 'admin';
 
   const isSupportUserThreadEmpty =
-    (role === 'user' || role === 'provider') &&
+    (role === 'user' || role === 'provider' || role === 'supplier' || role === 'branch_staff') &&
     supportKey &&
     selectedThreadKey === supportKey &&
     (threadMap.get(supportKey) ?? []).length === 0;
@@ -721,7 +770,13 @@ export default function NotificationsPage() {
     </div>
   );
 
-  const showFloatSupport = role !== 'admin' && (role === 'user' || role === 'provider') && supportKey;
+  const showFloatSupport =
+    role !== 'admin' &&
+    (role === 'user' ||
+      role === 'provider' ||
+      role === 'supplier' ||
+      role === 'branch_staff') &&
+    supportKey;
 
   return (
     <DashboardLayout>

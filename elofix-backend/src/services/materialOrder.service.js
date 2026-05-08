@@ -414,7 +414,7 @@ async function createMaterialOrder(params) {
     },
   });
   try {
-    await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, branchId);
+    await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, branchId, prismaRow.jobId);
   } catch (_) {
     /* non-fatal socket */
   }
@@ -1386,6 +1386,15 @@ async function cancelMaterialOrderAsSupplier(orderId, supplierId, supplierUserId
         materialOrderId: String(orderId),
       });
     }
+    if (row?.supplierId) {
+      void notificationService.notifySupplierOrgOwnerMaterialEvent(String(row.supplierId), {
+        type: "supplier_material_order_cancelled",
+        title: "Order cancelled",
+        message: `Order #${String(orderId).slice(0, 8)} was cancelled by the store. Reason: ${reason || "—"}`,
+        materialOrderId: String(orderId),
+        ...(row.jobId ? { jobId: String(row.jobId) } : {}),
+      });
+    }
   } catch (e) {
     console.error("notifySupplierCancelMaterialOrder", e);
   }
@@ -1428,6 +1437,15 @@ async function cancelMaterialOrderAsCustomer(orderId, customerUserId, reason) {
         materialOrderId: String(orderId),
       });
     }
+    if (row?.supplierId) {
+      void notificationService.notifySupplierOrgOwnerMaterialEvent(String(row.supplierId), {
+        type: "supplier_material_order_cancelled",
+        title: "Order cancelled",
+        message: `Order #${String(orderId).slice(0, 8)} was cancelled by the customer.`,
+        materialOrderId: String(orderId),
+        ...(row.jobId ? { jobId: String(row.jobId) } : {}),
+      });
+    }
   } catch (e) {
     console.error("notifyCustomerCancelMaterialOrder", e);
   }
@@ -1444,31 +1462,45 @@ async function cancelMaterialOrderAsCustomer(orderId, customerUserId, reason) {
   return outcome;
 }
 
-async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId, branchIdOpt) {
+async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId, branchIdOpt, jobIdOpt) {
   try {
-    if (!global.io || !supplierIdStr) return;
+    if (!supplierIdStr) return;
+    const shortId = `Order #${String(orderId).slice(0, 8)}`;
+    const jobIdForNotify =
+      jobIdOpt != null && String(jobIdOpt).trim() !== "" ? String(jobIdOpt).trim() : undefined;
     const payload = {
       orderId,
       supplierId: String(supplierIdStr),
       ...(branchIdOpt ? { branchId: String(branchIdOpt) } : {}),
     };
-    const row = await prisma.supplier.findUnique({
-      where: { id: String(supplierIdStr) },
-      select: { userId: true },
-    });
-    if (row?.userId) {
-      global.io.to(String(row.userId)).emit("supplier:material_order:new", payload);
+    if (global.io) {
+      const row = await prisma.supplier.findUnique({
+        where: { id: String(supplierIdStr) },
+        select: { userId: true },
+      });
+      if (row?.userId) {
+        global.io.to(String(row.userId)).emit("supplier:material_order:new", payload);
+      }
+      if (branchIdOpt) {
+        global.io.to(`branch:${String(branchIdOpt)}`).emit("supplier:material_order:new", payload);
+      }
     }
     if (branchIdOpt) {
-      global.io.to(`branch:${String(branchIdOpt)}`).emit("supplier:material_order:new", payload);
       void branchStaffNotificationService.createForBranchUsers(String(branchIdOpt), {
         category: "ORDERS",
         type: "material_order_new",
         title: "New material order",
-        message: `Order #${String(orderId).slice(0, 8)} — open Orders to fulfill.`,
+        message: `${shortId} — open Orders to fulfill.`,
         materialOrderId: String(orderId),
       });
     }
+    void notificationService.notifySupplierOrgOwnerMaterialEvent(supplierIdStr, {
+      type: "supplier_material_order_new",
+      title: "New material order",
+      message: `${shortId} — open Orders to fulfill.`,
+      materialOrderId: String(orderId),
+      ...(jobIdForNotify ? { jobId: jobIdForNotify } : {}),
+    });
   } catch (e) {
     console.error("emitSupplierMaterialOrderCreated", e);
   }
@@ -1631,7 +1663,7 @@ async function ensureJobMaterialPurchaseOrder(params) {
     })
   );
 
-  await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, sid);
+  await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, sid, prismaRow.jobId);
   return finalPayload;
 }
 

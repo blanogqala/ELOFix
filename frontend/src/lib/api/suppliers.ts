@@ -28,7 +28,17 @@ export async function getSupplierById(id: string): Promise<Supplier | null> {
 
 export async function getProductsByCategory(
   category: string
-): Promise<Array<Product & { supplierId: string; supplierName: string; branchId?: string }>> {
+): Promise<
+  Array<
+    Product & {
+      supplierId: string;
+      supplierName: string;
+      branchId?: string;
+      branchLatitude?: number;
+      branchLongitude?: number;
+    }
+  >
+> {
   const { data } = await apiClient.get<ProductsResponse>('/suppliers/products', {
     params: category ? { category } : undefined,
   });

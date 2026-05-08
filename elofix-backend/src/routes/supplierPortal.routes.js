@@ -20,7 +20,7 @@ function ownerOnly(req, res, next) {
 
 router.get("/me", asyncHandler(portal.getMe));
 router.patch("/branch/me", asyncHandler(portal.patchBranchMe));
-router.get("/analytics/overview", ownerOnly, asyncHandler(portal.getAnalyticsOverview));
+router.get("/analytics/overview", asyncHandler(portal.getAnalyticsOverview));
 router.get("/analytics/branches", ownerOnly, asyncHandler(portal.getAnalyticsBranches));
 router.get("/analytics/branch/:branchId/inventory", ownerOnly, asyncHandler(portal.getAnalyticsBranchInventory));
 router.get("/branches", ownerOnly, asyncHandler(supplierBranch.listBranches));

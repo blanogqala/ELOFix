@@ -136,17 +136,36 @@ async function listBranchesForLocation(query = {}) {
   });
 
   if (qRaw) {
+    const tokens = qRaw.split(/\s+/).filter(Boolean);
     list = list.filter((s) => {
-      const hay = [s.displayName, s.name, s.brandName, s.businessName].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(qRaw) || hay.split(/\s+/).some((w) => w.startsWith(qRaw));
+      const hay = [
+        s.displayName,
+        s.name,
+        s.brandName,
+        s.businessName,
+        s.city,
+        s.area,
+        s.address,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return tokens.every(
+        (t) => hay.includes(t) || hay.split(/\s+/).some((w) => w.startsWith(t))
+      );
     });
   }
 
   if (cityFilter) {
     list = list.filter((s) => {
       const c = (s.city || "").toLowerCase();
+      const ar = (s.area || "").toLowerCase();
       const addr = (s.address || "").toLowerCase();
-      return (c && c.includes(cityFilter)) || (addr && addr.includes(cityFilter));
+      return (
+        (c && c.includes(cityFilter)) ||
+        (ar && ar.includes(cityFilter)) ||
+        (addr && addr.includes(cityFilter))
+      );
     });
   }
 
@@ -155,6 +174,7 @@ async function listBranchesForLocation(query = {}) {
       const cityOk =
         Boolean(cityFilter) &&
         ((s.city || "").toLowerCase().includes(cityFilter) ||
+          (s.area || "").toLowerCase().includes(cityFilter) ||
           (s.address || "").toLowerCase().includes(cityFilter));
       if (cityOk) return true;
       if (s.distanceKm == null) return true;

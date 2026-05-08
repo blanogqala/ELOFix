@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -14,15 +14,19 @@ import {
   Search,
   ShoppingCart,
   ChevronRight,
-  Package
+  Package,
+  Navigation,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { categoryKeysMatch } from '@/lib/categoryKey';
+import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
 
 interface Step4MaterialSelectionProps {
   selectedCategory: string;
   materials: MaterialLine[];
   setMaterials: (materials: MaterialLine[]) => void;
+  /** When set (e.g. job address), store cards are sorted nearest-first when branch coords exist. */
+  customerCoordinates?: { lat: number; lng: number } | null;
 }
 
 type ViewMode = 'stores' | 'store-detail' | 'extra-search';
@@ -30,13 +34,15 @@ type ViewMode = 'stores' | 'store-detail' | 'extra-search';
 export function Step4MaterialSelection({
   selectedCategory,
   materials,
-  setMaterials
+  setMaterials,
+  customerCoordinates = null,
 }: Step4MaterialSelectionProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('stores');
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [storeListSearch, setStoreListSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'specials' | 'low' | 'medium' | 'high'>('specials');
   const [fallbackCatalog, setFallbackCatalog] = useState(false);
 
@@ -53,6 +59,8 @@ export function Step4MaterialSelection({
       for (const row of rows) {
         if (!row.inStock) continue;
         const bid = String((row as { branchId?: string }).branchId || row.supplierId);
+        const lat = (row as { branchLatitude?: number }).branchLatitude;
+        const lng = (row as { branchLongitude?: number }).branchLongitude;
         if (!byId.has(bid)) {
           byId.set(bid, {
             id: bid,
@@ -61,6 +69,12 @@ export function Step4MaterialSelection({
             deliveryFee: 0,
             products: [],
             supplierId: row.supplierId,
+            ...(typeof lat === 'number' &&
+            typeof lng === 'number' &&
+            Number.isFinite(lat) &&
+            Number.isFinite(lng)
+              ? { latitude: lat, longitude: lng }
+              : {}),
           });
         }
         const { supplierId: _sid, supplierName: _sn, branchId: _bid, ...product } = row as typeof row & {
@@ -141,6 +155,48 @@ export function Step4MaterialSelection({
 
   const materialsTotal = materials.reduce((sum, m) => sum + (m.qty * m.unitPrice), 0);
 
+  const visibleStores = useMemo(() => {
+    const q = storeListSearch.trim().toLowerCase();
+    let list = suppliers;
+    if (q) {
+      list = list.filter((s) => {
+        const hay = [s.name, s.displayName, s.brandName, s.branchName, s.city, s.address]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        const tokens = q.split(/\s+/).filter(Boolean);
+        return tokens.every((t) => hay.includes(t));
+      });
+    }
+    if (
+      customerCoordinates &&
+      Number.isFinite(customerCoordinates.lat) &&
+      Number.isFinite(customerCoordinates.lng)
+    ) {
+      const { lat: uLat, lng: uLng } = customerCoordinates;
+      list = [...list].sort((a, b) => {
+        const d = (s: Supplier) => {
+          if (
+            typeof s.latitude !== 'number' ||
+            typeof s.longitude !== 'number' ||
+            !Number.isFinite(s.latitude) ||
+            !Number.isFinite(s.longitude)
+          ) {
+            return null;
+          }
+          return haversineKm(uLat, uLng, s.latitude, s.longitude);
+        };
+        const dA = d(a);
+        const dB = d(b);
+        if (dA != null && dB != null && dA !== dB) return dA - dB;
+        if (dA != null && dB == null) return -1;
+        if (dA == null && dB != null) return 1;
+        return String(a.name).localeCompare(String(b.name));
+      });
+    }
+    return list;
+  }, [suppliers, storeListSearch, customerCoordinates]);
+
   // Group materials by store
   const materialsByStore = materials.reduce((acc, m) => {
     if (!acc[m.supplierId]) {
@@ -175,11 +231,28 @@ export function Step4MaterialSelection({
               No products are tagged exactly for this job category — showing full store catalogs instead. Suppliers can assign categories in Inventory to narrow this later.
             </p>
           )}
+          {customerCoordinates &&
+            Number.isFinite(customerCoordinates.lat) &&
+            Number.isFinite(customerCoordinates.lng) && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Stores with a map location are listed nearest to your job address first.
+              </p>
+            )}
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search stores by name, city…"
+            value={storeListSearch}
+            onChange={(e) => setStoreListSearch(e.target.value)}
+            className="pl-10"
+          />
         </div>
 
         {/* Store Cards */}
         <div className="grid sm:grid-cols-2 gap-4">
-          {suppliers.map(supplier => (
+          {visibleStores.map(supplier => (
             <div
               key={supplier.id}
               onClick={() => handleSelectSupplier(supplier)}
@@ -207,6 +280,25 @@ export function Step4MaterialSelection({
                         {getSpecialsCount(supplier)} Specials
                       </Badge>
                     )}
+                    {customerCoordinates &&
+                      Number.isFinite(customerCoordinates.lat) &&
+                      Number.isFinite(customerCoordinates.lng) &&
+                      typeof supplier.latitude === 'number' &&
+                      typeof supplier.longitude === 'number' &&
+                      Number.isFinite(supplier.latitude) &&
+                      Number.isFinite(supplier.longitude) && (
+                        <Badge variant="outline" className="text-xs font-normal">
+                          <Navigation className="h-3 w-3 mr-1" />
+                          {formatDistanceKm(
+                            haversineKm(
+                              customerCoordinates.lat,
+                              customerCoordinates.lng,
+                              supplier.latitude,
+                              supplier.longitude
+                            )
+                          )}
+                        </Badge>
+                      )}
                   </div>
                 </div>
                 <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -214,6 +306,11 @@ export function Step4MaterialSelection({
             </div>
           ))}
         </div>
+        {visibleStores.length === 0 && suppliers.length > 0 && (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            No stores match your search. Try another name or clear the search box.
+          </p>
+        )}
 
         {/* Add Extra Materials Button */}
         <Button

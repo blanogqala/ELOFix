@@ -56,6 +56,7 @@ import SupplierDashboard from "./pages/supplier/Dashboard";
 import SupplierOrdersPage from "./pages/supplier/OrdersPage";
 import SupplierInventoryPage from "./pages/supplier/InventoryPage";
 import SupplierEarningsPage from "./pages/supplier/EarningsPage";
+import SupplierBranchEarningsPage from "./pages/supplier/SupplierBranchEarningsPage";
 import SupplierProfilePage from "./pages/supplier/ProfilePage";
 import SupplierBranchesPage from "./pages/supplier/BranchesPage";
 import BranchDetailPage from "./pages/supplier/BranchDetailPage";
@@ -121,6 +122,7 @@ const App = () => (
             <Route path="/supplier/branches/:branchId" element={<AuthGuard allowedRoles={['supplier']}><BranchDetailPage /></AuthGuard>} />
             <Route path="/supplier/inventory" element={<AuthGuard allowedRoles={['supplier', 'branch_staff']}><SupplierInventoryPage /></AuthGuard>} />
             <Route path="/supplier/earnings" element={<AuthGuard allowedRoles={['supplier', 'branch_staff']}><SupplierEarningsPage /></AuthGuard>} />
+            <Route path="/supplier/earnings/branch/:branchId" element={<AuthGuard allowedRoles={['supplier', 'branch_staff']}><SupplierBranchEarningsPage /></AuthGuard>} />
             <Route path="/supplier/profile" element={<AuthGuard allowedRoles={['supplier']}><SupplierProfilePage /></AuthGuard>} />
             <Route path="/supplier/branch-profile" element={<AuthGuard allowedRoles={['branch_staff']}><BranchStaffProfilePage /></AuthGuard>} />
 

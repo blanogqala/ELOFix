@@ -130,6 +130,8 @@ export interface SupplierBranchProfile {
   id: string;
   supplierId: string;
   name: string;
+  /** Mirrored from org supplier row in API (`branchToPublicApi`). */
+  logo?: string;
   displayName?: string;
   brandName?: string;
   address?: string;
@@ -699,7 +701,11 @@ export type AppNotificationType =
   | 'support_contact'
   | 'job_chat'
   | 'support_reply'
-  | 'material_tracking';
+  | 'material_tracking'
+  | 'supplier_material_order_new'
+  | 'supplier_material_order_cancelled'
+  | 'material_order_new'
+  | 'material_order_cancelled';
 
 export interface AppNotification {
   id: string;
@@ -709,6 +715,8 @@ export interface AppNotification {
   message: string;
   read: boolean;
   jobId?: string;
+  /** Material order id (supplier portal + branch staff notifications). */
+  materialOrderId?: string;
   conversationId?: string;
   createdAt: string;
   senderId?: string;

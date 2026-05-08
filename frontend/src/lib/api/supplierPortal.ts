@@ -415,6 +415,7 @@ export interface SupplierAnalyticsOverview {
   totalBranches: number;
   sumNetEarningsAllBranches: number;
   totalOrders: number;
+  totalPendingOrders: number;
 }
 
 export async function getSupplierAnalyticsOverview(): Promise<SupplierAnalyticsOverview | null> {
@@ -426,6 +427,7 @@ export async function getSupplierAnalyticsOverview(): Promise<SupplierAnalyticsO
     totalBranches: data.totalBranches ?? 0,
     sumNetEarningsAllBranches: data.sumNetEarningsAllBranches ?? 0,
     totalOrders: data.totalOrders ?? 0,
+    totalPendingOrders: data.totalPendingOrders ?? 0,
   };
 }
 
@@ -445,6 +447,8 @@ export interface SupplierBranchAnalyticsRow {
 export async function getSupplierAnalyticsBranches(params?: {
   city?: string;
   q?: string;
+  from?: string;
+  to?: string;
 }): Promise<SupplierBranchAnalyticsRow[]> {
   const { data } = await apiClient.get<{ success: boolean; branches: SupplierBranchAnalyticsRow[] }>(
     '/supplier/analytics/branches',
