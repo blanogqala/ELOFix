@@ -1,4 +1,22 @@
 require("dotenv/config");
+
+(function validateCriticalEnv() {
+  const jwt = process.env.JWT_SECRET;
+  if (!jwt || !String(jwt).trim()) {
+    console.error(
+      "[FATAL] JWT_SECRET is missing or empty. /api/auth/login and /api/auth/me will fail. Set JWT_SECRET in Render (Environment)."
+    );
+    if (process.env.NODE_ENV === "production") {
+      process.exit(1);
+    }
+  }
+  const db = process.env.DATABASE_URL;
+  if (!db || !String(db).trim()) {
+    console.error("[FATAL] DATABASE_URL is missing or empty. Set it in Render and redeploy.");
+    process.exit(1);
+  }
+})();
+
 const http = require("http");
 const jwt = require("jsonwebtoken");
 const { Server } = require("socket.io");

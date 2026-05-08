@@ -73,6 +73,30 @@ function errorMiddleware(err, req, res, next) {
     message =
       process.env.NODE_ENV === "production" ? "Invalid request for database operation" : err.message;
     console.error("[Prisma validation]", req.method, req.originalUrl, err.message);
+  } else if (err.name === "PrismaClientUnknownRequestError") {
+    statusCode = 503;
+    code = "E_DB_UNAVAILABLE";
+    message =
+      process.env.NODE_ENV === "production"
+        ? "Database error — check service logs and DATABASE_URL / migrations."
+        : err.message;
+    console.error("[Prisma unknown]", req.method, req.originalUrl, err.message);
+  } else if (err.name === "PrismaClientInitializationError") {
+    statusCode = 503;
+    code = "E_DB_INIT";
+    message =
+      process.env.NODE_ENV === "production"
+        ? "Database unavailable — verify DATABASE_URL, SSL settings, and that the DB is reachable."
+        : err.message;
+    console.error("[Prisma init]", req.method, req.originalUrl, err.message);
+  } else if (err && (err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT") && err.syscall) {
+    statusCode = 503;
+    code = "E_NETWORK";
+    message =
+      process.env.NODE_ENV === "production"
+        ? "Could not reach a required service (often the database)."
+        : err.message;
+    console.error("[Network]", req.method, req.originalUrl, err.code, err.message);
   } else {
     code = "E_UNHANDLED";
     if (process.env.NODE_ENV === "development") {
