@@ -34,6 +34,10 @@ export interface MaterialsSectionProps {
   onSubmitMaterials: () => void;
   onAcceptSuggestion: (suggestionId: string) => void;
   onRejectSuggestion: (suggestionId: string) => void;
+  onWithdrawAcceptedSuggestion?: (suggestionId: string) => void | Promise<void>;
+  onPurgeWithdrawnSuggestion?: (suggestionId: string) => void | Promise<void>;
+  onProviderCancelBatch?: (orderId: string) => void | Promise<void>;
+  onDismissMaterialBatch?: (orderId: string) => void | Promise<void>;
 }
 
 export function MaterialsSection({
@@ -57,6 +61,10 @@ export function MaterialsSection({
   onSubmitMaterials,
   onAcceptSuggestion,
   onRejectSuggestion,
+  onWithdrawAcceptedSuggestion,
+  onPurgeWithdrawnSuggestion,
+  onProviderCancelBatch,
+  onDismissMaterialBatch,
 }: MaterialsSectionProps) {
   const [activeTab, setActiveTab] = useState<MaterialsTabId>('pending');
   const suggestionCount = customerSuggestionsForDisplay.length;
@@ -127,6 +135,8 @@ export function MaterialsSection({
               submitDisabled={submitDisabled}
               onAddMaterials={onAddMaterials}
               onSubmitMaterials={onSubmitMaterials}
+              onProviderCancelBatch={onProviderCancelBatch}
+              onDismissMaterialBatch={onDismissMaterialBatch}
             />
           ) : (
             <CustomerSuggestionsList
@@ -134,6 +144,8 @@ export function MaterialsSection({
               getPendingOrderForAcceptedSuggestion={getPendingOrderForAcceptedSuggestion}
               onAccept={onAcceptSuggestion}
               onReject={onRejectSuggestion}
+              onWithdrawAccepted={onWithdrawAcceptedSuggestion}
+              onPurgeWithdrawn={onPurgeWithdrawnSuggestion}
             />
           )}
         </div>

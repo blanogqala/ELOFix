@@ -1,5 +1,6 @@
-import { Check, X } from 'lucide-react';
+import { Check, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import type { JobStoreOrder, UserMaterialSuggestion } from '@/types';
 import { MaterialCard } from '@/components/materials/MaterialCard';
 
@@ -10,6 +11,15 @@ export interface CustomerSuggestionsListProps {
   ) => JobStoreOrder | undefined;
   onAccept: (id: string) => void;
   onReject: (id: string) => void;
+  /** Revoke acceptance before the customer pays (removes unpaid checkout batch). */
+  onWithdrawAccepted?: (id: string) => void | Promise<void>;
+  /** Permanently remove a withdrawn-after-accept record from meta. */
+  onPurgeWithdrawn?: (id: string) => void | Promise<void>;
+}
+
+function isPaidOrder(order?: JobStoreOrder): boolean {
+  if (!order) return false;
+  return Boolean(order.payment?.materialsPaid);
 }
 
 export function CustomerSuggestionsList({
@@ -17,6 +27,8 @@ export function CustomerSuggestionsList({
   getPendingOrderForAcceptedSuggestion,
   onAccept,
   onReject,
+  onWithdrawAccepted,
+  onPurgeWithdrawn,
 }: CustomerSuggestionsListProps) {
   if (suggestions.length === 0) {
     return (
@@ -41,13 +53,30 @@ export function CustomerSuggestionsList({
           const line = s.suggested;
           const subtotal = line.qty * line.unitPrice;
           const linked = getPendingOrderForAcceptedSuggestion(s);
-          const isPending = s.status === 'pending';
+          const st = String(s.status || '').toLowerCase();
+          const isPending = st === 'pending';
+          const withdrawnRecord = Boolean(s.withdrawnAfterAccept) && st === 'rejected';
+
+          const canRevokeAccepted =
+            Boolean(onWithdrawAccepted) &&
+            st === 'accepted' &&
+            !!linked &&
+            !isPaidOrder(linked);
+
+          const canPurgeWithdrawn = Boolean(onPurgeWithdrawn) && withdrawnRecord;
+
+          const withdrawnCaption =
+            s.withdrawnBy === 'customer'
+              ? 'Customer withdrew before paying.'
+              : s.withdrawnBy === 'provider'
+                ? 'You revoked acceptance (unpaid checkout removed).'
+                : 'Suggestion withdrawn';
 
           return (
             <MaterialCard
               key={s.id}
-              status={s.status === 'pending' ? 'suggested' : 'approved'}
-              supplierName={line.supplierName}
+              status={isPending ? 'suggested' : withdrawnRecord ? 'pending' : 'approved'}
+              supplierName={line.supplierName || 'Store'}
               subtotal={subtotal}
               items={[
                 {
@@ -60,10 +89,20 @@ export function CustomerSuggestionsList({
               meta={
                 <>
                   {s.message ? <p className="text-sm text-muted-foreground">{s.message}</p> : null}
-                  {!isPending && linked ? (
+                  {withdrawnRecord ? (
+                    <Badge variant="outline" className="text-[11px]">
+                      {withdrawnCaption}
+                    </Badge>
+                  ) : null}
+                  {!withdrawnRecord && !isPending && linked ? (
                     <p className="text-xs text-muted-foreground">
                       Linked order awaiting customer payment
                       {linked.orderId ? ` · ${linked.orderId.slice(-8)}` : ''}.
+                    </p>
+                  ) : null}
+                  {!withdrawnRecord && !isPending && st === 'accepted' && !linked ? (
+                    <p className="text-xs text-amber-600">
+                      Accepted — awaiting checkout batch (refresh if this persists).
                     </p>
                   ) : null}
                 </>
@@ -78,6 +117,28 @@ export function CustomerSuggestionsList({
                       <Check className="h-3 w-3" />
                     </Button>
                   </>
+                ) : withdrawnRecord ? (
+                  canPurgeWithdrawn ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      onClick={() => void onPurgeWithdrawn?.(s.id)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Remove record
+                    </Button>
+                  ) : undefined
+                ) : canRevokeAccepted ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="gap-1"
+                    onClick={() => void onWithdrawAccepted?.(s.id)}
+                  >
+                    <XCircle className="h-3 w-3" />
+                    Revoke acceptance
+                  </Button>
                 ) : undefined
               }
             />

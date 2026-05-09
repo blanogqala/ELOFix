@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { getAdminSuppliers, provisionAdminSupplier } from '@/lib/api/admin';
-import { Search, Plus, Eye, Store, TrendingUp, Percent, PackageCheck } from 'lucide-react';
+import { Search, Plus, Eye, Store, TrendingUp, Percent, PackageCheck, GitBranch } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Table,
@@ -171,6 +171,7 @@ export default function AdminSuppliers() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
+                <TableHead>Branches</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -190,6 +191,12 @@ export default function AdminSuppliers() {
                     ) : (
                       <span className="text-sm text-muted-foreground">—</span>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1.5 tabular-nums text-sm font-medium">
+                      <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+                      {Array.isArray(s.branches) ? s.branches.length : 0}
+                    </span>
                   </TableCell>
                   <TableCell>
                     {s.linkedUserEmail ? (
@@ -215,7 +222,7 @@ export default function AdminSuppliers() {
               ))}
               {filtered.length === 0 && !isLoading && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
                     No suppliers match your search.
                   </TableCell>
                 </TableRow>

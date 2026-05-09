@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Truck, Store, FileText, CreditCard, RefreshCw, XCircle } from 'lucide-react';
+import { Truck, Store, FileText, CreditCard, RefreshCw, XCircle, Phone, Mail } from 'lucide-react';
 import { UnifiedTrackingSection, type UnifiedDeliveryMode } from '@/components/tracking/UnifiedTrackingSection';
 import { canonicalDeliveryLabel } from '@/lib/deliveryTypes';
 import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
@@ -47,6 +47,9 @@ export interface NormalizedOrder {
   deliveryInvoiceId?: string;
   providerName?: string;
   providerVehicle?: string;
+  /** Courier profile (provider delivery only) */
+  providerPhone?: string;
+  providerEmail?: string;
   providerContact?: string;
   estimatedArrival?: string;
   jobId?: string;
@@ -204,6 +207,21 @@ export function OrderDetailsView({
   const unifiedMapActive = Boolean(showTracking && fulfillmentAllowsLiveMap);
   const cancellationReason = order.cancellationReason || undefined;
 
+  const showStoreContactBlock =
+    Boolean(
+      order.supplierAddress ||
+        order.branchCity ||
+        order.branchArea ||
+        order.supplierPhone ||
+        order.branchContactEmail ||
+        order.branchHasDelivery === true
+    );
+
+  /** Independent courier — not shown for self-collect or store delivery */
+  const showCourierContactCard =
+    order.deliveryType === 'PROVIDER' &&
+    Boolean(order.providerName || order.providerPhone || order.providerEmail);
+
   return (
     <div className="space-y-6">
       <Card>
@@ -254,16 +272,11 @@ export function OrderDetailsView({
                 <span>
                   {item.name} × {item.qty}
                 </span>
-                <span>${(item.qty * item.unitPrice).toFixed(2)}</span>
+                <span>{formatCurrency(item.qty * item.unitPrice, { decimals: 2 })}</span>
               </div>
             ))}
-            {(order.supplierAddress ||
-              order.branchCity ||
-              order.branchArea ||
-              order.supplierPhone ||
-              order.branchContactEmail ||
-              order.branchHasDelivery === true) && (
-              <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-sm space-y-1.5">
+            {showStoreContactBlock && (
+              <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-sm space-y-2">
                 <p className="font-medium text-foreground">Store contact and pickup</p>
                 {order.supplierAddress && (
                   <p className="text-muted-foreground">
@@ -283,19 +296,21 @@ export function OrderDetailsView({
                   </p>
                 )}
                 {order.supplierPhone && (
-                  <p className="text-muted-foreground">
-                    <span className="text-foreground/80">Phone: </span>
+                  <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    <Phone className="h-3.5 w-3.5 shrink-0 text-foreground/70" aria-hidden />
+                    <span className="text-foreground/80">Cell: </span>
                     <a href={`tel:${order.supplierPhone}`} className="text-primary underline-offset-4 hover:underline">
                       {order.supplierPhone}
                     </a>
                   </p>
                 )}
                 {order.branchContactEmail && (
-                  <p className="text-muted-foreground">
+                  <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    <Mail className="h-3.5 w-3.5 shrink-0 text-foreground/70" aria-hidden />
                     <span className="text-foreground/80">Email: </span>
                     <a
                       href={`mailto:${order.branchContactEmail}`}
-                      className="text-primary underline-offset-4 hover:underline"
+                      className="text-primary underline-offset-4 hover:underline break-all"
                     >
                       {order.branchContactEmail}
                     </a>
@@ -347,6 +362,50 @@ export function OrderDetailsView({
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {showCourierContactCard && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm space-y-2">
+              <p className="font-semibold text-foreground flex items-center gap-2">
+                <Truck className="h-4 w-4 text-primary shrink-0" />
+                Delivery provider contact
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Independent courier for this job — use these details for delivery-related questions.
+              </p>
+              {order.providerName && (
+                <p className="text-muted-foreground">
+                  <span className="text-foreground/80 font-medium">Name: </span>
+                  {order.providerName}
+                </p>
+              )}
+              {order.providerVehicle ? (
+                <p className="text-muted-foreground">
+                  <span className="text-foreground/80 font-medium">Vehicle: </span>
+                  {order.providerVehicle}
+                </p>
+              ) : null}
+              {order.providerPhone && (
+                <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                  <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="text-foreground/80 font-medium">Cell: </span>
+                  <a href={`tel:${order.providerPhone}`} className="text-primary underline-offset-4 hover:underline">
+                    {order.providerPhone}
+                  </a>
+                </p>
+              )}
+              {order.providerEmail && (
+                <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                  <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="text-foreground/80 font-medium">Email: </span>
+                  <a
+                    href={`mailto:${order.providerEmail}`}
+                    className="text-primary underline-offset-4 hover:underline break-all"
+                  >
+                    {order.providerEmail}
+                  </a>
+                </p>
+              )}
+            </div>
+          )}
           {onCancelOrder && (
             <div className="space-y-2 ">
               <Button size="sm" variant="destructive" onClick={onCancelOrder}>
@@ -378,7 +437,9 @@ export function OrderDetailsView({
                 <div className="text-sm text-muted-foreground space-y-1">
                   {order.providerName && <p>Driver: {order.providerName}</p>}
                   {order.providerVehicle && <p>Vehicle: {order.providerVehicle}</p>}
-                  {order.deliveryFee > 0 && <p>Delivery price: ${order.deliveryFee.toFixed(2)}</p>}
+                  {order.deliveryFee > 0 && (
+                    <p>Delivery price: {formatCurrency(order.deliveryFee, { decimals: 2 })}</p>
+                  )}
                 </div>
               )}
               <div className="flex flex-wrap gap-2">

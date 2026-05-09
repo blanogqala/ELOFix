@@ -24,6 +24,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
 import { format, parseISO } from 'date-fns';
 
 type TabType = 'cards' | 'invoices';
@@ -506,7 +507,8 @@ export default function UserPayments() {
                                 "font-semibold",
                                 invoice.type === 'refund' && "text-success"
                               )}>
-                                {invoice.type === 'refund' ? '+' : ''}${invoice.totalAmount.toFixed(2)}
+                                {invoice.type === 'refund' ? '+' : ''}
+                                {formatCurrency(invoice.totalAmount, { decimals: 2 })}
                               </p>
                               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                 {getStatusIcon(invoice.status)}
@@ -580,7 +582,7 @@ export default function UserPayments() {
                     ))}
                     <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
                       <span>Total</span>
-                      <span>${selectedInvoice.totalAmount.toFixed(2)}</span>
+                      <span>{formatCurrency(selectedInvoice.totalAmount, { decimals: 2 })}</span>
                     </div>
                     {selectedInvoice.refundedAmount && (
                       <div className="flex justify-between text-success">

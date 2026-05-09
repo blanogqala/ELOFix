@@ -669,7 +669,8 @@ function canFulfillmentTransition(from, to) {
   return false;
 }
 
-const CUSTOMER_CANCEL_ALLOWED = new Set(["ACCEPTED", "PREPARING", "READY"]);
+/** Customer may cancel before dispatch: awaiting supplier through ready-for-collection. */
+const CUSTOMER_CANCEL_ALLOWED = new Set(["PENDING", "ACCEPTED", "PREPARING", "READY"]);
 const CANCEL_TERMINAL = new Set(["CANCELLED", "COMPLETED", "FAILED"]);
 
 function safeMoney2(value) {
@@ -703,7 +704,10 @@ function assertCanCancel({ actor, currentStatus }) {
     throw new AppError(`Cannot cancel order in ${currentStatus} state`, 400);
   }
   if (actor === "customer" && !CUSTOMER_CANCEL_ALLOWED.has(currentStatus)) {
-    throw new AppError("Customer can cancel only when status is Accepted, Preparing, or Ready", 400);
+    throw new AppError(
+      "Customer can cancel while awaiting supplier or until ready for collection (not after dispatch)",
+      400
+    );
   }
   if (currentStatus === "OUT_FOR_DELIVERY" && actor === "customer") {
     throw new AppError("Cannot cancel when order is out for delivery", 400);
@@ -1189,6 +1193,7 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus, fro
     orderBy: { createdAt: "desc" },
     include: {
       supplier: { select: { id: true, name: true, businessName: true } },
+      branch: { select: { id: true, name: true } },
     },
   });
   const trackRows = await prisma.trackingSession.findMany({
@@ -1225,7 +1230,9 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus, fro
         : undefined);
     return {
       ...base,
+      id: r.id,
       branchId: r.branchId,
+      branchName: r.branch?.name ? String(r.branch.name) : undefined,
       customerId: r.userId,
       customerName: u?.name,
       customerEmail: u?.email,
@@ -1799,6 +1806,7 @@ async function buildSupplierOrdersExport(supplierId, { from, to, branchId } = {}
     const fx = computeSupplierExportFinancials(o);
     return {
       orderId: o.id,
+      branchName: o.branchName != null && String(o.branchName).trim() ? String(o.branchName).trim() : null,
       status: String(o.fulfillmentStatus || "PENDING"),
       totalAmount: fx.totalAmount,
       commission: fx.commission,

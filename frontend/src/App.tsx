@@ -26,6 +26,7 @@ import UserNotifications from "./pages/user/Notifications";
 import OrderMaterials from "./pages/user/OrderMaterials";
 import MaterialOrders from "./pages/user/MaterialOrders";
 import OrderDetails from "./pages/user/OrderDetails";
+import UserJobSuggestMaterials from "./pages/user/UserJobSuggestMaterials";
 
 // Provider pages
 import ProviderDashboard from "./pages/provider/Dashboard";
@@ -33,6 +34,7 @@ import ProviderRequests from "./pages/provider/Requests";
 import ProviderRequestDetail from "./pages/provider/RequestDetail";
 import ProviderActiveJobs from "./pages/provider/ActiveJobs";
 import ProviderJobDetail from "./pages/provider/JobDetail";
+import ProviderJobBrowseMaterials from "./pages/provider/ProviderJobBrowseMaterials";
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderProfile from "./pages/provider/Profile";
 import ProviderDocuments from "./pages/provider/Documents";
@@ -47,6 +49,8 @@ import AdminPayments from "./pages/admin/Payments";
 import AdminPaymentDetail from "./pages/admin/PaymentDetail";
 import AdminSuppliers from "./pages/admin/Suppliers";
 import AdminSupplierDetail from "./pages/admin/SupplierDetail";
+import AdminSupplierCatalogPage from "./pages/admin/AdminSupplierCatalogPage";
+import AdminSupplierBranchCatalogPage from "./pages/admin/AdminSupplierBranchCatalogPage";
 import AdminCategories from "./pages/admin/Categories.tsx";
 import AdminAnalytics from "./pages/admin/Analytics";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
@@ -92,6 +96,7 @@ const App = () => (
             <Route path="/user/request" element={<AuthGuard allowedRoles={['user']}><NewRequest /></AuthGuard>} />
             <Route path="/user/request/service" element={<AuthGuard allowedRoles={['user']}><ServiceRequest /></AuthGuard>} />
             <Route path="/user/jobs" element={<AuthGuard allowedRoles={['user']}><UserJobs /></AuthGuard>} />
+            <Route path="/user/jobs/:id/suggest-materials" element={<AuthGuard allowedRoles={['user']}><UserJobSuggestMaterials /></AuthGuard>} />
             <Route path="/user/jobs/:id" element={<AuthGuard allowedRoles={['user']}><JobDetail /></AuthGuard>} />
             <Route path="/user/payments" element={<AuthGuard allowedRoles={['user']}><UserPayments /></AuthGuard>} />
             <Route path="/user/profile" element={<AuthGuard allowedRoles={['user']}><UserProfile /></AuthGuard>} />
@@ -110,6 +115,7 @@ const App = () => (
             <Route path="/provider/requests" element={<AuthGuard allowedRoles={['provider']}><ProviderRequests /></AuthGuard>} />
             <Route path="/provider/requests/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderRequestDetail /></AuthGuard>} />
             <Route path="/provider/jobs" element={<AuthGuard allowedRoles={['provider']}><ProviderActiveJobs /></AuthGuard>} />
+            <Route path="/provider/jobs/:id/materials/browse" element={<AuthGuard allowedRoles={['provider']}><ProviderJobBrowseMaterials /></AuthGuard>} />
             <Route path="/provider/jobs/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderJobDetail /></AuthGuard>} />
             <Route path="/provider/earnings" element={<AuthGuard allowedRoles={['provider']}><ProviderEarnings /></AuthGuard>} />
             <Route path="/provider/profile" element={<AuthGuard allowedRoles={['provider']}><ProviderProfile /></AuthGuard>} />
@@ -132,6 +138,14 @@ const App = () => (
             <Route path="/admin/providers" element={<AuthGuard allowedRoles={['admin']}><AdminProviders /></AuthGuard>} />
             <Route path="/admin/providers/:id" element={<AuthGuard allowedRoles={['admin']}><AdminProviderDetail /></AuthGuard>} />
             <Route path="/admin/suppliers" element={<AuthGuard allowedRoles={['admin']}><AdminSuppliers /></AuthGuard>} />
+            <Route
+              path="/admin/suppliers/:supplierId/catalog"
+              element={<AuthGuard allowedRoles={['admin']}><AdminSupplierCatalogPage /></AuthGuard>}
+            />
+            <Route
+              path="/admin/suppliers/:supplierId/branches/:branchId/catalog"
+              element={<AuthGuard allowedRoles={['admin']}><AdminSupplierBranchCatalogPage /></AuthGuard>}
+            />
             <Route path="/admin/suppliers/:supplierId" element={<AuthGuard allowedRoles={['admin']}><AdminSupplierDetail /></AuthGuard>} />
             <Route path="/admin/categories" element={<AuthGuard allowedRoles={['admin']}><AdminCategories /></AuthGuard>} />
             <Route path="/admin/jobs" element={<AuthGuard allowedRoles={['admin']}><AdminJobs /></AuthGuard>} />

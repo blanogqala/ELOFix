@@ -156,7 +156,9 @@ async function listBranchesForLocation(query = {}) {
     });
   }
 
-  if (cityFilter) {
+  // No search text: keep suggestions local (city + radius). With `q`, list every branch
+  // that matches the name/search tokens — customers and providers can pick any store in the system.
+  if (cityFilter && !qRaw) {
     list = list.filter((s) => {
       const c = (s.city || "").toLowerCase();
       const ar = (s.area || "").toLowerCase();
@@ -169,7 +171,7 @@ async function listBranchesForLocation(query = {}) {
     });
   }
 
-  if (hasUserCoords) {
+  if (hasUserCoords && !qRaw) {
     list = list.filter((s) => {
       const cityOk =
         Boolean(cityFilter) &&

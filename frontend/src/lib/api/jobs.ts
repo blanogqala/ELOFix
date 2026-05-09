@@ -313,6 +313,41 @@ export async function rejectUserSuggestion(jobId: string, suggestionId: string):
   return ensureJob(data, 'reject user suggestion');
 }
 
+export async function customerRejectMaterialBatch(jobId: string, orderId: string): Promise<Job> {
+  const { data } = await apiClient.post<BackendJobResponse>(
+    `/jobs/${jobId}/material-batches/${orderId}/customer-reject`
+  );
+  return ensureJob(data, 'customer reject material batch');
+}
+
+export async function providerCancelMaterialBatch(jobId: string, orderId: string): Promise<Job> {
+  const { data } = await apiClient.post<BackendJobResponse>(
+    `/jobs/${jobId}/material-batches/${orderId}/provider-cancel`
+  );
+  return ensureJob(data, 'provider cancel material batch');
+}
+
+export async function dismissMaterialBatch(jobId: string, orderId: string): Promise<Job> {
+  const { data } = await apiClient.delete<BackendJobResponse>(
+    `/jobs/${jobId}/material-batches/${orderId}/dismiss`
+  );
+  return ensureJob(data, 'dismiss material batch');
+}
+
+export async function withdrawAcceptedUserSuggestion(jobId: string, suggestionId: string): Promise<Job> {
+  const { data } = await apiClient.post<BackendJobResponse>(
+    `/jobs/${jobId}/user-material-suggestions/${suggestionId}/withdraw-accepted`
+  );
+  return ensureJob(data, 'withdraw accepted suggestion');
+}
+
+export async function purgeWithdrawnUserSuggestion(jobId: string, suggestionId: string): Promise<Job> {
+  const { data } = await apiClient.delete<BackendJobResponse>(
+    `/jobs/${jobId}/user-material-suggestions/${suggestionId}/purge-withdrawn`
+  );
+  return ensureJob(data, 'purge withdrawn suggestion');
+}
+
 export async function getJobs(): Promise<Job[]> {
   const { data } = await apiClient.get<BackendJobsResponse>('/jobs');
   const jobs = Array.isArray(data?.jobs) ? data.jobs : [];

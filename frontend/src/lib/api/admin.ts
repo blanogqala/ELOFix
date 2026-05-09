@@ -1,5 +1,6 @@
 import apiClient from '@/api/client';
 import type { Supplier } from '@/types';
+import type { SupplierOrdersExportRow } from '@/lib/api/supplierPortal';
 
 export interface AnalyticsDayPoint {
   date: string;
@@ -143,6 +144,49 @@ export async function getAdminSupplierOrders(supplierId: string, limit = 10): Pr
     { params: { limit } }
   );
   return Array.isArray(data?.orders) ? data.orders : [];
+}
+
+/** Same payload as supplier portal `GET /supplier/orders/export` — completed/paid revenue rules + branch metadata. */
+export async function getAdminSupplierOrdersExport(
+  supplierId: string,
+  filters?: { from?: string; to?: string; branchId?: string }
+): Promise<{
+  rows: SupplierOrdersExportRow[];
+  summary: {
+    orderCount: number;
+    cancelledCount: number;
+    totalRevenueImpact: number;
+    totalCommissionImpact: number;
+    totalNetImpact: number;
+  };
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    rows: SupplierOrdersExportRow[];
+    summary: {
+      orderCount: number;
+      cancelledCount: number;
+      totalRevenueImpact: number;
+      totalCommissionImpact: number;
+      totalNetImpact: number;
+    };
+  }>(`/admin/suppliers/${supplierId}/orders/export`, {
+    params: {
+      ...(filters?.from ? { from: filters.from } : {}),
+      ...(filters?.to ? { to: filters.to } : {}),
+      ...(filters?.branchId ? { branchId: filters.branchId } : {}),
+    },
+  });
+  return {
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    summary: data?.summary || {
+      orderCount: 0,
+      cancelledCount: 0,
+      totalRevenueImpact: 0,
+      totalCommissionImpact: 0,
+      totalNetImpact: 0,
+    },
+  };
 }
 
 /** All platform material orders + revenue / commission rollup (persisted MaterialOrder rows). */

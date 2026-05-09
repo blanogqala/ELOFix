@@ -14,16 +14,19 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Job, MaterialLine, SavedCard, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
+import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { MaterialCard } from '@/components/materials/MaterialCard';
-import { 
-  CreditCard, 
-  Truck, 
-  Package, 
+import {
+  CreditCard,
+  Truck,
+  Package,
   CheckCircle,
   Plus,
   Trash2,
   AlertCircle,
-  Lock
+  Lock,
+  MapPin,
+  XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -37,6 +40,8 @@ import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHe
 interface MaterialPaymentSectionProps {
   job: Job;
   userSuggestions?: UserMaterialSuggestion[];
+  /** Submitted drafts from API — merged into visibility when job.materials is stale/empty after provider submit */
+  materialRequests?: MaterialRequestDto[];
   savedCards: SavedCard[];
   deliveryProviders: DeliveryProvider[];
   deliveryProvidersError?: string | null;
@@ -66,6 +71,10 @@ interface MaterialPaymentSectionProps {
   ) => Promise<void>;
   onSimulateProviderApproval: (storeId: string) => Promise<void>;
   onViewStoreOrder: (orderId: string) => void;
+  onCustomerRejectMaterialBatch?: (orderId: string) => Promise<void>;
+  onDismissMaterialBatch?: (orderId: string) => Promise<void>;
+  onWithdrawAcceptedSuggestion?: (suggestionId: string) => Promise<void>;
+  onPurgeWithdrawnSuggestion?: (suggestionId: string) => Promise<void>;
 }
 
 /** Canonical storefront key: branch id when present (job materials / migrated JSON). */
@@ -107,6 +116,7 @@ function lineFromOrderItem(storeId: string, storeName: string, item: JobStoreOrd
 export function MaterialPaymentSection({
   job,
   userSuggestions = [],
+  materialRequests = [],
   savedCards,
   deliveryProviders,
   deliveryProvidersError,
@@ -118,6 +128,10 @@ export function MaterialPaymentSection({
   onSelectDeliveryOption,
   onSimulateProviderApproval,
   onViewStoreOrder,
+  onCustomerRejectMaterialBatch,
+  onDismissMaterialBatch,
+  onWithdrawAcceptedSuggestion,
+  onPurgeWithdrawnSuggestion,
 }: MaterialPaymentSectionProps) {
   const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0];
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
@@ -150,6 +164,9 @@ export function MaterialPaymentSection({
     materials: MaterialLine[];
   } | null>(null);
 
+  const [materialBatchBusy, setMaterialBatchBusy] = useState<string | null>(null);
+  const [suggestionBusy, setSuggestionBusy] = useState<string | null>(null);
+
   const hasCourierOption = deliveryProviders.length > 0;
 
   useEffect(() => {
@@ -159,8 +176,46 @@ export function MaterialPaymentSection({
     }
   }, [hasCourierOption]);
 
-  // Group materials by store (deduped lines so pending / paid views do not double-list)
-  const materials = uniqueMaterialLines(job.materials || []);
+  const paidOrderIds = new Set(
+    (job.materialPayments || [])
+      .filter((payment) => payment.status === 'paid')
+      .map((payment) => payment.orderId)
+      .filter(Boolean)
+  );
+
+  const isJobStoreOrderMaterialsPaid = (card: JobStoreOrder): boolean => {
+    const isLegacyCard = card.orderId.startsWith('legacy-');
+    const payment = isLegacyCard
+      ? job.materialPayments?.find((p) => p.orderId === card.orderId) ||
+        job.materialPayments?.find((p) => !p.orderId && p.supplierId === card.storeId)
+      : job.materialPayments?.find((p) => p.orderId === card.orderId);
+    return !!card.payment?.materialsPaid || payment?.status === 'paid' || paidOrderIds.has(card.orderId);
+  };
+
+  /** When Prisma JSON is briefly empty client-side after submit, still show MR + unpaid storeOrders. */
+  const jobMaterialsOnly = uniqueMaterialLines(job.materials || []);
+  let supplementalMaterials: MaterialLine[] = [];
+  if (jobMaterialsOnly.length === 0) {
+    for (const r of materialRequests) {
+      if (r.status !== 'submitted' || !Array.isArray(r.items)) continue;
+      for (const line of r.items) {
+        supplementalMaterials.push({
+          ...line,
+          materialRequestId: r.id,
+        });
+      }
+    }
+    const orders = job.storeOrders ?? [];
+    for (const storeOrder of orders) {
+      if (isJobStoreOrderMaterialsPaid(storeOrder)) continue;
+      const nm = storeOrder.storeName || 'Store';
+      for (const item of storeOrder.items || []) {
+        supplementalMaterials.push(lineFromOrderItem(storeOrder.storeId, nm, item));
+      }
+    }
+  }
+  const materials = uniqueMaterialLines([...jobMaterialsOnly, ...supplementalMaterials]);
+
   const materialsByStore = materials.reduce((acc, m) => {
     const sid = lineStoreKey(m);
     if (!acc[sid]) {
@@ -176,7 +231,6 @@ export function MaterialPaymentSection({
     return acc;
   }, {} as Record<string, { id: string; name: string; materials: MaterialLine[]; total: number }>);
 
-  // Check payment status from job.materialPayments
   const getStorePaymentStatus = (storeId: string) => {
     return job.materialPayments?.find((p) => String(p.supplierId) === String(storeId));
   };
@@ -185,46 +239,35 @@ export function MaterialPaymentSection({
     return getStorePaymentStatus(storeId)?.status === 'paid';
   };
 
-  const allStoresPaid = Object.keys(materialsByStore).length > 0 && Object.keys(materialsByStore).every(
-    storeId => isStorePaid(storeId)
+  const allStoresPaid =
+    Object.keys(materialsByStore).length > 0 && Object.keys(materialsByStore).every((storeId) => isStorePaid(storeId));
+  const displayStoreOrders: JobStoreOrder[] =
+    job.storeOrders && job.storeOrders.length > 0
+      ? job.storeOrders
+      : Object.entries(materialsByStore).map(([storeId, store]) => ({
+          storeId,
+          orderId: `legacy-${storeId}`,
+          items: store.materials.map((material) => ({
+            productId: material.productId,
+            name: material.name,
+            qty: material.qty,
+            unitPrice: material.unitPrice,
+            qualityTier: material.qualityTier,
+            imageUrl: material.imageUrl,
+          })),
+          storeName: store.name,
+          deliveryType: 'SELF' as const,
+          deliveryFee: 0,
+          deliveryStatus: 'SelfCollect' as const,
+          paymentStatus: 'Paid' as const,
+          invoiceId: '',
+          createdAt: job.createdAt,
+          payment: { materialsPaid: isStorePaid(storeId), deliveryPaid: false },
+        }));
+  const paidCards = displayStoreOrders.filter((card) => isJobStoreOrderMaterialsPaid(card));
+  const pendingCards = displayStoreOrders.filter(
+    (card) => !isJobStoreOrderMaterialsPaid(card) && !card.sourceUserSuggestionId
   );
-  const displayStoreOrders: JobStoreOrder[] = (job.storeOrders && job.storeOrders.length > 0)
-    ? job.storeOrders
-    : Object.entries(materialsByStore).map(([storeId, store]) => ({
-        storeId,
-        orderId: `legacy-${storeId}`,
-        items: store.materials.map(material => ({
-          productId: material.productId,
-          name: material.name,
-          qty: material.qty,
-          unitPrice: material.unitPrice,
-          qualityTier: material.qualityTier,
-          imageUrl: material.imageUrl,
-        })),
-        storeName: store.name,
-        deliveryType: 'SELF' as const,
-        deliveryFee: 0,
-        deliveryStatus: 'SelfCollect' as const,
-        paymentStatus: 'Paid' as const,
-        invoiceId: '',
-        createdAt: job.createdAt,
-        payment: { materialsPaid: isStorePaid(storeId), deliveryPaid: false },
-      }));
-  const paidOrderIds = new Set(
-    (job.materialPayments || [])
-      .filter(payment => payment.status === 'paid')
-      .map(payment => payment.orderId)
-      .filter(Boolean)
-  );
-  const paidCards = displayStoreOrders.filter(card => {
-    const isLegacyCard = card.orderId.startsWith('legacy-');
-    const payment = isLegacyCard
-      ? (job.materialPayments?.find(p => p.orderId === card.orderId)
-          || job.materialPayments?.find(p => !p.orderId && p.supplierId === card.storeId))
-      : job.materialPayments?.find(p => p.orderId === card.orderId);
-    return !!card.payment?.materialsPaid || payment?.status === 'paid' || paidOrderIds.has(card.orderId);
-  });
-  const pendingCards = displayStoreOrders.filter(card => !paidCards.some(paid => paid.orderId === card.orderId));
 
   const getSupplierMeta = (storeId: string) => {
     return suppliers.find(s => s.id === storeId);
@@ -233,7 +276,16 @@ export function MaterialPaymentSection({
   const getStoreOrder = (orderId: string): JobStoreOrder | undefined => {
     return job.storeOrders?.find(so => so.orderId === orderId);
   };
-  const suggestedMaterialsOnly = userSuggestions.filter((s) => s.status === 'pending');
+  const suggestionTabSuggestions = userSuggestions.filter((s) => {
+    const st = String(s.status || '').toLowerCase();
+    if (st === 'rejected') return Boolean(s.withdrawnAfterAccept);
+    if (st === 'pending') return true;
+    if (st !== 'accepted') return false;
+    const linkedOrder =
+      (job.storeOrders && job.storeOrders.find((o) => o.sourceUserSuggestionId === s.id)) ||
+      displayStoreOrders.find((o) => o.sourceUserSuggestionId === s.id);
+    return !!linkedOrder && !isJobStoreOrderMaterialsPaid(linkedOrder);
+  });
 
   const handleOpenPaymentDialog = (storeId: string, storeName: string, hasDelivery: boolean, deliveryFee?: number, orderId?: string) => {
     const store = materialsByStore[storeId];
@@ -318,6 +370,7 @@ export function MaterialPaymentSection({
 
   const openPurchaseFlow = (storeId: string, orderId?: string) => {
     const order = orderId ? displayStoreOrders.find(entry => entry.orderId === orderId) : undefined;
+    if (order?.materialBatchResolution) return;
     const store = materialsByStore[storeId];
     const orderMaterials = order
       ? order.items.map(item => ({
@@ -430,7 +483,15 @@ export function MaterialPaymentSection({
     setDeliveryDialogOpen(false);
   };
 
-  if (materials.length === 0) {
+  const hasAnyMaterialSurface =
+    materials.length > 0 ||
+    paidCards.length > 0 ||
+    pendingCards.length > 0 ||
+    suggestionTabSuggestions.length > 0 ||
+    materialRequests.some((r) => r.status === 'submitted') ||
+    (job.storeOrders && job.storeOrders.length > 0);
+
+  if (!hasAnyMaterialSurface) {
     return (
       <Card>
         <CardHeader>
@@ -509,8 +570,8 @@ export function MaterialPaymentSection({
               )}
               {onSuggestAlternatives && (
                 <Button size="sm" variant="outline" onClick={onSuggestAlternatives}>
-                  <AlertCircle className="h-4 w-4 mr-1" />
-                  Suggest Alternatives
+                  <AlertCircle className="h-4 w-4" />
+                  Suggestions
                 </Button>
               )}
               {onAddMaterials && job.status === 'ASSIGNED' && (
@@ -532,7 +593,7 @@ export function MaterialPaymentSection({
           {paidCards.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-sm font-semibold text-muted-foreground">Paid materials</h4>
-              <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:grid-cols-2">
                 {paidCards.map((storeOrder) => {
                   const storeId = storeOrder.storeId;
                   const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
@@ -545,6 +606,8 @@ export function MaterialPaymentSection({
                   const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
                   const materialOrderKey = mo?.id ? String(mo.id) : storeOrder.orderId;
                   const batch = resolveMaterialBatchFromSnapshot(mo);
+                  const summaryIsPickup =
+                    storeOrder.deliveryType === 'SELF' || batch?.deliveryType === 'pickup';
                   const driverLabel =
                     batch?.assignedDriverId &&
                     deliveryProviders.find((d) => d.id === batch.assignedDriverId)?.name;
@@ -561,10 +624,52 @@ export function MaterialPaymentSection({
                   const trackingU = String(mo?.fulfillmentStatus || '').toUpperCase();
                   const trackingEligibleForStore = trackingU === 'OUT_FOR_DELIVERY';
                   const fullHref = `/user/jobs/${job.id}/store-orders/${encodeURIComponent(storeOrder.orderId)}`;
+
+                  const deliveryLocation =
+                    summaryIsPickup ? (
+                      batch?.pickupAddress ? (
+                        <span className="flex gap-2.5">
+                          <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden />
+                          <span className="min-w-0">
+                            <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide block">
+                              Collect at
+                            </span>
+                            <span className="break-words">{batch.pickupAddress}</span>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="flex gap-2.5 items-start">
+                          <MapPin className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
+                          <span className="text-muted-foreground text-[13px] leading-snug">
+                            Pickup location — the supplier will confirm the collection address as your order progresses.
+                          </span>
+                        </span>
+                      )
+                    ) : batch?.deliveryAddress ? (
+                      <span className="flex gap-2.5">
+                        <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden />
+                        <span className="min-w-0">
+                          <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide block">
+                            Deliver to
+                          </span>
+                          <span className="break-words">{batch.deliveryAddress}</span>
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="flex gap-2.5 items-start">
+                        <MapPin className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
+                        <span className="text-muted-foreground text-[13px] leading-snug">
+                          Delivery address appears here once dispatch details are available.
+                        </span>
+                      </span>
+                    );
+
                   return (
                     <MaterialCard
                       key={materialOrderKey}
                       status="paid"
+                      collapsible
+                      deliveryLocation={deliveryLocation}
                       supplierName={storeName}
                       subtotal={itemsTotal}
                       items={storeOrder.items.map((item) => ({
@@ -589,13 +694,13 @@ export function MaterialPaymentSection({
                             Supplier:{' '}
                             <span className="text-foreground font-medium">{mo?.supplierName || storeName}</span>
                           </p>
-                          {batch?.pickupAddress ? (
+                          {!(summaryIsPickup && batch?.pickupAddress) && batch?.pickupAddress ? (
                             <p className="text-xs text-muted-foreground">Pickup: {batch.pickupAddress}</p>
                           ) : null}
                           {batch?.deliveryType === 'pickup' && (
                             <p className="text-xs text-muted-foreground">Collect your order at the supplier address above.</p>
                           )}
-                          {batch?.deliveryAddress ? (
+                          {!(!summaryIsPickup && batch?.deliveryAddress) && batch?.deliveryAddress ? (
                             <p className="text-xs text-muted-foreground">Delivery address: {batch.deliveryAddress}</p>
                           ) : null}
                           {driverLabel ? (
@@ -640,7 +745,7 @@ export function MaterialPaymentSection({
                           />
                           <p>Invoice: {storeOrder.invoiceId || 'Pending assignment'}</p>
                           <p>Paid at: {paymentRecord?.paidAt ? new Date(paymentRecord.paidAt).toLocaleString() : 'N/A'}</p>
-                          <Button variant="outline" size="sm" className="mt-1" onClick={() => onViewStoreOrder(storeOrder.orderId)}>
+                          <Button variant="outline" size="sm" className="mt-1 w-full sm:w-auto" onClick={() => onViewStoreOrder(storeOrder.orderId)}>
                             View order
                           </Button>
                         </div>
@@ -675,12 +780,12 @@ export function MaterialPaymentSection({
                 aria-selected={userMaterialTab === 'suggested'}
                 size="sm"
                 variant={userMaterialTab === 'suggested' ? 'default' : 'ghost'}
-                className="h-8 gap-2 transition-colors duration-150"
+                className="h-8 gap-2 transition-colors duration-150 ml-1"
                 onClick={() => setUserMaterialTab('suggested')}
               >
-                Suggested materials
+                Suggested 
                 <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                  {suggestedMaterialsOnly.length}
+                  {suggestionTabSuggestions.length}
                 </Badge>
               </Button>
             </div>
@@ -693,6 +798,7 @@ export function MaterialPaymentSection({
                       const storeId = storeOrder.storeId;
                       const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
                       const isLegacyCard = storeOrder.orderId.startsWith('legacy-');
+                      const batchResolution = storeOrder.materialBatchResolution;
                       const paymentRecord = isLegacyCard
                         ? (job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId)
                             || job.materialPayments?.find(payment => !payment.orderId && payment.supplierId === storeId))
@@ -701,10 +807,38 @@ export function MaterialPaymentSection({
                       const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
                       const canPay =
                         !isPaid &&
+                        !batchResolution &&
                         ['ASSIGNED', 'INSPECTED', 'SERVICE_PRICE_SUBMITTED', 'SERVICE_PAID', 'MATERIALS_SUBMITTED', 'MATERIALS_PAID', 'IN_PROGRESS'].includes(job.status);
                       const canDelete =
                         Boolean(onDeleteMaterial) &&
                         (job.status === 'ASSIGNED' || job.status === 'MATERIALS_SUBMITTED');
+                      const canRejectListing =
+                        Boolean(onCustomerRejectMaterialBatch) && !isLegacyCard && !isPaid && !batchResolution;
+
+                      const canDismissListing =
+                        Boolean(onDismissMaterialBatch) &&
+                        !isPaid &&
+                        (batchResolution === 'rejected_by_customer' || batchResolution === 'cancelled_by_provider');
+
+                      const runRejectListing = async () => {
+                        if (!onCustomerRejectMaterialBatch || !confirm('Reject this entire materials list? The provider will be notified.')) return;
+                        setMaterialBatchBusy(storeOrder.orderId);
+                        try {
+                          await onCustomerRejectMaterialBatch(storeOrder.orderId);
+                        } finally {
+                          setMaterialBatchBusy(null);
+                        }
+                      };
+
+                      const runDismissListing = async () => {
+                        if (!onDismissMaterialBatch || !confirm('Remove this resolved listing from the job?')) return;
+                        setMaterialBatchBusy(storeOrder.orderId);
+                        try {
+                          await onDismissMaterialBatch(storeOrder.orderId);
+                        } finally {
+                          setMaterialBatchBusy(null);
+                        }
+                      };
 
                       return (
                         <MaterialCard
@@ -720,12 +854,17 @@ export function MaterialPaymentSection({
                           }))}
                           meta={
                             <>
-                              {storeOrder.sourceUserSuggestionId ? (
-                                <Badge variant="secondary" className="text-[10px] w-fit">
-                                  From your suggestion
-                                </Badge>
-                              ) : null}
                               <div className="flex flex-wrap gap-2 items-center">
+                                {batchResolution === 'rejected_by_customer' ? (
+                                  <Badge variant="destructive" className="text-[10px]">
+                                    You rejected this list
+                                  </Badge>
+                                ) : null}
+                                {batchResolution === 'cancelled_by_provider' ? (
+                                  <Badge variant="secondary" className="text-[10px]">
+                                    Cancelled by provider
+                                  </Badge>
+                                ) : null}
                                 <Badge variant="outline">
                                   {storeOrder.deliveryType === 'SELF' && 'Self collection'}
                                   {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
@@ -766,15 +905,45 @@ export function MaterialPaymentSection({
                             ) : undefined
                           }
                           actions={
-                            canPay ? (
-                              <Button
-                                size="sm"
-                                className="btn-accent"
-                                onClick={() => openPurchaseFlow(storeId, storeOrder.orderId)}
-                              >
-                                <CreditCard className="h-3 w-3 mr-1" />
-                                {`Pay ${storeName}`}
-                              </Button>
+                            canPay ||
+                            canRejectListing ||
+                            canDismissListing ? (
+                              <div className="flex flex-wrap gap-2 justify-end items-center">
+                                {canDismissListing ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1"
+                                    disabled={materialBatchBusy === storeOrder.orderId}
+                                    onClick={runDismissListing}
+                                  >
+                                    <Trash2 className="h-3 w-3 shrink-0" />
+                                    Remove listing
+                                  </Button>
+                                ) : null}
+                                {canRejectListing ? (
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    disabled={materialBatchBusy === storeOrder.orderId}
+                                    className="gap-1"
+                                    onClick={runRejectListing}
+                                  >
+                                    <XCircle className="h-3 w-3 shrink-0" />
+                                    Reject list
+                                  </Button>
+                                ) : null}
+                                {canPay ? (
+                                  <Button
+                                    size="sm"
+                                    className="btn-accent"
+                                    onClick={() => openPurchaseFlow(storeId, storeOrder.orderId)}
+                                  >
+                                    <CreditCard className="h-3 w-3 mr-1" />
+                                    {`Pay ${storeName}`}
+                                  </Button>
+                                ) : null}
+                              </div>
                             ) : undefined
                           }
                         />
@@ -789,15 +958,94 @@ export function MaterialPaymentSection({
               </div>
             ) : (
               <div className="min-h-[4rem] animate-in fade-in duration-200" role="tabpanel">
-                {suggestedMaterialsOnly.length > 0 ? (
+                {suggestionTabSuggestions.length > 0 ? (
                   <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                    {suggestedMaterialsOnly.map((suggestion) => {
+                    {suggestionTabSuggestions.map((suggestion) => {
                       const storeName = suggestion.suggested.supplierName || 'Store';
+                      const storeId =
+                        suggestion.suggested.branchId ?? suggestion.suggested.supplierId ?? '';
                       const lineTotal = suggestion.suggested.qty * suggestion.suggested.unitPrice;
+                      const stLow = String(suggestion.status || '').toLowerCase();
+                      const isPendingApproval = stLow === 'pending';
+                      const withdrawnRecord = Boolean(suggestion.withdrawnAfterAccept) && stLow === 'rejected';
+                      const linkedOrder =
+                        job.storeOrders?.find((o) => o.sourceUserSuggestionId === suggestion.id) ||
+                        displayStoreOrders.find((o) => o.sourceUserSuggestionId === suggestion.id);
+
+                      const canPayAcceptedBatch =
+                        !isPendingApproval &&
+                        !withdrawnRecord &&
+                        linkedOrder &&
+                        !linkedOrder.materialBatchResolution &&
+                        !isJobStoreOrderMaterialsPaid(linkedOrder) &&
+                        [
+                          'ASSIGNED',
+                          'INSPECTED',
+                          'SERVICE_PRICE_SUBMITTED',
+                          'SERVICE_PAID',
+                          'MATERIALS_SUBMITTED',
+                          'MATERIALS_PAID',
+                          'IN_PROGRESS',
+                        ].includes(job.status);
+
+                      const canWithdrawAccepted =
+                        Boolean(onWithdrawAcceptedSuggestion) &&
+                        !isPendingApproval &&
+                        !withdrawnRecord &&
+                        linkedOrder &&
+                        !linkedOrder.materialBatchResolution &&
+                        !isJobStoreOrderMaterialsPaid(linkedOrder) &&
+                        [
+                          'ASSIGNED',
+                          'INSPECTED',
+                          'SERVICE_PRICE_SUBMITTED',
+                          'SERVICE_PAID',
+                          'MATERIALS_SUBMITTED',
+                          'MATERIALS_PAID',
+                          'IN_PROGRESS',
+                        ].includes(job.status);
+
+                      const canPurgeWithdrawn =
+                        Boolean(onPurgeWithdrawnSuggestion) && withdrawnRecord;
+
+                      const withdrawnByCopy =
+                        suggestion.withdrawnBy === 'provider'
+                          ? 'Provider withdrew after accepting'
+                          : 'You withdrew this suggestion';
+
+                      const runWithdrawSuggestion = async () => {
+                        if (
+                          !onWithdrawAcceptedSuggestion ||
+                          !confirm('Cancel this suggestion before paying? Checkout will close.')
+                        ) {
+                          return;
+                        }
+                        setSuggestionBusy(suggestion.id);
+                        try {
+                          await onWithdrawAcceptedSuggestion(suggestion.id);
+                        } finally {
+                          setSuggestionBusy(null);
+                        }
+                      };
+
+                      const runPurgeSuggestion = async () => {
+                        if (!onPurgeWithdrawnSuggestion || !confirm('Remove this withdrawn suggestion from your list?')) {
+                          return;
+                        }
+                        setSuggestionBusy(suggestion.id);
+                        try {
+                          await onPurgeWithdrawnSuggestion(suggestion.id);
+                        } finally {
+                          setSuggestionBusy(null);
+                        }
+                      };
+
                       return (
                         <MaterialCard
                           key={suggestion.id}
-                          status="suggested"
+                          status={
+                            withdrawnRecord ? 'suggested' : isPendingApproval ? 'suggested' : 'approved'
+                          }
                           supplierName={storeName}
                           subtotal={lineTotal}
                           items={[
@@ -810,11 +1058,66 @@ export function MaterialPaymentSection({
                           ]}
                           meta={
                             <>
-                              <Badge variant="secondary">Waiting for provider approval</Badge>
+                              {isPendingApproval ? (
+                                <Badge variant="secondary">Waiting for provider approval</Badge>
+                              ) : withdrawnRecord ? (
+                                <Badge variant="outline">{withdrawnByCopy}</Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/25">
+                                  Approved · pay below to confirm
+                                </Badge>
+                              )}
                               {suggestion.message ? (
                                 <p className="text-xs text-muted-foreground">{suggestion.message}</p>
                               ) : null}
                             </>
+                          }
+                          actions={
+                            canPayAcceptedBatch ||
+                            canWithdrawAccepted ||
+                            canPurgeWithdrawn ? (
+                              <div className="flex flex-wrap gap-2 justify-end items-center">
+                                {canPurgeWithdrawn ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1"
+                                    disabled={suggestionBusy === suggestion.id}
+                                    onClick={runPurgeSuggestion}
+                                  >
+                                    <Trash2 className="h-3 w-3 shrink-0" />
+                                    Remove suggestion
+                                  </Button>
+                                ) : null}
+                                {canWithdrawAccepted ? (
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    className="gap-1"
+                                    disabled={suggestionBusy === suggestion.id}
+                                    onClick={runWithdrawSuggestion}
+                                  >
+                                    <XCircle className="h-3 w-3 shrink-0" />
+                                    Withdraw suggestion
+                                  </Button>
+                                ) : null}
+                                {canPayAcceptedBatch && linkedOrder ? (
+                                  <Button
+                                    size="sm"
+                                    className="btn-accent"
+                                    onClick={() =>
+                                      openPurchaseFlow(
+                                        linkedOrder.storeId ?? storeId,
+                                        linkedOrder.orderId
+                                      )
+                                    }
+                                  >
+                                    <CreditCard className="h-3 w-3 mr-1" />
+                                    {`Pay ${storeName}`}
+                                  </Button>
+                                ) : null}
+                              </div>
+                            ) : undefined
                           }
                         />
                       );

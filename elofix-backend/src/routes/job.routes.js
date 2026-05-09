@@ -73,6 +73,33 @@ router.patch(
   asyncHandler(jobController.rejectUserSuggestion)
 );
 router.post(
+  "/:id/user-material-suggestions/:suggestionId/withdraw-accepted",
+  authenticate,
+  asyncHandler(jobController.withdrawAcceptedUserSuggestion)
+);
+router.delete(
+  "/:id/user-material-suggestions/:suggestionId/purge-withdrawn",
+  authenticate,
+  asyncHandler(jobController.purgeWithdrawnUserSuggestion)
+);
+
+router.post(
+  "/:id/material-batches/:orderId/customer-reject",
+  authenticate,
+  asyncHandler(jobController.customerRejectMaterialBatch)
+);
+router.post(
+  "/:id/material-batches/:orderId/provider-cancel",
+  authenticate,
+  asyncHandler(jobController.providerCancelMaterialBatch)
+);
+router.delete(
+  "/:id/material-batches/:orderId/dismiss",
+  authenticate,
+  asyncHandler(jobController.dismissMaterialBatch)
+);
+
+router.post(
   "/:id/provider-material-suggestions",
   authenticate,
   asyncHandler(jobController.addProviderMaterialSuggestion)

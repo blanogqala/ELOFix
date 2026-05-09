@@ -4,6 +4,7 @@ import { getSpecials, getSpecialsByCategory } from '@/lib/api/specials';
 import { Special } from '@/types';
 import { ChevronLeft, ChevronRight, Clock, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
 import { differenceInDays, parseISO } from 'date-fns';
 
 interface SpecialsCarouselProps {
@@ -107,10 +108,10 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
             {/* Price */}
             <div className="flex items-center gap-3 mb-3">
               <span className="text-2xl font-bold text-accent">
-                ${currentSpecial.specialPrice}
+                {formatCurrency(currentSpecial.specialPrice, { decimals: 2 })}
               </span>
               <span className="text-sm line-through opacity-60">
-                ${currentSpecial.originalPrice}
+                {formatCurrency(currentSpecial.originalPrice, { decimals: 2 })}
               </span>
               <span className="px-2 py-0.5 bg-accent text-accent-foreground text-xs font-bold rounded-full">
                 -{currentSpecial.discountPercent}%

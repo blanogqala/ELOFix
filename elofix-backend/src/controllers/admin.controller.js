@@ -191,6 +191,24 @@ async function listSupplierOrders(req, res) {
   res.json({ success: true, orders });
 }
 
+/** Same rows/summary shape as supplier portal `GET /supplier/orders/export`, scoped by supplier org (admin). */
+async function getAdminSupplierOrdersExport(req, res) {
+  const supplierId = String(req.params.supplierId || "").trim();
+  if (!supplierId) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const supplier = await supplierService.getSupplierDetailsForAdmin(supplierId);
+  if (!supplier) {
+    throw new AppError("Supplier not found", 404);
+  }
+  const out = await materialOrderService.buildSupplierOrdersExport(supplierId, {
+    from: req.query.from || undefined,
+    to: req.query.to || undefined,
+    branchId: req.query.branchId || undefined,
+  });
+  res.json({ success: true, ...out });
+}
+
 async function listSupplierMaterialOrders(req, res) {
   const supplierId = String(req.params.supplierId || "").trim();
   if (!supplierId) {
@@ -240,6 +258,7 @@ module.exports = {
   createSupplier,
   getAdminSupplierDetail,
   listSupplierOrders,
+  getAdminSupplierOrdersExport,
   listSupplierMaterialOrders,
   listAllPlatformMaterialOrders,
 };

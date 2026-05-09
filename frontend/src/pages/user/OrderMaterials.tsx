@@ -726,7 +726,7 @@ export default function OrderMaterials() {
                             </p>
                           </div>
                         </div>
-                        <p className="font-bold">${dp.baseRate}</p>
+                        <p className="font-bold">{formatCurrency(Number(dp.baseRate) || 0, { decimals: 2 })}</p>
                       </div>
                     </div>
                   ))}
@@ -773,7 +773,7 @@ export default function OrderMaterials() {
                   {deliveryFee > 0 && (
                     <div className="flex justify-between text-sm text-muted-foreground">
                       <span className="flex items-center gap-1"><Truck className="h-3 w-3" /> Delivery (pay after approval)</span>
-                      <span>${deliveryFee.toFixed(2)}</span>
+                      <span>{formatCurrency(deliveryFee, { decimals: 2 })}</span>
                     </div>
                   )}
                   <div className="flex justify-between font-bold text-lg pt-1 border-t border-border">

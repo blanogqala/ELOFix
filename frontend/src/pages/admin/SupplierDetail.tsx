@@ -1,10 +1,8 @@
-import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
-import { getAdminSupplierDetail, getAdminSupplierOrders, type AdminSupplierOrderRow } from '@/lib/api/admin';
-import type { Product } from '@/types';
+import { getAdminSupplierDetail } from '@/lib/api/admin';
 import {
   ArrowLeft,
   Building2,
@@ -14,36 +12,16 @@ import {
   TrendingUp,
   Percent,
   ShoppingCart,
-  BarChart3,
+  GitBranch,
+  LayoutGrid,
+  ChevronRight,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Card, CardContent } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
-
-function formatCategoryLabel(raw: string) {
-  const s = (raw || 'general').trim().replace(/_/g, ' ');
-  if (!s) return 'General';
-  return s.replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function groupProductsByCategory(products: Product[]): { label: string; items: Product[] }[] {
-  const m = new Map<string, Product[]>();
-  for (const p of products || []) {
-    const key = (p.category || 'general').trim().toLowerCase() || 'general';
-    const list = m.get(key) ?? [];
-    list.push(p);
-    m.set(key, list);
-  }
-  return [...m.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, items]) => ({
-      label: formatCategoryLabel(key),
-      items: items.sort((a, b) => (a.name || '').localeCompare(b.name || '')),
-    }));
-}
+import { AdminSupplierOrdersPanel } from '@/components/admin/AdminSupplierOrdersPanel';
 
 export default function AdminSupplierDetail() {
   const { supplierId } = useParams<{ supplierId: string }>();
@@ -57,16 +35,9 @@ export default function AdminSupplierDetail() {
     retry: false,
   });
 
-  const ordersQuery = useQuery<AdminSupplierOrderRow[]>({
-    queryKey: ['admin', 'supplier', id, 'orders'],
-    queryFn: () => getAdminSupplierOrders(id, 10),
-    enabled: Boolean(id) && detailQuery.isSuccess,
-  });
-
   const supplier = detailQuery.data?.supplier;
   const analytics = detailQuery.data?.analytics;
-
-  const catalogGroups = useMemo(() => groupProductsByCategory(supplier?.products ?? []), [supplier?.products]);
+  const branchCount = supplier?.branches?.length ?? 0;
 
   if (detailQuery.isError) {
     return (
@@ -147,6 +118,9 @@ export default function AdminSupplierDetail() {
 
         <div>
           <h2 className="mb-4 text-lg font-semibold">Performance</h2>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Revenue and commission below reflect completed, paid material orders only ({commissionPct}% commission rate).
+          </p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="border-border/80 border-2 border-primary shadow-sm">
               <CardContent className="p-5">
@@ -189,103 +163,53 @@ export default function AdminSupplierDetail() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Avg order</p>
-                    <p className="mt-2 text-2xl font-semibold tabular-nums">
-                      {formatCurrency(analytics?.averageOrderValue ?? 0)}
-                    </p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Branches</p>
+                    <p className="mt-2 text-2xl font-semibold tabular-nums">{branchCount}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Storefronts / inventory scopes</p>
                   </div>
-                  <BarChart3 className="h-5 w-5 shrink-0 text-muted-foreground opacity-80" />
+                  <GitBranch className="h-5 w-5 shrink-0 text-muted-foreground opacity-80" />
                 </div>
               </CardContent>
             </Card>
           </div>
         </div>
 
-        <div>
-          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold">
-            <Package className="h-5 w-5" />
-            Catalog
-          </h2>
-          {catalogGroups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No catalog items.</p>
-          ) : (
-            <div className="space-y-8">
-              {catalogGroups.map((group) => (
-                <div key={group.label}>
-                  <h3 className="mb-3 text-sm font-semibold text-foreground/90">Category: {group.label}</h3>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {group.items.map((p) => (
-                      <Card key={p.id} className="overflow-hidden border-border/80 border-2 border-primary shadow-sm">
-                        <CardHeader className="space-y-1 pb-2">
-                          <CardTitle className="text-base leading-snug">{p.name}</CardTitle>
-                          <p className="text-xs text-muted-foreground">{formatCategoryLabel(p.category || '')}</p>
-                        </CardHeader>
-                        <CardContent className="space-y-2 pb-4">
-                          <p className="text-lg font-semibold">{formatCurrency(p.price)}</p>
-                          <Badge variant={p.inStock ? 'default' : 'secondary'} className="font-normal">
-                            {p.inStock ? 'In stock' : 'Out of stock'}
-                          </Badge>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              ))}
+        <div className="rounded-xl border-2 border-primary bg-gradient-to-br from-card via-card to-muted/25 p-6 shadow-md">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2 max-w-xl">
+              <h2 className="flex items-center gap-2 text-lg font-semibold">
+                <Package className="h-5 w-5 text-primary" />
+                Catalog
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Inventory is maintained per branch. Open the hub to see each branch as its own container, then drill into
+                products for that storefront.
+              </p>
             </div>
-          )}
+            <Button
+              type="button"
+              size="lg"
+              className="btn-accent shrink-0 gap-2 self-start lg:self-center px-6 shadow-sm"
+              onClick={() => navigate(`/admin/suppliers/${encodeURIComponent(id)}/catalog`)}
+            >
+              <LayoutGrid className="h-5 w-5" />
+              View catalog by branch
+              <ChevronRight className="h-4 w-4 opacity-80" />
+            </Button>
+          </div>
         </div>
 
         <div>
-          <h2 className="mb-4 text-lg font-semibold">Recent orders</h2>
-          <p className="mb-3 text-sm text-muted-foreground">Latest activity from this supplier (all statuses).</p>
-          {ordersQuery.isLoading && <p className="text-sm text-muted-foreground">Loading orders…</p>}
-          {!ordersQuery.isLoading && (ordersQuery.data?.length ?? 0) === 0 && (
-            <p className="text-sm text-muted-foreground">No orders yet.</p>
-          )}
-          {!ordersQuery.isLoading && (ordersQuery.data?.length ?? 0) > 0 && (
-            <div className="rounded-lg border-2 border-primary overflow-hidden bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Order ID</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(ordersQuery.data || []).map((o) => (
-                    <TableRow key={o.id}>
-                      <TableCell className="font-mono text-xs">{o.id}</TableCell>
-                      <TableCell>
-                        <div className="text-sm">{o.customerName || '—'}</div>
-                        {o.customerEmail && (
-                          <div className="text-xs text-muted-foreground break-all">{o.customerEmail}</div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-medium tabular-nums">
-                        {formatCurrency(Number(o.total ?? o.materialsSubtotal ?? 0))}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {o.fulfillmentStatus && (
-                            <Badge variant="outline" className="font-normal text-xs">
-                              {o.fulfillmentStatus}
-                            </Badge>
-                          )}
-                          {o.paymentStatus && (
-                            <Badge variant="secondary" className="font-normal text-xs capitalize">
-                              {o.paymentStatus}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <h2 className="mb-2 text-lg font-semibold">Material orders</h2>
+          <p className="mb-6 text-sm text-muted-foreground max-w-3xl">
+            Same earnings-style breakdown suppliers see: filter by date range and branch, export to Excel or PDF. Figures use
+            the portal&apos;s revenue / commission / net impact rules (including cancellations).
+          </p>
+          <AdminSupplierOrdersPanel
+            supplierId={id}
+            branches={supplier.branches ?? []}
+            businessLabel={displayBusiness}
+          />
         </div>
       </div>
     </DashboardLayout>

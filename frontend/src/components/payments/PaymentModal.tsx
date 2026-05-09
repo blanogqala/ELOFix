@@ -218,7 +218,7 @@ export function PaymentModal({
             disabled={isProcessing || !selectedCardId}
             className="btn-accent"
           >
-            {isProcessing ? 'Processing...' : `Pay $${amount.toFixed(2)}`}
+            {isProcessing ? 'Processing...' : `Pay ${formatCurrency(amount, { decimals: 2 })}`}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,5 +1,6 @@
 import type { Job, JobStoreOrder } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
+import { MapPin } from 'lucide-react';
 import { MaterialCard } from '@/components/materials/MaterialCard';
 import { MaterialTrackingMini } from '@/components/materials/MaterialTrackingMini';
 import {
@@ -35,7 +36,7 @@ export function MaterialBatches({
           No paid material purchases yet. Paid orders appear here after the customer checks out.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {paidBatches.map((card) => {
             const total = card.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
             const mo = resolveMaterialOrderForStoreOrder(job, card);
@@ -43,11 +44,53 @@ export function MaterialBatches({
             const batchMeta = card.materialRequestId
               ? materialRequests.find((r) => r.id === card.materialRequestId)
               : null;
+            const summaryIsPickup = card.deliveryType === 'SELF' || batch?.deliveryType === 'pickup';
+
+            const deliveryLocation =
+              summaryIsPickup ? (
+                batch?.pickupAddress ? (
+                  <span className="flex gap-2.5">
+                    <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide block">
+                        Collect at
+                      </span>
+                      <span className="break-words">{batch.pickupAddress}</span>
+                    </span>
+                  </span>
+                ) : (
+                  <span className="flex gap-2.5 items-start">
+                    <MapPin className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
+                    <span className="text-muted-foreground text-[13px] leading-snug">
+                      Pickup location — shown when the supplier confirms the batch.
+                    </span>
+                  </span>
+                )
+              ) : batch?.deliveryAddress ? (
+                <span className="flex gap-2.5">
+                  <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden />
+                  <span className="min-w-0">
+                    <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide block">
+                      Deliver to
+                    </span>
+                    <span className="break-words">{batch.deliveryAddress}</span>
+                  </span>
+                </span>
+              ) : (
+                <span className="flex gap-2.5 items-start">
+                  <MapPin className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
+                  <span className="text-muted-foreground text-[13px] leading-snug">
+                    Delivery address appears when dispatch details are set.
+                  </span>
+                </span>
+              );
 
             return (
               <MaterialCard
                 key={card.orderId}
                 status="paid"
+                collapsible
+                deliveryLocation={deliveryLocation}
                 supplierName={card.storeName || card.storeId}
                 subtotal={total}
                 items={card.items.map((item) => ({
@@ -73,17 +116,22 @@ export function MaterialBatches({
                   </div>
                 }
                 footer={
-                  <div className="mt-3 pt-3 border-t border-green-600/20 space-y-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Supplier</p>
-                    <p className="text-sm font-medium">{mo?.supplierName || card.storeName || card.storeId}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {card.deliveryType === 'SELF' && 'Pickup'}
-                      {card.deliveryType === 'STORE' && 'Store delivery'}
-                      {card.deliveryType === 'PROVIDER' && 'Courier'}{batch?.pickupAddress ? ` · ${batch.pickupAddress}` : ''}
-                    </p>
-                    {batch?.deliveryAddress ? (
-                      <p className="text-xs text-muted-foreground">Deliver to: {batch.deliveryAddress}</p>
-                    ) : null}
+                  <div className="space-y-3 border-t border-green-600/25 pt-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Supplier</p>
+                      <p className="text-sm font-medium">{mo?.supplierName || card.storeName || card.storeId}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {card.deliveryType === 'SELF' && 'Pickup'}
+                        {card.deliveryType === 'STORE' && 'Store delivery'}
+                        {card.deliveryType === 'PROVIDER' && 'Courier'}
+                        {!(summaryIsPickup && batch?.pickupAddress) && batch?.pickupAddress
+                          ? ` · ${batch.pickupAddress}`
+                          : ''}
+                      </p>
+                      {!(!summaryIsPickup && batch?.deliveryAddress) && batch?.deliveryAddress ? (
+                        <p className="text-xs text-muted-foreground">Deliver to: {batch.deliveryAddress}</p>
+                      ) : null}
+                    </div>
                     <MaterialTrackingMini batch={batch} />
                     <ProviderCourierActions
                       jobId={job.id}

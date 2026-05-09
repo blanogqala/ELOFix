@@ -107,6 +107,7 @@ export function SupplierEarningsOrdersPanel({
   const exportRows = useMemo(
     () =>
       rows.map((row) => ({
+        Branch: row.branchName || '',
         'Order ID': row.orderId,
         Status: row.status,
         'Total Amount': Number(row.totalAmount || 0),
@@ -138,8 +139,9 @@ export function SupplierEarningsOrdersPanel({
     doc.text(`Supplier Earnings (${heading || exportTag}) (${from} to ${to})`, 14, 14);
     autoTable(doc, {
       startY: 20,
-      head: [['Order ID', 'Status', 'Total', 'Commission', 'Net', 'Cancellation', 'Reason', 'Cancelled By']],
+      head: [['Branch', 'Order ID', 'Status', 'Total', 'Commission', 'Net', 'Cancellation', 'Reason', 'Cancelled By']],
       body: rows.map((row: SupplierOrdersExportRow) => [
+        String(row.branchName || '—'),
         String(row.orderId || ''),
         formatStatus(row.status || ''),
         String(Number(row.totalAmount || 0).toFixed(2)),
@@ -252,6 +254,7 @@ export function SupplierEarningsOrdersPanel({
               <table className="w-full text-sm">
                 <thead className="bg-muted/40 text-left">
                   <tr>
+                    <th className="px-3 py-2">Branch</th>
                     <th className="px-3 py-2">Order ID</th>
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2">Total</th>
@@ -264,13 +267,16 @@ export function SupplierEarningsOrdersPanel({
                 <tbody>
                   {rows.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-4 text-muted-foreground" colSpan={7}>
+                      <td className="px-3 py-4 text-muted-foreground" colSpan={8}>
                         No orders in selected range.
                       </td>
                     </tr>
                   ) : (
                     rows.map((row) => (
                       <tr key={row.orderId} className="border-t border-border">
+                        <td className="px-3 py-2 max-w-[10rem] truncate" title={row.branchName || ''}>
+                          {row.branchName || '—'}
+                        </td>
                         <td className="px-3 py-2 font-mono text-xs">{row.orderId}</td>
                         <td className="px-3 py-2 capitalize">{formatStatus(row.status)}</td>
                         <td className="px-3 py-2 tabular-nums">{formatCurrency(Number(row.totalAmount || 0))}</td>

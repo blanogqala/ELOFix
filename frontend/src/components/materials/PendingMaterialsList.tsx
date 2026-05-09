@@ -1,4 +1,7 @@
+import { useState } from 'react';
+import { Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import type { JobStoreOrder, MaterialLine } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { MaterialCard } from '@/components/materials/MaterialCard';
@@ -13,6 +16,8 @@ export interface PendingMaterialsListProps {
   submitDisabled: boolean;
   onAddMaterials: () => void;
   onSubmitMaterials: () => void;
+  onProviderCancelBatch?: (orderId: string) => Promise<void>;
+  onDismissMaterialBatch?: (orderId: string) => Promise<void>;
 }
 
 export function PendingMaterialsList({
@@ -25,9 +30,37 @@ export function PendingMaterialsList({
   submitDisabled,
   onAddMaterials,
   onSubmitMaterials,
+  onProviderCancelBatch,
+  onDismissMaterialBatch,
 }: PendingMaterialsListProps) {
+  const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
   const hasPendingOrders = pendingOrders.length > 0;
   const showEmpty = !hasDraftMaterials && !hasPendingOrders;
+
+  const runDismiss = async (orderId: string) => {
+    if (!onDismissMaterialBatch || !confirm('Remove this resolved listing from the job?')) return;
+    setBusyOrderId(orderId);
+    try {
+      await onDismissMaterialBatch(orderId);
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
+
+  const runCancel = async (orderId: string) => {
+    if (
+      !onProviderCancelBatch ||
+      !confirm('Cancel this listing? The customer will see it was cancelled.')
+    ) {
+      return;
+    }
+    setBusyOrderId(orderId);
+    try {
+      await onProviderCancelBatch(orderId);
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
 
   return (
     <div
@@ -68,7 +101,7 @@ export function PendingMaterialsList({
       {hasPendingOrders && (
         <>
           <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Awaiting customer payment
+            Sent to customer (awaiting payment or resolved)
           </h4>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {pendingOrders.map((card) => {
@@ -76,6 +109,21 @@ export function PendingMaterialsList({
               const batchMeta = card.materialRequestId
                 ? materialRequests.find((r) => r.id === card.materialRequestId)
                 : null;
+              const resolution = card.materialBatchResolution;
+              const isLegacy = card.orderId.startsWith('legacy-');
+              const canCancelActive =
+                Boolean(onProviderCancelBatch) &&
+                canEditMaterials &&
+                !resolution &&
+                !Boolean(card.payment?.materialsPaid) &&
+                !isLegacy &&
+                !card.sourceUserSuggestionId;
+              const canDismissResolved =
+                Boolean(onDismissMaterialBatch) &&
+                canEditMaterials &&
+                !Boolean(card.payment?.materialsPaid) &&
+                !isLegacy &&
+                (resolution === 'rejected_by_customer' || resolution === 'cancelled_by_provider');
 
               return (
                 <MaterialCard
@@ -90,11 +138,58 @@ export function PendingMaterialsList({
                     lineTotal: item.qty * item.unitPrice,
                   }))}
                   meta={
-                    batchMeta ? (
-                      <p className="text-xs text-muted-foreground">
-                        Request {batchMeta.status === 'submitted' ? 'awaiting payment' : batchMeta.status}{' '}
-                        · {new Date(batchMeta.createdAt).toLocaleString()}
-                      </p>
+                    <div className="space-y-2">
+                      {resolution === 'rejected_by_customer' ? (
+                        <Badge variant="destructive" className="text-[10px] w-fit">
+                          Customer rejected this list
+                        </Badge>
+                      ) : null}
+                      {resolution === 'cancelled_by_provider' ? (
+                        <Badge variant="secondary" className="text-[10px] w-fit">
+                          You cancelled this list
+                        </Badge>
+                      ) : null}
+                      {batchMeta ? (
+                        <p className="text-xs text-muted-foreground">
+                          Request {batchMeta.status === 'submitted' ? 'awaiting payment' : batchMeta.status}{' '}
+                          · {new Date(batchMeta.createdAt).toLocaleString()}
+                        </p>
+                      ) : undefined}
+                      {card.sourceUserSuggestionId ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Manage customer suggestion batches under Customer suggested.
+                        </p>
+                      ) : null}
+                    </div>
+                  }
+                  actions={
+                    canDismissResolved || canCancelActive ? (
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        {canDismissResolved ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1"
+                            disabled={busyOrderId === card.orderId}
+                            onClick={() => void runDismiss(card.orderId)}
+                          >
+                            <Trash2 className="h-3 w-3 shrink-0" />
+                            Remove listing
+                          </Button>
+                        ) : null}
+                        {canCancelActive ? (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="gap-1"
+                            disabled={busyOrderId === card.orderId}
+                            onClick={() => void runCancel(card.orderId)}
+                          >
+                            <XCircle className="h-3 w-3 shrink-0" />
+                            Cancel listing
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : undefined
                   }
                 />

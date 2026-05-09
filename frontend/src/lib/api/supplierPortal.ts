@@ -122,6 +122,7 @@ export async function cancelSupplierOrder(orderId: string, reason: string): Prom
 
 export interface SupplierOrdersExportRow {
   orderId: string;
+  branchName?: string | null;
   status: string;
   totalAmount: number;
   commission: number;

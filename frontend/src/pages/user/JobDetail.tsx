@@ -19,9 +19,12 @@ import {
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
   deleteJob,
-  addUserMaterialSuggestion,
   getLaborInvoiceByJobId,
   acceptProposedPrice,
+  customerRejectMaterialBatch,
+  dismissMaterialBatch,
+  withdrawAcceptedUserSuggestion,
+  purgeWithdrawnUserSuggestion,
 } from '@/lib/api/jobs';
 import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -32,7 +35,6 @@ import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/type
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
 import { JobCompletionDialog } from '@/components/jobs/JobCompletionDialog';
 import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection';
-import { SuggestAlternativeMaterialsModal } from '@/components/jobs/SuggestAlternativeMaterialsModal';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
@@ -57,7 +59,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getUserLaborGross } from '@/lib/jobUtils';
+import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/jobProgressDisplay';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
@@ -119,16 +121,19 @@ export default function JobDetail() {
     queryKey: queryKeys.jobs.detail(jobId),
     queryFn: () => getJobById(jobId),
     enabled: Boolean(jobId),
+    staleTime: 4_000,
+    refetchInterval: 8_000,
   });
   const { data: materialRequestsData } = useQuery({
     queryKey: queryKeys.materialRequests.job(jobId),
     queryFn: () => getMaterialRequestsForJob(jobId),
     enabled: Boolean(jobId),
+    staleTime: 4_000,
+    refetchInterval: 8_000,
   });
   const materialRequests = materialRequestsData ?? [];
   const [newMessage, setNewMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>('details');
-  const [suggestMaterialsOpen, setSuggestMaterialsOpen] = useState(false);
   const [payLaborModalOpen, setPayLaborModalOpen] = useState(false);
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -299,21 +304,6 @@ export default function JobDetail() {
     }
   };
 
-  const handleSuggestMaterial = async (suggested: MaterialLine, message: string) => {
-    if (!job) return;
-    try {
-      await addUserMaterialSuggestion(job.id, suggested, message);
-      await syncJobsAfterMutation();
-      toast({ title: 'Suggestion sent', description: 'Your alternative material suggestion has been sent to the provider.' });
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to send suggestion.',
-        variant: 'destructive',
-      });
-    }
-  };
-
   const handleCancelJob = async (reason: string, details: string) => {
     if (!job || isActionPending) return;
     setIsActionPending(true);
@@ -443,6 +433,74 @@ export default function JobDetail() {
     }
   };
 
+  const handleCustomerRejectMaterialBatch = async (orderId: string) => {
+    if (!job) return;
+    try {
+      await customerRejectMaterialBatch(job.id, orderId);
+      await syncJobsAfterMutation();
+      toast({
+        title: 'List rejected',
+        description:
+          'Your provider will see this as rejected. Tap “Remove listing” when you want it cleared from view.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not reject',
+        description:
+          error instanceof Error ? error.message : 'Reject failed. Try refreshing the job.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleCustomerDismissMaterialBatch = async (orderId: string) => {
+    if (!job) return;
+    try {
+      await dismissMaterialBatch(job.id, orderId);
+      await syncJobsAfterMutation();
+      toast({ title: 'Listing removed', description: 'That materials batch no longer appears on this job.' });
+    } catch (error) {
+      toast({
+        title: 'Could not remove',
+        description: error instanceof Error ? error.message : 'Remove failed.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleCustomerWithdrawSuggestion = async (suggestionId: string) => {
+    if (!job) return;
+    try {
+      await withdrawAcceptedUserSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
+      toast({
+        title: 'Suggestion withdrawn',
+        description: 'You can remove the record anytime with Remove suggestion.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not withdraw',
+        description: error instanceof Error ? error.message : 'Withdraw failed.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleCustomerPurgeWithdrawnSuggestion = async (suggestionId: string) => {
+    if (!job) return;
+    try {
+      await purgeWithdrawnUserSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
+      toast({ title: 'Suggestion cleared', description: 'Removed from this job\'s suggestion history.' });
+    } catch (error) {
+      toast({
+        title: 'Could not remove',
+        description: error instanceof Error ? error.message : 'Remove failed.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleDeleteJob = async () => {
     if (!job || isActionPending) return;
     setIsActionPending(true);
@@ -501,12 +559,19 @@ export default function JobDetail() {
     );
   };
 
-  const materialsTotal = (job?.materials || []).reduce((sum, m) => sum + (m.qty * m.unitPrice), 0) || 0;
+  const materialsTotal = job ? getQuoteMaterialsTotal(job) : 0;
   const laborTotal = job ? getUserLaborGross(job) : 0;
   const effectiveMeasurements = job
     ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
     : null;
-  const hasMaterialsPaid = job?.materialPayments?.some(p => p.status === 'paid') || false;
+  const hasMaterialsPaid =
+    job?.materialPayments?.some((p) => p.status === 'paid') ||
+    (job?.jobMaterialOrders ?? []).some((o) => {
+      const ps = String(o.paymentStatus ?? '').toLowerCase();
+      const fs = String(o.fulfillmentStatus ?? '').toUpperCase();
+      return ps === 'paid' && fs !== 'CANCELLED';
+    }) ||
+    false;
   const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
   const cancellationReasonText =
     (job?.cancellationDetails && job.cancellationDetails.trim()) ||
@@ -709,16 +774,21 @@ export default function JobDetail() {
         {/* Material Payment Section */}
         <MaterialPaymentSection
           job={job}
+          materialRequests={materialRequests}
           userSuggestions={job.userMaterialSuggestions || []}
           savedCards={savedCards}
           deliveryProviders={deliveryProviders}
           deliveryProvidersError={deliveryProvidersError}
           onPayForStore={handlePayForStore}
-          onSuggestAlternatives={() => setSuggestMaterialsOpen(true)}
+          onSuggestAlternatives={() => navigate(`/user/jobs/${job.id}/suggest-materials`)}
           suppliers={suppliers}
           onSelectDeliveryOption={handleSelectDeliveryOption}
           onSimulateProviderApproval={handleSimulateProviderApproval}
           onViewStoreOrder={(orderId) => navigate(`/user/orders/${orderId}`)}
+          onCustomerRejectMaterialBatch={handleCustomerRejectMaterialBatch}
+          onDismissMaterialBatch={handleCustomerDismissMaterialBatch}
+          onWithdrawAcceptedSuggestion={handleCustomerWithdrawSuggestion}
+          onPurgeWithdrawnSuggestion={handleCustomerPurgeWithdrawnSuggestion}
         />
 
         {/* Tabs */}
@@ -754,10 +824,12 @@ export default function JobDetail() {
               <CardHeader>
                 <CardTitle className="text-lg">Job Details</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="border-b-2 border-primary/20 pb-3">
+              <CardContent className="min-w-0 space-y-4">
+                <div className="min-w-0 border-b-2 border-primary/20 pb-3">
                   <p className="text-sm text-muted-foreground">Description</p>
-                  <p>{job.description}</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
+                    {job.description}
+                  </p>
                 </div>
                 {job.images.length > 0 && (
                   <div className="border-b-2 border-primary/20 pb-3">
@@ -778,14 +850,18 @@ export default function JobDetail() {
                   </div>
                 )}
                 {job.location && (
-                  <div className="border-b-2 border-primary/20 pb-3">
+                  <div className="min-w-0 border-b-2 border-primary/20 pb-3">
                     <p className="text-sm text-muted-foreground">Location</p>
-                    <p>{job.location.address}</p>
-                    <p className="text-sm text-muted-foreground">
+                    {job.location.address && (
+                      <p className="mt-1 break-words text-sm [overflow-wrap:anywhere]">{job.location.address}</p>
+                    )}
+                    <p className="text-sm text-muted-foreground break-words">
                       {job.location.city}{job.location.area ? `, ${job.location.area}` : ''}
                     </p>
                     {job.location.notes && (
-                      <p className="text-sm text-muted-foreground mt-1">Notes: {job.location.notes}</p>
+                      <p className="mt-1 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                        Notes: {job.location.notes}
+                      </p>
                     )}
                     {job.location.coordinates && (
                       <p className="text-xs text-muted-foreground mt-1">
@@ -874,9 +950,9 @@ export default function JobDetail() {
                       <p>{effectiveMeasurements.plumbingIssue.type}</p>
                     </div>
                     {(effectiveMeasurements.plumbingIssue.description?.trim() || job.description) && (
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-sm text-muted-foreground">Details</p>
-                        <p>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
                           {effectiveMeasurements.plumbingIssue.description?.trim() || job.description}
                         </p>
                       </div>
@@ -895,9 +971,11 @@ export default function JobDetail() {
                   <p className="text-sm text-muted-foreground">No measurement values provided.</p>
                 )}
                 {job.providerAdjustedRequirements?.requirementNotes && (
-                  <div className="mt-4 pt-4 border-t border-border">
+                  <div className="mt-4 min-w-0 pt-4 border-t border-border">
                     <p className="text-sm text-muted-foreground mb-1">Notes</p>
-                    <p className="text-sm">{job.providerAdjustedRequirements.requirementNotes}</p>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
+                      {job.providerAdjustedRequirements.requirementNotes}
+                    </p>
                   </div>
                 )}
                 <p className=" text-xs text-muted-foreground mt-4">
@@ -911,10 +989,15 @@ export default function JobDetail() {
               <CardHeader>
                 <CardTitle className="text-lg">Quote</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Materials</span>
-                  <span>{formatCurrency(materialsTotal, { decimals: 2 })}</span>
+              <CardContent className="min-w-0 space-y-2 text-sm">
+                <p className="text-xs text-muted-foreground">
+                  Materials total includes all paid purchases on this job; cancelled store orders are excluded.
+                </p>
+                <div className="flex justify-between gap-3 min-w-0">
+                  <span className="shrink-0 text-muted-foreground">Materials</span>
+                  <span className="min-w-0 text-right font-medium tabular-nums">
+                    {formatCurrency(materialsTotal, { decimals: 2 })}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Labor / Service</span>
@@ -1062,16 +1145,6 @@ export default function JobDetail() {
         />
       )}
 
-      {/* Suggest Alternative Materials Modal */}
-      <SuggestAlternativeMaterialsModal
-        open={suggestMaterialsOpen}
-        onOpenChange={setSuggestMaterialsOpen}
-        jobLocation={job.location ?? undefined}
-        jobCategory={job.category}
-        onSuggest={handleSuggestMaterial}
-      />
-
-      {/* Pay Labor Modal */}
       <PaymentModal
         open={payLaborModalOpen}
         onOpenChange={setPayLaborModalOpen}

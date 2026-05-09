@@ -1101,46 +1101,44 @@ async function acceptUserSuggestion(jobId, suggestionId) {
       s.id === suggestionId ? { ...s, status: "accepted" } : s
     );
     const accepted = suggestions.find((s) => s.id === suggestionId);
-    let storeOrders = m.storeOrders;
+    let storeOrders = Array.isArray(m.storeOrders) ? [...m.storeOrders] : [];
     if (accepted) {
-      const storeId = accepted.suggested.supplierId;
-      const existingOrder = storeOrders.find((o) => o.storeId === storeId && o.deliveryStatus !== "Delivered");
-      if (existingOrder) {
-        existingOrder.items.push({
-          productId: accepted.suggested.productId,
-          name: accepted.suggested.name,
-          qty: accepted.suggested.qty,
-          unitPrice: accepted.suggested.unitPrice,
-          qualityTier: accepted.suggested.qualityTier,
-          imageUrl: accepted.suggested.imageUrl,
-        });
+      const storeId = accepted.suggested.branchId ?? accepted.suggested.supplierId;
+      const lineItem = {
+        productId: accepted.suggested.productId,
+        name: accepted.suggested.name,
+        qty: accepted.suggested.qty,
+        unitPrice: accepted.suggested.unitPrice,
+        qualityTier: accepted.suggested.qualityTier,
+        imageUrl: accepted.suggested.imageUrl,
+      };
+
+      /** Never merge customer suggestions into a provider material-request store order — that duplicated pending + suggestion tabs.
+       * Stay on a dedicated order tagged with sourceUserSuggestionId until the customer pays. */
+      const existingSuggestionOrderIdx = storeOrders.findIndex(
+        (o) => String(o.sourceUserSuggestionId || "") === String(suggestionId)
+      );
+      if (existingSuggestionOrderIdx >= 0) {
+        const o = storeOrders[existingSuggestionOrderIdx];
+        storeOrders[existingSuggestionOrderIdx] = {
+          ...o,
+          items: [...(Array.isArray(o.items) ? o.items : []), lineItem],
+        };
       } else {
-        storeOrders = [
-          ...storeOrders,
-          {
-            storeId,
-            orderId: randomUUID(),
-            sourceUserSuggestionId: suggestionId,
-            items: [
-              {
-                productId: accepted.suggested.productId,
-                name: accepted.suggested.name,
-                qty: accepted.suggested.qty,
-                unitPrice: accepted.suggested.unitPrice,
-                qualityTier: accepted.suggested.qualityTier,
-                imageUrl: accepted.suggested.imageUrl,
-              },
-            ],
-            storeName: accepted.suggested.supplierName,
-            deliveryType: "SELF",
-            deliveryFee: 0,
-            deliveryStatus: "SelfCollect",
-            paymentStatus: "Paid",
-            invoiceId: "",
-            createdAt: new Date().toISOString(),
-            payment: { materialsPaid: false, deliveryPaid: false },
-          },
-        ];
+        storeOrders.push({
+          storeId,
+          orderId: randomUUID(),
+          sourceUserSuggestionId: suggestionId,
+          items: [lineItem],
+          storeName: accepted.suggested.supplierName,
+          deliveryType: "SELF",
+          deliveryFee: 0,
+          deliveryStatus: "SelfCollect",
+          paymentStatus: "Paid",
+          invoiceId: "",
+          createdAt: new Date().toISOString(),
+          payment: { materialsPaid: false, deliveryPaid: false },
+        });
       }
     }
     return { ...m, userMaterialSuggestions: suggestions, storeOrders };
@@ -1154,7 +1152,7 @@ async function rejectUserSuggestion(jobId, suggestionId) {
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
     userMaterialSuggestions: m.userMaterialSuggestions.map((s) =>
-      s.id === suggestionId ? { ...s, status: "rejected" } : s
+      s.id === suggestionId ? { ...s, status: "rejected", withdrawnAfterAccept: false } : s
     ),
   }));
   return await finalizeJob(job, meta);
@@ -1527,10 +1525,21 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
     storeOrders.find((o) => String(o.storeId) === String(supplierId) && String(o.orderId) === wantOrderId);
   if (!order) {
     const unpaidForSupplier = storeOrders.filter(
-      (o) => String(o.storeId) === String(supplierId) && !o.payment?.materialsPaid
+      (o) =>
+        String(o.storeId) === String(supplierId) &&
+        !o.payment?.materialsPaid &&
+        !["rejected_by_customer", "cancelled_by_provider"].includes(String(o.materialBatchResolution || ""))
     );
     order = unpaidForSupplier.length ? unpaidForSupplier[unpaidForSupplier.length - 1] : undefined;
   }
+  if (
+    order &&
+    (order.materialBatchResolution === "rejected_by_customer" ||
+      order.materialBatchResolution === "cancelled_by_provider")
+  ) {
+    throw new AppError("This materials list is no longer active for payment.", 400);
+  }
+
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
     const legacyMaterials = Array.isArray(job.materials)
       ? job.materials.filter((m) => String(m.supplierId) === String(supplierId))
@@ -1932,6 +1941,280 @@ async function createLaborInvoice(jobId, userId, laborAmount, cardLast4) {
   };
 }
 
+function findStoreOrderInMeta(meta, orderId) {
+  const list = Array.isArray(meta.storeOrders) ? meta.storeOrders : [];
+  const idx = list.findIndex((o) => String(o.orderId) === String(orderId));
+  return { list, idx, order: idx >= 0 ? list[idx] : null };
+}
+
+function assertMaterialsUnpaid(order) {
+  if (!order) throw new AppError("Material batch not found", 404);
+  if (Boolean(order.payment?.materialsPaid)) {
+    throw new AppError("Materials are already paid; this list cannot be changed.", 400);
+  }
+}
+
+function stripJobMaterialsLinesForDismissedOrder(jobMaterials, order) {
+  const lines = Array.isArray(jobMaterials) ? [...jobMaterials] : [];
+  const mrId = order.materialRequestId ? String(order.materialRequestId) : "";
+  const storeId = String(order.storeId);
+  const productIds = new Set((order.items || []).map((i) => String(i.productId)));
+  if (!mrId) {
+    return lines;
+  }
+  return lines.filter((line) => {
+    const lineStore = String(line.branchId ?? line.supplierId ?? "");
+    const pid = String(line.productId);
+    const lineMr = line.materialRequestId != null ? String(line.materialRequestId) : "";
+    if (lineStore !== storeId || !productIds.has(pid)) return true;
+    if (lineMr === mrId) return false;
+    return true;
+  });
+}
+
+async function reconcileMaterialRequestAfterDismiss(jobId, materialRequestId) {
+  const mrId = String(materialRequestId || "").trim();
+  if (!mrId) return;
+  const meta = await getJobMeta(jobId);
+  const orders = Array.isArray(meta.storeOrders) ? meta.storeOrders : [];
+  const stillOutstanding = orders.some((o) => {
+    if (String(o.materialRequestId || "") !== mrId) return false;
+    if (Boolean(o.payment?.materialsPaid)) return false;
+    const res = String(o.materialBatchResolution || "");
+    const dead = res === "rejected_by_customer" || res === "cancelled_by_provider";
+    return !dead;
+  });
+  if (stillOutstanding) return;
+  const anyPaid = orders.some(
+    (o) => String(o.materialRequestId || "") === mrId && Boolean(o.payment?.materialsPaid)
+  );
+  if (anyPaid) return;
+  try {
+    await prisma.materialRequest.updateMany({
+      where: { id: mrId, jobId, status: "submitted" },
+      data: { status: "draft" },
+    });
+  } catch {
+    /** ignore */
+  }
+}
+
+async function customerRejectProviderMaterialBatch(jobId, orderId, customerUserId) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { id: true, customerId: true } });
+  if (!job) throw new AppError("Job not found", 404);
+  if (String(job.customerId) !== String(customerUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const { list, idx, order } = findStoreOrderInMeta(m, orderId);
+    if (!order || idx < 0) throw new AppError("Material batch not found", 404);
+    assertMaterialsUnpaid(order);
+    if (String(order.orderId || "").startsWith("legacy-")) {
+      throw new AppError("Cannot reject this material view.", 400);
+    }
+    if (order.sourceUserSuggestionId) {
+      throw new AppError(
+        "This batch is linked to your suggestion — cancel it under the Suggested tab instead.",
+        400
+      );
+    }
+    if (order.materialBatchResolution) {
+      throw new AppError("This batch is already resolved.", 400);
+    }
+    list[idx] = {
+      ...order,
+      materialBatchResolution: "rejected_by_customer",
+      materialBatchRejectedAt: new Date().toISOString(),
+    };
+    m.storeOrders = list;
+    return m;
+  });
+  const refreshed = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  return await finalizeJob(refreshed, meta);
+}
+
+async function providerCancelProviderMaterialBatch(jobId, orderId, providerUserId) {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { id: true, providerId: true },
+  });
+  if (!job) throw new AppError("Job not found", 404);
+  if (String(job.providerId || "") !== String(providerUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const { list, idx, order } = findStoreOrderInMeta(m, orderId);
+    if (!order || idx < 0) throw new AppError("Material batch not found", 404);
+    assertMaterialsUnpaid(order);
+    if (order.sourceUserSuggestionId) {
+      throw new AppError("Use suggestion withdraw for customer-suggestion batches.", 400);
+    }
+    if (order.materialBatchResolution) {
+      throw new AppError("This batch is already resolved.", 400);
+    }
+    list[idx] = {
+      ...order,
+      materialBatchResolution: "cancelled_by_provider",
+      materialBatchRejectedAt: new Date().toISOString(),
+    };
+    m.storeOrders = list;
+    return m;
+  });
+  const refreshed = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  return await finalizeJob(refreshed, meta);
+}
+
+async function dismissMaterialBatch(jobId, orderId, actorUserId, actorRole) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  if (
+    actorRole === "CUSTOMER" &&
+    String(job.customerId) !== String(actorUserId)
+  ) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (
+    actorRole === "PROVIDER" &&
+    String(job.providerId || "") !== String(actorUserId)
+  ) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (actorRole !== "CUSTOMER" && actorRole !== "PROVIDER") {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const metaPeek = await getJobMeta(jobId);
+  const { order } = findStoreOrderInMeta(metaPeek, orderId);
+  if (!order) throw new AppError("Material batch not found", 404);
+  assertMaterialsUnpaid(order);
+  const res = order.materialBatchResolution;
+  if (res !== "rejected_by_customer" && res !== "cancelled_by_provider") {
+    throw new AppError("Reject or cancel this list before removing it.", 400);
+  }
+
+  const mrId = order.materialRequestId ? String(order.materialRequestId) : "";
+  const nextMaterials = stripJobMaterialsLinesForDismissedOrder(job.materials, order);
+
+  await prisma.job.update({
+    where: { id: jobId },
+    data: { materials: nextMaterials },
+  });
+
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const list = Array.isArray(m.storeOrders) ? m.storeOrders.filter((o) => String(o.orderId) !== String(orderId)) : [];
+    m.storeOrders = list;
+    return m;
+  });
+
+  const refreshed = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (mrId) {
+    await reconcileMaterialRequestAfterDismiss(jobId, mrId);
+  }
+  return await finalizeJob(refreshed, meta);
+}
+
+async function withdrawAcceptedUserMaterialSuggestion(jobId, suggestionId, actorUserId, actorRole) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  if (
+    actorRole === "CUSTOMER" &&
+    String(job.customerId) !== String(actorUserId)
+  ) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (
+    actorRole === "PROVIDER" &&
+    String(job.providerId || "") !== String(actorUserId)
+  ) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (actorRole !== "CUSTOMER" && actorRole !== "PROVIDER") {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const sid = String(suggestionId || "").trim();
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const suggestions = Array.isArray(m.userMaterialSuggestions) ? m.userMaterialSuggestions : [];
+    const s = suggestions.find((x) => String(x.id) === sid);
+    if (!s) throw new AppError("Suggestion not found", 404);
+    const st = String(s.status || "").toLowerCase();
+    if (st !== "accepted") {
+      throw new AppError("Only an accepted suggestion can be withdrawn.", 400);
+    }
+    const storeOrders = Array.isArray(m.storeOrders) ? [...m.storeOrders] : [];
+    const sugOrderIdx = storeOrders.findIndex((o) => String(o.sourceUserSuggestionId || "") === sid);
+    if (sugOrderIdx < 0) {
+      throw new AppError("No unpaid checkout batch for this accepted suggestion.", 400);
+    }
+    assertMaterialsUnpaid(storeOrders[sugOrderIdx]);
+    storeOrders.splice(sugOrderIdx, 1);
+    m.storeOrders = storeOrders;
+    const by = actorRole === "CUSTOMER" ? "customer" : "provider";
+    const now = new Date().toISOString();
+    m.userMaterialSuggestions = suggestions.map((x) =>
+      String(x.id) === sid
+        ? {
+            ...x,
+            status: "rejected",
+            withdrawnAfterAccept: true,
+            withdrawnAt: now,
+            withdrawnBy: by,
+          }
+        : x
+    );
+    return m;
+  });
+
+  const refreshed = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  return await finalizeJob(refreshed, meta);
+}
+
+async function purgeWithdrawnUserMaterialSuggestion(jobId, suggestionId, actorUserId, actorRole) {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { id: true, customerId: true, providerId: true },
+  });
+  if (!job) throw new AppError("Job not found", 404);
+  if (
+    actorRole === "CUSTOMER" &&
+    String(job.customerId) !== String(actorUserId)
+  ) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (
+    actorRole === "PROVIDER" &&
+    String(job.providerId || "") !== String(actorUserId)
+  ) {
+    throw new AppError("Forbidden", 403);
+  }
+  if (actorRole !== "CUSTOMER" && actorRole !== "PROVIDER") {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const sid = String(suggestionId || "").trim();
+  let found = false;
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const suggestions = Array.isArray(m.userMaterialSuggestions) ? m.userMaterialSuggestions : [];
+    const s = suggestions.find((x) => String(x.id) === sid);
+    if (!s) throw new AppError("Suggestion not found", 404);
+    if (!s.withdrawnAfterAccept) {
+      throw new AppError("Only withdrawn suggestions can be removed from history.", 400);
+    }
+    /** Ensure no dangling unpaid suggestion order */
+    const storeOrders = Array.isArray(m.storeOrders) ? m.storeOrders : [];
+    const dangling = storeOrders.some((o) => String(o.sourceUserSuggestionId || "") === sid && !o.payment?.materialsPaid);
+    if (dangling) {
+      throw new AppError("Unresolved suggestion checkout still pending; refresh and retry.", 400);
+    }
+    m.userMaterialSuggestions = suggestions.filter((x) => String(x.id) !== sid);
+    found = true;
+    return m;
+  });
+  if (!found) throw new AppError("Suggestion not found", 404);
+  const refreshed = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  return await finalizeJob(refreshed, meta);
+}
+
 module.exports = {
   createJob,
   getMatchedJobsForProvider,
@@ -1974,4 +2257,9 @@ module.exports = {
   releaseEscrowPayment,
   createLaborInvoice,
   getLaborInvoiceByJobId,
+  customerRejectProviderMaterialBatch,
+  providerCancelProviderMaterialBatch,
+  dismissMaterialBatch,
+  withdrawAcceptedUserMaterialSuggestion,
+  purgeWithdrawnUserMaterialSuggestion,
 };

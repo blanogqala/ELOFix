@@ -13,12 +13,25 @@ function dedupeStoreOrders(storeOrders) {
   });
 }
 
+function isDeadMaterialBatch(metaOrder) {
+  const r = String(metaOrder.materialBatchResolution || "");
+  return r === "rejected_by_customer" || r === "cancelled_by_provider";
+}
+
 /**
- * Aggregate: every checkout batch must be materials-paid before we treat materials as fully paid.
- * No store orders => nothing to wait on (legacy flows use other signals).
+ * Store orders still relevant for timeline / paid aggregate (exclude rejected or cancelled-but-not-dismissed rows).
+ */
+function activeStoreCheckoutOrders(meta) {
+  const list = dedupeStoreOrders(meta.storeOrders).filter((o) => !isDeadMaterialBatch(o));
+  return list;
+}
+
+/**
+ * Aggregate: every **active** checkout batch must be materials-paid before we treat materials as fully paid.
+ * No active store orders => nothing to wait on (legacy flows use other signals).
  */
 function allStoreMaterialOrdersPaid(meta) {
-  const list = dedupeStoreOrders(meta.storeOrders);
+  const list = activeStoreCheckoutOrders(meta);
   if (list.length === 0) return true;
   return list.every((o) => o.payment && o.payment.materialsPaid === true);
 }
@@ -28,7 +41,7 @@ function deriveHasStartedFromMeta(safeMeta, jobRow) {
   if (Boolean(jobRow.laborPaid) || Boolean(safeMeta.laborPaid)) return true;
   const mps = Array.isArray(safeMeta.materialPayments) ? safeMeta.materialPayments : [];
   if (mps.some((p) => String(p.status || "").toLowerCase() === "paid")) return true;
-  const orders = dedupeStoreOrders(safeMeta.storeOrders);
+  const orders = activeStoreCheckoutOrders(safeMeta);
   if (orders.some((o) => o.payment && o.payment.materialsPaid === true)) return true;
   return false;
 }

@@ -22,10 +22,13 @@ import {
   updateProviderRequirements,
   getLaborInvoiceByJobId,
   proposeNewLaborPrice,
+  providerCancelMaterialBatch,
+  dismissMaterialBatch,
+  withdrawAcceptedUserSuggestion,
+  purgeWithdrawnUserSuggestion,
 } from '@/lib/api/jobs';
 import {
   getMaterialRequestsForJob,
-  createMaterialRequestDraft,
   submitMaterialRequestPayload,
 } from '@/lib/api/materialRequests';
 import { Job, MaterialLine, Measurements } from '@/types';
@@ -51,7 +54,6 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { AddMaterialsModal } from '@/components/jobs/AddMaterialsModal';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { MaterialsSection } from '@/components/materials/MaterialsSection';
 import { Card, CardContent } from '@/components/ui/card';
@@ -125,11 +127,15 @@ export default function ProviderJobDetail() {
     queryKey: queryKeys.jobs.detail(jobId),
     queryFn: () => getJobById(jobId),
     enabled: Boolean(jobId),
+    staleTime: 4_000,
+    refetchInterval: 8_000,
   });
   const { data: materialRequestsData } = useQuery({
     queryKey: queryKeys.materialRequests.job(jobId),
     queryFn: () => getMaterialRequestsForJob(jobId),
     enabled: Boolean(jobId),
+    staleTime: 4_000,
+    refetchInterval: 8_000,
   });
   const materialRequests = materialRequestsData ?? [];
   const [noteTitle, setNoteTitle] = useState('');
@@ -142,7 +148,6 @@ export default function ProviderJobDetail() {
   const [materialsBuilder, setMaterialsBuilder] = useState<MaterialLine[]>([]);
   const [servicePriceAmount, setServicePriceAmount] = useState('');
   const [servicePriceNote, setServicePriceNote] = useState('');
-  const [addMaterialsOpen, setAddMaterialsOpen] = useState(false);
   const [editRequirementsOpen, setEditRequirementsOpen] = useState(false);
   const [editMeasurements, setEditMeasurements] = useState<Partial<Measurements>>({});
   const [editRequirementNotes, setEditRequirementNotes] = useState('');
@@ -260,7 +265,6 @@ export default function ProviderJobDetail() {
       const rows = await getMaterialRequestsForJob(job.id);
       const draft = rows.find((r) => r.status === 'draft');
       setMaterialsBuilder(draft?.items?.length ? (draft.items as MaterialLine[]) : []);
-      setAddMaterialsOpen(false);
       toast({ title: 'Materials submitted', description: 'The user can now review and pay.' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to submit materials.', variant: 'destructive' });
@@ -286,6 +290,59 @@ export default function ProviderJobDetail() {
       toast({ title: 'Suggestion rejected' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to reject.', variant: 'destructive' });
+    }
+  };
+
+  const handleWithdrawAcceptedSuggestion = async (suggestionId: string) => {
+    if (!job) return;
+    if (!confirm('Revoke acceptance before the customer pays? The unpaid checkout batch will close.')) {
+      return;
+    }
+    try {
+      await withdrawAcceptedUserSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
+      toast({ title: 'Acceptance revoked', description: 'The customer can adjust or submit a new suggestion.' });
+    } catch (e) {
+      toast({ title: 'Error', description: 'Could not revoke acceptance.', variant: 'destructive' });
+    }
+  };
+
+  const handlePurgeWithdrawnSuggestion = async (suggestionId: string) => {
+    if (!job) return;
+    if (!confirm('Remove this withdrawn suggestion record from history?')) {
+      return;
+    }
+    try {
+      await purgeWithdrawnUserSuggestion(job.id, suggestionId);
+      await syncJobsAfterMutation();
+      toast({ title: 'Suggestion removed', description: 'It no longer appears in this job.' });
+    } catch (e) {
+      toast({ title: 'Error', description: 'Could not remove suggestion.', variant: 'destructive' });
+    }
+  };
+
+  const handleProviderCancelBatch = async (orderId: string) => {
+    if (!job) return;
+    try {
+      await providerCancelMaterialBatch(job.id, orderId);
+      await syncJobsAfterMutation();
+      toast({
+        title: 'Listing cancelled',
+        description: 'The customer sees this batch as cancelled. Remove it once everyone is aligned.',
+      });
+    } catch (e) {
+      toast({ title: 'Error', description: 'Could not cancel listing.', variant: 'destructive' });
+    }
+  };
+
+  const handleDismissMaterialBatch = async (orderId: string) => {
+    if (!job) return;
+    try {
+      await dismissMaterialBatch(job.id, orderId);
+      await syncJobsAfterMutation();
+      toast({ title: 'Listing removed', description: 'This batch no longer appears on the job.' });
+    } catch (e) {
+      toast({ title: 'Error', description: 'Could not remove listing.', variant: 'destructive' });
     }
   };
 
@@ -451,21 +508,20 @@ export default function ProviderJobDetail() {
   const hasAnyMaterialPaid = materialCards.some((card) => card.payment?.materialsPaid);
   const allMaterialsPaid = materialCards.length > 0 && materialCards.every((card) => card.payment?.materialsPaid);
   const pendingMaterialCards = materialCards.filter((card) => !card.payment?.materialsPaid);
+  /** Provider "pending materials" tab: only batches authored by provider (not suggestion checkout cycles). */
+  const pendingProviderMaterialCardsOnly = pendingMaterialCards.filter((c) => !c.sourceUserSuggestionId);
   const paidMaterialBatches = materialsStackSorted.filter((card) => card.payment?.materialsPaid);
   const profileBlocksWorkflow = !isProfileComplete;
   const canEditMaterials = !profileBlocksWorkflow;
   const getPendingOrderForAcceptedSuggestion = (suggestion: NonNullable<Job['userMaterialSuggestions']>[number]) => {
-    const linked = pendingMaterialCards.find(card => card.sourceUserSuggestionId === suggestion.id);
-    if (linked) return linked;
-    return [...pendingMaterialCards].reverse().find(
-      card =>
-        card.storeId === suggestion.suggested.supplierId &&
-        card.items.some(item => item.productId === suggestion.suggested.productId)
-    );
+    if (String(suggestion.status || '').toLowerCase() !== 'accepted') return undefined;
+    return pendingMaterialCards.find((card) => card.sourceUserSuggestionId === suggestion.id);
   };
-  const customerSuggestionsForDisplay = (job?.userMaterialSuggestions || []).filter(suggestion => {
-    if (suggestion.status === 'pending') return true;
-    if (suggestion.status === 'accepted') return !!getPendingOrderForAcceptedSuggestion(suggestion);
+  const customerSuggestionsForDisplay = (job?.userMaterialSuggestions || []).filter((suggestion) => {
+    const st = String(suggestion.status || '').toLowerCase();
+    if (st === 'rejected') return Boolean(suggestion.withdrawnAfterAccept);
+    if (st === 'pending') return true;
+    if (st === 'accepted') return !!getPendingOrderForAcceptedSuggestion(suggestion);
     return false;
   });
   const draftCardsByStore = materialsBuilder.reduce((acc, material) => {
@@ -782,7 +838,7 @@ export default function ProviderJobDetail() {
           job={job}
           materialRequests={materialRequests}
           paidBatches={paidMaterialBatches}
-          pendingOrders={pendingMaterialCards}
+          pendingOrders={pendingProviderMaterialCardsOnly}
           draftCardsByStore={draftCardsByStore}
           hasDraftMaterials={hasDraftMaterials}
           hasSubmittedMaterialRequests={hasSubmittedMaterialRequests}
@@ -795,10 +851,14 @@ export default function ProviderJobDetail() {
           materialsBuilder={materialsBuilder}
           draftMrFromApi={draftMrFromApi}
           onNavigateProfile={() => navigate('/provider/profile')}
-          onAddMaterials={() => setAddMaterialsOpen(true)}
+          onAddMaterials={() => navigate(`/provider/jobs/${job.id}/materials/browse`)}
           onSubmitMaterials={handleSubmitMaterials}
           onAcceptSuggestion={handleAcceptUserSuggestion}
           onRejectSuggestion={handleRejectUserSuggestion}
+          onWithdrawAcceptedSuggestion={handleWithdrawAcceptedSuggestion}
+          onPurgeWithdrawnSuggestion={handlePurgeWithdrawnSuggestion}
+          onProviderCancelBatch={handleProviderCancelBatch}
+          onDismissMaterialBatch={handleDismissMaterialBatch}
         />
 
         {/* Communication */}
@@ -919,31 +979,6 @@ export default function ProviderJobDetail() {
           </div>
         )}
 
-        {/* Add Materials Modal */}
-        <AddMaterialsModal
-          open={addMaterialsOpen}
-          onOpenChange={setAddMaterialsOpen}
-          jobLocation={job.location ?? undefined}
-          jobCategory={job.category}
-          existingMaterials={materialsBuilder}
-          onAddMaterials={(mats) => {
-            setMaterialsBuilder(mats);
-            if (!job?.id) return;
-            void createMaterialRequestDraft({ jobId: job.id, items: mats })
-              .then(() =>
-                queryClient.invalidateQueries({ queryKey: queryKeys.materialRequests.job(jobId) })
-              )
-              .catch((err: unknown) =>
-                toast({
-                  title: 'Could not save draft',
-                  description: err instanceof Error ? err.message : 'Try again.',
-                  variant: 'destructive',
-                })
-              );
-          }}
-        />
-
-        {/* Payment Details Modal */}
         <Dialog open={paymentDetailsOpen} onOpenChange={setPaymentDetailsOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>

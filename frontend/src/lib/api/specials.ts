@@ -43,6 +43,8 @@ function providerToDeliveryCard(p: Provider): DeliveryProvider {
     estimatedTime: p.responseTime || '—',
     vehicleType: undefined,
     rating: p.rating,
+    phone: p.phone,
+    email: p.email,
   };
 }
 

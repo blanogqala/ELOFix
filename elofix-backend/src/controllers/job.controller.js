@@ -249,6 +249,58 @@ async function payForStoreMaterials(req, res) {
   res.json({ success: true, job });
 }
 
+async function customerRejectMaterialBatch(req, res) {
+  const role = String(req.user?.role || "");
+  if (role !== "CUSTOMER") throw new AppError("Only the customer can reject this batch", 403);
+  const job = await jobService.customerRejectProviderMaterialBatch(
+    req.params.id,
+    req.params.orderId,
+    req.user.userId
+  );
+  res.json({ success: true, job });
+}
+
+async function providerCancelMaterialBatch(req, res) {
+  const role = String(req.user?.role || "");
+  if (role !== "PROVIDER") throw new AppError("Only the provider can cancel this batch", 403);
+  const job = await jobService.providerCancelProviderMaterialBatch(
+    req.params.id,
+    req.params.orderId,
+    req.user.userId
+  );
+  res.json({ success: true, job });
+}
+
+async function dismissMaterialBatch(req, res) {
+  const job = await jobService.dismissMaterialBatch(
+    req.params.id,
+    req.params.orderId,
+    req.user.userId,
+    String(req.user?.role || "")
+  );
+  res.json({ success: true, job });
+}
+
+async function withdrawAcceptedUserSuggestion(req, res) {
+  const job = await jobService.withdrawAcceptedUserMaterialSuggestion(
+    req.params.id,
+    req.params.suggestionId,
+    req.user.userId,
+    String(req.user?.role || "")
+  );
+  res.json({ success: true, job });
+}
+
+async function purgeWithdrawnUserSuggestion(req, res) {
+  const job = await jobService.purgeWithdrawnUserMaterialSuggestion(
+    req.params.id,
+    req.params.suggestionId,
+    req.user.userId,
+    String(req.user?.role || "")
+  );
+  res.json({ success: true, job });
+}
+
 async function updateJobStatus(req, res) {
   const id = String(req.params.id || "").trim();
   if (!UUID_RE.test(id)) {
@@ -330,6 +382,11 @@ module.exports = {
   rejectStoreOrderDelivery,
   payStoreOrderDelivery,
   payForStoreMaterials,
+  customerRejectMaterialBatch,
+  providerCancelMaterialBatch,
+  dismissMaterialBatch,
+  withdrawAcceptedUserSuggestion,
+  purgeWithdrawnUserSuggestion,
   updateJobStatus,
   releaseEscrowPayment,
   createLaborInvoice,

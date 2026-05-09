@@ -237,6 +237,8 @@ export interface Product {
 export interface Supplier {
   id: string;
   name: string;
+  /** Org-level branches (admin dashboard, supplier profile). Catalog lives per branch. */
+  branches?: SupplierBranchProfile[];
   /** Brand + branch label from API when set (e.g. "Build It - Bellville"). */
   displayName?: string;
   brandName?: string;
@@ -426,6 +428,10 @@ export interface UserMaterialSuggestion {
   suggested: MaterialLine;
   status: 'pending' | 'accepted' | 'rejected';
   createdAt: string;
+  /** Set when suggestion was withdrawn after acceptance (before payment); allows purge UX. */
+  withdrawnAfterAccept?: boolean;
+  withdrawnAt?: string;
+  withdrawnBy?: 'customer' | 'provider';
 }
 
 export interface MaterialPayment {
@@ -524,6 +530,9 @@ export interface JobStoreOrder {
   deliveryInvoiceId?: string;
   createdAt: string;
   deliveryRequest?: StoreOrderDeliveryRequest;
+  /** Provider list rejected by customer, or cancelled by provider — removable after dismiss. */
+  materialBatchResolution?: 'rejected_by_customer' | 'cancelled_by_provider';
+  materialBatchRejectedAt?: string;
 }
 
 /** DB-backed material purchase order linked to a job (customer paid → supplier fulfills) */
@@ -751,6 +760,9 @@ export interface DeliveryProvider {
   vehicleType?: string;
   numberPlate?: string;
   rating?: number;
+  /** From courier provider profile — for customer contact on provider delivery */
+  phone?: string;
+  email?: string;
 }
 
 // Material Order (standalone, not attached to a job)

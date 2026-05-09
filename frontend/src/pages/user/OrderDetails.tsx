@@ -23,7 +23,7 @@ import {
   payStoreOrderDelivery,
 } from '@/lib/api/jobs';
 import { getSavedCards, getInvoiceById } from '@/lib/api/payments';
-import { DeliveryProvider, SavedCard, MaterialOrder } from '@/types';
+import { DeliveryProvider, SavedCard, MaterialOrder, Supplier } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
@@ -119,6 +119,28 @@ function mergeTrackingFields(
         : undefined,
     deliveryConfirmed: Boolean(mo.deliveryConfirmed),
   };
+}
+
+/** Fill store + courier contact from listings when API row is sparse */
+function enrichOrderContact(
+  order: NormalizedOrder,
+  supplier: Supplier | undefined,
+  provider: DeliveryProvider | null | undefined
+): NormalizedOrder {
+  const next = { ...order };
+  if (supplier) {
+    if (!next.supplierPhone && supplier.phone) next.supplierPhone = supplier.phone;
+    if (!next.branchContactEmail && supplier.linkedUserEmail) {
+      next.branchContactEmail = supplier.linkedUserEmail || undefined;
+    }
+    if (!next.supplierAddress && supplier.address) next.supplierAddress = supplier.address;
+  }
+  if (provider) {
+    if (!next.providerName) next.providerName = provider.name;
+    if (!next.providerPhone && provider.phone) next.providerPhone = provider.phone;
+    if (!next.providerEmail && provider.email) next.providerEmail = provider.email;
+  }
+  return next;
 }
 
 export default function OrderDetails() {
@@ -234,13 +256,21 @@ export default function OrderDetails() {
           invoiceId: found.invoiceId,
           deliveryInvoiceId: found.deliveryInvoiceId,
           providerName: provider?.name,
+          providerPhone: provider?.phone,
+          providerEmail: provider?.email,
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: typeof (found as { jobId?: string }).jobId === 'string' ? (found as { jobId?: string }).jobId : undefined,
         };
-        setOrder(mergeTrackingFields(normalized, found as unknown as Record<string, unknown>));
-        setJobContext(null);
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === found.storeId);
+        setOrder(
+          enrichOrderContact(
+            mergeTrackingFields(normalized, found as unknown as Record<string, unknown>),
+            supplier,
+            provider ?? undefined
+          )
+        );
+        setJobContext(null);
         const f = found as MaterialOrder & {
           branchHasDelivery?: boolean;
           branchDeliveryFee?: number;
@@ -287,19 +317,25 @@ export default function OrderDetails() {
           invoiceId: storeOrder.invoiceId,
           deliveryInvoiceId: storeOrder.deliveryInvoiceId,
           providerName: provider?.name,
+          providerPhone: provider?.phone,
+          providerEmail: provider?.email,
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: job.id,
           storeId: storeOrder.storeId,
         };
         const moRow = await getMaterialOrderById(effectiveOrderId);
-        setOrder(
-          mergeTrackingFields(normalized, moRow as unknown as Record<string, unknown>, {
-            destinationCoords: job.location?.coordinates ?? null,
-          })
-        );
-        setJobContext({ jobId: job.id, storeId: storeOrder.storeId });
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === storeOrder.storeId);
+        setOrder(
+          enrichOrderContact(
+            mergeTrackingFields(normalized, moRow as unknown as Record<string, unknown>, {
+              destinationCoords: job.location?.coordinates ?? null,
+            }),
+            supplier,
+            provider ?? undefined
+          )
+        );
+        setJobContext({ jobId: job.id, storeId: storeOrder.storeId });
         const m = moRow as MaterialOrder | null;
         setStoreHasDelivery(
           m && typeof m.branchHasDelivery === 'boolean' ? m.branchHasDelivery : supplier?.hasDelivery ?? false
@@ -453,8 +489,8 @@ export default function OrderDetails() {
               <tr>
                 <td>${item.description}${item.supplierName ? ` (${item.supplierName})` : ''}</td>
                 <td>${item.quantity}</td>
-                <td>$${item.unitPrice.toFixed(2)}</td>
-                <td>$${item.total.toFixed(2)}</td>
+                <td>${formatCurrency(item.unitPrice, { decimals: 2 })}</td>
+                <td>${formatCurrency(item.total, { decimals: 2 })}</td>
               </tr>
             `).join('')}
           </tbody>

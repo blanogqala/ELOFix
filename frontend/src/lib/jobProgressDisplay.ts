@@ -57,11 +57,20 @@ export function dedupeStoreOrders(storeOrders: Job['storeOrders']): NonNullable<
   });
 }
 
+function isDeadJobStoreOrder(order: NonNullable<Job['storeOrders']>[number]): boolean {
+  const r = order.materialBatchResolution;
+  return r === 'rejected_by_customer' || r === 'cancelled_by_provider';
+}
+
+function activeDedupedStoreOrders(storeOrders: Job['storeOrders']): NonNullable<Job['storeOrders']> {
+  return dedupeStoreOrders(storeOrders).filter((o) => !isDeadJobStoreOrder(o));
+}
+
 /**
- * Aggregate material payment: all store checkout batches paid, or legacy materialPayments per supplier.
+ * Aggregate material payment: all **active** store checkout batches paid, or legacy materialPayments per supplier.
  */
 export function allMaterialsPaidAggregate(job: Job): boolean {
-  const orders = dedupeStoreOrders(job.storeOrders);
+  const orders = activeDedupedStoreOrders(job.storeOrders);
   if (orders.length > 0) {
     return orders.every((o) => o.payment?.materialsPaid === true);
   }

@@ -18,6 +18,7 @@ import {
   Navigation,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
 import { categoryKeysMatch } from '@/lib/categoryKey';
 import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
 
@@ -330,7 +331,7 @@ export function Step4MaterialSelection({
                 <ShoppingCart className="h-5 w-5" />
                 Your Materials
               </h3>
-              <span className="text-lg font-bold">${materialsTotal.toFixed(2)}</span>
+              <span className="text-lg font-bold">{formatCurrency(materialsTotal, { decimals: 2 })}</span>
             </div>
             
             {Object.entries(materialsByStore).map(([storeId, store]) => (
@@ -347,7 +348,7 @@ export function Step4MaterialSelection({
                           )}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          ${m.unitPrice}/{m.unit}
+                          {formatCurrency(m.unitPrice, { decimals: 2 })}/{m.unit}
                         </p>
                       </div>
                       <div className="flex items-center gap-1">
@@ -376,7 +377,7 @@ export function Step4MaterialSelection({
                         </Button>
                       </div>
                       <p className="text-sm font-medium w-16 text-right">
-                        ${(m.qty * m.unitPrice).toFixed(2)}
+                        {formatCurrency(m.qty * m.unitPrice, { decimals: 2 })}
                       </p>
                       <Button
                         size="icon"
@@ -394,7 +395,7 @@ export function Step4MaterialSelection({
                   <div className="flex justify-between text-sm pt-1">
                     <span className="text-muted-foreground">Store subtotal</span>
                     <span className="font-medium">
-                      ${store.items.reduce((sum, m) => sum + m.qty * m.unitPrice, 0).toFixed(2)}
+                      {formatCurrency(store.items.reduce((sum, m) => sum + m.qty * m.unitPrice, 0), { decimals: 2 })}
                     </span>
                   </div>
                 </div>
@@ -457,7 +458,7 @@ export function Step4MaterialSelection({
               {selectedSupplier.hasDelivery && (
                 <p className="text-sm text-muted-foreground flex items-center gap-1">
                   <Truck className="h-3 w-3" />
-                  Delivery available (${selectedSupplier.deliveryFee})
+                  Delivery available ({formatCurrency(selectedSupplier.deliveryFee ?? 0, { decimals: 2 })})
                 </p>
               )}
             </div>
@@ -520,7 +521,7 @@ export function Step4MaterialSelection({
                       )}
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      ${product.price}/{product.unit} • {product.qualityTier} quality
+                      {formatCurrency(product.price, { decimals: 2 })}/{product.unit} • {product.qualityTier} quality
                     </p>
                   </div>
 
@@ -579,7 +580,7 @@ export function Step4MaterialSelection({
                   {materials.length} items from {Object.keys(materialsByStore).length} store(s)
                 </p>
               </div>
-              <p className="text-xl font-bold">${materialsTotal.toFixed(2)}</p>
+              <p className="text-xl font-bold">{formatCurrency(materialsTotal, { decimals: 2 })}</p>
             </div>
           </div>
         )}
@@ -648,7 +649,7 @@ export function Step4MaterialSelection({
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm">{product.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {product.supplier.name} • ${product.price}/{product.unit} • {product.category}
+                    {product.supplier.name} • {formatCurrency(product.price, { decimals: 2 })}/{product.unit} • {product.category}
                   </p>
                 </div>
                 {inCart ? (
