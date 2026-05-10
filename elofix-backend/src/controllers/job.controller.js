@@ -4,6 +4,10 @@ const jobService = require("../services/job.service");
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function requestActor(req) {
+  return { userId: req.user?.userId, role: req.user?.role };
+}
+
 async function uploadJobImage(req, res) {
   if (!req.file) {
     throw new AppError("File is required", 400);
@@ -200,32 +204,59 @@ async function confirmJobCompletion(req, res) {
 }
 
 async function setStoreDeliveryOption(req, res) {
-  const job = await jobService.setStoreDeliveryOption(req.params.id, req.params.storeId, req.body || {});
+  const job = await jobService.setStoreDeliveryOption(
+    req.params.id,
+    req.params.storeId,
+    req.body || {},
+    requestActor(req)
+  );
   res.json({ success: true, job });
 }
 
 async function approveStoreDeliveryRequest(req, res) {
-  const job = await jobService.approveStoreDeliveryRequest(req.params.id, req.params.storeId);
+  const job = await jobService.approveStoreDeliveryRequest(
+    req.params.id,
+    req.params.storeId,
+    requestActor(req)
+  );
   res.json({ success: true, job });
 }
 
 async function updateStoreOrderDeliveryStatus(req, res) {
-  const job = await jobService.updateStoreOrderDeliveryStatus(req.params.id, req.params.storeId, req.body?.status);
+  const job = await jobService.updateStoreOrderDeliveryStatus(
+    req.params.id,
+    req.params.storeId,
+    req.body?.status,
+    requestActor(req)
+  );
   res.json({ success: true, job });
 }
 
 async function updateStoreOrderDelivery(req, res) {
-  const job = await jobService.updateStoreOrderDelivery(req.params.id, req.params.storeId, req.body || {});
+  const job = await jobService.updateStoreOrderDelivery(
+    req.params.id,
+    req.params.storeId,
+    req.body || {},
+    requestActor(req)
+  );
   res.json({ success: true, job });
 }
 
 async function approveStoreOrderDelivery(req, res) {
-  const job = await jobService.approveStoreOrderDelivery(req.params.id, req.params.storeId);
+  const job = await jobService.approveStoreOrderDelivery(
+    req.params.id,
+    req.params.storeId,
+    requestActor(req)
+  );
   res.json({ success: true, job });
 }
 
 async function rejectStoreOrderDelivery(req, res) {
-  const job = await jobService.rejectStoreOrderDelivery(req.params.id, req.params.storeId);
+  const job = await jobService.rejectStoreOrderDelivery(
+    req.params.id,
+    req.params.storeId,
+    requestActor(req)
+  );
   res.json({ success: true, job });
 }
 
@@ -234,7 +265,8 @@ async function payStoreOrderDelivery(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body?.fee
+    req.body?.fee,
+    requestActor(req)
   );
   res.json({ success: true, job });
 }
@@ -244,7 +276,8 @@ async function payForStoreMaterials(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body || {}
+    req.body || {},
+    requestActor(req)
   );
   res.json({ success: true, job });
 }

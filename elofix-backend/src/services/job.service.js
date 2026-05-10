@@ -1403,9 +1403,18 @@ function ensureStoreOrder(meta, storeId, fallback) {
   return { index: meta.storeOrders.length - 1, order: created };
 }
 
-async function setStoreDeliveryOption(jobId, storeId, params) {
+function assertCustomerJobMutationAllowed(job, actor = {}) {
+  const role = String(actor.role || "").toUpperCase();
+  if (role === "ADMIN") return;
+  if (role !== "CUSTOMER" || String(job.customerId || "") !== String(actor.userId || "")) {
+    throw new AppError("Forbidden", 403);
+  }
+}
+
+async function setStoreDeliveryOption(jobId, storeId, params, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerJobMutationAllowed(job, actor);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1431,17 +1440,18 @@ async function setStoreDeliveryOption(jobId, storeId, params) {
   return enriched;
 }
 
-async function approveStoreDeliveryRequest(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" });
+async function approveStoreDeliveryRequest(jobId, storeId, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" }, actor);
 }
 
-async function updateStoreOrderDeliveryStatus(jobId, storeId, status) {
-  return updateStoreOrderDelivery(jobId, storeId, { status });
+async function updateStoreOrderDeliveryStatus(jobId, storeId, status, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status }, actor);
 }
 
-async function updateStoreOrderDelivery(jobId, storeId, updates) {
+async function updateStoreOrderDelivery(jobId, storeId, updates, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerJobMutationAllowed(job, actor);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1471,17 +1481,18 @@ async function updateStoreOrderDelivery(jobId, storeId, updates) {
   return enriched;
 }
 
-async function approveStoreOrderDelivery(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" });
+async function approveStoreOrderDelivery(jobId, storeId, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" }, actor);
 }
 
-async function rejectStoreOrderDelivery(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" });
+async function rejectStoreOrderDelivery(jobId, storeId, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" }, actor);
 }
 
-async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
+async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerJobMutationAllowed(job, actor);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1512,9 +1523,10 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
   return enriched;
 }
 
-async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
+async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerJobMutationAllowed(job, actor);
 
   const metaPeek = await getJobMeta(jobId);
   const storeOrders = Array.isArray(metaPeek.storeOrders) ? metaPeek.storeOrders : [];

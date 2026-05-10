@@ -551,13 +551,22 @@ async function getMaterialOrderById(orderId) {
   return base;
 }
 
-async function updateMaterialOrderDelivery(orderId, updates = {}) {
+function assertCustomerDeliveryMutationAllowed(row, actorUserId, actorRole) {
+  const role = String(actorRole || "").toUpperCase();
+  if (role === "ADMIN") return;
+  if (role !== "CUSTOMER" || String(row.userId || "") !== String(actorUserId || "")) {
+    throw new AppError("Forbidden", 403);
+  }
+}
+
+async function updateMaterialOrderDelivery(orderId, updates = {}, actorUserId, actorRole) {
   return prisma.$transaction(
     async (tx) => {
       const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row || !row.payload || typeof row.payload !== "object") {
         throw new AppError("Material order not found", 404);
       }
+      assertCustomerDeliveryMutationAllowed(row, actorUserId, actorRole);
       const current = row.payload;
       const nextDelivery = {
         ...(current.delivery || {}),
@@ -592,21 +601,22 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
   );
 }
 
-async function approveMaterialOrderDelivery(orderId) {
-  return updateMaterialOrderDelivery(orderId, { status: "Approved" });
+async function approveMaterialOrderDelivery(orderId, actorUserId, actorRole) {
+  return updateMaterialOrderDelivery(orderId, { status: "Approved" }, actorUserId, actorRole);
 }
 
-async function rejectMaterialOrderDelivery(orderId) {
-  return updateMaterialOrderDelivery(orderId, { status: "Rejected" });
+async function rejectMaterialOrderDelivery(orderId, actorUserId, actorRole) {
+  return updateMaterialOrderDelivery(orderId, { status: "Rejected" }, actorUserId, actorRole);
 }
 
-async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
+async function payMaterialOrderDelivery(orderId, cardLast4, fee, actorUserId, actorRole) {
   return prisma.$transaction(
     async (tx) => {
       const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row || !row.payload || typeof row.payload !== "object") {
         throw new AppError("Material order not found", 404);
       }
+      assertCustomerDeliveryMutationAllowed(row, actorUserId, actorRole);
       if (String(row.fulfillmentStatus || "").toUpperCase() === "COMPLETED") {
         throw new AppError("Cannot attach payment to completed order", 400);
       }
@@ -624,7 +634,7 @@ async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
         ...current,
         deliveryFee: safeFee,
         deliveryStatus: "processing",
-        payment: { ...(current.payment || {}), materialsPaid: true, deliveryPaid: true },
+        payment: { ...(current.payment || {}), deliveryPaid: true },
         delivery: { ...(current.delivery || {}), fee: safeFee, status: "Processing" },
         deliveryInvoiceId: `INV-DEL-${Date.now()}`,
       };
@@ -638,11 +648,11 @@ async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
   );
 }
 
-async function updateMaterialOrderDeliveryStatus(orderId, status) {
+async function updateMaterialOrderDeliveryStatus(orderId, status, actorUserId, actorRole) {
   let mapped = "Processing";
   if (status === "delivered") mapped = "Delivered";
   else if (status === "out_for_delivery") mapped = "InProgress";
-  return updateMaterialOrderDelivery(orderId, { status: mapped });
+  return updateMaterialOrderDelivery(orderId, { status: mapped }, actorUserId, actorRole);
 }
 
 const FULFILLMENT_ORDER = [
