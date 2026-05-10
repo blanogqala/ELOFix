@@ -1,7 +1,7 @@
 const express = require("express");
 const jobController = require("../controllers/job.controller");
 const asyncHandler = require("../middleware/asyncHandler");
-const { authenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
 const financialIdem = require("../middleware/financialIdempotency.middleware");
 const { uploadJobImage } = require("../middleware/upload.middleware");
 
@@ -50,6 +50,7 @@ router.get("/:id/invoices/labor", authenticate, asyncHandler(jobController.getLa
 router.post(
   "/:id/escrow/release",
   authenticate,
+  authorizeRoles(["ADMIN"]),
   financialIdem.attachFinancialRequestFingerprint,
   financialIdem.requireIdempotencyKey,
   asyncHandler(jobController.releaseEscrowPayment)
