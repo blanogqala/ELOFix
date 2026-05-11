@@ -2,7 +2,26 @@ const materialOrderService = require("../services/materialOrder.service");
 const jobService = require("../services/job.service");
 const supplierService = require("../services/supplier.service");
 const prisma = require("../config/prisma");
+const AppError = require("../utils/AppError");
 const { materialOrderBelongsToSupplierStore } = require("../utils/materialOrderSupplier.util");
+
+async function assertCustomerDeliveryMutationAllowed(orderId, user) {
+  if (user?.role === "ADMIN") return;
+  if (user?.role !== "CUSTOMER") {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const row = await prisma.materialOrder.findUnique({
+    where: { id: String(orderId || "") },
+    select: { userId: true },
+  });
+  if (!row) {
+    throw new AppError("Material order not found", 404);
+  }
+  if (String(row.userId) !== String(user.userId)) {
+    throw new AppError("Forbidden", 403);
+  }
+}
 
 async function listOrdersQuery(req, res) {
   const supplierIdQ = req.query.supplierId;
@@ -127,26 +146,31 @@ async function createMaterialOrder(req, res) {
 }
 
 async function updateMaterialOrderDelivery(req, res) {
+  await assertCustomerDeliveryMutationAllowed(req.params.id, req.user);
   const order = await materialOrderService.updateMaterialOrderDelivery(req.params.id, req.body || {});
   res.json({ success: true, order });
 }
 
 async function approveMaterialOrderDelivery(req, res) {
+  await assertCustomerDeliveryMutationAllowed(req.params.id, req.user);
   const order = await materialOrderService.approveMaterialOrderDelivery(req.params.id);
   res.json({ success: true, order });
 }
 
 async function rejectMaterialOrderDelivery(req, res) {
+  await assertCustomerDeliveryMutationAllowed(req.params.id, req.user);
   const order = await materialOrderService.rejectMaterialOrderDelivery(req.params.id);
   res.json({ success: true, order });
 }
 
 async function payMaterialOrderDelivery(req, res) {
+  await assertCustomerDeliveryMutationAllowed(req.params.id, req.user);
   const order = await materialOrderService.payMaterialOrderDelivery(req.params.id, req.body?.cardLast4, req.body?.fee);
   res.json({ success: true, order });
 }
 
 async function updateMaterialOrderDeliveryStatus(req, res) {
+  await assertCustomerDeliveryMutationAllowed(req.params.id, req.user);
   const order = await materialOrderService.updateMaterialOrderDeliveryStatus(req.params.id, req.body?.status);
   res.json({ success: true, order });
 }
