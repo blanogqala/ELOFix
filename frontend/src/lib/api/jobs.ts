@@ -32,6 +32,8 @@ interface BackendJob {
   id: string;
   title: string;
   category?: string;
+  /** Category step3Type from server (measurements vs items/issue). */
+  categoryStep3Type?: 'measurements' | 'items' | 'issue';
   description: string;
   price: number;
   status: JobStatus | string;
@@ -188,6 +190,7 @@ function toFrontendJob(job: BackendJob): Job {
     createdAt: job.createdAt,
     updatedAt: job.updatedAt ?? job.createdAt,
     requiresInspection,
+    categoryStep3Type: job.categoryStep3Type,
     totalPrice: numOrUndef(job.totalPrice),
     commissionAmount: numOrUndef(job.commissionAmount),
     providerAmount: numOrUndef(job.providerAmount),
@@ -508,7 +511,11 @@ export async function addJobNote(jobId: string, message: string, title?: string)
 
 export async function updateProviderRequirements(
   jobId: string,
-  updates: { measurements?: Partial<Measurements>; requirementNotes?: string }
+  updates: {
+    measurements?: Partial<Measurements>;
+    requirementNotes?: string;
+    requirementText?: string;
+  }
 ): Promise<Job> {
   const { data } = await apiClient.patch<BackendJobResponse>(`/jobs/${jobId}/provider-requirements`, updates);
   return ensureJob(data, 'update provider requirements');

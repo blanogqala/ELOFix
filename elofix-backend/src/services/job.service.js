@@ -20,6 +20,7 @@ const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
 const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+const { expandLaborPricingFromPaidJob } = require("./provider.service");
 
 const jobInclude = {
   customer: {
@@ -708,34 +709,63 @@ function hasMeaningfulMeasurements(measurements) {
   return Boolean(hasValues || hasMovingItems || hasIssue || hasCameraAssist);
 }
 
-function assertMeasurementsReadyForSpecification(job, meta) {
+async function resolveCategoryStep3(slug) {
+  let requiresInspection = true;
+  let step3Type = "measurements";
+  const key = String(slug || "").trim();
+  if (!key) {
+    return { requiresInspection, step3Type };
+  }
+  try {
+    const cat = await prisma.category.findUnique({
+      where: { id: key },
+      select: { requiresInspection: true, step3Type: true },
+    });
+    if (cat && typeof cat.requiresInspection === "boolean") {
+      requiresInspection = cat.requiresInspection;
+    }
+    if (cat && cat.step3Type) {
+      step3Type = String(cat.step3Type);
+    }
+  } catch {
+    // keep defaults
+  }
+  return { requiresInspection, step3Type };
+}
+
+async function assertSpecificationsReadyForPricing(job, meta) {
+  const slug = String(job?.category || "").trim();
+  const { step3Type } = await resolveCategoryStep3(slug);
   const providerAdjusted = meta?.providerAdjustedRequirements?.measurements;
   const mergedMeasurements = {
     ...(job?.measurements && typeof job.measurements === "object" ? job.measurements : {}),
     ...(providerAdjusted && typeof providerAdjusted === "object" ? providerAdjusted : {}),
   };
-  if (!hasMeaningfulMeasurements(mergedMeasurements)) {
-    throw new AppError("Measurements are required before completing specifications.", 400);
+
+  if (step3Type === "measurements") {
+    if (!hasMeaningfulMeasurements(mergedMeasurements)) {
+      throw new AppError("Measurements are required before completing specifications.", 400);
+    }
+    return;
   }
+
+  const reqText = String(meta?.providerAdjustedRequirements?.requirementText || "").trim();
+  if (reqText.length > 0) {
+    return;
+  }
+  if (hasMeaningfulMeasurements(mergedMeasurements)) {
+    return;
+  }
+  throw new AppError(
+    "Document the job requirements before inspection or pricing. Add details under job specifications.",
+    400
+  );
 }
 
 async function finalizeJob(job, meta) {
   const base = enrichJob(job, meta);
   const slug = String(base.category || "").trim();
-  let requiresInspection = true;
-  if (slug) {
-    try {
-      const cat = await prisma.category.findUnique({
-        where: { id: slug },
-        select: { requiresInspection: true },
-      });
-      if (cat && typeof cat.requiresInspection === "boolean") {
-        requiresInspection = cat.requiresInspection;
-      }
-    } catch {
-      requiresInspection = true;
-    }
-  }
+  const { requiresInspection, step3Type: categoryStep3Type } = await resolveCategoryStep3(slug);
   let jobMaterialOrders = [];
   if (job?.id) {
     try {
@@ -745,7 +775,7 @@ async function finalizeJob(job, meta) {
       console.error("getJobMaterialOrdersForJob", e);
     }
   }
-  return { ...base, requiresInspection, jobMaterialOrders };
+  return { ...base, requiresInspection, categoryStep3Type, jobMaterialOrders };
 }
 
 async function updateJobStatus(jobId, status) {
@@ -753,7 +783,7 @@ async function updateJobStatus(jobId, status) {
   if (!job) throw new AppError("Job not found", 404);
   if (String(status) === "INSPECTED") {
     const metaBefore = await getJobMeta(jobId);
-    assertMeasurementsReadyForSpecification(job, metaBefore);
+    await assertSpecificationsReadyForPricing(job, metaBefore);
   }
   const dbStatus = mapFrontendStatusToDb(status);
   let updatedJob = job;
@@ -864,7 +894,7 @@ async function submitServicePrice(jobId, amount, note) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   const metaBefore = await getJobMeta(jobId);
-  assertMeasurementsReadyForSpecification(job, metaBefore);
+  await assertSpecificationsReadyForPricing(job, metaBefore);
   const safeAmount = coerceNumber(amount);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
@@ -1064,13 +1094,23 @@ async function updateProviderRequirements(jobId, updates) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   const payload = updates && typeof updates === "object" ? updates : {};
-  const meta = await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    providerAdjustedRequirements: {
-      measurements: payload.measurements || undefined,
-      requirementNotes: payload.requirementNotes || "",
-    },
-  }));
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const prev =
+      m.providerAdjustedRequirements && typeof m.providerAdjustedRequirements === "object"
+        ? { ...m.providerAdjustedRequirements }
+        : {};
+    const next = { ...prev };
+    if (Object.prototype.hasOwnProperty.call(payload, "measurements")) {
+      next.measurements = payload.measurements;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "requirementNotes")) {
+      next.requirementNotes = String(payload.requirementNotes || "");
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "requirementText")) {
+      next.requirementText = String(payload.requirementText || "").trim();
+    }
+    return { ...m, providerAdjustedRequirements: next };
+  });
   return await finalizeJob(job, meta);
 }
 
@@ -1376,6 +1416,17 @@ async function confirmJobCompletion(jobId, rating, review) {
     });
     if (pRow2) {
       await syncProviderAggregateRating(pRow2.id);
+      const payoutMeta = await getJobMeta(jobId);
+      const grossLabor =
+        Number(updated.totalPrice) ||
+        Number(updated.price) ||
+        (payoutMeta.servicePayment && Number(payoutMeta.servicePayment.amount)) ||
+        (payoutMeta.servicePrice && Number(payoutMeta.servicePrice.amount)) ||
+        0;
+      const catSlug = String(updated.category || job.category || "").trim();
+      if (grossLabor > 0 && catSlug) {
+        await expandLaborPricingFromPaidJob(job.providerId, catSlug, grossLabor);
+      }
     }
   }
 

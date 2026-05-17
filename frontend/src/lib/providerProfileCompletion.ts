@@ -1,4 +1,5 @@
 import type { Provider } from '@/types';
+import { skillLaborPricingPassesOnboarding } from '@/lib/providerLaborPricing';
 
 export type ProviderProfileSection = 'profileInfo' | 'skillsAndPrices' | 'documents';
 
@@ -58,10 +59,7 @@ export function evaluateProviderCoreSections(
 
   const skillsAndPrices =
     selectedSkills.length > 0 &&
-    selectedSkills.every((s) => {
-      const pr = pricing[s];
-      return Boolean(pr && Number(pr.rate) > 0);
-    });
+    selectedSkills.every((s) => skillLaborPricingPassesOnboarding(pricing[s] ?? {}));
 
   const documents =
     hasDocUrl(provider?.documents?.idDoc) && hasDocUrl(provider?.documents?.proofOfSkill);

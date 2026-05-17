@@ -70,6 +70,13 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
+import {
+  categoryUsesMeasurementFields,
+  getJobCategoryStep3Type,
+  jobWorkflowSpecsCompleteForProvider,
+  measurementsHaveStructuredSpecs,
+  mergeJobMeasurementPayload,
+} from '@/lib/jobSpecifications';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
   if (!values) return undefined;
@@ -151,6 +158,7 @@ export default function ProviderJobDetail() {
   const [editRequirementsOpen, setEditRequirementsOpen] = useState(false);
   const [editMeasurements, setEditMeasurements] = useState<Partial<Measurements>>({});
   const [editRequirementNotes, setEditRequirementNotes] = useState('');
+  const [editRequirementText, setEditRequirementText] = useState('');
   const [editArea, setEditArea] = useState('');
   const [editLength, setEditLength] = useState('');
   const [editWidth, setEditWidth] = useState('');
@@ -421,46 +429,97 @@ export default function ProviderJobDetail() {
 
   const handleSaveRequirements = async () => {
     if (!job) return;
-    const parseOptional = (raw: string): number | undefined => {
-      const trimmed = raw.trim();
-      if (!trimmed) return undefined;
-      const parsed = Number(trimmed);
-      return Number.isFinite(parsed) ? parsed : undefined;
-    };
+    const step3 = getJobCategoryStep3Type(job);
 
-    const area = parseOptional(editArea);
-    const length = parseOptional(editLength);
-    const width = parseOptional(editWidth);
-    const hasCoreMeasurement = area !== undefined || length !== undefined || width !== undefined;
-    if (!hasCoreMeasurement) {
+    if (categoryUsesMeasurementFields(step3)) {
+      const parseOptional = (raw: string): number | undefined => {
+        const trimmed = raw.trim();
+        if (!trimmed) return undefined;
+        const parsed = Number(trimmed);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      };
+
+      const area = parseOptional(editArea);
+      const length = parseOptional(editLength);
+      const width = parseOptional(editWidth);
+
+      const nextValues: Record<string, number> = {
+        ...(job.providerAdjustedRequirements?.measurements?.values || {}),
+        ...(editMeasurements.values && typeof editMeasurements.values === 'object' ? editMeasurements.values : {}),
+      };
+      if (area !== undefined) nextValues.area = area;
+      if (length !== undefined) nextValues.length = length;
+      if (width !== undefined) nextValues.width = width;
+
+      const nextProviderMeasurements: Partial<Measurements> = {
+        ...editMeasurements,
+        source: editMeasurements.source || job.measurements?.source || 'MANUAL',
+        values: nextValues,
+      };
+
+      const mergedDraft = mergeJobMeasurementPayload({
+        ...job,
+        providerAdjustedRequirements: {
+          ...job.providerAdjustedRequirements,
+          measurements: nextProviderMeasurements,
+        },
+      });
+
+      if (!measurementsHaveStructuredSpecs(mergedDraft)) {
+        toast({
+          title: 'Missing measurements',
+          description:
+            'Add area, length, or width—or ensure guided / uploaded measurements are already on file—before saving.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      try {
+        await updateProviderRequirements(job.id, {
+          measurements: nextProviderMeasurements,
+          requirementNotes: editRequirementNotes.trim() || undefined,
+          requirementText: '',
+        });
+        await syncJobsAfterMutation();
+        setEditRequirementsOpen(false);
+        setEditMeasurements({});
+        setEditRequirementNotes('');
+        setEditRequirementText('');
+        setEditArea('');
+        setEditLength('');
+        setEditWidth('');
+        toast({ title: 'Requirements updated', description: 'Changes will be visible to the user.' });
+      } catch {
+        toast({ title: 'Error', description: 'Failed to update requirements.', variant: 'destructive' });
+      }
+      return;
+    }
+
+    if (!editRequirementText.trim()) {
       toast({
-        title: 'Missing measurements',
-        description: 'Enter at least one of Area, Length, or Width before saving.',
+        title: 'Add requirements',
+        description: 'Describe the agreed scope before saving.',
         variant: 'destructive',
       });
       return;
     }
 
-    const values: Record<string, number> = {
-      ...(area !== undefined ? { area } : {}),
-      ...(length !== undefined ? { length } : {}),
-      ...(width !== undefined ? { width } : {}),
-    };
-
     try {
       await updateProviderRequirements(job.id, {
-        measurements: {
-          ...editMeasurements,
-          values,
-        },
-        requirementNotes: editRequirementNotes || undefined,
+        requirementText: editRequirementText.trim(),
+        requirementNotes: editRequirementNotes.trim() || undefined,
       });
       await syncJobsAfterMutation();
       setEditRequirementsOpen(false);
       setEditMeasurements({});
       setEditRequirementNotes('');
+      setEditRequirementText('');
+      setEditArea('');
+      setEditLength('');
+      setEditWidth('');
       toast({ title: 'Requirements updated', description: 'Changes will be visible to the user.' });
-    } catch (e) {
+    } catch {
       toast({ title: 'Error', description: 'Failed to update requirements.', variant: 'destructive' });
     }
   };
@@ -468,16 +527,13 @@ export default function ProviderJobDetail() {
   const effectiveMeasurements = job
     ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
     : null;
-  const canProceedWithSpecs = Boolean(
-    effectiveMeasurements &&
-      ((effectiveMeasurements.values && Object.keys(effectiveMeasurements.values).length > 0) ||
-        (effectiveMeasurements.movingItems && effectiveMeasurements.movingItems.length > 0) ||
-        (effectiveMeasurements.plumbingIssue &&
-          (Boolean(effectiveMeasurements.plumbingIssue.type) ||
-            Boolean(effectiveMeasurements.plumbingIssue.description))) ||
-        effectiveMeasurements.cameraAssist)
-  );
+  const canProceedWithSpecs = job ? jobWorkflowSpecsCompleteForProvider(job) : false;
   const requirementNotes = job?.providerAdjustedRequirements?.requirementNotes;
+  const providerRequirementText = job?.providerAdjustedRequirements?.requirementText?.trim();
+  const specsSectionLabel =
+    job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+      ? 'Measurements & Requirements'
+      : 'Requirements';
   const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
   const isCancelledJob = job?.status === 'CANCELLED';
   const cancellationReasonText =
@@ -654,7 +710,7 @@ export default function ProviderJobDetail() {
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-muted-foreground text-sm">Measurements & Requirements</p>
+              <p className="text-muted-foreground text-sm">{specsSectionLabel}</p>
               <Button
                 variant="ghost"
                 size="sm"
@@ -662,11 +718,13 @@ export default function ProviderJobDetail() {
                 onClick={() => {
                   setEditRequirementsOpen(true);
                   setEditMeasurements(job.providerAdjustedRequirements?.measurements || {});
-                  const openValues = job.providerAdjustedRequirements?.measurements?.values || job.measurements?.values || {};
+                  const openValues =
+                    job.providerAdjustedRequirements?.measurements?.values || job.measurements?.values || {};
                   setEditArea(openValues.area != null ? String(openValues.area) : '');
                   setEditLength(openValues.length != null ? String(openValues.length) : '');
                   setEditWidth(openValues.width != null ? String(openValues.width) : '');
                   setEditRequirementNotes(job.providerAdjustedRequirements?.requirementNotes || '');
+                  setEditRequirementText(job.providerAdjustedRequirements?.requirementText || '');
                 }}
               >
                 <Pencil className="h-3 w-3 mr-1" />
@@ -703,8 +761,24 @@ export default function ProviderJobDetail() {
                       <span>{row.value}</span>
                     </div>
                   ))
-                ) : (
-                  <p className="text-muted-foreground">No measurement values provided.</p>
+                ) : providerRequirementText ? null : (
+                  <p className="text-muted-foreground">
+                    No measurement values provided.{!categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+                      ? ' Add the agreed scope below.'
+                      : ''}
+                  </p>
+                )}
+                {providerRequirementText && (
+                  <div
+                    className={cn(
+                      measurementRows.length > 0 || Boolean(effectiveMeasurements?.cameraAssist)
+                        ? 'pt-2 border-t border-border mt-2'
+                        : ''
+                    )}
+                  >
+                    <p className="text-muted-foreground text-xs mb-1">Confirmed requirements</p>
+                    <p className="whitespace-pre-wrap text-sm">{providerRequirementText}</p>
+                  </div>
                 )}
                 {requirementNotes && (
                   <div className="pt-2 border-t border-border mt-2">
@@ -764,7 +838,9 @@ export default function ProviderJobDetail() {
               <h3 className="font-medium">Submit Service Price</h3>
               {!canProceedWithSpecs && (
                 <p className="text-warning text-sm">
-                  You must add measurements before completing this step.
+                  {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+                    ? 'Add measurements (or guided dimensions) before completing this step.'
+                    : 'Document what was agreed (scope checklist, issue summary, or your requirement notes) before completing this step.'}
                 </p>
               )}
               <div className="flex gap-2 flex-wrap">
@@ -823,7 +899,9 @@ export default function ProviderJobDetail() {
               <p className="text-sm text-muted-foreground">Mark inspection done, then submit your service price.</p>
               {!canProceedWithSpecs && (
                 <p className="text-warning text-sm">
-                  You must add measurements before completing this step.
+                  {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+                    ? 'Add measurements (or guided dimensions) before completing this step.'
+                    : 'Document what was agreed (scope checklist, issue summary, or your requirement notes) before completing this step.'}
                 </p>
               )}
               <Button onClick={handleMarkInspectionDone} disabled={!canProceedWithSpecs}>
@@ -1052,56 +1130,91 @@ export default function ProviderJobDetail() {
           </DialogContent>
         </Dialog>
 
-        {/* Edit Requirements Dialog */}
+        {/* Edit specifications (category-aware: measurements vs requirements) */}
         <Dialog open={editRequirementsOpen} onOpenChange={setEditRequirementsOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Edit Requirements & Measurements</DialogTitle>
+              <DialogTitle>
+                {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+                  ? 'Edit measurements & notes'
+                  : 'Edit requirements & notes'}
+              </DialogTitle>
+              <DialogDescription>
+                {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+                  ? 'These dimensions help price area-based jobs. Customers see updates on their job.'
+                  : 'Capture the agreed scope for this category. Customers see updates on their job.'}
+              </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div>
-                <label className="text-sm font-medium">Area (m²)</label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  placeholder="e.g. 20"
-                  value={editArea}
-                  onChange={(e) => setEditArea(e.target.value)}
-                />
+            {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job)) ? (
+              <div className="space-y-4 py-4">
+                <div>
+                  <label className="text-sm font-medium">Area (m²)</label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="e.g. 20"
+                    value={editArea}
+                    onChange={(e) => setEditArea(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Length (m)</label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="e.g. 5"
+                    value={editLength}
+                    onChange={(e) => setEditLength(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Width (m)</label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="e.g. 4"
+                    value={editWidth}
+                    onChange={(e) => setEditWidth(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Additional notes (optional)</label>
+                  <Textarea
+                    placeholder="Dimensions, quantities, access, or extras…"
+                    value={editRequirementNotes}
+                    onChange={(e) => setEditRequirementNotes(e.target.value)}
+                    rows={3}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Enter area, length, or width—or keep existing guided / AI measurements from the customer.
+                  </p>
+                </div>
               </div>
-              <div>
-                <label className="text-sm font-medium">Length (m)</label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  placeholder="e.g. 5"
-                  value={editLength}
-                  onChange={(e) => setEditLength(e.target.value)}
-                />
+            ) : (
+              <div className="space-y-4 py-4">
+                <div>
+                  <label className="text-sm font-medium">Requirement</label>
+                  <Textarea
+                    placeholder="Describe the scope: items, quantities, access, exclusions…"
+                    value={editRequirementText}
+                    onChange={(e) => setEditRequirementText(e.target.value)}
+                    rows={5}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Additional notes (optional)</label>
+                  <Textarea
+                    placeholder="Fine print, timelines, contingencies…"
+                    value={editRequirementNotes}
+                    onChange={(e) => setEditRequirementNotes(e.target.value)}
+                    rows={3}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Requirement is mandatory before inspection/pricing unless the booking already lists full item or issue detail from step 3.
+                  </p>
+                </div>
               </div>
-              <div>
-                <label className="text-sm font-medium">Width (m)</label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  placeholder="e.g. 4"
-                  value={editWidth}
-                  onChange={(e) => setEditWidth(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Additional Notes (optional)</label>
-                <Textarea
-                  placeholder="Add notes about dimensions, quantities, or work requirements..."
-                  value={editRequirementNotes}
-                  onChange={e => setEditRequirementNotes(e.target.value)}
-                  rows={3}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Enter at least one of Area, Length, or Width.
-                </p>
-              </div>
-            </div>
+            )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditRequirementsOpen(false)}>Cancel</Button>
               <Button onClick={handleSaveRequirements}>Save</Button>

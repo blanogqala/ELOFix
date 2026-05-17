@@ -26,7 +26,11 @@ import {
   Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  formatServiceLaborEstimateDescription,
+  formatServiceLaborEstimateShort,
+  getServiceLaborEstimate,
+} from '@/lib/providerLaborPricing';
 
 const STEPS = [
   { id: 1, title: 'Category' },
@@ -428,8 +432,9 @@ export default function ServiceRequest() {
                     No providers are available for this category yet.
                   </div>
                 ) : providers.map((provider) => {
-                  const laborForCategory = provider.laborPricing[selectedCategory];
-                  const laborRate = laborForCategory?.rate;
+                  const est = getServiceLaborEstimate(provider, selectedCategory);
+                  const estimatePrimary = formatServiceLaborEstimateShort(est);
+                  const estimateHint = formatServiceLaborEstimateDescription(est);
                   return (
                   <div
                     key={provider.id}
@@ -475,14 +480,10 @@ export default function ServiceRequest() {
                           </span>
                         </div>
                       </div>
-                      <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
+                        <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
                         <div>
-                          <p className="text-lg font-semibold">
-                            {laborRate != null ? formatCurrency(laborRate) : 'N/A'}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            per {laborForCategory?.unit || 'job'} (estimate)
-                          </p>
+                          <p className="text-sm font-semibold text-primary">{estimatePrimary}</p>
+                          <p className="text-xs text-muted-foreground max-w-[220px] sm:max-w-xs sm:text-right leading-snug">{estimateHint}</p>
                         </div>
                         <div className="flex flex-wrap gap-2 sm:justify-end">
                           <Button size="sm" variant="outline" className="w-full whitespace-nowrap sm:w-auto" onClick={() => setSelectedProviderForModal(provider)}>
@@ -539,6 +540,7 @@ export default function ServiceRequest() {
         provider={selectedProviderForModal}
         open={!!selectedProviderForModal}
         onOpenChange={(open) => !open && setSelectedProviderForModal(null)}
+        selectedCategory={selectedCategory || undefined}
         onSelect={(providerId) => {
           setSelectedProvider(providerId);
           setSelectedProviderForModal(null);

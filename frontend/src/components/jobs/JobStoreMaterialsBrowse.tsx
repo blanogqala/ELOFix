@@ -396,8 +396,8 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                       type="button"
                       onClick={() => handleSelectSupplier(supplier)}
                       className={cn(
-                        'w-full flex items-start gap-4 p-4 rounded-xl border transition-all text-left',
-                        'border-border bg-card hover:border-primary/40 hover:bg-primary/[0.04]',
+                        'w-full flex items-start gap-4 p-4 rounded-xl border-2 transition-all text-left',
+                        'border-primary bg-card  hover:bg-card/80',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
                       )}
                     >
@@ -466,7 +466,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                   className="pl-10 h-11 rounded-xl bg-muted/40 border-transparent"
                 />
               </div>
-              <div className="w-full sm:w-52 shrink-0">
+              <div className="w-36 sm:w-52 shrink-0">
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                   <SelectTrigger className="h-11 rounded-xl bg-muted/40 border-transparent">
                     <SelectValue placeholder="Category" />
@@ -654,8 +654,8 @@ function ProductRowCart({
     <li className="flex h-full min-h-0 list-none">
       <div
         className={cn(
-          'flex h-full min-h-[260px] w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm ring-1 ring-border transition-[box-shadow,border-color]',
-          qty > 0 ? 'border-primary/45 ring-primary/25 shadow-md' : 'border-border hover:border-primary/25'
+          'flex h-full min-h-[260px] w-full flex-col overflow-hidden rounded-xl border-2 bg-card shadow-sm ring-1 ring-border transition-[box-shadow,border-color]',
+          qty > 0 ? 'border-primary ring-primary/25 shadow-md' : 'border-primary hover:border-primary'
         )}
       >
         <div className="relative aspect-square w-full shrink-0 bg-muted">
@@ -729,9 +729,9 @@ function ProductRowSuggest({
       <button
         type="button"
         className={cn(
-          'flex h-full min-h-[260px] w-full flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm ring-1 ring-border transition-all',
+          'flex h-full min-h-[260px] w-full flex-col overflow-hidden rounded-xl border-2 bg-card text-left shadow-sm ring-1 ring-border transition-all',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          selected ? 'border-primary ring-primary/30 shadow-md' : 'border-border hover:border-primary/30'
+          selected ? 'border-primary ring-primary/30 shadow-md' : 'border-primary hover:border-primary'
         )}
         onClick={onPick}
       >

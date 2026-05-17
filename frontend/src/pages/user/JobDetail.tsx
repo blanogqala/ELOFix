@@ -63,6 +63,7 @@ import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/jobProgressDisplay';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
+import { categoryUsesMeasurementFields, getJobCategoryStep3Type } from '@/lib/jobSpecifications';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
@@ -573,14 +574,17 @@ export default function JobDetail() {
     }) ||
     false;
   const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
+  const providerReqText = job?.providerAdjustedRequirements?.requirementText?.trim();
+  const specsCardTitle =
+    job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+      ? 'Measurements & Requirements'
+      : 'Requirements';
   const cancellationReasonText =
     (job?.cancellationDetails && job.cancellationDetails.trim()) ||
     (job?.cancellationReason && job.cancellationReason.trim()) ||
     'No reason provided';
 
-  // Infer completion readiness from provider-authored notes
-  const providerMarkedComplete = job?.status === 'IN_PROGRESS' && 
-    job?.jobNotes?.some(n => n.message.toLowerCase().includes('completed') || n.message.toLowerCase().includes('finished'));
+  const awaitingUserConfirmation = job?.status === 'AWAITING_CONFIRMATION';
 
   if (isLoading) {
     return (
@@ -646,15 +650,6 @@ export default function JobDetail() {
               >
                 <Ban className="mr-2 h-4 w-4" />
                 Cancel Job
-              </Button>
-            )}
-            {providerMarkedComplete && job.status === 'IN_PROGRESS' && (
-              <Button 
-                className="btn-accent h-9 flex-1 whitespace-nowrap sm:flex-initial"
-                onClick={() => setCompletionDialogOpen(true)}
-              >
-                <CheckCircle className="mr-2 h-4 w-4" />
-                Confirm Completion
               </Button>
             )}
           </div>
@@ -888,8 +883,9 @@ export default function JobDetail() {
               <CardHeader>
                 <CardTitle className="text-lg">Provider</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 {job.providerName ? (
+                  <>
                   <div 
                     className="flex items-center gap-4 cursor-pointer hover:bg-muted/50 p-2 rounded-lg -m-2 transition-colors"
                     onClick={() => setProviderModalOpen(true)}
@@ -916,6 +912,47 @@ export default function JobDetail() {
                       )}
                     </div>
                   </div>
+
+                    {awaitingUserConfirmation && (
+                      <div className="space-y-3 border-t pt-4">
+                        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                          <Clock className="h-5 w-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
+                          <div>
+                            <p className="font-medium text-sm">Waiting for your confirmation</p>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {job.providerName} has marked this job as complete. Confirm when you are satisfied with the work.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="flex-1"
+                            disabled={isActionPending}
+                            onClick={() => {
+                              setActiveTab('messages');
+                              toast({
+                                title: 'Message your provider',
+                                description: 'Use Messages to discuss any outstanding work before confirming completion.',
+                              });
+                            }}
+                          >
+                            No, work not complete
+                          </Button>
+                          <Button
+                            type="button"
+                            className="btn-accent flex-1"
+                            disabled={isActionPending}
+                            onClick={() => setCompletionDialogOpen(true)}
+                          >
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            Yes, work completed
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <p className="text-muted-foreground">No provider assigned yet</p>
                 )}
@@ -925,7 +962,7 @@ export default function JobDetail() {
             {/* Measurements / Requirements */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Measurements & Requirements</CardTitle>
+                <CardTitle className="text-lg">{specsCardTitle}</CardTitle>
               </CardHeader>
               <CardContent>
                 {effectiveMeasurements?.cameraAssist && (
@@ -968,7 +1005,19 @@ export default function JobDetail() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground">No measurement values provided.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+                      ? 'No measurement values provided.'
+                      : 'No checklist or issue details yet. Your provider may add a written requirement after inspection.'}
+                  </p>
+                )}
+                {providerReqText && (
+                  <div className="mt-4 min-w-0 pt-4 border-t border-border">
+                    <p className="text-sm text-muted-foreground mb-1">Provider-confirmed requirements</p>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
+                      {providerReqText}
+                    </p>
+                  </div>
                 )}
                 {job.providerAdjustedRequirements?.requirementNotes && (
                   <div className="mt-4 min-w-0 pt-4 border-t border-border">
@@ -1142,6 +1191,7 @@ export default function JobDetail() {
           provider={provider}
           open={providerModalOpen}
           onOpenChange={setProviderModalOpen}
+          selectedCategory={job.category}
         />
       )}
 

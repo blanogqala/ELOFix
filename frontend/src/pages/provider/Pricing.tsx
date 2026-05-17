@@ -5,21 +5,37 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { getProviderById, updateProviderPricing, updateProviderSkills } from '@/lib/api/providers';
+import { getProviderById, updateProvider } from '@/lib/api/providers';
 import { getCategories } from '@/lib/api/categories';
-import { Category, Provider } from '@/types';
-import { DollarSign, Plus, X, Save } from 'lucide-react';
+import type { Category, Provider, ProviderSettings } from '@/types';
+import { Banknote, X, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { validateSkillPricingDraft } from '@/lib/providerLaborPricing';
+
+const defaultSettings = (): ProviderSettings => ({
+  notifications: { jobRequests: true, payments: true, marketing: false },
+  availability: true,
+  businessHours: {
+    Monday: { open: '08:00', close: '17:00', enabled: true },
+    Tuesday: { open: '08:00', close: '17:00', enabled: true },
+    Wednesday: { open: '08:00', close: '17:00', enabled: true },
+    Thursday: { open: '08:00', close: '17:00', enabled: true },
+    Friday: { open: '08:00', close: '17:00', enabled: true },
+    Saturday: { open: '09:00', close: '13:00', enabled: false },
+    Sunday: { open: '09:00', close: '13:00', enabled: false },
+  },
+});
 
 export default function ProviderPricing() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [provider, setProvider] = useState<Provider | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [pricing, setPricing] = useState<Provider['laborPricing']>({});
+  const [settings, setSettings] = useState<ProviderSettings>(defaultSettings());
+  const [deliveryKmInput, setDeliveryKmInput] = useState('');
 
   const loadCategories = useCallback(async () => {
     try {
@@ -34,9 +50,15 @@ export default function ProviderPricing() {
     try {
       const providerData = await getProviderById(user.id);
       if (providerData) {
-        setProvider(providerData);
         setSelectedSkills(providerData.skills);
         setPricing(providerData.laborPricing);
+        const set = providerData.settings || defaultSettings();
+        setSettings(set);
+        setDeliveryKmInput(
+          set.deliveryRatePerKm != null && Number.isFinite(set.deliveryRatePerKm)
+            ? String(set.deliveryRatePerKm)
+            : ''
+        );
       }
     } catch (error) {
       console.error('Failed to load provider:', error);
@@ -54,38 +76,65 @@ export default function ProviderPricing() {
 
   const handleToggleSkill = (skillId: string) => {
     if (selectedSkills.includes(skillId)) {
-      setSelectedSkills(selectedSkills.filter(s => s !== skillId));
+      setSelectedSkills(selectedSkills.filter((s) => s !== skillId));
       const newPricing = { ...pricing };
       delete newPricing[skillId];
       setPricing(newPricing);
     } else {
       setSelectedSkills([...selectedSkills, skillId]);
-      setPricing({ ...pricing, [skillId]: { unit: 'hour', rate: 0 } });
+      setPricing({ ...pricing, [skillId]: {} });
     }
-  };
-
-  const handleUpdateRate = (skill: string, rate: number) => {
-    setPricing({
-      ...pricing,
-      [skill]: { ...pricing[skill], rate },
-    });
-  };
-
-  const handleUpdateUnit = (skill: string, unit: 'sqm' | 'hour' | 'job' | 'meter') => {
-    setPricing({
-      ...pricing,
-      [skill]: { ...pricing[skill], unit },
-    });
   };
 
   const handleSave = async () => {
     if (!user) return;
+    for (const skill of selectedSkills) {
+      const check = validateSkillPricingDraft(pricing[skill] ?? {});
+      if (!check.ok) {
+        toast({
+          title: 'Check your amounts',
+          description: `${categories.find((c) => c.id === skill)?.name ?? skill}: ${check.message}`,
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+    let deliveryPatch: number | null = null;
+    if (deliveryKmInput.trim() === '') {
+      deliveryPatch = null;
+    } else {
+      const pk = Number(deliveryKmInput.trim());
+      if (!Number.isFinite(pk) || pk < 0) {
+        toast({
+          title: 'Invalid delivery rate',
+          description: 'Rand per kilometre must be ≥ 0, or leave blank.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      deliveryPatch = pk;
+    }
+
     setIsSaving(true);
     try {
-      await updateProviderSkills(user.id, selectedSkills);
-      await updateProviderPricing(user.id, pricing);
-      toast({ title: 'Pricing saved', description: 'Your skills and rates have been updated.' });
-    } catch (error) {
+      const settingsOut = {
+        ...settings,
+        deliveryRatePerKm: deliveryPatch === null ? null : deliveryPatch,
+      } as ProviderSettings;
+
+      const next = await updateProvider(user.id, {
+        skills: selectedSkills,
+        laborPricing: pricing,
+        settings: settingsOut,
+      });
+      setSettings(next.settings || settingsOut);
+      setDeliveryKmInput(
+        next.settings?.deliveryRatePerKm != null && Number.isFinite(next.settings.deliveryRatePerKm)
+          ? String(next.settings.deliveryRatePerKm)
+          : ''
+      );
+      toast({ title: 'Saved', description: 'Skills and ZAR labour guide updated.' });
+    } catch {
       toast({ title: 'Error', description: 'Failed to save pricing.', variant: 'destructive' });
     } finally {
       setIsSaving(false);
@@ -109,7 +158,10 @@ export default function ProviderPricing() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Skills & Pricing</h1>
-            <p className="text-sm text-muted-foreground sm:text-base">Set your service rates for each skill</p>
+            <p className="text-sm text-muted-foreground sm:text-base">
+              Whole-job labour guide in Rand (customers see this on bookings). The Profile tab has the same editor with full
+              onboarding context.
+            </p>
           </div>
           <Button className="h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={handleSave} disabled={isSaving}>
             <Save className="mr-2 h-4 w-4" />
@@ -117,91 +169,104 @@ export default function ProviderPricing() {
           </Button>
         </div>
 
-        {/* Skill Selection */}
         <div className="card-elevated p-4 sm:p-6">
           <h3 className="mb-4 text-lg font-semibold sm:text-xl">Select Your Services</h3>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">
             {categories.map((category) => (
               <button
                 key={category.id}
+                type="button"
                 onClick={() => handleToggleSkill(category.id)}
                 className={cn(
-                  "p-4 rounded-lg border-2 transition-all text-center",
+                  'rounded-lg border-2 p-4 text-center transition-all',
                   selectedSkills.includes(category.id)
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-primary/30"
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/30'
                 )}
               >
-                <div className="text-2xl mb-1">{category.icon}</div>
+                <div className="mb-1 text-2xl">{category.icon}</div>
                 <p className="text-sm font-medium">{category.name}</p>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Pricing Table */}
         {selectedSkills.length > 0 && (
           <div className="card-elevated overflow-hidden">
-            <div className="border-b border-border p-4 sm:p-6">
-              <h3 className="text-lg font-semibold sm:text-xl">Set Your Rates</h3>
+            <div className="space-y-1 border-b border-border p-4 sm:p-6">
+              <h3 className="text-lg font-semibold sm:text-xl">Labour guide (whole job · ZAR)</h3>
               <p className="text-sm text-muted-foreground">
-                Define your pricing for each selected service
+                Lowest and highest labour for comparable jobs. Leave blank if you’re brand new—paid completions will expand the
+                range automatically.
               </p>
             </div>
 
             <div className="divide-y divide-border">
               {selectedSkills.map((skillId) => {
-                const category = categories.find(c => c.id === skillId);
-                const skillPricing = pricing[skillId] || { unit: 'hour', rate: 0 };
-
+                const category = categories.find((c) => c.id === skillId);
+                const sp = pricing[skillId] || {};
                 return (
                   <div key={skillId} className="p-4 sm:p-6">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                      <div className="flex min-w-0 flex-1 items-center gap-3">
-                        <span className="text-2xl">{category?.icon}</span>
-                        <div>
-                          <p className="font-medium">{category?.name}</p>
-                          <p className="text-xs text-muted-foreground">{category?.description}</p>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <span className="text-2xl">{category?.icon}</span>
+                          <div className="min-w-0">
+                            <p className="font-medium">{category?.name}</p>
+                            <p className="text-xs text-muted-foreground line-clamp-2">{category?.description}</p>
+                          </div>
                         </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                        <div className="flex items-center gap-2">
-                          <DollarSign className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <Input
-                            type="number"
-                            min="0"
-                            value={skillPricing.rate || ''}
-                            onChange={(e) => handleUpdateRate(skillId, parseFloat(e.target.value) || 0)}
-                            className="w-24 min-w-0"
-                            placeholder="Rate"
-                          />
-                        </div>
-
-                        <select
-                          value={skillPricing.unit}
-                          onChange={(e) => {
-                            const unit = e.target.value;
-                            if (unit === 'hour' || unit === 'sqm' || unit === 'job' || unit === 'meter') {
-                              handleUpdateUnit(skillId, unit);
-                            }
-                          }}
-                          className="input-field min-w-0 w-full max-w-[11rem] sm:w-28"
-                        >
-                          <option value="hour">per hour</option>
-                          <option value="sqm">per sqm</option>
-                          <option value="job">per job</option>
-                          <option value="meter">per meter</option>
-                        </select>
-
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="text-destructive"
+                          className="self-end text-destructive sm:self-auto"
+                          type="button"
                           onClick={() => handleToggleSkill(skillId)}
                         >
                           <X className="h-4 w-4" />
                         </Button>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
+                            <Banknote className="h-3 w-3" /> Lowest (job)
+                          </Label>
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            min={0}
+                            step={50}
+                            value={sp.jobFeeLow ?? ''}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setPricing((prev) => ({
+                                ...prev,
+                                [skillId]: { ...prev[skillId], jobFeeLow: raw === '' ? undefined : Number(raw) },
+                              }));
+                            }}
+                            placeholder="Optional"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
+                            <Banknote className="h-3 w-3" /> Highest (job)
+                          </Label>
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            min={0}
+                            step={50}
+                            value={sp.jobFeeHigh ?? ''}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setPricing((prev) => ({
+                                ...prev,
+                                [skillId]: { ...prev[skillId], jobFeeHigh: raw === '' ? undefined : Number(raw) },
+                              }));
+                            }}
+                            placeholder="Optional"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -211,15 +276,29 @@ export default function ProviderPricing() {
           </div>
         )}
 
+        {selectedSkills.includes('delivery') && (
+          <div className="card-elevated space-y-3 p-4 sm:p-6">
+            <h3 className="font-semibold">Driving / delivery (ZAR per km)</h3>
+            <p className="text-sm text-muted-foreground">Optional · multiplied by route distance once wired into booking flows.</p>
+            <Input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              value={deliveryKmInput}
+              onChange={(e) => setDeliveryKmInput(e.target.value)}
+              placeholder="e.g. 15"
+              className="max-w-xs"
+            />
+          </div>
+        )}
+
         {selectedSkills.length === 0 && (
           <div className="card-elevated p-12 text-center">
-            <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-              <DollarSign className="h-8 w-8 text-muted-foreground" />
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+              <Banknote className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h3 className="font-semibold mb-2">No services selected</h3>
-            <p className="text-muted-foreground text-sm">
-              Select the services you offer to set your pricing
-            </p>
+            <h3 className="mb-2 font-semibold">No services selected</h3>
+            <p className="text-sm text-muted-foreground">Select the trades you cover to declare Rand guidance.</p>
           </div>
         )}
       </div>

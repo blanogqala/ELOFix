@@ -92,6 +92,11 @@ model Provider {
   skills            String[]
   location          String    @default("UNKNOWN")
   bio               String?
+  /// Whole-job totals (Rand) provider reports or system expands from paid labor on jobs
+  lowestPaidJobRand  Decimal?  @db.Decimal(12, 2)
+  highestPaidJobRand Decimal?  @db.Decimal(12, 2)
+  /// Courier / delivery: rate charged per kilometer (Rand). Distance billing comes later.
+  deliveryRatePerKmRand Decimal? @db.Decimal(12, 2)
   /// Combined average: job reviews + material-order delivery ratings (see providerAggregateRating sync)
   rating            Float     @default(0)
   totalReviews      Int       @default(0)

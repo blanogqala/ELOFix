@@ -35,6 +35,7 @@ interface BackendUser {
   blocked?: boolean;
   reviewSubmittedAt?: string;
   supplierProfile?: SupplierAccountProfile | null;
+  completedLaborByCategory?: Provider['completedLaborByCategory'];
 }
 
 interface AuthResponse {
@@ -105,6 +106,11 @@ function toAuthUser(user: BackendUser): AuthUser {
       createdAt: user.createdAt ?? new Date().toISOString(),
       blocked: user.blocked,
       reviewSubmittedAt: user.reviewSubmittedAt,
+      ...(user.completedLaborByCategory &&
+      typeof user.completedLaborByCategory === 'object' &&
+      !Array.isArray(user.completedLaborByCategory)
+        ? { completedLaborByCategory: user.completedLaborByCategory }
+        : {}),
     };
   }
 

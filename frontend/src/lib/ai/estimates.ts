@@ -1,7 +1,7 @@
 // AI Module - Stubs for MVP
 // These functions simulate AI outputs. Replace with real AI calls later.
 
-import { Measurements, MaterialLine, Product, Provider } from '@/types';
+import { Measurements, MaterialLine, Product, Provider, ProviderLaborPricingEntry } from '@/types';
 
 /**
  * Simulate AI-based measurement estimation from images
@@ -129,42 +129,58 @@ export function recommendProviders(
 export function generateQuote(
   category: string,
   materials: MaterialLine[],
-  providerPricing: Record<string, { unit: string; rate: number }>,
+  providerPricing: Record<string, ProviderLaborPricingEntry>,
   measurements: Record<string, number>
 ): { materialsRange: { min: number; max: number }; laborRange: { min: number; max: number }; totalRange: { min: number; max: number } } {
   // Calculate materials cost
   const materialsTotal = materials.reduce((sum, m) => sum + (m.qty * m.unitPrice), 0);
   const materialsMin = materialsTotal * 0.95;
   const materialsMax = materialsTotal * 1.05;
-  
-  // Calculate labor cost
+
+  // Calculate labour (prefer whole-job ZAR range when present)
   const pricing = providerPricing[category];
   let laborBase = 0;
-  
+  let laborSpan = { minMul: 0.9, maxMul: 1.1 };
+
   if (pricing) {
-    laborBase = pricing.rate;
-    
+    const low = pricing.jobFeeLow != null ? Number(pricing.jobFeeLow) : Number.NaN;
+    const high = pricing.jobFeeHigh != null ? Number(pricing.jobFeeHigh) : Number.NaN;
+
+    if (Number.isFinite(low) && Number.isFinite(high) && low > 0 && high > 0 && low <= high) {
+      return {
+        materialsRange: { min: Math.round(materialsMin), max: Math.round(materialsMax) },
+        laborRange: { min: Math.round(low * 0.95), max: Math.round(high * 1.05) },
+        totalRange: {
+          min: Math.round(materialsMin + low * 0.95),
+          max: Math.round(materialsMax + high * 1.05),
+        },
+      };
+    }
+
+    laborBase = Number(pricing.rate || 0) || 0;
+
     if (pricing.unit === 'sqm' && measurements.area) {
       laborBase *= measurements.area;
     } else if (pricing.unit === 'hour') {
-      // Estimate hours based on area
       const estimatedHours = Math.ceil((measurements.area || 10) / 5);
       laborBase *= estimatedHours;
     }
-  } else {
-    // Fallback estimate
-    laborBase = (measurements.area || 10) * 25;
   }
-  
-  const laborMin = laborBase * 0.9;
-  const laborMax = laborBase * 1.1;
-  
+
+  if (laborBase <= 0 || !pricing) {
+    laborBase = (measurements.area || 10) * 25;
+    laborSpan = { minMul: 0.9, maxMul: 1.1 };
+  }
+
+  const laborMin = laborBase * laborSpan.minMul;
+  const laborMax = laborBase * laborSpan.maxMul;
+
   return {
     materialsRange: { min: Math.round(materialsMin), max: Math.round(materialsMax) },
     laborRange: { min: Math.round(laborMin), max: Math.round(laborMax) },
-    totalRange: { 
-      min: Math.round(materialsMin + laborMin), 
-      max: Math.round(materialsMax + laborMax) 
+    totalRange: {
+      min: Math.round(materialsMin + laborMin),
+      max: Math.round(materialsMax + laborMax),
     },
   };
 }

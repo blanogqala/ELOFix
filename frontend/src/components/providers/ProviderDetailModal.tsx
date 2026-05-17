@@ -7,6 +7,12 @@ import {
   ChevronLeft, ChevronRight, Image
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  formatServiceLaborEstimateDescription,
+  formatServiceLaborEstimateShort,
+  getServiceLaborEstimate,
+} from '@/lib/providerLaborPricing';
 import { getCategories } from '@/lib/api/categories';
 
 interface ProviderDetailModalProps {
@@ -35,7 +41,9 @@ export function ProviderDetailModal({
 
   if (!provider) return null;
 
-  const laborPricing = selectedCategory ? provider.laborPricing[selectedCategory] : null;
+  const labourEstimate = selectedCategory
+    ? getServiceLaborEstimate(provider, selectedCategory)
+    : { kind: 'none' as const };
   const categoryName = selectedCategory
     ? categories.find(c => c.id === selectedCategory)?.name || selectedCategory
     : null;
@@ -238,21 +246,28 @@ export function ProviderDetailModal({
           {/* Pricing & CTA */}
           {onSelect && (
             <div className="sticky bottom-0 bg-primary/20 pt-4 border-t border-border -mx-6 px-6 -mb-6 pb-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  {laborPricing ? (
-                    <>
-                      <p className="text-sm text-muted-foreground">Rate for this service</p>
-                      <p className="text-2xl font-bold text-primary">
-                        ${laborPricing.rate}
-                        <span className="text-sm font-normal text-muted-foreground">/{laborPricing.unit}</span>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Typical labour (this booking)</p>
+                  <p className="text-2xl font-bold text-primary">
+                    {selectedCategory ? formatServiceLaborEstimateShort(labourEstimate) : 'Select a category in the wizard'}
+                  </p>
+                  <p className="text-xs text-muted-foreground max-w-[320px]">
+                    {selectedCategory
+                      ? formatServiceLaborEstimateDescription(labourEstimate)
+                      : 'Open this provider from step 4 to see Rand guidance for your chosen service.'}
+                  </p>
+                  {provider.skills?.includes('delivery') &&
+                    provider.settings?.deliveryRatePerKm != null &&
+                    Number(provider.settings.deliveryRatePerKm) >= 0 && (
+                      <p className="text-xs text-muted-foreground pt-1">
+                        Trip / driving guide:{' '}
+                        <span className="font-medium">{formatCurrency(provider.settings.deliveryRatePerKm)}</span>/km · final fee uses
+                        distance later.
                       </p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">Select to view pricing</p>
-                  )}
+                    )}
                 </div>
-                <Button className="btn-accent" onClick={() => { onSelect(provider.id); onOpenChange(false); }}>
+                <Button className="btn-accent shrink-0" onClick={() => { onSelect(provider.id); onOpenChange(false); }}>
                   <Check className="mr-2 h-4 w-4" />
                   Select Provider
                 </Button>

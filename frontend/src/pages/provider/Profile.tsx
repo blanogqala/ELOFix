@@ -10,8 +10,6 @@ import { useToast } from '@/hooks/use-toast';
 import {
   getProviderById,
   updateProvider,
-  updateProviderSkills,
-  updateProviderPricing,
   uploadProviderDocument,
   uploadProviderAvatar,
   uploadWorkPostImage,
@@ -26,11 +24,12 @@ import {
   type CategorySuggestion,
 } from '@/lib/api/categories';
 import { evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
+import { validateSkillPricingDraft } from '@/lib/providerLaborPricing';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
 import {
   Save, Plus, X, Upload, AlertCircle,
-  CheckCircle, Clock, DollarSign, Image, Trash2, Pencil,
+  CheckCircle, Clock, Banknote, Image, Trash2, Pencil,
   Bell, CalendarClock, Camera
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -89,6 +88,8 @@ export default function ProviderProfile() {
   // Skills & Pricing state
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [pricing, setPricing] = useState<Provider['laborPricing']>({});
+  /** Local string so providers can edit per-km Rand without keystroke jitter. */
+  const [deliveryKmInput, setDeliveryKmInput] = useState('');
 
   // Work posts state
   const [workPosts, setWorkPosts] = useState<WorkPost[]>([]);
@@ -177,7 +178,13 @@ export default function ProviderProfile() {
         setSelectedSkills(data.skills);
         setPricing(data.laborPricing);
         setWorkPosts(data.workPosts || []);
-        setSettings(data.settings || defaultSettings);
+        const set = data.settings || defaultSettings;
+        setSettings(set);
+        setDeliveryKmInput(
+          set.deliveryRatePerKm != null && Number.isFinite(set.deliveryRatePerKm)
+            ? String(set.deliveryRatePerKm)
+            : ''
+        );
       }
     } catch (error) {
       toast({
@@ -301,25 +308,55 @@ export default function ProviderProfile() {
       setPricing(p);
     } else {
       setSelectedSkills(prev => [...prev, skillId]);
-      setPricing(prev => ({ ...prev, [skillId]: { unit: 'hour', rate: 0 } }));
+      setPricing((prev) => ({ ...prev, [skillId]: { ...(prev[skillId] || {}) } }));
     }
   };
 
   const handleSavePricing = async () => {
     if (!user) return;
-    // Validate all rates filled
     for (const skill of selectedSkills) {
-      if (!pricing[skill] || pricing[skill].rate <= 0) {
-        toast({ title: 'Missing pricing', description: `Set a rate for ${categories.find(c => c.id === skill)?.name || skill}.`, variant: 'destructive' });
+      const check = validateSkillPricingDraft(pricing[skill] ?? {});
+      if (!check.ok) {
+        toast({
+          title: 'Check your amounts',
+          description: `${categories.find((c) => c.id === skill)?.name ?? skill}: ${check.message}`,
+          variant: 'destructive',
+        });
         return;
       }
     }
+    let deliveryPatch: ProviderSettings['deliveryRatePerKm'] | null = null;
+    if (deliveryKmInput.trim() === '') {
+      deliveryPatch = null;
+    } else {
+      const pk = Number(deliveryKmInput.trim());
+      if (!Number.isFinite(pk) || pk < 0) {
+        toast({ title: 'Invalid delivery rate', description: 'Use a Rand amount per kilometre ≥ 0, or leave blank.', variant: 'destructive' });
+        return;
+      }
+      deliveryPatch = pk;
+    }
+
     setIsSaving(true);
     try {
-      let next = await updateProviderSkills(user.id, selectedSkills);
+      const settingsOut = {
+        ...settings,
+        deliveryRatePerKm: deliveryPatch === null ? null : deliveryPatch,
+      } as ProviderSettings;
+
+      const next = await updateProvider(user.id, {
+        skills: selectedSkills,
+        laborPricing: pricing,
+        settings: settingsOut,
+      });
       setProvider(next);
-      next = await updateProviderPricing(user.id, pricing);
-      setProvider(next);
+      const savedSet = next.settings ?? settingsOut;
+      setSettings(savedSet);
+      setDeliveryKmInput(
+        next.settings?.deliveryRatePerKm != null && Number.isFinite(next.settings.deliveryRatePerKm)
+          ? String(next.settings.deliveryRatePerKm)
+          : ''
+      );
       await refreshProfile();
       const refreshed = evaluateProviderCoreSections(next, {
         phone,
@@ -332,7 +369,10 @@ export default function ProviderProfile() {
       if (refreshed.skillsAndPrices && !refreshed.documents) {
         setProfileTab('docs');
       }
-      toast({ title: 'Pricing saved', description: 'Your skills and rates have been updated.' });
+      toast({
+        title: 'Saved',
+        description: 'Your services, labour guide (ZAR) and optional delivery-per-km rate are updated.',
+      });
     } catch {
       toast({ title: 'Error', description: 'Failed to save pricing.', variant: 'destructive' });
     } finally {
@@ -866,69 +906,113 @@ export default function ProviderProfile() {
 
             {selectedSkills.length > 0 && (
               <div className="card-elevated">
-                <div className="p-6 border-b border-border">
-                  <h3 className="font-semibold">Set Your Rates</h3>
-                  <p className="text-sm text-muted-foreground">Define your pricing for each selected service</p>
+                <div className="p-6 border-b border-border space-y-1">
+                  <h3 className="font-semibold">Set labour guide (whole job)</h3>
+                  <p className="text-sm text-muted-foreground">
+                    For each selected service, add the smallest and largest labour amounts you&apos;ve quoted or been paid for
+                    a comparable job—all in Rand (whole job, not hourly or per m² unless you&apos;re still on a legacy profile).
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Leave both blank until your first payout if you&apos;re new; after completed paid jobs these bounds update
+                    automatically.
+                  </p>
                 </div>
                 <div className="divide-y divide-border">
                   {selectedSkills.map((skillId) => {
-                    const cat = categories.find(c => c.id === skillId);
-                    const sp = pricing[skillId] || { unit: 'hour', rate: 0 };
+                    const cat = categories.find((c) => c.id === skillId);
+                    const sp = pricing[skillId] || {};
                     return (
                       <div key={skillId} className="p-6">
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                          <div className="flex items-center gap-3 flex-1">
-                            <span className="text-2xl">{cat?.icon}</span>
-                            <div>
-                              <p className="font-medium">{cat?.name}</p>
-                              <p className="text-xs text-muted-foreground">{cat?.description}</p>
+                        <div className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <span className="text-2xl">{cat?.icon}</span>
+                              <div className="min-w-0">
+                                <p className="font-medium">{cat?.name}</p>
+                                <p className="text-xs text-muted-foreground line-clamp-2">{cat?.description}</p>
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-2">
-                              <DollarSign className="h-4 w-4 text-muted-foreground" />
-                              <Input
-                                type="number"
-                                min="0"
-                                value={sp.rate || ''}
-                                onChange={(e) => setPricing(prev => ({
-                                  ...prev,
-                                  [skillId]: { ...prev[skillId], rate: parseFloat(e.target.value) || 0 }
-                                }))}
-                                className="w-24"
-                                placeholder="Rate"
-                              />
-                            </div>
-                            <select
-                              value={sp.unit}
-                              onChange={(e) => setPricing(prev => ({
-                                ...prev,
-                                [skillId]: {
-                                  ...prev[skillId],
-                                  unit:
-                                    e.target.value === 'hour' ||
-                                    e.target.value === 'sqm' ||
-                                    e.target.value === 'job' ||
-                                    e.target.value === 'meter'
-                                      ? e.target.value
-                                      : prev[skillId]?.unit ?? 'hour'
-                                }
-                              }))}
-                              className="input-field w-28"
-                            >
-                              <option value="hour">per hour</option>
-                              <option value="sqm">per sqm</option>
-                              <option value="job">per job</option>
-                              <option value="meter">per meter</option>
-                            </select>
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleToggleSkill(skillId)}>
+                            <Button variant="ghost" size="icon" className="text-destructive self-end sm:self-auto" type="button" onClick={() => handleToggleSkill(skillId)}>
                               <X className="h-4 w-4" />
                             </Button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                                <Banknote className="h-3 w-3" /> Lowest labour (job)
+                              </Label>
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min={0}
+                                step={50}
+                                value={sp.jobFeeLow ?? ''}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setPricing((prev) => ({
+                                    ...prev,
+                                    [skillId]: {
+                                      ...prev[skillId],
+                                      jobFeeLow: raw === '' ? undefined : Number(raw),
+                                    },
+                                  }));
+                                }}
+                                placeholder="Optional"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                                <Banknote className="h-3 w-3" /> Highest labour (job)
+                              </Label>
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min={0}
+                                step={50}
+                                value={sp.jobFeeHigh ?? ''}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setPricing((prev) => ({
+                                    ...prev,
+                                    [skillId]: {
+                                      ...prev[skillId],
+                                      jobFeeHigh: raw === '' ? undefined : Number(raw),
+                                    },
+                                  }));
+                                }}
+                                placeholder="Optional"
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {selectedSkills.includes('delivery') && (
+              <div className="card-elevated p-6 space-y-4 border border-primary/25">
+                <div>
+                  <h3 className="font-semibold">Driving / delivery rate</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Quote in Rand per kilometre. Final trip quotes will multiply your rate by route distance once routing is wired
+                    into booking.
+                  </p>
+                </div>
+                <div className="space-y-2 max-w-xs">
+                  <Label htmlFor="delivery-per-km">Rand per kilometre (optional)</Label>
+                  <Input
+                    id="delivery-per-km"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step={1}
+                    value={deliveryKmInput}
+                    onChange={(e) => setDeliveryKmInput(e.target.value)}
+                    placeholder="e.g. 12"
+                  />
                 </div>
               </div>
             )}

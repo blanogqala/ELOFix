@@ -22,24 +22,24 @@ export async function getSpecialsByCategory(category: string): Promise<Special[]
 }
 
 function providerToDeliveryCard(p: Provider): DeliveryProvider {
+  const rateFromSettings =
+    p.settings?.deliveryRatePerKm != null && Number.isFinite(p.settings.deliveryRatePerKm)
+      ? Number(p.settings.deliveryRatePerKm)
+      : 0;
   const labor = p.laborPricing && typeof p.laborPricing === 'object' ? p.laborPricing : {};
   const deliveryEntry = labor['delivery'] as { rate?: number } | undefined;
-  const firstRate = Object.values(labor).find(
-    (v): v is { rate?: number } => v != null && typeof v === 'object' && 'rate' in v
-  )?.rate;
-  const baseRate =
-    typeof deliveryEntry?.rate === 'number'
-      ? deliveryEntry.rate
-      : typeof firstRate === 'number'
-        ? firstRate
-        : 0;
+
+  const firstRate =
+    typeof deliveryEntry?.rate === 'number' && Number.isFinite(deliveryEntry.rate) ? deliveryEntry.rate : undefined;
+
+  const baseRate = firstRate ?? 0;
 
   return {
     id: p.id,
     name: (p.businessName && p.businessName.trim()) || p.name,
     logo: p.profileImage,
     baseRate,
-    perKmRate: 0,
+    perKmRate: rateFromSettings,
     estimatedTime: p.responseTime || '—',
     vehicleType: undefined,
     rating: p.rating,

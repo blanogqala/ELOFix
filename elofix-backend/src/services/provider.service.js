@@ -178,8 +178,31 @@ function checkProviderProfileCompletion(profile, user, workPostCount) {
   if (skills.length < 1) return false;
 
   for (const sk of skills) {
-    const pr = laborPricing[sk];
-    if (!pr || Number(pr.rate) <= 0) return false;
+    const raw = laborPricing[sk];
+    const pr = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const low = pr.jobFeeLow != null && pr.jobFeeLow !== "" ? Number(pr.jobFeeLow) : null;
+    const high = pr.jobFeeHigh != null && pr.jobFeeHigh !== "" ? Number(pr.jobFeeHigh) : null;
+    const hasLow = low != null && !Number.isNaN(low) && low > 0;
+    const hasHigh = high != null && !Number.isNaN(high) && high > 0;
+    const legacyOk = Number(pr.rate) > 0;
+
+    if (hasLow !== hasHigh) {
+      return false;
+    }
+    if (hasLow && hasHigh && low > high) {
+      return false;
+    }
+    if (!hasLow && !hasHigh && !legacyOk) {
+      /* empty range allowed for new providers */
+      continue;
+    }
+    if (hasLow && hasHigh) {
+      continue;
+    }
+    if (legacyOk) {
+      continue;
+    }
+    return false;
   }
 
   if (!hasDocUrl(documents.idDoc)) return false;
@@ -190,13 +213,65 @@ function checkProviderProfileCompletion(profile, user, workPostCount) {
   return true;
 }
 
+function prismaDecimalToNumber(v) {
+  if (v == null) return Number.NaN;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && typeof v.toNumber === "function") return v.toNumber();
+  return Number(v);
+}
+
+async function aggregateCompletedLaborByCategoryForProviders(userIds) {
+  const ids = [...new Set((userIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!ids.length) return {};
+  const jobs = await prisma.job.findMany({
+    where: {
+      providerId: { in: ids },
+      status: "COMPLETED",
+      laborPaid: true,
+    },
+    select: {
+      providerId: true,
+      category: true,
+      price: true,
+      totalPrice: true,
+    },
+  });
+  /** @type {Record<string, Record<string, { min: number; max: number; jobCount: number }>>} */
+  const out = {};
+  for (const j of jobs) {
+    const pid = j.providerId != null ? String(j.providerId) : "";
+    if (!pid) continue;
+    let amt = j.totalPrice != null ? prismaDecimalToNumber(j.totalPrice) : Number.NaN;
+    if (!Number.isFinite(amt) || amt <= 0) {
+      amt = prismaDecimalToNumber(j.price);
+    }
+    if (!Number.isFinite(amt) || amt <= 0) continue;
+    const cat = String(j.category || "").trim();
+    if (!cat) continue;
+    if (!out[pid]) out[pid] = {};
+    const prev = out[pid][cat];
+    if (!prev) {
+      out[pid][cat] = { min: amt, max: amt, jobCount: 1 };
+    } else {
+      prev.min = Math.min(prev.min, amt);
+      prev.max = Math.max(prev.max, amt);
+      prev.jobCount += 1;
+    }
+  }
+  return out;
+}
+
 function toProviderResponse(
   profile,
   user,
   completedJobs,
   workPosts,
   reviewRows = [],
-  { pendingSuggestionsCount = 0, pendingSuggestions = [] } = {}
+  {
+    pendingSuggestionsCount = 0,
+    pendingSuggestions = [],
+    completedLaborByCategory = undefined,
+  } = {}
 ) {
   const documents = normalizeDocuments(profile.documents);
   const laborPricing =
@@ -259,6 +334,12 @@ function toProviderResponse(
       : undefined,
     pendingSuggestionsCount,
     pendingSuggestions,
+    ...(completedLaborByCategory &&
+    typeof completedLaborByCategory === "object" &&
+    !Array.isArray(completedLaborByCategory) &&
+    Object.keys(completedLaborByCategory).length > 0
+      ? { completedLaborByCategory }
+      : {}),
   };
 }
 
@@ -396,6 +477,111 @@ function mergeDocuments(prev, next) {
   return merged;
 }
 
+function coerceFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sanitizeLaborPricing(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [key, entry] of Object.entries(raw)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const slug = String(key).trim();
+    if (!slug) continue;
+    const next = { ...entry };
+    const rate = coerceFiniteNumber(next.rate);
+    if (rate != null && rate >= 0) next.rate = rate;
+    else delete next.rate;
+
+    let low = coerceFiniteNumber(next.jobFeeLow);
+    let high = coerceFiniteNumber(next.jobFeeHigh);
+    if (low != null && low < 0) low = null;
+    if (high != null && high < 0) high = null;
+    if (low != null) next.jobFeeLow = low;
+    else delete next.jobFeeLow;
+    if (high != null) next.jobFeeHigh = high;
+    else delete next.jobFeeHigh;
+
+    const units = ["sqm", "hour", "job", "meter"];
+    if (units.includes(String(next.unit))) {
+      next.unit = String(next.unit);
+    } else if (rate != null && next.rate > 0) {
+      next.unit = "job";
+    } else {
+      delete next.unit;
+    }
+
+    out[slug] = next;
+  }
+  return out;
+}
+
+function sanitizeSettingsPatch(prev, incoming) {
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+    return prev && typeof prev === "object" ? { ...prev } : {};
+  }
+  const base = prev && typeof prev === "object" ? { ...prev } : {};
+  const merged = { ...base, ...incoming };
+  if (Object.prototype.hasOwnProperty.call(merged, "deliveryRatePerKm")) {
+    const v = merged.deliveryRatePerKm;
+    if (v === null || v === "" || v === undefined) {
+      delete merged.deliveryRatePerKm;
+    } else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) {
+        delete merged.deliveryRatePerKm;
+      } else {
+        merged.deliveryRatePerKm = n;
+      }
+    }
+  }
+  return merged;
+}
+
+async function expandLaborPricingFromPaidJob(providerUserId, categorySlug, laborGross) {
+  const amount = Number(laborGross);
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  const slug = String(categorySlug || "").trim();
+  if (!slug || !providerUserId) return;
+
+  const profile = await prisma.provider.findUnique({
+    where: { userId: String(providerUserId) },
+    select: { id: true, laborPricing: true },
+  });
+  if (!profile) return;
+
+  const lpRaw =
+    profile.laborPricing && typeof profile.laborPricing === "object" && !Array.isArray(profile.laborPricing)
+      ? profile.laborPricing
+      : {};
+  const lp = { ...lpRaw };
+  const prev = lp[slug] && typeof lp[slug] === "object" && !Array.isArray(lp[slug]) ? { ...lp[slug] } : {};
+
+  let prevLow =
+    prev.jobFeeLow !== undefined && prev.jobFeeLow !== null ? Number(prev.jobFeeLow) : Number.NaN;
+  let prevHigh =
+    prev.jobFeeHigh !== undefined && prev.jobFeeHigh !== null ? Number(prev.jobFeeHigh) : Number.NaN;
+
+  prevLow = Number.isFinite(prevLow) && prevLow > 0 ? prevLow : null;
+  prevHigh = Number.isFinite(prevHigh) && prevHigh > 0 ? prevHigh : null;
+
+  const nextLow = prevLow != null ? Math.min(prevLow, amount) : amount;
+  const nextHigh = prevHigh != null ? Math.max(prevHigh, amount) : amount;
+
+  lp[slug] = {
+    ...prev,
+    jobFeeLow: nextLow,
+    jobFeeHigh: nextHigh,
+  };
+
+  await prisma.provider.update({
+    where: { id: profile.id },
+    data: { laborPricing: lp },
+  });
+}
+
 async function updateProviderForUser(requestUserId, body) {
   const profile = await loadProviderBundleByUserId(requestUserId);
   if (!profile || profile.user.role !== "PROVIDER") {
@@ -430,13 +616,13 @@ async function updateProviderForUser(requestUserId, body) {
       : [];
   }
   if (data.laborPricing !== undefined) {
-    providerUpdate.laborPricing = data.laborPricing;
+    providerUpdate.laborPricing = sanitizeLaborPricing(data.laborPricing);
   }
   if (data.documents !== undefined) {
     providerUpdate.documents = mergeDocuments(profile.documents, data.documents);
   }
   if (data.settings !== undefined) {
-    providerUpdate.settings = data.settings;
+    providerUpdate.settings = sanitizeSettingsPatch(profile.settings, data.settings);
   }
   if (data.portfolioImages !== undefined) {
     providerUpdate.portfolioImages = Array.isArray(data.portfolioImages) ? data.portfolioImages : [];
@@ -599,6 +785,8 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
     },
   });
 
+  const laborByProviderUserId = await aggregateCompletedLaborByCategoryForProviders(profiles.map((p) => p.userId));
+
   const providers = await Promise.all(
     profiles.map(async (profile) => {
       const completedJobs = await prisma.job.count({
@@ -635,6 +823,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
           status: s.status,
           createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
         })),
+        completedLaborByCategory: laborByProviderUserId[String(profile.userId)] || {},
       });
     })
   );
@@ -694,6 +883,8 @@ async function getProviderById(id) {
     },
   });
 
+  const laborByPid = await aggregateCompletedLaborByCategoryForProviders([profile.userId]);
+
   return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts, reviewRows, {
     pendingSuggestionsCount: pendingSuggestions.length,
     pendingSuggestions: pendingSuggestions.map((s) => ({
@@ -702,6 +893,7 @@ async function getProviderById(id) {
       status: s.status,
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
+    completedLaborByCategory: laborByPid[String(profile.userId)] || {},
   });
 }
 
@@ -898,4 +1090,5 @@ module.exports = {
   softDeleteProviderByUserId,
   persistProfileCompleted,
   isProviderActiveRow,
+  expandLaborPricingFromPaidJob,
 };

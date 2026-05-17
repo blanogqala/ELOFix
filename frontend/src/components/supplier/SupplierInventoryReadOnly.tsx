@@ -79,7 +79,7 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
 
   if (!pickedBranchId) {
     return (
-      <div className="space-y-4 sm:w-full">
+      <div className="space-y-4 ">
         <p className="text-sm text-muted-foreground">
           Read-only inventory by branch. Select a branch to view products and units sold (non-cancelled orders).
         </p>

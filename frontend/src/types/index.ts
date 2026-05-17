@@ -31,6 +31,19 @@ export interface ProviderSettings {
   businessHours: {
     [day: string]: { open: string; close: string; enabled: boolean };
   };
+  /** ZAR per kilometre for driving / delivery quotes (distance × rate later). */
+  deliveryRatePerKm?: number;
+}
+
+/** Per-category labour — whole-job range in ZAR preferred; legacy unit rate still supported. */
+export interface ProviderLaborPricingEntry {
+  unit?: 'sqm' | 'hour' | 'job' | 'meter';
+  /** @deprecated Prefer jobFeeLow / jobFeeHigh for customer-facing whole-job guidance. */
+  rate?: number;
+  /** Lowest labour for a completed job in this category (ZAR), provider-declared or synced from paid jobs. */
+  jobFeeLow?: number;
+  /** Highest labour for a completed job in this category (ZAR). */
+  jobFeeHigh?: number;
 }
 
 export interface Provider {
@@ -44,7 +57,7 @@ export interface Provider {
   city?: string;
   serviceAreas?: string[];
   skills: string[];
-  laborPricing: Record<string, { unit: 'sqm' | 'hour' | 'job' | 'meter'; rate: number }>;
+  laborPricing: Record<string, ProviderLaborPricingEntry>;
   documents: {
     idDoc?: {
       url: string;
@@ -104,6 +117,8 @@ export interface Provider {
     status: 'PENDING' | 'APPROVED' | 'REJECTED';
     createdAt: string;
   }>;
+  /** Min/max labour paid (ZAR) on completed jobs per category id; populated by listing/detail APIs. */
+  completedLaborByCategory?: Record<string, { min: number; max: number; jobCount: number }>;
 }
 
 export interface ProviderReview {
@@ -562,6 +577,8 @@ export interface Job {
   id: string;
   category: string;
   categoryName: string;
+  /** From category record; drives provider step-3 behaviour (measurements vs written requirements). */
+  categoryStep3Type?: Category['step3Type'];
   userId: string;
   userName: string;
   providerId?: string;
@@ -615,6 +632,8 @@ export interface Job {
   };
   providerAdjustedRequirements?: {
     measurements?: Partial<Measurements>;
+    /** Provider-authored scope for categories that use items/issue step 3 (non–area-based). */
+    requirementText?: string;
     requirementNotes?: string;
   };
   userMaterialSuggestions?: UserMaterialSuggestion[];

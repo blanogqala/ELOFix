@@ -44,7 +44,8 @@ function inferCancelledPinIndex(job: Job): number {
   const hasInspectionSignals =
     Boolean(job.providerId) ||
     hasNonEmptyObject(job.providerAdjustedRequirements?.measurements) ||
-    Boolean(job.providerAdjustedRequirements?.requirementNotes?.trim());
+    Boolean(job.providerAdjustedRequirements?.requirementNotes?.trim()) ||
+    Boolean(job.providerAdjustedRequirements?.requirementText?.trim());
   if (hasInspectionSignals) return 1;
 
   return 0;
