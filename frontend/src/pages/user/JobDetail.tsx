@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -65,6 +65,9 @@ import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/j
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
 import { categoryUsesMeasurementFields, getJobCategoryStep3Type } from '@/lib/jobSpecifications';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { formatPersonDisplayName } from '@/lib/displayPersonName';
+import { ActivityDot } from '@/components/ui/ActivityDot';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
   if (!values) return undefined;
@@ -99,9 +102,11 @@ export default function JobDetail() {
   const { id } = useParams();
   const jobId = id ?? '';
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { messagesCount, markJobSectionRead } = useJobActivityIndicators();
 
   /** Keep hook order stable and aligned with provider JobDetail (socket + queries + state + effects). */
   useMaterialOrderFulfillmentSocket({ userId: user?.id, activeJobId: jobId });
@@ -134,7 +139,10 @@ export default function JobDetail() {
   });
   const materialRequests = materialRequestsData ?? [];
   const [newMessage, setNewMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>('details');
+  const initialTab = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>(
+    initialTab === 'messages' || initialTab === 'notes' ? initialTab : 'details'
+  );
   const [payLaborModalOpen, setPayLaborModalOpen] = useState(false);
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -266,6 +274,17 @@ export default function JobDetail() {
     window.addEventListener('storage', handleStorageUpdate);
     return () => window.removeEventListener('storage', handleStorageUpdate);
   }, [jobId, queryClient]);
+
+  useEffect(() => {
+    if (!jobId || !job) return;
+    void markJobSectionRead(jobId, 'materials');
+    void markJobSectionRead(jobId, 'general');
+  }, [jobId, job?.id, markJobSectionRead]);
+
+  useEffect(() => {
+    if (!jobId || activeTab !== 'messages') return;
+    void markJobSectionRead(jobId, 'messages');
+  }, [jobId, activeTab, markJobSectionRead]);
 
   const handleSendMessage = async () => {
     if (!job || !newMessage.trim() || isMessageSending) return;
@@ -806,6 +825,9 @@ export default function JobDetail() {
               >
                 <tab.icon className="h-4 w-4" />
                 {tab.label}
+                {tab.id === 'messages' && messagesCount(jobId) > 0 && (
+                  <ActivityDot count={messagesCount(jobId)} aria-label="Unread messages" />
+                )}
               </button>
             ))}
           </div>
@@ -890,8 +912,16 @@ export default function JobDetail() {
                     className="flex items-center gap-4 cursor-pointer hover:bg-muted/50 p-2 rounded-lg -m-2 transition-colors"
                     onClick={() => setProviderModalOpen(true)}
                   >
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <User className="h-6 w-6 text-primary" />
+                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full bg-primary/10 flex items-center justify-center">
+                      {provider?.profileImage ? (
+                        <img
+                          src={resolveUploadUrl(provider.profileImage)}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <User className="h-6 w-6 text-primary" />
+                      )}
                     </div>
                     <div>
                       <p className="font-medium">{job.providerName}</p>
@@ -1095,7 +1125,7 @@ export default function JobDetail() {
                     >
                       {note.title && <p className="font-medium text-sm mb-1">{note.title}</p>}
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="font-medium text-sm">{note.authorName}</span>
+                        <span className="font-medium text-sm">{formatPersonDisplayName(note.authorName)}</span>
                         <span className="text-xs text-muted-foreground">
                           {new Date(note.createdAt).toLocaleString()}
                         </span>
@@ -1138,7 +1168,7 @@ export default function JobDetail() {
                           : "bg-muted"
                       )}
                     >
-                      <p className="text-xs font-medium mb-1 opacity-75">{msg.authorName}</p>
+                      <p className="text-xs font-medium mb-1 opacity-75">{formatPersonDisplayName(msg.authorName)}</p>
                       <p className="text-sm">{msg.message}</p>
                       <p className={cn(
                         "text-xs mt-1",

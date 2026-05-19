@@ -30,7 +30,7 @@ interface BackendUser {
   completedJobs?: number;
   responseTime?: string;
   portfolioImages?: string[];
-  profileImage?: string;
+  profileImage?: string | null;
   settings?: Provider['settings'];
   blocked?: boolean;
   reviewSubmittedAt?: string;
@@ -146,6 +146,7 @@ function toAuthUser(user: BackendUser): AuthUser {
     email: user.email,
     phone: user.phone ?? '',
     role,
+    profileImage: user.profileImage || undefined,
     createdAt: user.createdAt ?? new Date().toISOString(),
   };
 }

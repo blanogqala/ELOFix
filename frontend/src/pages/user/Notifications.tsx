@@ -31,6 +31,10 @@ import {
   Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  formatPersonDisplayName,
+  sanitizeNotificationMessage,
+} from '@/lib/displayPersonName';
 import { formatDistanceToNow, format, isToday, isYesterday, parseISO } from 'date-fns';
 import { useNavigate, useLocation, type NavigateFunction } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -97,7 +101,7 @@ function formatDisplayRole(r?: string): string {
 }
 
 function initialFromName(name: string): string {
-  const t = name.trim();
+  const t = formatPersonDisplayName(name, '').trim();
   if (!t) return '?';
   const parts = t.split(/\s+/);
   if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
@@ -120,8 +124,10 @@ function navigateForNotification(n: AppNotification, role: UserRole, navigate: N
     return;
   }
   if (!n.jobId) return;
-  if (role === 'user') navigate(`/user/jobs/${n.jobId}`);
-  else if (role === 'provider') navigate(`/provider/jobs/${n.jobId}`);
+  const tab =
+    n.type === 'job_chat' ? '?tab=messages' : '';
+  if (role === 'user') navigate(`/user/jobs/${n.jobId}${tab}`);
+  else if (role === 'provider') navigate(`/provider/jobs/${n.jobId}${tab}`);
   else if (role === 'admin') navigate(`/admin/jobs/${n.jobId}`);
 }
 
@@ -159,6 +165,8 @@ function getNotificationIcon(type: AppNotification['type']) {
       return <LifeBuoy className="h-4 w-4 text-muted-foreground" />;
     case 'job_chat':
       return <MessageSquare className="h-4 w-4 text-primary" />;
+    case 'material_list_submitted':
+      return <ClipboardList className="h-4 w-4 text-orange-500" />;
     case 'support_reply':
       return <LifeBuoy className="h-4 w-4 text-primary" />;
     case 'supplier_material_order_new':
@@ -401,11 +409,11 @@ export default function NotificationsPage() {
     if (kind === 'support' && role === 'admin') {
       const id = key.slice('support:'.length);
       return {
-        primary: last?.senderName ?? 'Support',
+        primary: formatPersonDisplayName(last?.senderName, 'Support'),
         secondary: 'Support request',
         tertiary: last?.senderRole ? formatDisplayRole(last.senderRole) : 'user',
         avatarLabel: initialFromName(last?.senderName ?? 'U'),
-        preview: last?.message ?? '',
+        preview: last?.message ? sanitizeNotificationMessage(last.message) : '',
         time: last ? parseISO(last.createdAt) : null,
       };
     }
@@ -413,11 +421,11 @@ export default function NotificationsPage() {
     if (kind === 'job' && last) {
       const jobLabel = extractJobContextLabel(msgs);
       return {
-        primary: last.senderName ?? 'Update',
+        primary: formatPersonDisplayName(last.senderName, 'Update'),
         secondary: jobLabel,
         tertiary: last.senderRole ? formatDisplayRole(last.senderRole) : '',
         avatarLabel: initialFromName(last.senderName ?? 'J'),
-        preview: last.message,
+        preview: sanitizeNotificationMessage(last.message),
         time: parseISO(last.createdAt),
       };
     }
@@ -428,18 +436,18 @@ export default function NotificationsPage() {
         secondary: undefined as string | undefined,
         tertiary: '',
         avatarLabel: 'O',
-        preview: last.message,
+        preview: sanitizeNotificationMessage(last.message),
         time: parseISO(last.createdAt),
       };
     }
 
     if (last) {
       return {
-        primary: last.senderName ?? last.title,
+        primary: formatPersonDisplayName(last.senderName ?? last.title, last.title),
         secondary: undefined as string | undefined,
         tertiary: last.senderRole ? formatDisplayRole(last.senderRole) : '',
         avatarLabel: initialFromName((last.senderName ?? last.title).trim() || 'N'),
-        preview: last.message,
+        preview: sanitizeNotificationMessage(last.message),
         time: parseISO(last.createdAt),
       };
     }
@@ -552,7 +560,7 @@ export default function NotificationsPage() {
                   </div>
                   {!isMe && notification.senderName && (
                     <p className="text-[10px] opacity-80 mb-1">
-                      {notification.senderName}
+                      {formatPersonDisplayName(notification.senderName)}
                       {notification.senderRole ? ` · ${formatDisplayRole(notification.senderRole)}` : ''}
                     </p>
                   )}
@@ -562,7 +570,7 @@ export default function NotificationsPage() {
                       isMe ? 'text-primary-foreground' : 'text-muted-foreground'
                     )}
                   >
-                    {notification.message}
+                    {sanitizeNotificationMessage(notification.message)}
                   </p>
                   <p
                     className={cn(

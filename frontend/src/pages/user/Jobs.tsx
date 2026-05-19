@@ -14,6 +14,9 @@ import { cn } from '@/lib/utils';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { useToast } from '@/hooks/use-toast';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { ActivityDot } from '@/components/ui/ActivityDot';
+import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 
 export default function UserJobs() {
   const { user } = useAuth();
@@ -34,6 +37,8 @@ export default function UserJobs() {
     enabled: Boolean(userId),
   });
   const loadError = isError ? (error instanceof Error ? error.message : 'Failed to load jobs.') : null;
+  const { jobHasActivity, notifications } = useJobActivityIndicators();
+  const activeFilterHasDot = activeTabHasActivity(notifications, jobs, (s) => isActiveWorkflowStatus(s));
 
   useEffect(() => {
     if (!isError || !loadError) return;
@@ -94,10 +99,13 @@ export default function UserJobs() {
                 key={filter}
                 variant={statusFilter === filter ? 'default' : 'outline'}
                 size="sm"
-                className="whitespace-nowrap"
+                className="relative whitespace-nowrap gap-1.5"
                 onClick={() => setStatusFilter(filter)}
               >
                 {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                {filter === 'active' && activeFilterHasDot && (
+                  <ActivityDot aria-label="Active jobs need attention" />
+                )}
               </Button>
             ))}
           </div>
@@ -168,6 +176,9 @@ export default function UserJobs() {
                         );
                       })()}
                     </div>
+                    {jobHasActivity(job.id) && (
+                      <ActivityDot className="shrink-0" aria-label="This job needs your attention" />
+                    )}
                     <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                   </div>
                 </div>

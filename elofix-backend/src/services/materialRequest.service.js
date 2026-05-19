@@ -83,7 +83,7 @@ function assertProviderJob(job, providerUserId) {
 async function findJobForProvider(jobId, providerUserId) {
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, customerId: true, providerId: true, materials: true },
+    select: { id: true, customerId: true, providerId: true, materials: true, title: true },
   });
   assertProviderJob(job, providerUserId);
   return job;
@@ -261,6 +261,23 @@ async function finalizeProviderMaterialsSubmit(jobId, materials, providerUserId,
     next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, jobStatusRow || { status: "ACCEPTED" });
     return next;
   });
+
+  try {
+    const notificationEvents = require("./notificationEvents.service");
+    const providerRow = await prisma.provider.findUnique({
+      where: { userId: String(providerUserId) },
+      select: { user: { select: { name: true } } },
+    });
+    const providerName = providerRow?.user?.name || "Your provider";
+    await notificationEvents.notifyMaterialsListSubmitted(
+      customerId,
+      jobId,
+      job.title || "Job",
+      providerName
+    );
+  } catch (err) {
+    console.error("[notifications] materials list submitted", err);
+  }
 }
 
 async function submitFromBody(providerUserId, body) {

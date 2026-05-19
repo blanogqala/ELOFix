@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { DeleteRejectedRequestDialog } from '@/components/jobs/DeleteRejectedRequestDialog';
 import { cn } from '@/lib/utils';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 export default function ProviderRequests() {
   const { user } = useAuth();
@@ -68,7 +69,7 @@ export default function ProviderRequests() {
         {/* Thumbnail */}
         <div className="flex aspect-video w-full shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted sm:aspect-square sm:h-24 sm:w-24">
           {job.images[0] ? (
-            <img src={job.images[0]} alt="" className="h-full w-full object-cover" />
+            <img src={resolveUploadUrl(job.images[0])} alt="" className="h-full w-full object-cover" />
           ) : (
             <ClipboardList className="h-8 w-8 text-muted-foreground" />
           )}

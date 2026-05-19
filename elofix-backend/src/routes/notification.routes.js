@@ -16,6 +16,7 @@ router.post(
   asyncHandler(notificationController.replySupportAsAdmin)
 );
 router.post("/", asyncHandler(notificationController.addNotification));
+router.patch("/job/:jobId/read", asyncHandler(notificationController.markJobNotificationsRead));
 router.patch("/:notificationId/read", asyncHandler(notificationController.markAsRead));
 router.patch("/read-all", asyncHandler(notificationController.markAllAsRead));
 

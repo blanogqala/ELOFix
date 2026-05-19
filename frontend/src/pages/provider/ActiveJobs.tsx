@@ -5,7 +5,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { getJobsByProvider, deleteJob } from '@/lib/api/jobs';
 import { queryKeys } from '@/lib/queryKeys';
-import { Job } from '@/types';
+import { Job, JobStatus } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Briefcase, Trash2 } from 'lucide-react';
@@ -13,7 +13,10 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { getJobDisplayStatusLabel, getProviderJobBadgeVariantForJob } from '@/lib/jobProgressDisplay';
-import { ACTIVE_WORKFLOW_JOB_STATUSES } from '@/lib/jobStatusMapping';
+import { ACTIVE_WORKFLOW_JOB_STATUSES, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { ActivityDot } from '@/components/ui/ActivityDot';
+import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 
 export default function ProviderActiveJobs() {
   const { user } = useAuth();
@@ -29,6 +32,10 @@ export default function ProviderActiveJobs() {
   const [filter, setFilter] = useState<string>('all');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
+  const { jobHasActivity, notifications } = useJobActivityIndicators();
+  const activeFilterHasDot = activeTabHasActivity(notifications, jobs, (s) =>
+    s ? isActiveWorkflowStatus(s as JobStatus) : false
+  );
 
   const handleDeleteCancelled = async () => {
     if (!jobToDelete) return;
@@ -92,11 +99,14 @@ export default function ProviderActiveJobs() {
               key={f.value}
               onClick={() => setFilter(f.value)}
               className={cn(
-                "whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4",
+                "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4",
                 filter === f.value ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
               )}
             >
               {f.label}
+              {f.value === 'active' && activeFilterHasDot && (
+                <ActivityDot aria-label="Active jobs need attention" />
+              )}
             </button>
           ))}
         </div>
@@ -127,6 +137,9 @@ export default function ProviderActiveJobs() {
                     <div className="mb-1 flex flex-wrap items-center gap-2">
                       <p className="font-medium">{job.categoryName}</p>
                       {getStatusBadge(job)}
+                      {jobHasActivity(job.id) && (
+                        <ActivityDot aria-label="This job needs your attention" />
+                      )}
                     </div>
                     <p className="truncate text-sm text-muted-foreground">{job.description}</p>
                     <p className="mt-1 text-xs text-muted-foreground">Client: {job.userName}</p>

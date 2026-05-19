@@ -217,7 +217,7 @@ export default function ServiceRequest() {
     <DashboardLayout>
       <div className="mx-auto min-w-0 max-w-4xl animate-fade-in">
         <div className="mb-6 md:mb-8">
-          <div className="-mx-1 mb-4 flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto px-1 pb-2 sm:mx-0 sm:justify-between sm:overflow-visible sm:px-0 sm:pb-0">
+          <div className="-mx-1 mb-4 flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto px-1 pb-2 sm:mx-0 sm:item-center sm:justify-between sm:overflow-visible sm:px-0 sm:pb-0">
             {STEPS.map((step, index) => {
               const isActive = step.id === currentStep;
               const isCompleted = step.id < currentStep;
@@ -442,10 +442,18 @@ export default function ServiceRequest() {
                   >
                     <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
                       <div
-                        className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary/10"
+                        className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-primary/10"
                         onClick={() => setSelectedProviderForModal(provider)}
                       >
-                        <span className="text-xl font-bold text-primary">{provider.name.charAt(0)}</span>
+                        {resolveUploadUrl(provider.profileImage) ? (
+                          <img
+                            src={resolveUploadUrl(provider.profileImage)}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-xl font-bold text-primary">{provider.name.charAt(0)}</span>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">

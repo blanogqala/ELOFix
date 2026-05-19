@@ -10,6 +10,7 @@ import { Category, Provider } from '@/types';
 import { 
   Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin
 } from 'lucide-react';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 export default function AdminProviders() {
   const navigate = useNavigate();
@@ -198,6 +199,7 @@ export default function AdminProviders() {
                 ) : filteredProviders.length > 0 ? (
                   filteredProviders.map((provider) => {
                     const docStatus = getDocumentStatus(provider);
+                    const avatarSrc = resolveUploadUrl(provider.profileImage);
                     const activeServiceNames = getResolvedServiceNames(provider.skills || []);
                     const pendingServiceNames = (provider.pendingSuggestions || []).map((s) => s.name);
                     const allServices = [
@@ -208,8 +210,12 @@ export default function AdminProviders() {
                       <tr key={provider.id} className="hover:bg-muted/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                              <span className="text-sm font-bold text-primary">{provider.name.charAt(0)}</span>
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
+                              {avatarSrc ? (
+                                <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
+                              ) : (
+                                <span className="text-sm font-bold text-primary">{provider.name.charAt(0)}</span>
+                              )}
                             </div>
                             <div>
                               <p className="font-medium text-sm">{provider.name}</p>

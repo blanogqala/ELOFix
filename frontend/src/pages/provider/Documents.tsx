@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { getProviderById, updateProvider, uploadProviderDocument, uploadWorkPostImage } from '@/lib/api/providers';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { compressImageForUpload } from '@/lib/imageCompression';
 import { Provider } from '@/types';
 import { 
   Upload, 
@@ -68,7 +69,8 @@ export default function ProviderDocuments() {
     e.target.value = '';
     if (!file || !user || !provider) return;
     try {
-      const updated = await uploadProviderDocument(user.id, docType, file);
+      const uploadFile = file.type.startsWith('image/') ? await compressImageForUpload(file) : file;
+      const updated = await uploadProviderDocument(user.id, docType, uploadFile);
       setProvider(updated);
       await refreshProfile();
       toast({ title: 'Document uploaded', description: 'Pending admin review.' });
@@ -90,7 +92,8 @@ export default function ProviderDocuments() {
       return;
     }
     try {
-      const url = await uploadWorkPostImage(user.id, file);
+      const compressed = await compressImageForUpload(file);
+      const url = await uploadWorkPostImage(user.id, compressed);
       const newImages = [...portfolioImages, url];
       const updated = await updateProvider(user.id, { portfolioImages: newImages });
       setProvider(updated);

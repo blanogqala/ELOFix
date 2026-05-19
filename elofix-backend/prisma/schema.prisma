@@ -71,6 +71,7 @@ model User {
   password            String
   name                String
   phone               String?
+  profileImage        String?
   role                Role
   createdAt           DateTime             @default(now())
   providerProfile     Provider?

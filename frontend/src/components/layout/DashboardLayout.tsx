@@ -7,6 +7,8 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Button } from '@/components/ui/button';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getUnreadCount } from '@/lib/api/notifications';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSupplierMe } from '@/lib/api/supplierPortal';
 import { socket } from '@/lib/socket';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -117,13 +119,29 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   });
   const branchAvatarUrl = resolveUploadUrl(branchStaffProfile?.supplierLogo || branchStaffProfile?.logo);
 
+  const sidebarAvatarUrl = useMemo(() => {
+    if (!user) return '';
+    if (user.role === 'branch_staff') return branchAvatarUrl;
+    if (user.role === 'user' || user.role === 'provider') {
+      return resolveUploadUrl(user.profileImage);
+    }
+    if (user.role === 'supplier' && 'supplierProfile' in user) {
+      return resolveUploadUrl(user.supplierProfile?.logo);
+    }
+    return '';
+  }, [user, branchAvatarUrl]);
+
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications', 'unread-count', user?.id],
-    queryFn: () => getUnreadCount(user?.role),
+    queryFn: () => getUnreadCount(),
     enabled: Boolean(user?.id),
     refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
+
+  const { hasJobsNavActivity } = useJobActivityIndicators();
+  const jobsNavPath =
+    user?.role === 'provider' ? '/provider/jobs' : user?.role === 'user' ? '/user/jobs' : null;
 
   useEffect(() => {
     if (!user?.id) return;
@@ -136,12 +154,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     socket.on('message:new', refreshUnread);
     socket.on('notification:read', refreshUnread);
     socket.on('notification:read-all', refreshUnread);
+    socket.on('notification:job-read', refreshUnread);
 
     return () => {
       socket.off('notification:new', refreshUnread);
       socket.off('message:new', refreshUnread);
       socket.off('notification:read', refreshUnread);
       socket.off('notification:read-all', refreshUnread);
+      socket.off('notification:job-read', refreshUnread);
     };
   }, [queryClient, user?.id]);
 
@@ -230,8 +250,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 className="flex min-w-0 items-center gap-3 rounded-md p-1 -m-1 transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
-                  {user.role === 'branch_staff' && branchAvatarUrl ? (
-                    <img src={branchAvatarUrl} alt="" className="h-full w-full object-cover" />
+                  {sidebarAvatarUrl ? (
+                    <img src={sidebarAvatarUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <User className="h-4 w-4 text-primary" />
                   )}
@@ -270,12 +290,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 to={item.path}
                 onClick={() => setSidebarOpen(false)}
                 className={cn(
-                  "nav-link",
+                  "nav-link relative",
                   location.pathname === item.path && "active"
                 )}
               >
                 {item.icon}
                 <span>{item.label}</span>
+                {jobsNavPath && item.path === jobsNavPath && hasJobsNavActivity && (
+                  <ActivityDot className="ml-1" aria-label="Job activity" />
+                )}
                 {location.pathname === item.path && (
                   <ChevronRight className="ml-auto h-4 w-4" />
                 )}

@@ -105,6 +105,53 @@ async function getUnreadCount(userId) {
   });
 }
 
+const JOB_SECTION_TYPES = {
+  materials: [
+    "material_list_submitted",
+    "material_suggestion_received",
+    "material_list_replaced",
+    "provider_suggestion",
+    "material_paid",
+    "material_suggestion_accepted",
+    "material_suggestion_rejected",
+    "payment_made",
+  ],
+  messages: ["job_chat"],
+  general: [
+    "job_request",
+    "job_accepted",
+    "inspection_completed",
+    "price_submitted",
+    "delivery_update",
+    "provider_accepted",
+    "provider_rejected",
+    "job_completed",
+    "job_cancelled",
+    "material_tracking",
+  ],
+};
+
+/**
+ * Mark unread job-scoped notifications read, optionally filtered by UI section.
+ * @param {'all'|'materials'|'messages'|'general'} section
+ */
+async function markJobNotificationsRead(userId, jobId, section = "all") {
+  const uid = String(userId);
+  const jid = String(jobId);
+  const where = { userId: uid, jobId: jid, read: false };
+  if (section && section !== "all") {
+    const types = JOB_SECTION_TYPES[section];
+    if (!types?.length) return 0;
+    where.type = { in: types };
+  }
+  const result = await prisma.notification.updateMany({
+    where,
+    data: { read: true },
+  });
+  emitToUserRoom(uid, "notification:job-read", { jobId: jid, section: section || "all" });
+  return result.count;
+}
+
 /**
  * In-app notification for the supplier org owner (User row) for material-order events.
  */
@@ -134,5 +181,6 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   getUnreadCount,
+  markJobNotificationsRead,
   notifySupplierOrgOwnerMaterialEvent,
 };

@@ -97,6 +97,17 @@ async function notifyCategorySuggestion(adminId, suggestionName, suggestionId) {
   });
 }
 
+async function notifyMaterialsListSubmitted(customerId, jobId, jobTitle, providerName) {
+  return notifyUser(customerId, {
+    type: "material_list_submitted",
+    title: "Materials list ready",
+    message: providerName
+      ? `${providerName} submitted a materials list for "${jobTitle || "your job"}". Review and pay when ready.`
+      : `Your provider submitted a materials list for "${jobTitle || "your job"}". Review and pay when ready.`,
+    jobId,
+  });
+}
+
 async function notifyChatMessage({ recipientId, jobId, jobTitle, message, senderId, senderName, senderRole }) {
   if (!recipientId) return;
   try {
@@ -126,5 +137,6 @@ module.exports = {
   notifyDeliveryUpdate,
   notifyProviderApproved,
   notifyCategorySuggestion,
+  notifyMaterialsListSubmitted,
   notifyChatMessage,
 };

@@ -47,11 +47,11 @@ export default function Landing() {
       <Header />
       
       {/* Hero Section */}
-      <section id="home" className="scroll-mt-20 hero-section text-primary-foreground py-16 md:py-24 lg:py-32">
+      <section id="home" className="scroll-mt-20 hero-section-with-image text-primary-foreground py-16 md:py-24 lg:py-32">
         <div className="container">
-          <div className="max-w-3xl mx-auto text-center animate-fade-in">
+          <div className="max-w-3xl mx-auto text-center animate-fade-in bg-primary/60 rounded-xl p-4">
             <h1 className="text-3xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight">
-              Find Trusted Maintenance Professionals Near You
+              <span className='text-accent'>Find Trusted Maintenance</span> Professionals Near You
             </h1>
             <p className="text-lg md:text-xl text-primary-foreground/80 mb-8 max-w-2xl mx-auto">
               Connect with verified service providers for plumbing, electrical, tiling, cleaning, and more. 

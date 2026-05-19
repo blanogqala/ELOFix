@@ -16,6 +16,7 @@ import {
   submitProviderForReview,
 } from '@/lib/api/providers';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { compressImageForUpload } from '@/lib/imageCompression';
 import {
   getCategories,
   getServiceAreas,
@@ -553,7 +554,8 @@ export default function ProviderProfile() {
       return;
     }
     try {
-      const updated = await uploadProviderAvatar(user.id, file);
+      const compressed = await compressImageForUpload(file);
+      const updated = await uploadProviderAvatar(user.id, compressed);
       setProvider(updated);
       await refreshProfile();
       toast({ title: 'Profile photo updated' });

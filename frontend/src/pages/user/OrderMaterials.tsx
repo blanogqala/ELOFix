@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { getDeliveryProviders } from '@/lib/api/specials';
 import { reverseGeocode } from '@/lib/api/geocode';
 import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
@@ -495,6 +496,7 @@ export default function OrderMaterials() {
                           : null;
                     const addressLine = sup.address?.trim();
                     const title = sup.displayName || sup.name;
+                    const logoUrl = resolveUploadUrl(sup.logo);
                     return (
                       <div
                         key={sup.id}
@@ -517,8 +519,12 @@ export default function OrderMaterials() {
                         )}
                       >
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-2xl">
-                            {sup.logo || <Store className="h-5 w-5 text-primary sm:h-6 sm:w-6" />}
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-primary/10">
+                            {logoUrl ? (
+                              <img src={logoUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <Store className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
+                            )}
                           </div>
                           <div className="min-w-0 flex-1 space-y-2">
                             <p className="font-semibold leading-tight">{title}</p>
@@ -595,11 +601,22 @@ export default function OrderMaterials() {
               <div className="grid sm:grid-cols-2 gap-4">
                 {filteredProducts.map(product => {
                   const inCart = cart.find(c => c.product.id === product.id);
+                  const productImageUrl = resolveUploadUrl(product.image);
                   return (
                     <div key={product.id} className="p-4 border border-border rounded-lg">
                       <div className="flex items-start gap-3">
-                        <div className="h-14 w-14 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                          <Package className="h-6 w-6 text-muted-foreground" />
+                        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-muted">
+                          {productImageUrl ? (
+                            <img
+                              src={productImageUrl}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Package className="h-6 w-6 text-muted-foreground" />
+                            </div>
+                          )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm">{product.name}</p>

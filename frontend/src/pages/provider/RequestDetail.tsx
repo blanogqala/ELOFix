@@ -17,6 +17,7 @@ import {
   MessageSquare, Send, Package, XCircle,
 } from 'lucide-react';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   Select,
   SelectContent,
@@ -31,6 +32,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { formatPersonDisplayName } from '@/lib/displayPersonName';
 
 export default function ProviderRequestDetail() {
   const { id } = useParams<{ id: string }>();
@@ -183,7 +185,7 @@ export default function ProviderRequestDetail() {
             <div className="flex gap-2 flex-wrap">
               {job.images.map((img, i) => (
                 <div key={i} className="h-20 w-20 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-                  <img src={img} alt="" className="h-full w-full object-cover" />
+                  <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
                 </div>
               ))}
             </div>
@@ -292,7 +294,7 @@ export default function ProviderRequestDetail() {
                         : "bg-muted"
                     )}
                   >
-                    <p className="text-xs font-medium mb-1 opacity-75">{msg.authorName}</p>
+                    <p className="text-xs font-medium mb-1 opacity-75">{formatPersonDisplayName(msg.authorName)}</p>
                     <p>{msg.message}</p>
                     <p className="text-xs opacity-50 mt-1">{new Date(msg.createdAt).toLocaleString()}</p>
                   </div>

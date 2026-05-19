@@ -13,6 +13,7 @@ const userPublicSelect = {
   email: true,
   name: true,
   phone: true,
+  profileImage: true,
   role: true,
   createdAt: true,
 };
@@ -36,7 +37,7 @@ function parseRole(role) {
 
 function signToken(user) {
   return jwt.sign(
-    { sub: user.id, email: user.email, role: user.role },
+    { sub: user.id, email: user.email, name: user.name, role: user.role },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
   );

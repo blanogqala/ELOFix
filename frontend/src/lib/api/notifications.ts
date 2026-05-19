@@ -35,6 +35,15 @@ export async function markAllAsRead(): Promise<void> {
   await apiClient.patch('/notifications/read-all');
 }
 
+export type JobNotificationSection = 'all' | 'materials' | 'messages' | 'general';
+
+export async function markJobNotificationsRead(
+  jobId: string,
+  section: JobNotificationSection = 'all'
+): Promise<void> {
+  await apiClient.patch(`/notifications/job/${jobId}/read`, { section });
+}
+
 export async function getUnreadCount(): Promise<number> {
   const { data } = await apiClient.get<CountResponse>('/notifications/unread-count');
   return typeof data?.count === 'number' ? data.count : 0;

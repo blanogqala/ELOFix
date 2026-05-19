@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Clock, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { differenceInDays, parseISO } from 'date-fns';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 interface SpecialsCarouselProps {
   category?: string;
@@ -80,6 +81,8 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
   }
 
   const currentSpecial = specials[currentIndex];
+  const supplierLogoUrl = resolveUploadUrl(currentSpecial.supplierLogo);
+  const productImageUrl = resolveUploadUrl(currentSpecial.productImage) || '/placeholder.svg';
 
   return (
     <div className="card-elevated group relative max-w-full min-w-0 overflow-hidden">
@@ -96,7 +99,11 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
           <div className="z-10 min-w-0 flex-1 text-white">
             {/* Store Info */}
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-2xl">{currentSpecial.supplierLogo}</span>
+              {supplierLogoUrl ? (
+                <img src={supplierLogoUrl} alt="" className="h-8 w-8 rounded-full object-cover bg-white/20" />
+              ) : (
+                <span className="text-2xl" aria-hidden>🏪</span>
+              )}
               <span className="text-sm font-medium opacity-90">{currentSpecial.supplierName}</span>
             </div>
             
@@ -128,7 +135,7 @@ export function SpecialsCarousel({ category }: SpecialsCarouselProps) {
           {/* Product Image */}
           <div className="hidden sm:block w-32 h-32 rounded-lg bg-white/10 overflow-hidden">
             <img 
-              src={currentSpecial.productImage || '/placeholder.svg'} 
+              src={productImageUrl} 
               alt={currentSpecial.productName}
               className="w-full h-full object-cover"
             />

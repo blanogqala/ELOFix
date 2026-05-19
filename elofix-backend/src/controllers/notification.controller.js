@@ -46,7 +46,7 @@ async function createSupportNotifications(req, res) {
     if (!bu) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-    senderName = bu.email || "Branch staff";
+    senderName = "Branch staff";
     senderRoleFormatted = "branch_staff";
     fullMessage = `${senderName}: ${message}`;
   } else {
@@ -65,7 +65,7 @@ async function createSupportNotifications(req, res) {
           : roleUp === "PROVIDER"
             ? "provider"
             : String(sender.role || "user").toLowerCase();
-    fullMessage = `${sender.name} (${sender.email}): ${message}`;
+    fullMessage = `${sender.name}: ${message}`;
   }
 
   await Promise.all(
@@ -132,6 +132,23 @@ async function markAllAsRead(req, res) {
   res.json({ success: true });
 }
 
+async function markJobNotificationsRead(req, res) {
+  if (req.user.role === "BRANCH_STAFF") {
+    return res.status(400).json({ success: false, message: "Not supported for branch staff" });
+  }
+  const userId = String(req.body?.userId || req.user.userId);
+  if (req.user.role !== "ADMIN" && userId !== req.user.userId) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+  const jobId = String(req.params.jobId || "").trim();
+  if (!jobId) {
+    return res.status(400).json({ success: false, message: "jobId is required" });
+  }
+  const section = String(req.body?.section || "all").trim() || "all";
+  const count = await notificationService.markJobNotificationsRead(userId, jobId, section);
+  res.json({ success: true, count });
+}
+
 async function getUnreadCount(req, res) {
   if (req.user.role === "BRANCH_STAFF") {
     const count = await branchStaffNotificationService.getUnreadCount(req.user.userId);
@@ -152,5 +169,6 @@ module.exports = {
   replySupportAsAdmin,
   markAsRead,
   markAllAsRead,
+  markJobNotificationsRead,
   getUnreadCount,
 };

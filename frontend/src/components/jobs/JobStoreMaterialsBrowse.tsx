@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select';
 import { Supplier, Product, MaterialLine, JobLocation } from '@/types';
 import { getStores, type StoreRow } from '@/lib/api/stores';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   ArrowLeft,
   Plus,
@@ -402,10 +403,10 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                       )}
                     >
                       <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 text-lg leading-none">
-                        {supplier.logo && supplier.logo.startsWith('http') ? (
-                          <img src={supplier.logo} alt="" className="h-12 w-12 rounded-xl object-cover" />
+                        {resolveUploadUrl(supplier.logo) ? (
+                          <img src={resolveUploadUrl(supplier.logo)} alt="" className="h-12 w-12 rounded-xl object-cover" />
                         ) : (
-                          supplier.logo || <Store className="h-6 w-6 text-primary" />
+                          <Store className="h-6 w-6 text-primary" />
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -660,7 +661,7 @@ function ProductRowCart({
       >
         <div className="relative aspect-square w-full shrink-0 bg-muted">
           {product.image ? (
-            <img src={product.image} alt="" className="absolute inset-0 size-full object-cover" />
+            <img src={resolveUploadUrl(product.image)} alt="" className="absolute inset-0 size-full object-cover" />
           ) : (
             <div className="flex size-full items-center justify-center p-3 text-center text-[10px] text-muted-foreground">No image</div>
           )}
@@ -737,7 +738,7 @@ function ProductRowSuggest({
       >
         <div className="relative aspect-square w-full shrink-0 bg-muted">
           {product.image ? (
-            <img src={product.image} alt="" className="absolute inset-0 size-full object-cover" />
+            <img src={resolveUploadUrl(product.image)} alt="" className="absolute inset-0 size-full object-cover" />
           ) : (
             <div className="flex size-full items-center justify-center p-3 text-center text-[10px] text-muted-foreground">No image</div>
           )}

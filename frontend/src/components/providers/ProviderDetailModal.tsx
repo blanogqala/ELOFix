@@ -14,6 +14,7 @@ import {
   getServiceLaborEstimate,
 } from '@/lib/providerLaborPricing';
 import { getCategories } from '@/lib/api/categories';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 interface ProviderDetailModalProps {
   provider: Provider | null;
@@ -52,6 +53,7 @@ export function ProviderDetailModal({
   const workPosts = (provider.workPosts || []).filter(
     p => !selectedCategory || p.categoryId === selectedCategory
   );
+  const profileAvatarUrl = resolveUploadUrl(provider.profileImage);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -63,10 +65,14 @@ export function ProviderDetailModal({
         <div className="space-y-6">
           {/* Header */}
           <div className=" p-4 rounded-lg bg-primary/20 border-2 border-primary flex items-start gap-4">
-            <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <span className="text-3xl font-bold text-primary">
-                {provider.name.charAt(0)}
-              </span>
+            <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden">
+              {profileAvatarUrl ? (
+                <img src={profileAvatarUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-3xl font-bold text-primary">
+                  {provider.name.charAt(0)}
+                </span>
+              )}
             </div>
             <div className="flex-1">
               <h2 className="text-xl font-bold">{provider.name}</h2>
@@ -140,7 +146,7 @@ export function ProviderDetailModal({
                 <div className="relative">
                   <div className="aspect-video rounded-lg overflow-hidden bg-muted">
                     <img 
-                      src={workPosts[activeGalleryIndex % workPosts.length]?.images[0] || '/placeholder.svg'} 
+                      src={resolveUploadUrl(workPosts[activeGalleryIndex % workPosts.length]?.images[0]) || '/placeholder.svg'} 
                       alt="Work sample"
                       className="w-full h-full object-cover"
                     />
@@ -192,7 +198,7 @@ export function ProviderDetailModal({
                           : "border-transparent hover:border-border"
                       )}
                     >
-                      <img src={post.images[0] || '/placeholder.svg'} alt="" className="w-full h-full object-cover" />
+                      <img src={resolveUploadUrl(post.images[0]) || '/placeholder.svg'} alt="" className="w-full h-full object-cover" />
                     </button>
                   ))}
                 </div>
@@ -202,7 +208,7 @@ export function ProviderDetailModal({
               <div className="grid grid-cols-3 gap-2">
                 {provider.portfolioImages.map((img, idx) => (
                   <div key={idx} className="aspect-square rounded-lg overflow-hidden bg-muted">
-                    <img src={img} alt={`Work ${idx + 1}`} className="w-full h-full object-cover" />
+                    <img src={resolveUploadUrl(img)} alt={`Work ${idx + 1}`} className="w-full h-full object-cover" />
                   </div>
                 ))}
               </div>

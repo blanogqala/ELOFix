@@ -78,6 +78,21 @@ function workPostImageStorage(userIdFromReq) {
   });
 }
 
+function customerAvatarStorage(userIdFromReq) {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uid = userIdFromReq(req);
+      const dir = path.join(UPLOAD_ROOT, "users", uid, "avatar");
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `avatar-${Date.now()}${ext}`);
+    },
+  });
+}
+
 function jobImageStorage() {
   return multer.diskStorage({
     destination: (req, file, cb) => {
@@ -94,6 +109,12 @@ function jobImageStorage() {
 }
 
 const userIdFromParams = (req) => String(req.params.id || "").trim();
+
+const uploadUserAvatar = multer({
+  storage: customerAvatarStorage(userIdFromParams),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
+});
 
 const uploadProviderDocument = multer({
   storage: providerDocStorage(userIdFromParams),
@@ -169,6 +190,7 @@ function filePathToPublicUrl(absolutePath) {
 
 module.exports = {
   UPLOAD_ROOT,
+  uploadUserAvatar,
   uploadProviderDocument,
   uploadProviderAvatar,
   uploadWorkPostImage,

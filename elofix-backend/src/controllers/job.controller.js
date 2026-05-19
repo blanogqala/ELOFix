@@ -1,6 +1,17 @@
 const AppError = require("../utils/AppError");
 const { filePathToPublicUrl } = require("../middleware/upload.middleware");
+const { resolveUserDisplayName } = require("../utils/displayName.util");
 const jobService = require("../services/job.service");
+
+async function authorFromRequest(req) {
+  const fromBody = req.body?.authorName != null ? String(req.body.authorName).trim() : "";
+  const fromToken = req.user?.name != null ? String(req.user.name).trim() : "";
+  const name =
+    (fromBody && !fromBody.includes("@") ? fromBody : "") ||
+    (fromToken && !fromToken.includes("@") ? fromToken : "") ||
+    (await resolveUserDisplayName(req.user.userId));
+  return { ...req.user, name };
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -62,7 +73,7 @@ async function removeMaterial(req, res) {
 async function addJobNote(req, res) {
   const job = await jobService.addJobNote(
     req.params.id,
-    { ...req.user, name: req.body?.authorName || req.user.email },
+    await authorFromRequest(req),
     req.body?.message,
     req.body?.title
   );
@@ -72,7 +83,7 @@ async function addJobNote(req, res) {
 async function addChatMessage(req, res) {
   const job = await jobService.addChatMessage(
     req.params.id,
-    { ...req.user, name: req.body?.authorName || req.user.email },
+    await authorFromRequest(req),
     req.body?.message
   );
   res.json({ success: true, job });

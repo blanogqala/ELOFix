@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { categoryKeysMatch } from '@/lib/categoryKey';
 import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 interface Step4MaterialSelectionProps {
   selectedCategory: string;
@@ -260,8 +261,12 @@ export function Step4MaterialSelection({
               className="p-4 border border-border rounded-lg hover:border-primary/50 hover:shadow-md transition-all cursor-pointer"
             >
               <div className="flex items-start gap-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center text-2xl shrink-0">
-                  {supplier.logo || '🏪'}
+                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden">
+                  {resolveUploadUrl(supplier.logo) ? (
+                    <img src={resolveUploadUrl(supplier.logo)} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-2xl" aria-hidden>🏪</span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold">{supplier.name}</h3>
@@ -447,8 +452,12 @@ export function Step4MaterialSelection({
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-xl">
-              {selectedSupplier.logo || '🏪'}
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
+              {resolveUploadUrl(selectedSupplier.logo) ? (
+                <img src={resolveUploadUrl(selectedSupplier.logo)} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-xl" aria-hidden>🏪</span>
+              )}
             </div>
             <div>
               <h2 className="text-xl font-semibold">{selectedSupplier.name}</h2>
@@ -502,7 +511,7 @@ export function Step4MaterialSelection({
                   <div className="h-16 w-16 rounded-lg bg-muted flex items-center justify-center shrink-0 overflow-hidden">
                     {product.image ? (
                       <img 
-                        src={product.image} 
+                        src={resolveUploadUrl(product.image)} 
                         alt={product.name}
                         className="h-full w-full object-cover"
                       />

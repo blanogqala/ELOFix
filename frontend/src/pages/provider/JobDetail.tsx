@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -68,6 +68,9 @@ import {
 } from '@/lib/providerJobTimeline';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { formatPersonDisplayName } from '@/lib/displayPersonName';
+import { ActivityDot } from '@/components/ui/ActivityDot';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import {
@@ -114,7 +117,9 @@ export default function ProviderJobDetail() {
   const { user } = useAuth();
   const { isProfileComplete } = useProviderStatus();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
+  const { messagesCount, markJobSectionRead } = useJobActivityIndicators();
 
   useMaterialOrderFulfillmentSocket({ userId: user?.id, activeJobId: jobId });
 
@@ -148,7 +153,10 @@ export default function ProviderJobDetail() {
   const [noteTitle, setNoteTitle] = useState('');
   const [noteMessage, setNoteMessage] = useState('');
   const [chatMessage, setChatMessage] = useState('');
-  const [commTab, setCommTab] = useState<'messages' | 'notes'>('messages');
+  const commTabParam = searchParams.get('tab');
+  const [commTab, setCommTab] = useState<'messages' | 'notes'>(
+    commTabParam === 'messages' || commTabParam === 'notes' ? commTabParam : 'messages'
+  );
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelDetails, setCancelDetails] = useState('');
@@ -218,6 +226,17 @@ export default function ProviderJobDetail() {
     window.addEventListener('storage', handleStorageUpdate);
     return () => window.removeEventListener('storage', handleStorageUpdate);
   }, [jobId, queryClient]);
+
+  useEffect(() => {
+    if (!jobId || !job) return;
+    void markJobSectionRead(jobId, 'materials');
+    void markJobSectionRead(jobId, 'general');
+  }, [jobId, job?.id, markJobSectionRead]);
+
+  useEffect(() => {
+    if (!jobId || commTab !== 'messages') return;
+    void markJobSectionRead(jobId, 'messages');
+  }, [jobId, commTab, markJobSectionRead]);
 
   const handleMarkInspectionDone = async () => {
     if (!job) return;
@@ -946,11 +965,14 @@ export default function ProviderJobDetail() {
             <button
               onClick={() => setCommTab('messages')}
               className={cn(
-                "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+                "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
                 commTab === 'messages' ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
               )}
             >
               Messages
+              {messagesCount(jobId) > 0 && (
+                <ActivityDot count={messagesCount(jobId)} aria-label="Unread messages" />
+              )}
             </button>
             <button
               onClick={() => setCommTab('notes')}
@@ -974,7 +996,7 @@ export default function ProviderJobDetail() {
                       msg.authorId === user?.id ? "ml-auto bg-primary text-primary-foreground" : "bg-muted"
                     )}
                   >
-                    <p className="text-xs font-medium mb-1 opacity-75">{msg.authorName}</p>
+                    <p className="text-xs font-medium mb-1 opacity-75">{formatPersonDisplayName(msg.authorName)}</p>
                     <p>{msg.message}</p>
                     <p className="text-xs opacity-50 mt-1">{new Date(msg.createdAt).toLocaleString()}</p>
                   </div>
@@ -1023,7 +1045,7 @@ export default function ProviderJobDetail() {
                   >
                     {note.title && <p className="font-medium mb-1">{note.title}</p>}
                     <p className="text-muted-foreground">{note.message}</p>
-                    <p className="text-xs opacity-50 mt-1">{note.authorName} · {new Date(note.createdAt).toLocaleString()}</p>
+                    <p className="text-xs opacity-50 mt-1">{formatPersonDisplayName(note.authorName)} · {new Date(note.createdAt).toLocaleString()}</p>
                   </div>
                 )) : (
                   <p className="text-sm text-muted-foreground text-center py-4">No notes yet.</p>

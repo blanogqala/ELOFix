@@ -16,6 +16,7 @@ import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobP
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { sumReleasedAmountJobs } from '@/lib/jobMoney';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 export default function ProviderDashboard() {
   const { user } = useAuth();
@@ -165,8 +166,12 @@ export default function ProviderDashboard() {
           <div className="card-elevated bg-accent/30 p-4 sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-col sm:items-start sm:pl-4">
               <div className="grid grid-cols-2 gap-2">
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                  <span className="text-2xl font-bold text-primary">{provider.name.charAt(0)}</span>
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
+                  {resolveUploadUrl(provider.profileImage) ? (
+                    <img src={resolveUploadUrl(provider.profileImage)} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-2xl font-bold text-primary">{provider.name.charAt(0)}</span>
+                  )}
                 </div>
                 <div className="flex justify-end sm:justify-end sm:ml-48 sm:mt-4">
                   <Button variant="outline" className="h-9 w-28 shrink-0 whitespace-nowrap sm:w-48" onClick={() => navigate('/provider/profile')}>Edit Profile</Button>
@@ -228,7 +233,7 @@ export default function ProviderDashboard() {
                     <div className="flex items-start gap-3">
                       {job.images[0] ? (
                         <div className="h-12 w-12 rounded-lg overflow-hidden shrink-0">
-                          <img src={job.images[0]} alt="" className="h-full w-full object-cover" />
+                          <img src={resolveUploadUrl(job.images[0])} alt="" className="h-full w-full object-cover" />
                         </div>
                       ) : (
                         <div className="h-12 w-12 rounded-lg bg-warning/10 flex items-center justify-center shrink-0">

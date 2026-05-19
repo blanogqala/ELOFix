@@ -15,6 +15,7 @@ function authenticate(req, res, next) {
       userId: payload.sub,
       id: payload.sub,
       email: payload.email,
+      name: payload.name || null,
       role: payload.role,
       branchId: payload.branchId || null,
       supplierOrgId: payload.supplierOrgId || null,
