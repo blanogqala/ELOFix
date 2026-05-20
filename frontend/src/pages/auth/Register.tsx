@@ -75,8 +75,8 @@ export default function Register() {
       {/* Left side - Form */}
       <div className="flex flex-1 items-center justify-center p-4 sm:p-8">
         <div className="w-full max-w-md min-w-0 animate-fade-in">
-        <div className="mb-8 flex justify-center">
-            <EloFixLogo variant="dark" className="h-20" />
+        <div className="mb-1 flex justify-center">
+            <EloFixLogo variant="dark" className="h-32" />
           </div>
 
           <h1 className="mb-2 text-xl font-semibold sm:text-2xl md:text-3xl">Create an account</h1>
@@ -240,10 +240,10 @@ export default function Register() {
       </div>
 
       {/* Right side - Image/Branding */}
-      <div className="hidden lg:flex flex-1 hero-section items-center justify-center p-8">
-        <div className="max-w-md text-center text-primary-foreground">
-          <div className="flex justify-center mb-6">
-            <EloFixLogo variant="light" className="h-48" clickable={false} />
+      <div className="hidden lg:flex flex-1 hero-section justify-center p-8">
+        <div className="max-w-md text-center text-primary-foreground mt-20 fixed">
+          <div className="flex justify-center">
+            <EloFixLogo variant="light" className="h-56" clickable={false} />
           </div>
           <h2 className="text-3xl font-bold mb-4">
             {role === 'provider' 
