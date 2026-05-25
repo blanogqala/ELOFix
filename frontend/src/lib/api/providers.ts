@@ -1,5 +1,6 @@
 import apiClient from '@/api/client';
 import { Provider } from '@/types';
+import type { ProviderDocType } from '@/lib/providerDocuments';
 
 interface ProvidersResponse {
   success: boolean;
@@ -73,7 +74,7 @@ export async function updateProvider(id: string, updates: Partial<Provider>): Pr
 
 export async function uploadProviderDocument(
   providerUserId: string,
-  documentType: 'idDoc' | 'companyReg' | 'proofOfSkill',
+  documentType: ProviderDocType,
   file: File
 ): Promise<Provider> {
   const fd = new FormData();
@@ -143,7 +144,7 @@ export async function deleteProvider(userId: string): Promise<Provider> {
 
 export async function rejectProviderDocument(
   providerUserId: string,
-  documentType: 'idDoc' | 'companyReg' | 'proofOfSkill',
+  documentType: ProviderDocType,
   feedback: string
 ): Promise<Provider> {
   const { data } = await apiClient.patch<ProviderResponse>(
@@ -156,7 +157,7 @@ export async function rejectProviderDocument(
 
 export async function approveProviderDocument(
   providerUserId: string,
-  documentType: 'idDoc' | 'companyReg' | 'proofOfSkill'
+  documentType: ProviderDocType
 ): Promise<Provider> {
   const { data } = await apiClient.patch<ProviderResponse>(
     `/admin/providers/${providerUserId}/documents/${documentType}/approve`
@@ -197,8 +198,10 @@ export function recommendProviders(
   );
 
   return [...eligible].sort((a, b) => {
-    const scoreA = a.rating * 20 + a.completedJobs * 0.1;
-    const scoreB = b.rating * 20 + b.completedJobs * 0.1;
+    const reviewsA = a.totalReviews ?? a.reviews?.length ?? 0;
+    const reviewsB = b.totalReviews ?? b.reviews?.length ?? 0;
+    const scoreA = a.rating * 25 + reviewsA * 2 + a.completedJobs * 0.5;
+    const scoreB = b.rating * 25 + reviewsB * 2 + b.completedJobs * 0.5;
     return scoreB - scoreA;
   });
 }

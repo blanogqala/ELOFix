@@ -1,5 +1,6 @@
 import type { Provider } from '@/types';
 import { skillLaborPricingPassesOnboarding } from '@/lib/providerLaborPricing';
+import { requiredDocumentsComplete } from '@/lib/providerDocuments';
 
 export type ProviderProfileSection = 'profileInfo' | 'skillsAndPrices' | 'documents';
 
@@ -9,10 +10,6 @@ export interface ProviderProfileSectionStatus {
   documents: boolean;
   /** 0–100 based on the three guided sections (user-facing workflow). */
   percentCore: number;
-}
-
-function hasDocUrl(doc?: { url?: string } | null): boolean {
-  return Boolean(doc?.url && String(doc.url).trim().length > 0);
 }
 
 /**
@@ -61,8 +58,7 @@ export function evaluateProviderCoreSections(
     selectedSkills.length > 0 &&
     selectedSkills.every((s) => skillLaborPricingPassesOnboarding(pricing[s] ?? {}));
 
-  const documents =
-    hasDocUrl(provider?.documents?.idDoc) && hasDocUrl(provider?.documents?.proofOfSkill);
+  const documents = requiredDocumentsComplete(provider?.documents);
 
   const done = [profileInfo, skillsAndPrices, documents].filter(Boolean).length;
 

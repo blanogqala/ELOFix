@@ -10,7 +10,6 @@ import { useToast } from '@/hooks/use-toast';
 import {
   getProviderById,
   updateProvider,
-  uploadProviderDocument,
   uploadProviderAvatar,
   uploadWorkPostImage,
   submitProviderForReview,
@@ -30,10 +29,11 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
 import {
   Save, Plus, X, Upload, AlertCircle,
-  CheckCircle, Clock, Banknote, Image, Trash2, Pencil,
-  Bell, CalendarClock, Camera
+  Banknote, Image, Trash2, Pencil,
+  Bell, CalendarClock, Camera, Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ProviderVerificationDocuments } from '@/components/provider/ProviderVerificationDocuments';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { socket } from '@/lib/socket';
@@ -51,19 +51,12 @@ import {
   TabsTrigger,
 } from '@/components/ui/tabs';
 
-type DocType = 'idDoc' | 'companyReg' | 'proofOfSkill';
 type ProfileInfoErrors = {
   phone?: boolean;
   businessName?: boolean;
   bio?: boolean;
   serviceAreas?: boolean;
 };
-
-const documentTypes: { id: DocType; label: string; description: string; required: boolean }[] = [
-  { id: 'idDoc', label: 'ID Document', description: 'Government-issued photo ID', required: true },
-  { id: 'companyReg', label: 'Company Registration', description: 'Business license or registration', required: false },
-  { id: 'proofOfSkill', label: 'Proof of Skill', description: 'Certifications or qualifications', required: true },
-];
 
 const ONBOARDING_KEY = 'provider_onboarding_seen';
 
@@ -72,7 +65,6 @@ export default function ProviderProfile() {
   const { isApproved, isProfileComplete } = useProviderStatus();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const workPostImageInputRef = useRef<HTMLInputElement>(null);
-  const docInputRefs = useRef<Partial<Record<DocType, HTMLInputElement | null>>>({});
   const { toast } = useToast();
   const [provider, setProvider] = useState<Provider | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -378,35 +370,6 @@ export default function ProviderProfile() {
       toast({ title: 'Error', description: 'Failed to save pricing.', variant: 'destructive' });
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  // ── Documents ──
-  const triggerDocUpload = (docType: DocType) => {
-    docInputRefs.current[docType]?.click();
-  };
-
-  const handleDocFileChange = async (e: React.ChangeEvent<HTMLInputElement>, docType: DocType) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file || !user || !provider) return;
-    try {
-      const updated = await uploadProviderDocument(user.id, docType, file);
-      setProvider(updated);
-      await refreshProfile();
-      toast({ title: 'Document uploaded', description: 'Pending admin review.' });
-    } catch {
-      toast({ title: 'Error', description: 'Failed to upload document.', variant: 'destructive' });
-    }
-  };
-
-  const getDocStatus = (docType: DocType) => {
-    const doc = provider?.documents[docType];
-    if (!doc) return null;
-    switch (doc.status) {
-      case 'approved': return { icon: CheckCircle, label: 'Approved', class: 'text-success' };
-      case 'rejected': return { icon: AlertCircle, label: 'Rejected', class: 'text-destructive' };
-      default: return { icon: Clock, label: 'Pending', class: 'text-warning' };
     }
   };
 
@@ -1027,73 +990,16 @@ export default function ProviderProfile() {
 
           {/* ═══ DOCUMENTS ═══ */}
           <TabsContent value="docs" className="space-y-6">
-            <div className="card-elevated">
-              <div className="p-6 border-b border-border">
-                <h3 className="font-semibold">Verification Documents</h3>
-              </div>
-              <div className="divide-y divide-border">
-                {documentTypes.map((docType) => {
-                  const doc = provider?.documents[docType.id];
-                  const status = getDocStatus(docType.id);
-                  const StatusIcon = status?.icon;
-                  return (
-                    <div key={docType.id} className="p-6">
-                      <input
-                        type="file"
-                        accept="application/pdf,image/*"
-                        className="hidden"
-                        ref={(el) => {
-                          docInputRefs.current[docType.id] = el;
-                        }}
-                        onChange={(e) => void handleDocFileChange(e, docType.id)}
-                      />
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium">{docType.label}</p>
-                            {docType.required && <span className="text-xs text-destructive">Required</span>}
-                          </div>
-                          <p className="text-sm text-muted-foreground">{docType.description}</p>
-                          {doc?.url && (
-                            <a
-                              href={resolveUploadUrl(doc.url)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-2 inline-flex text-sm text-primary underline"
-                            >
-                              View uploaded file
-                            </a>
-                          )}
-                          {doc?.status === 'rejected' && doc.feedback && (
-                            <div className="mt-2 p-2 bg-destructive/10 rounded text-sm text-destructive">
-                              Feedback: {doc.feedback}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          {status && StatusIcon && (
-                            <div className={cn("flex items-center gap-1", status.class)}>
-                              <StatusIcon className="h-4 w-4" />
-                              <span className="text-sm font-medium">{status.label}</span>
-                            </div>
-                          )}
-                          {(!doc || doc.status === 'rejected') ? (
-                            <Button type="button" onClick={() => triggerDocUpload(docType.id)}>
-                              <Upload className="mr-2 h-4 w-4" />
-                              {doc?.status === 'rejected' ? 'Re-upload' : 'Upload'}
-                            </Button>
-                          ) : (
-                            <Button type="button" variant="outline" onClick={() => triggerDocUpload(docType.id)}>
-                              Replace
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            {user && (
+              <ProviderVerificationDocuments
+                provider={provider}
+                userId={user.id}
+                onProviderUpdated={async (updated) => {
+                  setProvider(updated);
+                  await refreshProfile();
+                }}
+              />
+            )}
           </TabsContent>
 
           {/* ═══ WORK POSTS ═══ */}

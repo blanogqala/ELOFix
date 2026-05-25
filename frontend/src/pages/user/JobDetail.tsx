@@ -38,6 +38,7 @@ import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
+import { QuotationAttachmentCard } from '@/components/jobs/QuotationAttachmentCard';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
 import { getProviderById } from '@/lib/api/providers';
@@ -741,25 +742,24 @@ export default function JobDetail() {
           (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED') && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Service Price</CardTitle>
+              <CardTitle className="text-lg">Service price & quotation</CardTitle>
               <p className="text-sm text-muted-foreground">
                 {job.requiresInspection === false
-                  ? 'Provider has set the labor price. Pay to proceed.'
-                  : 'Provider has set the labor price after inspection. Pay to proceed.'}
+                  ? 'Your provider submitted labour pricing. Review the amount and any attached quote, then pay to proceed.'
+                  : 'Your provider submitted labour pricing after inspection. Review the amount and any attached quote, then pay to proceed.'}
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-primary/5 rounded-lg">
-                <div>
-                  <p className="text-2xl font-bold text-primary">
-                    R{(job.servicePrice?.amount ?? job.laborEstimateRange.max).toFixed(2)}
-                  </p>
-                  {job.servicePrice?.note && (
-                    <p className="text-sm text-muted-foreground mt-1">{job.servicePrice.note}</p>
-                  )}
-                </div>
+              <QuotationAttachmentCard
+                jobId={job.id}
+                serviceAmount={job.servicePrice?.amount ?? job.laborEstimateRange.max}
+                fileName={job.quotationFileName}
+                uploadedAt={job.quotationUploadedAt}
+                serviceNote={job.servicePrice?.note}
+              />
+              <div className="flex justify-end">
                 <Button className="btn-accent" onClick={() => setPayLaborModalOpen(true)}>
-                  Pay Service
+                  Pay service
                 </Button>
               </div>
             </CardContent>
@@ -769,17 +769,21 @@ export default function JobDetail() {
         {job.laborPaid && job.servicePrice && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Service Price</CardTitle>
+              <CardTitle className="text-lg">Service price</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-lg font-semibold">{formatCurrency(getUserLaborGross(job), { decimals: 2 })}</span>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
-                    View Invoice
-                  </Button>
-                  <Badge className="bg-success text-success-foreground">Paid</Badge>
-                </div>
+            <CardContent className="space-y-4">
+              <QuotationAttachmentCard
+                jobId={job.id}
+                serviceAmount={getUserLaborGross(job)}
+                fileName={job.quotationFileName}
+                uploadedAt={job.quotationUploadedAt}
+                serviceNote={job.servicePrice?.note}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
+                  View invoice
+                </Button>
+                <Badge className="bg-success text-success-foreground">Paid</Badge>
               </div>
             </CardContent>
           </Card>
@@ -910,7 +914,10 @@ export default function JobDetail() {
                   <>
                   <div 
                     className="flex items-center gap-4 cursor-pointer hover:bg-muted/50 p-2 rounded-lg -m-2 transition-colors"
-                    onClick={() => setProviderModalOpen(true)}
+                    onClick={() => {
+                      if (job.providerId) navigate(`/user/providers/${job.providerId}`);
+                      else setProviderModalOpen(true);
+                    }}
                   >
                     <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full bg-primary/10 flex items-center justify-center">
                       {provider?.profileImage ? (
@@ -935,7 +942,7 @@ export default function JobDetail() {
                             {(provider.totalReviews ?? provider.reviews?.length ?? 0).toLocaleString()} review
                             {(provider.totalReviews ?? provider.reviews?.length ?? 0) === 1 ? '' : 's'}
                           </span>
-                          <span className="text-muted-foreground">· Tap for full profile</span>
+                          <span className="text-muted-foreground">· View full profile</span>
                         </p>
                       ) : (
                         <p className="text-sm text-muted-foreground">Click to view profile</p>

@@ -157,7 +157,7 @@ export default function Landing() {
               </div>
               <h3 className="text-lg font-semibold mb-2">Choose a Provider</h3>
               <p className="text-muted-foreground text-sm">
-                Compare verified providers based on ratings, price, and availability. View their portfolios.
+                Compare verified providers by ratings, reviews, completed jobs, and portfolios.
               </p>
             </div>
 

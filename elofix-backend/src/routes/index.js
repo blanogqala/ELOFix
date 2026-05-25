@@ -19,6 +19,7 @@ const materialRoutes = require("./material.routes");
 const ordersRoutes = require("./orders.routes");
 const trackingRoutes = require("./tracking.routes");
 const ratingRoutes = require("./rating.routes");
+const providerReviewRoutes = require("./providerReview.routes");
 const branchRoutes = require("./branch.routes");
 
 const router = express.Router();
@@ -44,5 +45,6 @@ router.use("/supplier", supplierPortalRoutes);
 router.use("/materials", materialRoutes);
 router.use("/tracking", trackingRoutes);
 router.use("/ratings", ratingRoutes);
+router.use("/provider-reviews", providerReviewRoutes);
 
 module.exports = router;

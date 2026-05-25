@@ -39,6 +39,13 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
+  ALL_PROVIDER_DOCUMENTS,
+  REQUIRED_PROVIDER_DOCUMENTS,
+  ADMIN_OPTIONAL_PROVIDER_DOCUMENTS,
+  adminCanApproveProviderAccount,
+  type ProviderDocType,
+} from '@/lib/providerDocuments';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -47,17 +54,83 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 
-type AdminDocType = 'idDoc' | 'companyReg' | 'proofOfSkill';
-
-const documentTypes: { id: AdminDocType; label: string }[] = [
-  { id: 'idDoc', label: 'ID Document' },
-  { id: 'companyReg', label: 'Company Registration' },
-  { id: 'proofOfSkill', label: 'Proof of Skill' },
-];
+type AdminDocType = ProviderDocType;
 
 function docStatusLabel(status: string | undefined, hasUrl: boolean) {
   if (!hasUrl) return 'Not uploaded';
   return status === 'approved' || status === 'rejected' || status === 'pending' ? status : 'pending';
+}
+
+function AdminDocumentRow({
+  label,
+  doc,
+  hasUrl,
+  providerBlocked,
+  isMutating,
+  onApprove,
+  onReject,
+}: {
+  label: string;
+  doc?: Provider['documents'][ProviderDocType];
+  hasUrl: boolean;
+  providerBlocked?: boolean;
+  isMutating: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border-2 border-primary p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
+          <p className="font-medium text-sm">{label}</p>
+          <DocStatusBadge status={doc?.status} hasUrl={hasUrl} />
+        </div>
+        {doc?.feedback ? (
+          <p className="text-xs text-muted-foreground">Feedback: {doc.feedback}</p>
+        ) : null}
+        {!hasUrl ? (
+          <span className="text-xs text-muted-foreground">No file uploaded</span>
+        ) : null}
+      </div>
+      {hasUrl && !providerBlocked ? (
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 overflow-hidden">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8 px-3 text-xs font-medium"
+            disabled={isMutating || doc?.status === 'approved'}
+            onClick={onApprove}
+          >
+            <Check className="mr-1 h-3 w-3" />
+            Approve
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 border-destructive/40 px-3 text-xs text-destructive"
+            disabled={isMutating}
+            onClick={onReject}
+          >
+            <X className="mr-1 h-3 w-3" />
+            Reject
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-8 px-3 text-xs" asChild>
+            <a
+              href={resolveUploadUrl(doc!.url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open
+            </a>
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function DocStatusBadge({ status, hasUrl }: { status: string | undefined; hasUrl: boolean }) {
@@ -132,13 +205,7 @@ export default function AdminProviderDetail() {
     return 'Pending';
   };
 
-  const canApproveAccount = (p: Provider) => {
-    if (p.approved || p.blocked) return false;
-    const profileOk = p.profileCompleted === true;
-    const idOk = p.documents?.idDoc?.status === 'approved';
-    const skillOk = p.documents?.proofOfSkill?.status === 'approved';
-    return profileOk && idOk && skillOk;
-  };
+  const canApproveAccount = (p: Provider) => adminCanApproveProviderAccount(p);
 
   const openImagePreview = (url: string) => {
     const abs = resolveUploadUrl(url);
@@ -151,7 +218,10 @@ export default function AdminProviderDetail() {
       setIsMutating(true);
       const updated = await approveProviderDocument(provider.id, docType);
       setProvider(updated);
-      toast({ title: 'Document approved', description: `${documentTypes.find((d) => d.id === docType)?.label ?? docType} marked approved.` });
+      toast({
+        title: 'Document approved',
+        description: `${ALL_PROVIDER_DOCUMENTS.find((d) => d.id === docType)?.label ?? docType} marked approved.`,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to approve document.';
       toast({ title: 'Error', description: message, variant: 'destructive' });
@@ -366,7 +436,7 @@ export default function AdminProviderDetail() {
                     disabled={isMutating || !canApproveAccount(provider)}
                     title={
                       !canApproveAccount(provider)
-                        ? 'Requires complete profile and approved ID + proof of skill documents'
+                        ? 'Requires complete profile and approved ID, company registration, and proof of address'
                         : undefined
                     }
                   >
@@ -580,80 +650,58 @@ export default function AdminProviderDetail() {
               <div>
                 <h3 className="font-semibold mb-3 flex items-center gap-2">
                   <FileCheck className="h-4 w-4" />
-                  Uploaded Documents
+                  Verification documents
                 </h3>
-                <div className="space-y-3">
-                  {documentTypes.map(({ id: docId, label }) => {
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Approve all required documents before activating the provider account.
+                </p>
+
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Required
+                </p>
+                <div className="mb-6 space-y-3">
+                  {REQUIRED_PROVIDER_DOCUMENTS.map(({ id: docId, label }) => {
                     const doc = provider.documents[docId];
                     const hasUrl = Boolean(doc?.url?.trim());
                     return (
-                      <div
+                      <AdminDocumentRow
                         key={docId}
-                        className="flex flex-col gap-3 rounded-lg border-2 border-primary p-3 sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <div className="min-w-0 flex-1 space-y-3">
-                          <div className="flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
-                            <p className="font-medium text-sm">{label}</p>
-                            <DocStatusBadge status={doc?.status} hasUrl={hasUrl} />
-                          </div>
-                          {doc?.feedback ? (
-                            <p className="text-xs text-muted-foreground">Feedback: {doc.feedback}</p>
-                          ) : null}
-                          
-                        </div>
-                        {hasUrl && !provider.blocked ? (
-                          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 overflow-hidden">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="h-8 px-3 text-xs font-medium"
-                              disabled={isMutating || doc?.status === 'approved'}
-                              onClick={() => void handleApproveDocument(docId)}
-                            >
-                              <Check className="mr-1 h-3 w-3" />
-                              
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-8 border-destructive/40 px-3 text-xs text-destructive"
-                              disabled={isMutating}
-                              onClick={() => {
-                                setDocRejectTarget(docId);
-                                setDocRejectFeedback('');
-                              }}
-                            >
-                              <X className="mr-1 h-3 w-3" />
-                            </Button>
-                            <div className="flex max-w-full flex-wrap items-center gap-2 overflow-hidden pt-0">
-                            {hasUrl ? (
-                              <>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 px-3 text-xs"
-                                  asChild
-                                >
-                                  <a
-                                    href={resolveUploadUrl(doc!.url)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1"
-                                  >
-                                    <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                </Button>
-                              </>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">No file uploaded</span>
-                            )}
-                          </div>
-                          </div>
-                        ) : null}
-                      </div>
+                        label={label}
+                        doc={doc}
+                        hasUrl={hasUrl}
+                        providerBlocked={provider.blocked}
+                        isMutating={isMutating}
+                        onApprove={() => void handleApproveDocument(docId)}
+                        onReject={() => {
+                          setDocRejectTarget(docId);
+                          setDocRejectFeedback('');
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Optional
+                </p>
+                <div className="space-y-3">
+                  {ADMIN_OPTIONAL_PROVIDER_DOCUMENTS.map(({ id: docId, label }) => {
+                    const doc = provider.documents[docId];
+                    const hasUrl = Boolean(doc?.url?.trim());
+                    return (
+                      <AdminDocumentRow
+                        key={docId}
+                        label={label}
+                        doc={doc}
+                        hasUrl={hasUrl}
+                        providerBlocked={provider.blocked}
+                        isMutating={isMutating}
+                        onApprove={() => void handleApproveDocument(docId)}
+                        onReject={() => {
+                          setDocRejectTarget(docId);
+                          setDocRejectFeedback('');
+                        }}
+                      />
                     );
                   })}
                 </div>

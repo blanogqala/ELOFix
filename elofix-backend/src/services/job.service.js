@@ -19,8 +19,19 @@ const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
-const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
 const { expandLaborPricingFromPaidJob } = require("./provider.service");
+const {
+  registerUploadedFile,
+  resolveFileForDownload,
+  FILES_URL_PREFIX,
+} = require("./fileStorage.service");
+const {
+  validateQuotationFileMeta,
+  assertQuotationFileMagic,
+  sanitizeDownloadFilename,
+  MAX_BYTES: QUOTATION_MAX_BYTES,
+} = require("../utils/quotationFile.util");
 
 const jobInclude = {
   customer: {
@@ -890,6 +901,93 @@ async function addChatMessage(jobId, author, message) {
   return await finalizeJob(job, meta);
 }
 
+async function assertJobQuotationUploadAllowed(job) {
+  if (!job) throw new AppError("Job not found", 404);
+  if (!job.providerId) {
+    throw new AppError("Assign a provider before uploading a quotation", 400);
+  }
+  if (job.status === "CANCELLED") {
+    throw new AppError("Cannot attach a quotation to a cancelled job", 400);
+  }
+}
+
+async function assertActorCanAccessJobQuotation(job, actorUserId, actorRole) {
+  if (!job) throw new AppError("Job not found", 404);
+  if (!job.quotationFileUrl) {
+    throw new AppError("No quotation file for this job", 404);
+  }
+  const role = String(actorRole || "").toUpperCase();
+  if (role === "ADMIN") return;
+  if (role === "CUSTOMER" && String(job.customerId) === String(actorUserId)) return;
+  if (role === "PROVIDER" && String(job.providerId) === String(actorUserId)) return;
+  throw new AppError("Forbidden", 403);
+}
+
+async function uploadJobQuotation(jobId, providerUserId, file) {
+  if (!file || !file.path) {
+    throw new AppError("File is required", 400);
+  }
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  if (String(job.providerId) !== String(providerUserId)) {
+    throw new AppError("Only the assigned provider can upload a quotation", 403);
+  }
+  await assertJobQuotationUploadAllowed(job);
+
+  const { ext } = validateQuotationFileMeta(file.originalname, file.mimetype, file.size);
+  if (!Number.isFinite(Number(file.size)) || Number(file.size) <= 0) {
+    throw new AppError("File is empty", 400);
+  }
+  if (Number(file.size) > QUOTATION_MAX_BYTES) {
+    throw new AppError("Quotation file must be 10MB or smaller", 400);
+  }
+  await assertQuotationFileMagic(file.path, ext);
+
+  const stored = await registerUploadedFile(file, {
+    ownerUserId: providerUserId,
+    type: "jobQuotation",
+    originalName: file.originalname,
+    mimeType: file.mimetype,
+  });
+
+  const uploadedAt = new Date();
+  const updated = await prisma.job.update({
+    where: { id: jobId },
+    data: {
+      quotationFileUrl: stored.url,
+      quotationFileName: stored.originalName || file.originalname,
+      quotationUploadedAt: uploadedAt,
+    },
+    include: jobInclude,
+  });
+  const meta = await getJobMeta(jobId);
+  return finalizeJob(updated, meta);
+}
+
+async function resolveJobQuotationFile(job) {
+  const url = String(job.quotationFileUrl || "").trim();
+  if (!url) return null;
+  const token = url.startsWith(FILES_URL_PREFIX) ? url.slice(FILES_URL_PREFIX.length) : url;
+  return resolveFileForDownload(token);
+}
+
+async function getJobQuotationDownload(jobId, actorUserId, actorRole, disposition = "inline") {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  await assertActorCanAccessJobQuotation(job, actorUserId, actorRole);
+  const file = await resolveJobQuotationFile(job);
+  if (!file) {
+    throw new AppError("Quotation file not found", 404);
+  }
+  const filename = sanitizeDownloadFilename(job.quotationFileName || file.originalName);
+  const mode = String(disposition).toLowerCase() === "attachment" ? "attachment" : "inline";
+  return {
+    absolutePath: file.absolutePath,
+    mimeType: file.mimeType || "application/octet-stream",
+    filename,
+    contentDisposition: `${mode}; filename="${filename}"`,
+  };
+}
+
 async function submitServicePrice(jobId, amount, note) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
@@ -1342,7 +1440,9 @@ async function confirmJobCompletion(jobId, rating, review) {
     throw new AppError("rating must be between 1 and 5", 400);
   }
 
-  const existingReview = await prisma.review.findUnique({ where: { jobId } });
+  const roundedRating = normalizeRating(r);
+
+  const existingReview = await prisma.providerReview.findUnique({ where: { jobId } });
   if (existingReview) {
     const ageMs = Date.now() - existingReview.createdAt.getTime();
     if (ageMs > 10 * 60 * 1000) {
@@ -1369,22 +1469,28 @@ async function confirmJobCompletion(jobId, rating, review) {
         ...m,
         statusOverride: "COMPLETED",
         completionConfirmedByUser: true,
-        userRating: r,
+        userRating: roundedRating,
         userReview: review,
       }));
-      await tx.review.upsert({
-        where: { jobId },
-        create: {
-          id: randomUUID(),
-          jobId,
-          rating: Math.round(r),
-          comment: review != null && String(review).trim() !== "" ? String(review).trim() : null,
-        },
-        update: {
-          rating: Math.round(r),
-          comment: review != null && String(review).trim() !== "" ? String(review).trim() : null,
-        },
-      });
+      if (providerRow) {
+        const trimmedComment =
+          review != null && String(review).trim() !== "" ? String(review).trim() : null;
+        await tx.providerReview.upsert({
+          where: { jobId },
+          create: {
+            id: randomUUID(),
+            jobId,
+            customerId: job.customerId,
+            providerId: providerRow.id,
+            rating: roundedRating,
+            comment: trimmedComment,
+          },
+          update: {
+            rating: roundedRating,
+            comment: trimmedComment,
+          },
+        });
+      }
       if (providerRow) {
         const alreadySettled = Boolean(j0.escrowSecondReleaseDone && j0.paymentReleased);
         if (!alreadySettled) {
@@ -1406,7 +1512,7 @@ async function confirmJobCompletion(jobId, rating, review) {
 
   await logAudit("review.upsert", {
     userId: job.customerId,
-    metadata: { jobId, rating: Math.round(r) },
+    metadata: { jobId, rating: roundedRating },
   });
 
   if (job.providerId) {
@@ -1415,6 +1521,7 @@ async function confirmJobCompletion(jobId, rating, review) {
       select: { id: true },
     });
     if (pRow2) {
+      const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
       await syncProviderAggregateRating(pRow2.id);
       const payoutMeta = await getJobMeta(jobId);
       const grossLabor =
@@ -2280,6 +2387,8 @@ module.exports = {
   addJobNote,
   addChatMessage,
   submitServicePrice,
+  uploadJobQuotation,
+  getJobQuotationDownload,
   payLabor,
   submitMaterials,
   rejectJob,

@@ -75,7 +75,23 @@ export interface Provider {
       status?: 'pending' | 'approved' | 'rejected';
       feedback?: string;
     };
+    proofOfAddress?: {
+      url: string;
+      fileId?: string;
+      originalName?: string;
+      type?: string;
+      status?: 'pending' | 'approved' | 'rejected';
+      feedback?: string;
+    };
     proofOfSkill?: {
+      url: string;
+      fileId?: string;
+      originalName?: string;
+      type?: string;
+      status?: 'pending' | 'approved' | 'rejected';
+      feedback?: string;
+    };
+    certifications?: {
       url: string;
       fileId?: string;
       originalName?: string;
@@ -93,8 +109,9 @@ export interface Provider {
   /** Backend-computed; all required sections complete */
   profileCompleted?: boolean;
   rating: number;
-  /** Job reviews + material delivery ratings combined (matches provider API). */
+  /** Count of completed-job reviews (ProviderReview). */
   totalReviews?: number;
+  ratingBreakdown?: ProviderRatingBreakdown;
   completedJobs: number;
   responseTime: string;
   bio?: string;
@@ -120,6 +137,8 @@ export interface Provider {
   /** Min/max labour paid (ZAR) on completed jobs per category id; populated by listing/detail APIs. */
   completedLaborByCategory?: Record<string, { min: number; max: number; jobCount: number }>;
 }
+
+export type ProviderRatingBreakdown = Record<1 | 2 | 3 | 4 | 5, number>;
 
 export interface ProviderReview {
   id: string;
@@ -622,6 +641,9 @@ export interface Job {
   /** Per-supplier store checkout orders embedded on the job (API: `storeOrders`) */
   storeOrders?: JobStoreOrder[];
   servicePrice?: { amount: number; note?: string; submittedAt?: string };
+  quotationFileUrl?: string | null;
+  quotationFileName?: string | null;
+  quotationUploadedAt?: string | null;
   servicePayment?: {
     status: 'paid';
     amount: number;

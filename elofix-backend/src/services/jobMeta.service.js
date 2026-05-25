@@ -184,6 +184,11 @@ function enrichJob(job, meta) {
     laborPaid: Boolean(job.laborPaid) || Boolean(safeMeta.laborPaid),
     paymentReleased: typeof job.paymentReleased === "boolean" ? job.paymentReleased : false,
     servicePrice: safeMeta.servicePrice,
+    quotationFileUrl: job.quotationFileUrl || null,
+    quotationFileName: job.quotationFileName || null,
+    quotationUploadedAt: job.quotationUploadedAt
+      ? new Date(job.quotationUploadedAt).toISOString()
+      : null,
     servicePayment: safeMeta.servicePayment,
     providerAdjustedRequirements: safeMeta.providerAdjustedRequirements,
     userMaterialSuggestions: safeMeta.userMaterialSuggestions,

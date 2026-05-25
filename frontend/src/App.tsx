@@ -18,6 +18,7 @@ import TrackDelivery from "./pages/TrackDelivery";
 import UserDashboard from "./pages/user/Dashboard";
 import NewRequest from "./pages/user/NewRequest";
 import ServiceRequest from "./pages/user/ServiceRequest";
+import UserProviderProfile from "./pages/user/ProviderProfile";
 import UserJobs from "./pages/user/Jobs";
 import JobDetail from "./pages/user/JobDetail";
 import UserProfile from "./pages/user/Profile";
@@ -95,6 +96,7 @@ const App = () => (
             <Route path="/user/new-request" element={<AuthGuard allowedRoles={['user']}><NewRequest /></AuthGuard>} />
             <Route path="/user/request" element={<AuthGuard allowedRoles={['user']}><NewRequest /></AuthGuard>} />
             <Route path="/user/request/service" element={<AuthGuard allowedRoles={['user']}><ServiceRequest /></AuthGuard>} />
+            <Route path="/user/providers/:id" element={<AuthGuard allowedRoles={['user']}><UserProviderProfile /></AuthGuard>} />
             <Route path="/user/jobs" element={<AuthGuard allowedRoles={['user']}><UserJobs /></AuthGuard>} />
             <Route path="/user/jobs/:id/suggest-materials" element={<AuthGuard allowedRoles={['user']}><UserJobSuggestMaterials /></AuthGuard>} />
             <Route path="/user/jobs/:id" element={<AuthGuard allowedRoles={['user']}><JobDetail /></AuthGuard>} />

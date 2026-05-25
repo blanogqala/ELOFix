@@ -110,6 +110,35 @@ async function submitServicePrice(req, res) {
   res.json({ success: true, job });
 }
 
+async function uploadJobQuotation(req, res) {
+  const id = String(req.params.id || "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new AppError("Invalid job id", 400);
+  }
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  const job = await jobService.uploadJobQuotation(id, req.user.userId, req.file);
+  res.json({ success: true, job });
+}
+
+async function downloadJobQuotation(req, res) {
+  const id = String(req.params.id || "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new AppError("Invalid job id", 400);
+  }
+  const disposition = String(req.query.disposition || "inline").toLowerCase() === "attachment" ? "attachment" : "inline";
+  const file = await jobService.getJobQuotationDownload(
+    id,
+    req.user.userId,
+    req.user.role,
+    disposition
+  );
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", file.contentDisposition);
+  res.sendFile(file.absolutePath);
+}
+
 async function payLabor(req, res) {
   const id = String(req.params.id || "").trim();
   if (!UUID_RE.test(id)) {
@@ -369,6 +398,8 @@ module.exports = {
   addJobNote,
   addChatMessage,
   submitServicePrice,
+  uploadJobQuotation,
+  downloadJobQuotation,
   payLabor,
   submitMaterials,
   rejectJob,

@@ -1,0 +1,55 @@
+import type { Provider, ProviderRatingBreakdown } from '@/types';
+
+export type ProviderVerificationBadge = {
+  id: string;
+  label: string;
+  variant: 'verified' | 'identity' | 'profile' | 'new';
+};
+
+const NEW_PROVIDER_DAYS = 30;
+
+export function isNewProvider(provider: Pick<Provider, 'totalReviews' | 'rating' | 'createdAt'>): boolean {
+  const reviewCount = provider.totalReviews ?? 0;
+  if (reviewCount > 0 || (provider.rating ?? 0) > 0) return false;
+  const created = new Date(provider.createdAt).getTime();
+  if (!Number.isFinite(created)) return true;
+  const ageDays = (Date.now() - created) / (1000 * 60 * 60 * 24);
+  return ageDays <= NEW_PROVIDER_DAYS;
+}
+
+export function getProviderVerificationBadges(provider: Provider): ProviderVerificationBadge[] {
+  const badges: ProviderVerificationBadge[] = [];
+  if (provider.approved) {
+    badges.push({ id: 'verified', label: 'Verified Provider', variant: 'verified' });
+  }
+  const docs = provider.documents;
+  const idOk = docs?.idDoc?.status === 'approved';
+  const companyOk = docs?.companyReg?.status === 'approved';
+  const addressOk = docs?.proofOfAddress?.status === 'approved';
+  if (idOk && companyOk && addressOk) {
+    badges.push({ id: 'identity', label: 'Identity Verified', variant: 'identity' });
+  }
+  if (provider.profileCompleted) {
+    badges.push({ id: 'profile', label: 'Complete Profile', variant: 'profile' });
+  }
+  if (isNewProvider(provider)) {
+    badges.push({ id: 'new', label: 'New Provider', variant: 'new' });
+  }
+  return badges;
+}
+
+export function formatReviewCount(count: number): string {
+  const n = Math.max(0, Math.floor(count));
+  if (n === 0) return 'No ratings yet';
+  return `${n.toLocaleString()} review${n === 1 ? '' : 's'}`;
+}
+
+export function breakdownTotal(breakdown: ProviderRatingBreakdown): number {
+  return Object.values(breakdown).reduce((sum, n) => sum + (Number(n) || 0), 0);
+}
+
+export function breakdownPercent(breakdown: ProviderRatingBreakdown, star: 1 | 2 | 3 | 4 | 5): number {
+  const total = breakdownTotal(breakdown);
+  if (total <= 0) return 0;
+  return Math.round(((Number(breakdown[star]) || 0) / total) * 100);
+}

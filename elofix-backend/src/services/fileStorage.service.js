@@ -6,7 +6,13 @@ const prisma = require("../config/prisma");
 const { UPLOAD_ROOT } = require("../middleware/upload.middleware");
 
 const FILES_URL_PREFIX = "/api/files/";
-const DOC_TYPES = new Set(["idDoc", "companyReg", "proofOfSkill"]);
+const DOC_TYPES = new Set([
+  "idDoc",
+  "companyReg",
+  "proofOfAddress",
+  "proofOfSkill",
+  "certifications",
+]);
 const IMAGE_EXT_TO_MIME = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",

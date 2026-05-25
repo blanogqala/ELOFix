@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Category, Provider, WorkPost } from '@/types';
-import { 
-  Star, Clock, Briefcase, Award, Calendar, Check,
-  ChevronLeft, ChevronRight, Image
+import {
+  Star, Briefcase, Award, Calendar, Check,
+  ChevronLeft, ChevronRight, Image, ExternalLink,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatCurrency } from '@/lib/formatCurrency';
-import {
-  formatServiceLaborEstimateDescription,
-  formatServiceLaborEstimateShort,
-  getServiceLaborEstimate,
-} from '@/lib/providerLaborPricing';
+import { Category, Provider } from '@/types';
 import { getCategories } from '@/lib/api/categories';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { ProviderReputationSummary } from './ProviderReputationSummary';
+import { ProviderVerificationBadges } from './ProviderVerificationBadges';
+import { RatingBreakdownChart } from './RatingBreakdownChart';
+import { ProviderReviewList } from './ProviderReviewList';
+import { isNewProvider } from '@/lib/providerReputation';
 
 interface ProviderDetailModalProps {
   provider: Provider | null;
@@ -27,6 +27,7 @@ interface ProviderDetailModalProps {
 export function ProviderDetailModal({ 
   provider, open, onOpenChange, onSelect, selectedCategory
 }: ProviderDetailModalProps) {
+  const navigate = useNavigate();
   const [activeGalleryIndex, setActiveGalleryIndex] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
 
@@ -42,18 +43,17 @@ export function ProviderDetailModal({
 
   if (!provider) return null;
 
-  const labourEstimate = selectedCategory
-    ? getServiceLaborEstimate(provider, selectedCategory)
-    : { kind: 'none' as const };
   const categoryName = selectedCategory
     ? categories.find(c => c.id === selectedCategory)?.name || selectedCategory
     : null;
 
-  // Filter work posts by selected category
   const workPosts = (provider.workPosts || []).filter(
     p => !selectedCategory || p.categoryId === selectedCategory
   );
   const profileAvatarUrl = resolveUploadUrl(provider.profileImage);
+  const breakdown = provider.ratingBreakdown ?? { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const reviewCount = provider.totalReviews ?? provider.reviews?.length ?? 0;
+  const isNew = isNewProvider(provider);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -63,8 +63,7 @@ export function ProviderDetailModal({
         </DialogHeader>
         
         <div className="space-y-6">
-          {/* Header */}
-          <div className=" p-4 rounded-lg bg-primary/20 border-2 border-primary flex items-start gap-4">
+          <div className="p-4 rounded-lg bg-primary/20 border-2 border-primary flex items-start gap-4">
             <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden">
               {profileAvatarUrl ? (
                 <img src={profileAvatarUrl} alt="" className="h-full w-full object-cover" />
@@ -74,39 +73,26 @@ export function ProviderDetailModal({
                 </span>
               )}
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold">{provider.name}</h2>
               {provider.businessName && (
                 <p className="text-sm text-muted-foreground">{provider.businessName}</p>
               )}
               <p className="text-muted-foreground text-sm mt-1">{provider.bio}</p>
-              <div className="flex items-center gap-4 mt-2 flex-wrap">
-                <span className="flex items-center gap-1">
-                  <Star className="h-4 w-4 fill-accent text-accent" />
-                  <span className="font-medium">{provider.rating.toFixed(1)}</span>
-                  <span className="text-muted-foreground text-sm">
-                    ({provider.totalReviews ?? provider.reviews?.length ?? 0}{' '}
-                    {(provider.totalReviews ?? provider.reviews?.length ?? 0) === 1 ? 'review' : 'reviews'})
-                  </span>
-                </span>
-                <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Briefcase className="text-primary h-4 w-4" />
-                  {provider.completedJobs} jobs
-                </span>
-                <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Clock className="text-primary h-4 w-4" />
-                  {provider.responseTime}
-                </span>
+              <div className="mt-2">
+                <ProviderReputationSummary provider={provider} size="md" />
               </div>
+              <ProviderVerificationBadges provider={provider} className="mt-2" />
             </div>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-4">
             <div className="text-center p-4 border-2 border-accent bg-accent/30 rounded-lg">
               <Calendar className="h-5 w-5 mx-auto mb-1 text-primary" />
-              <p className="text-2xl font-bold">{provider.yearsExperience || '5+'}</p>
-              <p className="text-xs text-muted-foreground">Years Exp.</p>
+              <p className="text-2xl font-bold">
+                {new Date(provider.createdAt).getFullYear()}
+              </p>
+              <p className="text-xs text-muted-foreground">Member since</p>
             </div>
             <div className="text-center p-4 border-2 border-accent bg-accent/30 rounded-lg">
               <Briefcase className="h-5 w-5 mx-auto mb-1 text-primary" />
@@ -115,12 +101,24 @@ export function ProviderDetailModal({
             </div>
             <div className="text-center p-4 border-2 border-accent bg-accent/30 rounded-lg">
               <Star className="h-5 w-5 mx-auto mb-1 text-accent" />
-              <p className="text-2xl font-bold">{provider.rating.toFixed(1)}</p>
+              <p className="text-2xl font-bold">
+                {isNew ? '—' : provider.rating.toFixed(1)}
+              </p>
               <p className="text-xs text-muted-foreground">Rating</p>
             </div>
           </div>
 
-          {/* Certifications */}
+          {!isNew && reviewCount > 0 && (
+            <div>
+              <h3 className="font-semibold mb-3">Ratings breakdown</h3>
+              <RatingBreakdownChart
+                breakdown={breakdown}
+                averageRating={provider.rating}
+                totalReviews={reviewCount}
+              />
+            </div>
+          )}
+
           {provider.certifications && provider.certifications.length > 0 && (
             <div>
               <h3 className="font-semibold mb-2">Certifications</h3>
@@ -135,14 +133,12 @@ export function ProviderDetailModal({
             </div>
           )}
 
-          {/* Work Posts (category-filtered) */}
           <div>
             <h3 className="font-semibold mb-2">
-              {categoryName ? `${categoryName} Work` : 'Portfolio'}
+              {categoryName ? `${categoryName} portfolio` : 'Portfolio'}
             </h3>
             {workPosts.length > 0 ? (
               <div className="space-y-4">
-                {/* Main gallery from first post */}
                 <div className="relative">
                   <div className="aspect-video rounded-lg overflow-hidden bg-muted">
                     <img 
@@ -154,6 +150,7 @@ export function ProviderDetailModal({
                   {workPosts.length > 1 && (
                     <>
                       <button
+                        type="button"
                         onClick={() => setActiveGalleryIndex(prev => 
                           (prev - 1 + workPosts.length) % workPosts.length
                         )}
@@ -162,6 +159,7 @@ export function ProviderDetailModal({
                         <ChevronLeft className="h-5 w-5" />
                       </button>
                       <button
+                        type="button"
                         onClick={() => setActiveGalleryIndex(prev => 
                           (prev + 1) % workPosts.length
                         )}
@@ -173,7 +171,6 @@ export function ProviderDetailModal({
                   )}
                 </div>
 
-                {/* Post info */}
                 {workPosts[activeGalleryIndex % workPosts.length] && (
                   <div className="p-3 bg-muted/50 rounded-lg">
                     <p className="font-medium text-sm">
@@ -185,10 +182,10 @@ export function ProviderDetailModal({
                   </div>
                 )}
 
-                {/* Thumbnails */}
                 <div className="flex gap-2 overflow-x-auto pb-2">
                   {workPosts.map((post, idx) => (
                     <button
+                      type="button"
                       key={post.id}
                       onClick={() => setActiveGalleryIndex(idx)}
                       className={cn(
@@ -204,7 +201,6 @@ export function ProviderDetailModal({
                 </div>
               </div>
             ) : provider.portfolioImages && provider.portfolioImages.length > 0 ? (
-              // Fallback to legacy portfolio images
               <div className="grid grid-cols-3 gap-2">
                 {provider.portfolioImages.map((img, idx) => (
                   <div key={idx} className="aspect-square rounded-lg overflow-hidden bg-muted">
@@ -222,57 +218,32 @@ export function ProviderDetailModal({
             )}
           </div>
 
-          {/* Reviews */}
-          {provider.reviews && provider.reviews.length > 0 && (
-            <div>
-              <h3 className="font-semibold mb-2">Recent Reviews</h3>
-              <div className="space-y-3 rounded-lg border-2 border-primary p-2 bg-primary/20">
-                {provider.reviews.slice(0, 3).map(review => (
-                  <div key={review.id} className="p-4 bg-muted/50 rounded-lg">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                        <span className="text-sm font-medium text-primary">{review.userName.charAt(0)}</span>
-                      </div>
-                      <div>
-                        <p className="font-medium text-sm">{review.userName}</p>
-                        <div className="flex items-center gap-1">
-                          {[...Array(5)].map((_, i) => (
-                            <Star key={i} className={cn("h-3 w-3", i < review.rating ? "fill-accent text-accent" : "fill-muted text-muted")} />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground">{review.comment}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div>
+            <h3 className="font-semibold mb-2">Customer reviews</h3>
+            <ProviderReviewList reviews={provider.reviews?.slice(0, 5) ?? []} />
+          </div>
 
-          {/* Pricing & CTA */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                onOpenChange(false);
+                navigate(`/user/providers/${provider.id}`);
+              }}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Full profile
+            </Button>
+          </div>
+
           {onSelect && (
             <div className="sticky bottom-0 bg-primary/20 pt-4 border-t border-border -mx-6 px-6 -mb-6 pb-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Typical labour (this booking)</p>
-                  <p className="text-2xl font-bold text-primary">
-                    {selectedCategory ? formatServiceLaborEstimateShort(labourEstimate) : 'Select a category in the wizard'}
-                  </p>
-                  <p className="text-xs text-muted-foreground max-w-[320px]">
-                    {selectedCategory
-                      ? formatServiceLaborEstimateDescription(labourEstimate)
-                      : 'Open this provider from step 4 to see Rand guidance for your chosen service.'}
-                  </p>
-                  {provider.skills?.includes('delivery') &&
-                    provider.settings?.deliveryRatePerKm != null &&
-                    Number(provider.settings.deliveryRatePerKm) >= 0 && (
-                      <p className="text-xs text-muted-foreground pt-1">
-                        Trip / driving guide:{' '}
-                        <span className="font-medium">{formatCurrency(provider.settings.deliveryRatePerKm)}</span>/km · final fee uses
-                        distance later.
-                      </p>
-                    )}
-                </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground max-w-md">
+                  Labour is quoted after inspection. Choose this provider to continue your request.
+                </p>
                 <Button className="btn-accent shrink-0" onClick={() => { onSelect(provider.id); onOpenChange(false); }}>
                   <Check className="mr-2 h-4 w-4" />
                   Select Provider

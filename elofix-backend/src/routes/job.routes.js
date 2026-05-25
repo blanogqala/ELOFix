@@ -3,7 +3,7 @@ const jobController = require("../controllers/job.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate } = require("../middleware/auth.middleware");
 const financialIdem = require("../middleware/financialIdempotency.middleware");
-const { uploadJobImage } = require("../middleware/upload.middleware");
+const { uploadJobImage, uploadJobQuotation } = require("../middleware/upload.middleware");
 
 const router = express.Router();
 
@@ -38,6 +38,13 @@ router.patch(
 );
 
 router.post("/:id/service-price", authenticate, asyncHandler(jobController.submitServicePrice));
+router.post(
+  "/:id/quotation/upload",
+  authenticate,
+  uploadJobQuotation.single("file"),
+  asyncHandler(jobController.uploadJobQuotation)
+);
+router.get("/:id/quotation/download", authenticate, asyncHandler(jobController.downloadJobQuotation));
 router.post(
   "/:id/pay-labor",
   authenticate,

@@ -1,8 +1,6 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
-const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
-
 async function createMaterialOrderRating({ orderId, customerUserId, rating, comment }) {
   const oid = String(orderId || "").trim();
   if (!oid) {
@@ -66,8 +64,6 @@ async function createMaterialOrderRating({ orderId, customerUserId, rating, comm
       comment: comment != null && String(comment).trim() !== "" ? String(comment).trim() : null,
     },
   });
-
-  await syncProviderAggregateRating(providerRow.id);
 
   return { orderId: oid, rating: r };
 }

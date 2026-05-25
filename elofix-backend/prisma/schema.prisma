@@ -84,6 +84,7 @@ model User {
   sentNotifications   Notification[]       @relation("NotificationSender")
   auditLogs           AuditLog[]
   supplierProfile     Supplier?
+  providerReviews     ProviderReview[] @relation("CustomerProviderReviews")
 }
 
 model Provider {
@@ -107,6 +108,8 @@ model Provider {
   businessName      String?
   serviceAreas      String[]  @default([])
   laborPricing      Json?
+  /// KYC documents JSON. Required keys: idDoc, companyReg, proofOfAddress. Optional: proofOfSkill, certifications.
+  /// Each entry: { url, fileId?, originalName?, type?, status?: pending|approved|rejected, feedback? }
   documents         Json?
   settings          Json?
   portfolioImages   String[]  @default([])
@@ -123,6 +126,7 @@ model Provider {
   categorySuggestions    CategorySuggestion[]    @relation("ProviderCategorySuggestions")
   earnings               Earning[]
   materialOrderRatings   MaterialOrderRating[]
+  providerReviews        ProviderReview[]
 }
 
 model WorkPost {
@@ -181,6 +185,10 @@ model Job {
   provider        User?     @relation("JobProvider", fields: [providerId], references: [id], onDelete: SetNull)
   createdAt                        DateTime          @default(now())
   meta                             Json?
+  /// Optional provider quotation document (PDF/DOC/DOCX/JPG/PNG) — `/api/files/{id}` URL
+  quotationFileUrl                 String?
+  quotationFileName                String?
+  quotationUploadedAt              DateTime?
   laborPaid                        Boolean           @default(false)
   paymentReleased                  Boolean           @default(false)
   /// Gross labor amount charged to customer (at settlement)
@@ -194,7 +202,7 @@ model Job {
   isFullyReleased                  Boolean           @default(false)
   /// Prevents double second-tranche release on confirm-completion
   escrowSecondReleaseDone          Boolean           @default(false)
-  review                           Review?
+  providerReview                   ProviderReview?
   earnings                         Earning[]
   commissionLedger                 CommissionLedger?
   paystackCharges                  PaystackCharge[]
@@ -340,15 +348,22 @@ model Notification {
   @@index([notificationCategory])
 }
 
-model Review {
-  id        String   @id @default(uuid())
-  jobId     String   @unique
-  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  rating    Int
-  comment   String?
-  createdAt DateTime @default(now())
+model ProviderReview {
+  id         String   @id @default(uuid())
+  rating     Int
+  comment    String?
+  customerId String
+  customer   User     @relation("CustomerProviderReviews", fields: [customerId], references: [id], onDelete: Cascade)
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  jobId      String   @unique
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
 
+  @@index([providerId])
+  @@index([customerId])
   @@index([jobId])
+  @@index([createdAt])
 }
 
 model ProviderWithdrawalProfile {

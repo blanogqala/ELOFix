@@ -11,6 +11,7 @@ const {
 const router = express.Router();
 
 router.get("/", asyncHandler(providerController.listProviders));
+router.get("/:id/reviews", asyncHandler(providerController.listProviderReviews));
 router.get("/:id", asyncHandler(providerController.getProvider));
 
 router.post(

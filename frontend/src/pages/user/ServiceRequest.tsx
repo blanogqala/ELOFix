@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  readServiceRequestDraft,
+  writeServiceRequestDraft,
+  clearServiceRequestDraft,
+} from '@/lib/serviceRequestDraft';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -13,24 +18,15 @@ import { Category, Provider, Measurements, JobLocation } from '@/types';
 import { areaSquareMetersFromAssist } from '@/lib/measurements';
 import { Step2Location } from '@/components/wizard/Step2Location';
 import { Step3DynamicInput } from '@/components/wizard/Step3DynamicInput';
-import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
+import { ProviderDiscoveryCard } from '@/components/providers/ProviderDiscoveryCard';
 import {
   ArrowLeft,
   ArrowRight,
   Check,
   Upload,
-  Star,
-  Clock,
-  Briefcase,
   X,
-  Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import {
-  formatServiceLaborEstimateDescription,
-  formatServiceLaborEstimateShort,
-  getServiceLaborEstimate,
-} from '@/lib/providerLaborPricing';
 
 const STEPS = [
   { id: 1, title: 'Category' },
@@ -39,24 +35,51 @@ const STEPS = [
   { id: 4, title: 'Provider' },
 ];
 
+function loadInitialWizardState(initialCategory: string) {
+  const draft = readServiceRequestDraft();
+  if (draft) {
+    clearServiceRequestDraft();
+    return {
+      currentStep: draft.currentStep,
+      selectedCategory: draft.selectedCategory || initialCategory,
+      location: draft.location,
+      description: draft.description,
+      images: draft.images,
+      measurements: draft.measurements,
+      useMeasurements: draft.useMeasurements,
+      selectedProvider: draft.selectedProvider,
+    };
+  }
+  return {
+    currentStep: 1,
+    selectedCategory: initialCategory,
+    location: {} as Partial<JobLocation>,
+    description: '',
+    images: [] as string[],
+    measurements: { source: 'MANUAL', values: {} } as Measurements,
+    useMeasurements: false,
+    selectedProvider: '',
+  };
+}
+
 export default function ServiceRequest() {
   const [searchParams] = useSearchParams();
   const initialCategory = searchParams.get('category') || '';
+  const [initialWizard] = useState(() => loadInitialWizardState(initialCategory));
 
   const [categories, setCategories] = useState<Category[]>([]);
-  const [currentStep, setCurrentStep] = useState(1);
-  const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory);
-  const [location, setLocation] = useState<Partial<JobLocation>>({});
-  const [description, setDescription] = useState('');
-  const [images, setImages] = useState<string[]>([]);
-  const [measurements, setMeasurements] = useState<Measurements>({ source: 'MANUAL', values: {} });
-  const [useMeasurements, setUseMeasurements] = useState(false);
+  const [currentStep, setCurrentStep] = useState(initialWizard.currentStep);
+  const [selectedCategory, setSelectedCategory] = useState<string>(initialWizard.selectedCategory);
+  const [location, setLocation] = useState<Partial<JobLocation>>(initialWizard.location);
+  const [description, setDescription] = useState(initialWizard.description);
+  const [images, setImages] = useState<string[]>(initialWizard.images);
+  const [measurements, setMeasurements] = useState<Measurements>(initialWizard.measurements);
+  const [useMeasurements, setUseMeasurements] = useState(initialWizard.useMeasurements);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersError, setProvidersError] = useState<string | null>(null);
-  const [selectedProvider, setSelectedProvider] = useState<string>('');
+  const [selectedProvider, setSelectedProvider] = useState<string>(initialWizard.selectedProvider);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedProviderForModal, setSelectedProviderForModal] = useState<Provider | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -149,6 +172,7 @@ export default function ServiceRequest() {
         user.name
       );
 
+      clearServiceRequestDraft();
       toast({
         title: 'Request Submitted!',
         description: 'Your service request has been submitted successfully.',
@@ -211,6 +235,20 @@ export default function ServiceRequest() {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     }
+  };
+
+  const handleViewProviderProfile = (providerId: string) => {
+    writeServiceRequestDraft({
+      currentStep,
+      selectedCategory,
+      location,
+      description,
+      images,
+      measurements,
+      useMeasurements,
+      selectedProvider,
+    });
+    navigate(`/user/providers/${providerId}`, { state: { fromServiceRequest: true } });
   };
 
   return (
@@ -416,9 +454,13 @@ export default function ServiceRequest() {
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold mb-2">Choose a Provider</h2>
-                <p className="text-muted-foreground">Select from our recommended verified providers</p>
+                <p className="text-muted-foreground">
+                  Compare verified providers by ratings, completed jobs, and portfolio — not estimated prices.
+                </p>
                 <div className="mt-2 p-3 bg-muted/50 rounded-lg">
-                  <p className="text-sm text-muted-foreground">Final labor price will be confirmed after provider inspection.</p>
+                  <p className="text-sm text-muted-foreground">
+                    Labour is quoted after inspection. Trust scores reflect real completed jobs on EloFix.
+                  </p>
                 </div>
               </div>
 
@@ -431,94 +473,15 @@ export default function ServiceRequest() {
                   <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
                     No providers are available for this category yet.
                   </div>
-                ) : providers.map((provider) => {
-                  const est = getServiceLaborEstimate(provider, selectedCategory);
-                  const estimatePrimary = formatServiceLaborEstimateShort(est);
-                  const estimateHint = formatServiceLaborEstimateDescription(est);
-                  return (
-                  <div
+                ) : providers.map((provider) => (
+                  <ProviderDiscoveryCard
                     key={provider.id}
-                    className={cn('provider-card', selectedProvider === provider.id && 'selected')}
-                  >
-                    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
-                      <div
-                        className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-primary/10"
-                        onClick={() => setSelectedProviderForModal(provider)}
-                      >
-                        {resolveUploadUrl(provider.profileImage) ? (
-                          <img
-                            src={resolveUploadUrl(provider.profileImage)}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <span className="text-xl font-bold text-primary">{provider.name.charAt(0)}</span>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3
-                            className="font-semibold cursor-pointer hover:text-primary transition-colors"
-                            onClick={() => setSelectedProviderForModal(provider)}
-                          >
-                            {provider.name}
-                          </h3>
-                          {selectedProvider === provider.id && (
-                            <div className="h-5 w-5 rounded-full bg-success flex items-center justify-center">
-                              <Check className="h-3 w-3 text-success-foreground" />
-                            </div>
-                          )}
-                        </div>
-                        <p className="text-sm text-muted-foreground line-clamp-1 mb-2">{provider.bio}</p>
-                        <div className="flex flex-wrap gap-4 text-sm">
-                          <span className="flex items-center gap-1">
-                            <Star className="h-4 w-4 fill-accent text-accent" />
-                            {provider.rating.toFixed(1)}
-                            <span className="text-muted-foreground text-xs">
-                              ({provider.totalReviews ?? provider.reviews?.length ?? 0})
-                            </span>
-                          </span>
-                          <span className="flex items-center gap-1 text-muted-foreground">
-                            <Briefcase className="h-4 w-4" />
-                            {provider.completedJobs} jobs
-                          </span>
-                          <span className="flex items-center gap-1 text-muted-foreground">
-                            <Clock className="h-4 w-4" />
-                            {provider.responseTime}
-                          </span>
-                        </div>
-                      </div>
-                        <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
-                        <div>
-                          <p className="text-sm font-semibold text-primary">{estimatePrimary}</p>
-                          <p className="text-xs text-muted-foreground max-w-[220px] sm:max-w-xs sm:text-right leading-snug">{estimateHint}</p>
-                        </div>
-                        <div className="flex flex-wrap gap-2 sm:justify-end">
-                          <Button size="sm" variant="outline" className="w-full whitespace-nowrap sm:w-auto" onClick={() => setSelectedProviderForModal(provider)}>
-                            <Eye className="mr-1 h-4 w-4" />
-                            View
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="w-full whitespace-nowrap sm:w-auto"
-                            variant={selectedProvider === provider.id ? 'default' : 'outline'}
-                            onClick={() => setSelectedProvider(provider.id)}
-                          >
-                            {selectedProvider === provider.id ? (
-                              <>
-                                <Check className="mr-1 h-4 w-4" />
-                                Selected
-                              </>
-                            ) : (
-                              'Select'
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  );
-                })}
+                    provider={provider}
+                    selected={selectedProvider === provider.id}
+                    onSelect={setSelectedProvider}
+                    onViewProfile={handleViewProviderProfile}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -544,16 +507,6 @@ export default function ServiceRequest() {
         </div>
       </div>
 
-      <ProviderDetailModal
-        provider={selectedProviderForModal}
-        open={!!selectedProviderForModal}
-        onOpenChange={(open) => !open && setSelectedProviderForModal(null)}
-        selectedCategory={selectedCategory || undefined}
-        onSelect={(providerId) => {
-          setSelectedProvider(providerId);
-          setSelectedProviderForModal(null);
-        }}
-      />
     </DashboardLayout>
   );
 }

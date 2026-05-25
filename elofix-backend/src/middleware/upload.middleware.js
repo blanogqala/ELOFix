@@ -9,20 +9,29 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-const ALLOWED_DOC = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-]);
+const {
+  validateProviderDocumentFileMeta,
+  MAX_BYTES: PROVIDER_DOC_MAX_BYTES,
+} = require("../utils/providerDocumentFile.util");
 const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-function docFileFilter(req, file, cb) {
-  if (!file.mimetype || !ALLOWED_DOC.has(file.mimetype)) {
-    return cb(new AppError("Only PDF and image files are allowed for documents", 400));
+const ALLOWED_QUOTATION_MIME = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/jpeg",
+  "image/png",
+]);
+
+const { validateQuotationFileMeta, MAX_BYTES: QUOTATION_MAX_BYTES } = require("../utils/quotationFile.util");
+
+function providerDocFileFilter(req, file, cb) {
+  try {
+    validateProviderDocumentFileMeta(file.originalname, file.mimetype, file.size ?? 0);
+    cb(null, true);
+  } catch (err) {
+    cb(err instanceof AppError ? err : new AppError("Invalid document file", 400));
   }
-  cb(null, true);
 }
 
 function imageFileFilter(req, file, cb) {
@@ -30,6 +39,15 @@ function imageFileFilter(req, file, cb) {
     return cb(new AppError("Only image files are allowed", 400));
   }
   cb(null, true);
+}
+
+function quotationFileFilter(req, file, cb) {
+  try {
+    validateQuotationFileMeta(file.originalname, file.mimetype, file.size ?? 0);
+    cb(null, true);
+  } catch (err) {
+    cb(err instanceof AppError ? err : new AppError("Invalid quotation file", 400));
+  }
 }
 
 function providerDocStorage(userIdFromReq) {
@@ -118,8 +136,8 @@ const uploadUserAvatar = multer({
 
 const uploadProviderDocument = multer({
   storage: providerDocStorage(userIdFromParams),
-  limits: { fileSize: 12 * 1024 * 1024 },
-  fileFilter: docFileFilter,
+  limits: { fileSize: PROVIDER_DOC_MAX_BYTES },
+  fileFilter: providerDocFileFilter,
 });
 
 const uploadProviderAvatar = multer({
@@ -138,6 +156,27 @@ const uploadJobImage = multer({
   storage: jobImageStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: imageFileFilter,
+});
+
+function jobQuotationStorage() {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const jobId = String(req.params.id || "").trim() || "unknown";
+      const dir = path.join(UPLOAD_ROOT, "jobs", jobId, "quotations");
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || "";
+      cb(null, `quotation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
+const uploadJobQuotation = multer({
+  storage: jobQuotationStorage(),
+  limits: { fileSize: QUOTATION_MAX_BYTES },
+  fileFilter: quotationFileFilter,
 });
 
 function supplierProductImageStorage() {
@@ -195,6 +234,7 @@ module.exports = {
   uploadProviderAvatar,
   uploadWorkPostImage,
   uploadJobImage,
+  uploadJobQuotation,
   uploadSupplierProductImage,
   uploadSupplierLogo,
   filePathToPublicUrl,

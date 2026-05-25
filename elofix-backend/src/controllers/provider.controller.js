@@ -1,5 +1,6 @@
 const AppError = require("../utils/AppError");
 const providerService = require("../services/provider.service");
+const providerReviewService = require("../services/providerReview.service");
 
 async function resolveTargetProviderUserId(req) {
   const resolved = await providerService.resolveProviderUserIdFromRouteParam(req.params.id);
@@ -24,6 +25,14 @@ async function listProviders(req, res) {
 async function getProvider(req, res) {
   const provider = await providerService.getProviderById(req.params.id);
   res.json({ success: true, provider });
+}
+
+async function listProviderReviews(req, res) {
+  const result = await providerReviewService.listProviderReviews(req.params.id, {
+    limit: req.query.limit,
+    offset: req.query.offset,
+  });
+  res.json({ success: true, ...result });
 }
 
 async function updateProviderScoped(req, res) {
@@ -63,6 +72,7 @@ async function uploadWorkPostImageScoped(req, res) {
 module.exports = {
   listProviders,
   getProvider,
+  listProviderReviews,
   updateProviderScoped,
   uploadDocumentScoped,
   uploadAvatarScoped,

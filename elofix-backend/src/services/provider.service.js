@@ -8,7 +8,14 @@ const {
   resolveExistingFileReference,
 } = require("./fileStorage.service");
 
-const DOCUMENT_TYPES = ["idDoc", "companyReg", "proofOfSkill"];
+const {
+  validateProviderDocumentFileMeta,
+  assertProviderDocumentFileMagic,
+} = require("../utils/providerDocumentFile.util");
+
+const REQUIRED_DOCUMENT_TYPES = ["idDoc", "companyReg", "proofOfAddress"];
+const OPTIONAL_DOCUMENT_TYPES = ["proofOfSkill", "certifications"];
+const DOCUMENT_TYPES = [...REQUIRED_DOCUMENT_TYPES, ...OPTIONAL_DOCUMENT_TYPES];
 
 function normalizeDocuments(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -205,8 +212,9 @@ function checkProviderProfileCompletion(profile, user, workPostCount) {
     return false;
   }
 
-  if (!hasDocUrl(documents.idDoc)) return false;
-  if (!hasDocUrl(documents.proofOfSkill)) return false;
+  for (const docType of REQUIRED_DOCUMENT_TYPES) {
+    if (!hasDocUrl(documents[docType])) return false;
+  }
 
   if (workPostCount < 1) return false;
 
@@ -271,6 +279,8 @@ function toProviderResponse(
     pendingSuggestionsCount = 0,
     pendingSuggestions = [],
     completedLaborByCategory = undefined,
+    ratingBreakdown = undefined,
+    includeLaborHistory = false,
   } = {}
 ) {
   const documents = normalizeDocuments(profile.documents);
@@ -316,8 +326,8 @@ function toProviderResponse(
     certifications: [],
     reviews: (reviewRows || []).map((r) => ({
       id: r.id,
-      userId: "",
-      userName: r.job?.customer?.name || "Customer",
+      userId: r.customerId || r.customer?.id || "",
+      userName: r.customer?.name || r.job?.customer?.name || "Customer",
       rating: r.rating,
       comment: r.comment || "",
       jobId: r.jobId,
@@ -325,6 +335,9 @@ function toProviderResponse(
       jobTitle: r.job?.title || "",
       jobCategory: r.job?.category || "",
     })),
+    ...(ratingBreakdown && typeof ratingBreakdown === "object"
+      ? { ratingBreakdown }
+      : {}),
     createdAt: user.createdAt,
     rejectionReason: profile.rejectionReason || undefined,
     rejectedAt: profile.rejectedAt ? profile.rejectedAt.toISOString() : undefined,
@@ -334,7 +347,8 @@ function toProviderResponse(
       : undefined,
     pendingSuggestionsCount,
     pendingSuggestions,
-    ...(completedLaborByCategory &&
+    ...(includeLaborHistory &&
+    completedLaborByCategory &&
     typeof completedLaborByCategory === "object" &&
     !Array.isArray(completedLaborByCategory) &&
     Object.keys(completedLaborByCategory).length > 0
@@ -669,13 +683,19 @@ async function updateProviderForUser(requestUserId, body) {
 }
 
 async function saveDocumentFromUpload(requestUserId, docType, file) {
-  const allowed = ["idDoc", "companyReg", "proofOfSkill"];
-  if (!allowed.includes(docType)) {
+  if (!DOCUMENT_TYPES.includes(docType)) {
     throw new AppError("Invalid document type", 400);
   }
   if (!file || !file.path) {
     throw new AppError("File is required", 400);
   }
+
+  const { ext } = validateProviderDocumentFileMeta(
+    file.originalname,
+    file.mimetype,
+    file.size
+  );
+  await assertProviderDocumentFileMagic(file.path, ext);
 
   const prof = await loadProviderBundleByUserId(requestUserId);
   if (!prof) {
@@ -823,7 +843,6 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
           status: s.status,
           createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
         })),
-        completedLaborByCategory: laborByProviderUserId[String(profile.userId)] || {},
       });
     })
   );
@@ -857,20 +876,23 @@ async function getProviderById(id) {
     },
   });
 
-  const reviewRows = await prisma.review.findMany({
-    where: { job: { providerId: profile.userId } },
+  const reviewRows = await prisma.providerReview.findMany({
+    where: { providerId: profile.id },
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {
+      customer: { select: { id: true, name: true } },
       job: {
         select: {
           title: true,
           category: true,
-          customer: { select: { name: true } },
         },
       },
     },
   });
+
+  const { aggregateRatingBreakdown } = require("./providerReview.service");
+  const ratingBreakdown = await aggregateRatingBreakdown(profile.id);
 
   const pendingSuggestions = await prisma.categorySuggestion.findMany({
     where: { providerId: profile.id, status: "PENDING" },
@@ -883,8 +905,6 @@ async function getProviderById(id) {
     },
   });
 
-  const laborByPid = await aggregateCompletedLaborByCategoryForProviders([profile.userId]);
-
   return toProviderResponse(profile, profile.user, completedJobs, profile.workPosts, reviewRows, {
     pendingSuggestionsCount: pendingSuggestions.length,
     pendingSuggestions: pendingSuggestions.map((s) => ({
@@ -893,7 +913,7 @@ async function getProviderById(id) {
       status: s.status,
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
-    completedLaborByCategory: laborByPid[String(profile.userId)] || {},
+    ratingBreakdown,
   });
 }
 
@@ -909,23 +929,23 @@ async function resolveProviderUserIdFromRouteParam(id) {
 
 function assertRequiredDocsForApproval(profile) {
   const documents = normalizeDocuments(profile.documents);
-  if (!hasDocUrl(documents.idDoc)) {
-    throw new AppError("Cannot approve: ID document is required", 400);
-  }
-  if (!hasDocUrl(documents.proofOfSkill)) {
-    throw new AppError("Cannot approve: Proof of skill document is required", 400);
-  }
-  if (!hasDocApproved(documents.idDoc)) {
-    throw new AppError("Cannot approve: ID document must be approved by admin", 400);
-  }
-  if (!hasDocApproved(documents.proofOfSkill)) {
-    throw new AppError("Cannot approve: Proof of skill document must be approved by admin", 400);
+  const labels = {
+    idDoc: "ID document",
+    companyReg: "Company registration",
+    proofOfAddress: "Proof of address",
+  };
+  for (const docType of REQUIRED_DOCUMENT_TYPES) {
+    if (!hasDocUrl(documents[docType])) {
+      throw new AppError(`Cannot approve: ${labels[docType]} is required`, 400);
+    }
+    if (!hasDocApproved(documents[docType])) {
+      throw new AppError(`Cannot approve: ${labels[docType]} must be approved by admin`, 400);
+    }
   }
 }
 
 async function approveProviderDocumentByUserId(targetUserId, docType) {
-  const allowed = ["idDoc", "companyReg", "proofOfSkill"];
-  if (!allowed.includes(docType)) {
+  if (!DOCUMENT_TYPES.includes(docType)) {
     throw new AppError("Invalid document type", 400);
   }
   const profile = await loadProviderBundleByUserId(targetUserId);
@@ -954,8 +974,7 @@ async function approveProviderDocumentByUserId(targetUserId, docType) {
 }
 
 async function rejectProviderDocumentByUserId(targetUserId, docType, feedback) {
-  const allowed = ["idDoc", "companyReg", "proofOfSkill"];
-  if (!allowed.includes(docType)) {
+  if (!DOCUMENT_TYPES.includes(docType)) {
     throw new AppError("Invalid document type", 400);
   }
   const profile = await loadProviderBundleByUserId(targetUserId);
@@ -1071,6 +1090,9 @@ function isProviderActiveRow(profile) {
 }
 
 module.exports = {
+  REQUIRED_DOCUMENT_TYPES,
+  OPTIONAL_DOCUMENT_TYPES,
+  DOCUMENT_TYPES,
   checkProviderProfileCompletion,
   toProviderResponse,
   listProviders,

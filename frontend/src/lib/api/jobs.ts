@@ -52,6 +52,9 @@ interface BackendJob {
   laborPaid?: boolean;
   paymentReleased?: boolean;
   servicePrice?: Job['servicePrice'];
+  quotationFileUrl?: string | null;
+  quotationFileName?: string | null;
+  quotationUploadedAt?: string | null;
   servicePayment?: Job['servicePayment'];
   providerAdjustedRequirements?: Job['providerAdjustedRequirements'];
   userMaterialSuggestions?: Job['userMaterialSuggestions'];
@@ -164,6 +167,9 @@ function toFrontendJob(job: BackendJob): Job {
     laborPaid: Boolean(job.laborPaid),
     paymentReleased: Boolean(job.paymentReleased),
     servicePrice: job.servicePrice,
+    quotationFileUrl: job.quotationFileUrl ?? null,
+    quotationFileName: job.quotationFileName ?? null,
+    quotationUploadedAt: job.quotationUploadedAt ?? null,
     servicePayment: job.servicePayment,
     providerAdjustedRequirements: job.providerAdjustedRequirements,
     userMaterialSuggestions: Array.isArray(job.userMaterialSuggestions)
@@ -293,6 +299,39 @@ export async function submitServicePrice(jobId: string, amount: number, note?: s
     note,
   });
   return ensureJob(data, 'submit service price');
+}
+
+export async function uploadJobQuotation(
+  jobId: string,
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<Job> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await apiClient.post<BackendJobResponse>(`/jobs/${jobId}/quotation/upload`, formData, {
+    onUploadProgress: (event) => {
+      if (!onProgress || !event.total) return;
+      onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+    },
+  });
+  return ensureJob(data, 'upload job quotation');
+}
+
+/** Authenticated download — use with blob URLs in the UI (not raw href). */
+export async function fetchJobQuotationBlob(
+  jobId: string,
+  disposition: 'inline' | 'attachment' = 'inline'
+): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(`/jobs/${jobId}/quotation/download`, {
+    params: { disposition },
+    responseType: 'blob',
+  });
+  return data;
+}
+
+export function getJobQuotationDownloadPath(jobId: string, disposition: 'inline' | 'attachment' = 'inline'): string {
+  const q = disposition === 'attachment' ? '?disposition=attachment' : '';
+  return `/jobs/${jobId}/quotation/download${q}`;
 }
 
 export async function submitMaterials(jobId: string, materials: MaterialLine[]): Promise<Job> {

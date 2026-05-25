@@ -17,6 +17,7 @@ import {
   updateJobStatus,
   markInspectionDone,
   submitServicePrice,
+  uploadJobQuotation,
   acceptUserSuggestion,
   rejectUserSuggestion,
   updateProviderRequirements,
@@ -35,8 +36,15 @@ import { Job, MaterialLine, Measurements } from '@/types';
 import {
   ArrowLeft, User, Calendar, MessageSquare, Send, MapPin,
   XCircle, CheckCircle, Clock, AlertTriangle, DollarSign, X,
-  Pencil, ExternalLink, CreditCard, Lock,
+  Pencil, ExternalLink, CreditCard, Lock, Paperclip, Upload, Loader2,
 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Label } from '@/components/ui/label';
+import {
+  formatQuotationFileSize,
+  quotationFileIcon,
+  validateQuotationFileClient,
+} from '@/lib/quotationFile';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import {
@@ -163,6 +171,9 @@ export default function ProviderJobDetail() {
   const [materialsBuilder, setMaterialsBuilder] = useState<MaterialLine[]>([]);
   const [servicePriceAmount, setServicePriceAmount] = useState('');
   const [servicePriceNote, setServicePriceNote] = useState('');
+  const [quotationFile, setQuotationFile] = useState<File | null>(null);
+  const [quotationUploadProgress, setQuotationUploadProgress] = useState(0);
+  const [isSubmittingPrice, setIsSubmittingPrice] = useState(false);
   const [editRequirementsOpen, setEditRequirementsOpen] = useState(false);
   const [editMeasurements, setEditMeasurements] = useState<Partial<Measurements>>({});
   const [editRequirementNotes, setEditRequirementNotes] = useState('');
@@ -249,18 +260,70 @@ export default function ProviderJobDetail() {
     }
   };
 
+  const handleQuotationFilePick = (file: File | undefined) => {
+    if (!file) {
+      setQuotationFile(null);
+      return;
+    }
+    const check = validateQuotationFileClient(file);
+    if (!check.ok) {
+      toast({ title: 'Invalid file', description: check.message, variant: 'destructive' });
+      return;
+    }
+    setQuotationFile(file);
+  };
+
   const handleSubmitServicePrice = async () => {
     if (!job || !servicePriceAmount) return;
     const amount = parseFloat(servicePriceAmount);
     if (isNaN(amount) || amount <= 0) return;
+    setIsSubmittingPrice(true);
+    setQuotationUploadProgress(0);
     try {
+      if (quotationFile) {
+        await uploadJobQuotation(job.id, quotationFile, (pct) => setQuotationUploadProgress(pct));
+      }
       await submitServicePrice(job.id, amount, servicePriceNote);
       await syncJobsAfterMutation();
       setServicePriceAmount('');
       setServicePriceNote('');
-      toast({ title: 'Service price submitted', description: 'The user will be notified to pay.' });
+      setQuotationFile(null);
+      setQuotationUploadProgress(0);
+      toast({
+        title: 'Service price submitted',
+        description: quotationFile
+          ? 'Quote and attachment sent to the customer.'
+          : 'The customer will be notified to pay.',
+      });
     } catch (e) {
-      toast({ title: 'Error', description: 'Failed to submit price.', variant: 'destructive' });
+      toast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Failed to submit price.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmittingPrice(false);
+    }
+  };
+
+  const handleUploadQuotationOnly = async () => {
+    if (!job || !quotationFile) return;
+    setIsSubmittingPrice(true);
+    setQuotationUploadProgress(0);
+    try {
+      await uploadJobQuotation(job.id, quotationFile, (pct) => setQuotationUploadProgress(pct));
+      await syncJobsAfterMutation();
+      setQuotationFile(null);
+      setQuotationUploadProgress(0);
+      toast({ title: 'Quotation uploaded', description: 'Customers can view the document on the job.' });
+    } catch (e) {
+      toast({
+        title: 'Upload failed',
+        description: e instanceof Error ? e.message : 'Could not upload quotation.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmittingPrice(false);
     }
   };
 
@@ -853,8 +916,13 @@ export default function ProviderJobDetail() {
             )}
           </div>
           {(job.status === 'INSPECTED' || job.status === 'ASSIGNED') && !job.servicePrice && (
-            <div className="p-4 border border-primary/40 rounded-lg space-y-4 ">
-              <h3 className="font-medium">Submit Service Price</h3>
+            <div className="p-4 border border-primary/40 rounded-lg space-y-4">
+              <div>
+                <h3 className="font-medium">Submit service price</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Enter the labour amount. Optionally attach a formal quote (PDF, Word, or image) that matches this amount.
+                </p>
+              </div>
               {!canProceedWithSpecs && (
                 <p className="text-warning text-sm">
                   {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
@@ -862,29 +930,152 @@ export default function ProviderJobDetail() {
                     : 'Document what was agreed (scope checklist, issue summary, or your requirement notes) before completing this step.'}
                 </p>
               )}
-              <div className="flex gap-2 flex-wrap">
-                <Input
-                  type="number"
-                  placeholder="Amount (e.g. 450)"
-                  value={servicePriceAmount}
-                  onChange={e => setServicePriceAmount(e.target.value)}
-                  className="w-32"
-                />
-                <Input
-                  placeholder="Note (optional)"
-                  value={servicePriceNote}
-                  onChange={e => setServicePriceNote(e.target.value)}
-                  className="flex-1 min-w-[120px]"
-                />
-                <Button
-                  onClick={handleSubmitServicePrice}
-                  disabled={!canProceedWithSpecs || !servicePriceAmount || parseFloat(servicePriceAmount) <= 0}
-                >
-                  Submit Price
-                </Button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">Service amount (ZAR)</Label>
+                  <Input
+                    type="number"
+                    placeholder="e.g. 4500"
+                    value={servicePriceAmount}
+                    onChange={e => setServicePriceAmount(e.target.value)}
+                    min={0}
+                    step={50}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">Note (optional)</Label>
+                  <Input
+                    placeholder="Scope summary for customer"
+                    value={servicePriceNote}
+                    onChange={e => setServicePriceNote(e.target.value)}
+                  />
+                </div>
               </div>
+              <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4 space-y-3">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                  <Paperclip className="h-3.5 w-3.5" />
+                  Quotation attachment (optional)
+                </Label>
+                <p className="text-xs text-muted-foreground">PDF, DOC, DOCX, JPG, or PNG · max 10MB</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" asChild disabled={isSubmittingPrice}>
+                    <label className="cursor-pointer">
+                      <Upload className="mr-2 h-4 w-4 inline" />
+                      Choose file
+                      <input
+                        type="file"
+                        className="sr-only"
+                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png"
+                        onChange={e => {
+                          handleQuotationFilePick(e.target.files?.[0]);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </Button>
+                  {quotationFile ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuotationFile(null)}
+                      disabled={isSubmittingPrice}
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+                {quotationFile ? (
+                  <div className="flex items-center gap-2 text-sm">
+                    {(() => {
+                      const QIcon = quotationFileIcon(quotationFile.name);
+                      return <QIcon className="h-4 w-4 text-muted-foreground shrink-0" />;
+                    })()}
+                    <span className="truncate font-medium">{quotationFile.name}</span>
+                    <span className="text-xs text-muted-foreground">{formatQuotationFileSize(quotationFile.size)}</span>
+                  </div>
+                ) : null}
+                {isSubmittingPrice && quotationUploadProgress > 0 ? (
+                  <div className="space-y-1">
+                    <Progress value={quotationUploadProgress} className="h-2" />
+                    <p className="text-xs text-muted-foreground">Uploading… {quotationUploadProgress}%</p>
+                  </div>
+                ) : null}
+              </div>
+              <Button
+                onClick={() => void handleSubmitServicePrice()}
+                disabled={
+                  isSubmittingPrice ||
+                  !canProceedWithSpecs ||
+                  !servicePriceAmount ||
+                  parseFloat(servicePriceAmount) <= 0
+                }
+                className="w-full sm:w-auto"
+              >
+                {isSubmittingPrice ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Submitting…
+                  </>
+                ) : (
+                  'Submit price'
+                )}
+              </Button>
             </div>
           )}
+
+          {job.servicePrice && !job.laborPaid && !job.quotationFileName && (
+            <div className="p-4 border border-dashed border-border rounded-lg space-y-3">
+              <p className="text-sm font-medium">Add quotation document (optional)</p>
+              <p className="text-xs text-muted-foreground">
+                Attach a formal quote matching {formatCurrency(job.servicePrice.amount)}.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" asChild disabled={isSubmittingPrice}>
+                  <label className="cursor-pointer">
+                    <Upload className="mr-2 h-4 w-4 inline" />
+                    Choose file
+                    <input
+                      type="file"
+                      className="sr-only"
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png"
+                      onChange={e => {
+                        handleQuotationFilePick(e.target.files?.[0]);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </Button>
+                {quotationFile ? (
+                  <Button
+                    size="sm"
+                    onClick={() => void handleUploadQuotationOnly()}
+                    disabled={isSubmittingPrice}
+                  >
+                    {isSubmittingPrice ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Upload quotation'}
+                  </Button>
+                ) : null}
+              </div>
+              {quotationFile ? (
+                <p className="text-xs text-muted-foreground truncate">{quotationFile.name}</p>
+              ) : null}
+              {isSubmittingPrice && quotationUploadProgress > 0 ? (
+                <Progress value={quotationUploadProgress} className="h-2" />
+              ) : null}
+            </div>
+          )}
+
+          {job.quotationFileName ? (
+            <div className="p-3 rounded-lg bg-muted/30 border border-border flex items-center gap-2 text-sm">
+              {(() => {
+                const QIcon = quotationFileIcon(job.quotationFileName);
+                return <QIcon className="h-4 w-4 text-primary shrink-0" />;
+              })()}
+              <span className="truncate font-medium">{job.quotationFileName}</span>
+              <Badge variant="secondary" className="ml-auto shrink-0">On file</Badge>
+            </div>
+          ) : null}
 
           {job.proposedLaborPrice && !job.laborPaid && (
             <div className="p-4 border border-amber-500/40 rounded-lg bg-amber-500/5 space-y-1">
