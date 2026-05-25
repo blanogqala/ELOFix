@@ -71,6 +71,7 @@ describe('tapMeasurePreview', () => {
       ],
       4
     );
+    expect(preview?.primaryM).toBe(4);
     expect(preview?.widthM).toBe(2);
     expect(preview?.areaM2).toBe(8);
   });
@@ -78,8 +79,8 @@ describe('tapMeasurePreview', () => {
 
 describe('deriveMeasureStep', () => {
   it('walks through steps', () => {
-    expect(deriveMeasureStep([], null, [])).toBe('length');
-    expect(deriveMeasureStep([{ x: 0, y: 0 }], null, [])).toBe('length');
+    expect(deriveMeasureStep(null, null, null)).toBe('length');
+    expect(deriveMeasureStep([{ x: 0, y: 0 }], null, null)).toBe('length');
     expect(
       deriveMeasureStep(
         [
@@ -87,7 +88,7 @@ describe('deriveMeasureStep', () => {
           { x: 1, y: 0 },
         ],
         null,
-        []
+        null
       )
     ).toBe('calibrate');
     expect(
@@ -97,7 +98,7 @@ describe('deriveMeasureStep', () => {
           { x: 1, y: 0 },
         ],
         3,
-        []
+        null
       )
     ).toBe('width');
     expect(

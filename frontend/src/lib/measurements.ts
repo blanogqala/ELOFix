@@ -1,4 +1,4 @@
-import type { CameraAssistMeasurement } from '@/types';
+import type { CameraAssistDimensionMode, CameraAssistMeasurement } from '@/types';
 
 /** Area in square meters from length × width (each in meters). */
 export function calculateArea(lengthM: number, widthM: number): number {
@@ -117,38 +117,81 @@ export function overlayPointFromClient(
   return { x, y, valid: inX && inY };
 }
 
+export type Segment2D = [Point2D, Point2D];
+
+export function isSegmentComplete(seg: Point2D[] | null | undefined): seg is Segment2D {
+  return seg != null && seg.length === 2;
+}
+
+export function segmentMidpoint(seg: Segment2D): Point2D {
+  return { x: (seg[0].x + seg[1].x) / 2, y: (seg[0].y + seg[1].y) / 2 };
+}
+
+export function segmentAngleDeg(seg: Segment2D): number {
+  return (Math.atan2(seg[1].y - seg[0].y, seg[1].x - seg[0].x) * 180) / Math.PI;
+}
+
+export function primaryDimensionLabel(mode: CameraAssistDimensionMode): string {
+  return mode === 'heightWidth' ? 'Height' : 'Length';
+}
+
+export function formatSegmentLabelPx(px: number): string {
+  return `${Math.round(px)} px`;
+}
+
+export function formatSegmentLabelM(m: number): string {
+  return `${m.toFixed(2)} m`;
+}
+
 export type TapMeasurePreview = {
-  lengthM: number;
+  primaryM: number;
   widthM: number;
   areaM2: number;
+  dimensionMode: CameraAssistDimensionMode;
 };
 
-/** Compute width and area from tap calibration (length segment + width segment + real length in m). */
+/** Compute width and area from calibrated primary segment + width segment. */
 export function tapMeasurePreview(
-  lengthPts: Point2D[],
-  widthPts: Point2D[],
-  calibratedLengthM: number
+  primarySeg: Point2D[] | null,
+  widthSeg: Point2D[] | null,
+  calibratedPrimaryM: number,
+  dimensionMode: CameraAssistDimensionMode = 'lengthWidth'
 ): TapMeasurePreview | null {
-  if (lengthPts.length !== 2 || widthPts.length !== 2) return null;
-  if (!Number.isFinite(calibratedLengthM) || calibratedLengthM <= 0) return null;
-  const lengthPx = pixelDistance(lengthPts[0], lengthPts[1]);
-  const widthPx = pixelDistance(widthPts[0], widthPts[1]);
-  const widthM = metersFromPixelSegment(widthPx, lengthPx, calibratedLengthM);
+  if (!isSegmentComplete(primarySeg) || !isSegmentComplete(widthSeg)) return null;
+  if (!Number.isFinite(calibratedPrimaryM) || calibratedPrimaryM <= 0) return null;
+  const primaryPx = pixelDistance(primarySeg[0], primarySeg[1]);
+  const widthPx = pixelDistance(widthSeg[0], widthSeg[1]);
+  const widthM = metersFromPixelSegment(widthPx, primaryPx, calibratedPrimaryM);
   if (widthM === undefined || widthM <= 0) return null;
-  const areaM2 = areaFromLengthWidthM(calibratedLengthM, widthM);
-  return { lengthM: calibratedLengthM, widthM, areaM2 };
+  const areaM2 = areaFromLengthWidthM(calibratedPrimaryM, widthM);
+  return { primaryM: calibratedPrimaryM, widthM, areaM2, dimensionMode };
 }
 
 export type MeasureStep = 'length' | 'calibrate' | 'width' | 'ready';
 
-/** Derive guided tap step from current tap state. */
+/** Derive guided tape-measure step from segment state. */
 export function deriveMeasureStep(
-  tapLengthPts: Point2D[],
-  calibratedLengthM: number | null,
-  tapWidthPts: Point2D[]
+  primarySeg: Point2D[] | null,
+  calibratedPrimaryM: number | null,
+  widthSeg: Point2D[] | null
 ): MeasureStep {
-  if (tapLengthPts.length < 2) return 'length';
-  if (calibratedLengthM == null || calibratedLengthM <= 0) return 'calibrate';
-  if (tapWidthPts.length < 2) return 'width';
+  if (!isSegmentComplete(primarySeg)) return 'length';
+  if (calibratedPrimaryM == null || calibratedPrimaryM <= 0) return 'calibrate';
+  if (!isSegmentComplete(widthSeg)) return 'width';
   return 'ready';
+}
+
+/** Label for a completed or in-progress segment on the overlay. */
+export function segmentOverlayLabel(
+  seg: Segment2D,
+  options: { metres?: number; showPxFallback?: boolean }
+): string {
+  const px = pixelDistance(seg[0], seg[1]);
+  if (options.metres != null && options.metres > 0) {
+    return formatSegmentLabelM(options.metres);
+  }
+  if (options.showPxFallback !== false) {
+    return formatSegmentLabelPx(px);
+  }
+  return '';
 }
