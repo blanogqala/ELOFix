@@ -21,6 +21,11 @@ const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTran
 const jobProgressUtil = require("../utils/jobProgress.util");
 const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
 const { expandLaborPricingFromPaidJob } = require("./provider.service");
+const {
+  assertJobCustomer,
+  assertJobProvider,
+  assertJobCustomerOrProvider,
+} = require("../utils/accessControl.util");
 
 const jobInclude = {
   customer: {
@@ -890,9 +895,10 @@ async function addChatMessage(jobId, author, message) {
   return await finalizeJob(job, meta);
 }
 
-async function submitServicePrice(jobId, amount, note) {
+async function submitServicePrice(jobId, amount, note, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobProvider(job, actor, "Only the assigned provider can submit a service price");
   const metaBefore = await getJobMeta(jobId);
   await assertSpecificationsReadyForPricing(job, metaBefore);
   const safeAmount = coerceNumber(amount);
@@ -1280,9 +1286,10 @@ async function acceptProposedPrice(jobId) {
   return enriched;
 }
 
-async function cancelJob(jobId, reason, details) {
+async function cancelJob(jobId, reason, details, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobCustomerOrProvider(job, actor, "Only the customer or assigned provider can cancel this job");
   const preMeta = await getJobMeta(jobId);
   const originalPaymentRef = preMeta?.servicePayment?.paymentRef || preMeta?.servicePayment?.reference || null;
   const providerRow = job.providerId
@@ -1334,9 +1341,10 @@ async function cancelJob(jobId, reason, details) {
   return { job: await finalizeJob(updated, meta), refundAmount: Number(refundAmount) || 0 };
 }
 
-async function confirmJobCompletion(jobId, rating, review) {
+async function confirmJobCompletion(jobId, rating, review, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobCustomer(job, actor, "Only the customer can confirm job completion");
   const r = Number(rating);
   if (!Number.isFinite(r) || r < 1 || r > 5) {
     throw new AppError("rating must be between 1 and 5", 400);
@@ -1454,9 +1462,10 @@ function ensureStoreOrder(meta, storeId, fallback) {
   return { index: meta.storeOrders.length - 1, order: created };
 }
 
-async function setStoreDeliveryOption(jobId, storeId, params) {
+async function setStoreDeliveryOption(jobId, storeId, params, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobCustomer(job, actor, "Only the customer can update store delivery options");
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1482,17 +1491,18 @@ async function setStoreDeliveryOption(jobId, storeId, params) {
   return enriched;
 }
 
-async function approveStoreDeliveryRequest(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" });
+async function approveStoreDeliveryRequest(jobId, storeId, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" }, actor);
 }
 
-async function updateStoreOrderDeliveryStatus(jobId, storeId, status) {
-  return updateStoreOrderDelivery(jobId, storeId, { status });
+async function updateStoreOrderDeliveryStatus(jobId, storeId, status, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status }, actor);
 }
 
-async function updateStoreOrderDelivery(jobId, storeId, updates) {
+async function updateStoreOrderDelivery(jobId, storeId, updates, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobCustomer(job, actor, "Only the customer can update store delivery");
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1522,17 +1532,18 @@ async function updateStoreOrderDelivery(jobId, storeId, updates) {
   return enriched;
 }
 
-async function approveStoreOrderDelivery(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" });
+async function approveStoreOrderDelivery(jobId, storeId, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" }, actor);
 }
 
-async function rejectStoreOrderDelivery(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" });
+async function rejectStoreOrderDelivery(jobId, storeId, actor) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" }, actor);
 }
 
-async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
+async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobCustomer(job, actor, "Only the customer can pay for store delivery");
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1563,12 +1574,14 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
   return enriched;
 }
 
-async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
+async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, actor) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertJobCustomer(job, actor, "Only the customer can pay for store materials");
 
   const metaPeek = await getJobMeta(jobId);
   const storeOrders = Array.isArray(metaPeek.storeOrders) ? metaPeek.storeOrders : [];
+  const materialPayments = Array.isArray(metaPeek.materialPayments) ? metaPeek.materialPayments : [];
   const wantOrderId = options.orderId ? String(options.orderId).trim() : "";
 
   let order =
@@ -1582,6 +1595,12 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
         !["rejected_by_customer", "cancelled_by_provider"].includes(String(o.materialBatchResolution || ""))
     );
     order = unpaidForSupplier.length ? unpaidForSupplier[unpaidForSupplier.length - 1] : undefined;
+  }
+  const alreadyPaidForSupplier = materialPayments.some(
+    (p) => String(p.supplierId) === String(supplierId) && String(p.status || "").toLowerCase() === "paid"
+  );
+  if (order?.payment?.materialsPaid || (!order && alreadyPaidForSupplier)) {
+    throw new AppError("Materials already paid", 400);
   }
   if (
     order &&

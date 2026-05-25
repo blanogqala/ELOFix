@@ -1,45 +1,47 @@
 const AppError = require("../utils/AppError");
 const paymentService = require("../services/payment.service");
 const jobService = require("../services/job.service");
+const { assertAdmin, resolveScopedUserId } = require("../utils/accessControl.util");
 
 async function getSavedCards(req, res) {
-  const userId = req.query.userId || req.user.userId;
+  const userId = resolveScopedUserId(req.user, req.query.userId);
   const cards = await paymentService.getSavedCards(String(userId));
   res.json({ success: true, cards });
 }
 
 async function addCard(req, res) {
-  const userId = req.body?.userId || req.user.userId;
+  const userId = resolveScopedUserId(req.user, req.body?.userId);
   const card = await paymentService.addCard(String(userId), req.body || {});
   res.status(201).json({ success: true, card });
 }
 
 async function deleteCard(req, res) {
-  const userId = req.query.userId || req.user.userId;
+  const userId = resolveScopedUserId(req.user, req.query.userId);
   await paymentService.deleteCard(String(userId), req.params.cardId);
   res.json({ success: true });
 }
 
 async function setDefaultCard(req, res) {
-  const userId = req.body?.userId || req.user.userId;
+  const userId = resolveScopedUserId(req.user, req.body?.userId);
   await paymentService.setDefaultCard(String(userId), req.params.cardId);
   res.json({ success: true });
 }
 
 async function getInvoices(req, res) {
-  const userId = req.query.userId || req.user.userId;
+  const userId = resolveScopedUserId(req.user, req.query.userId);
   const invoices = await paymentService.getInvoices(String(userId));
   res.json({ success: true, invoices });
 }
 
 async function getInvoice(req, res) {
-  const userId = req.query.userId || req.user.userId;
+  const userId = resolveScopedUserId(req.user, req.query.userId);
   const invoice = await paymentService.getInvoiceById(String(userId), req.params.invoiceId);
   res.json({ success: true, invoice });
 }
 
 async function createInvoice(req, res) {
-  const invoice = await paymentService.createInvoice(req.body || {});
+  const userId = resolveScopedUserId(req.user, req.body?.userId);
+  const invoice = await paymentService.createInvoice({ ...(req.body || {}), userId });
   res.status(201).json({ success: true, invoice });
 }
 
@@ -61,8 +63,12 @@ async function releaseEscrow(req, res) {
 }
 
 async function createRefundInvoice(req, res) {
+  assertAdmin(req.user);
+  if (!req.body?.userId) {
+    throw new AppError("userId is required", 400);
+  }
   const invoice = await paymentService.createRefundInvoice(
-    req.body?.userId || req.user.userId,
+    req.body?.userId,
     req.body?.jobId,
     req.body?.laborRefund,
     req.body?.materialsRefund,

@@ -9,6 +9,7 @@ const { logAudit } = require("./auditLog.service");
 const paymentService = require("./payment.service");
 const branchService = require("./branch.service");
 const branchStaffNotificationService = require("./branchStaffNotification.service");
+const { assertMaterialOrderCustomer } = require("../utils/accessControl.util");
 
 async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
   const org = String(supplierOrgId || "").trim();
@@ -551,13 +552,14 @@ async function getMaterialOrderById(orderId) {
   return base;
 }
 
-async function updateMaterialOrderDelivery(orderId, updates = {}) {
+async function updateMaterialOrderDelivery(orderId, updates = {}, actor) {
   return prisma.$transaction(
     async (tx) => {
       const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row || !row.payload || typeof row.payload !== "object") {
         throw new AppError("Material order not found", 404);
       }
+      assertMaterialOrderCustomer(row, actor);
       const current = row.payload;
       const nextDelivery = {
         ...(current.delivery || {}),
@@ -592,21 +594,22 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
   );
 }
 
-async function approveMaterialOrderDelivery(orderId) {
-  return updateMaterialOrderDelivery(orderId, { status: "Approved" });
+async function approveMaterialOrderDelivery(orderId, actor) {
+  return updateMaterialOrderDelivery(orderId, { status: "Approved" }, actor);
 }
 
-async function rejectMaterialOrderDelivery(orderId) {
-  return updateMaterialOrderDelivery(orderId, { status: "Rejected" });
+async function rejectMaterialOrderDelivery(orderId, actor) {
+  return updateMaterialOrderDelivery(orderId, { status: "Rejected" }, actor);
 }
 
-async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
+async function payMaterialOrderDelivery(orderId, cardLast4, fee, actor) {
   return prisma.$transaction(
     async (tx) => {
       const row = await tx.materialOrder.findUnique({ where: { id: orderId } });
       if (!row || !row.payload || typeof row.payload !== "object") {
         throw new AppError("Material order not found", 404);
       }
+      assertMaterialOrderCustomer(row, actor);
       if (String(row.fulfillmentStatus || "").toUpperCase() === "COMPLETED") {
         throw new AppError("Cannot attach payment to completed order", 400);
       }
@@ -638,11 +641,11 @@ async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
   );
 }
 
-async function updateMaterialOrderDeliveryStatus(orderId, status) {
+async function updateMaterialOrderDeliveryStatus(orderId, status, actor) {
   let mapped = "Processing";
   if (status === "delivered") mapped = "Delivered";
   else if (status === "out_for_delivery") mapped = "InProgress";
-  return updateMaterialOrderDelivery(orderId, { status: mapped });
+  return updateMaterialOrderDelivery(orderId, { status: mapped }, actor);
 }
 
 const FULFILLMENT_ORDER = [
