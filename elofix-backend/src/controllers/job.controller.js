@@ -106,7 +106,7 @@ async function submitServicePrice(req, res) {
   if (note != null && String(note).length > 5000) {
     throw new AppError("note is too long", 400);
   }
-  const job = await jobService.submitServicePrice(id, amount, note);
+  const job = await jobService.submitServicePrice(id, amount, note, req.user);
   res.json({ success: true, job });
 }
 
@@ -201,42 +201,47 @@ async function acceptProposedPrice(req, res) {
 }
 
 async function cancelJob(req, res) {
-  const result = await jobService.cancelJob(req.params.id, req.body?.reason, req.body?.details);
+  const result = await jobService.cancelJob(req.params.id, req.body?.reason, req.body?.details, req.user);
   res.json({ success: true, ...result });
 }
 
 async function confirmJobCompletion(req, res) {
-  const job = await jobService.confirmJobCompletion(req.params.id, req.body?.rating, req.body?.review);
+  const job = await jobService.confirmJobCompletion(req.params.id, req.body?.rating, req.body?.review, req.user);
   res.json({ success: true, job });
 }
 
 async function setStoreDeliveryOption(req, res) {
-  const job = await jobService.setStoreDeliveryOption(req.params.id, req.params.storeId, req.body || {});
+  const job = await jobService.setStoreDeliveryOption(req.params.id, req.params.storeId, req.body || {}, req.user);
   res.json({ success: true, job });
 }
 
 async function approveStoreDeliveryRequest(req, res) {
-  const job = await jobService.approveStoreDeliveryRequest(req.params.id, req.params.storeId);
+  const job = await jobService.approveStoreDeliveryRequest(req.params.id, req.params.storeId, req.user);
   res.json({ success: true, job });
 }
 
 async function updateStoreOrderDeliveryStatus(req, res) {
-  const job = await jobService.updateStoreOrderDeliveryStatus(req.params.id, req.params.storeId, req.body?.status);
+  const job = await jobService.updateStoreOrderDeliveryStatus(
+    req.params.id,
+    req.params.storeId,
+    req.body?.status,
+    req.user
+  );
   res.json({ success: true, job });
 }
 
 async function updateStoreOrderDelivery(req, res) {
-  const job = await jobService.updateStoreOrderDelivery(req.params.id, req.params.storeId, req.body || {});
+  const job = await jobService.updateStoreOrderDelivery(req.params.id, req.params.storeId, req.body || {}, req.user);
   res.json({ success: true, job });
 }
 
 async function approveStoreOrderDelivery(req, res) {
-  const job = await jobService.approveStoreOrderDelivery(req.params.id, req.params.storeId);
+  const job = await jobService.approveStoreOrderDelivery(req.params.id, req.params.storeId, req.user);
   res.json({ success: true, job });
 }
 
 async function rejectStoreOrderDelivery(req, res) {
-  const job = await jobService.rejectStoreOrderDelivery(req.params.id, req.params.storeId);
+  const job = await jobService.rejectStoreOrderDelivery(req.params.id, req.params.storeId, req.user);
   res.json({ success: true, job });
 }
 
@@ -245,7 +250,8 @@ async function payStoreOrderDelivery(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body?.fee
+    req.body?.fee,
+    req.user
   );
   res.json({ success: true, job });
 }
@@ -255,7 +261,8 @@ async function payForStoreMaterials(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body || {}
+    req.body || {},
+    req.user
   );
   res.json({ success: true, job });
 }
