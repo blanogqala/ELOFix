@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import {
   Category,
   Measurements,
-  type CameraAssistDimensionMode,
   type CameraAssistMeasurement,
 } from '@/types';
 import { Check, Plus, Minus, AlertCircle, Package, Camera } from 'lucide-react';
@@ -19,7 +18,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
-import { calculateArea, toMeters } from '@/lib/measurements';
+import {
+  calculateArea,
+  deriveMeasureStep,
+  getVideoDisplayRect,
+  overlayPointFromClient,
+  pixelDistance,
+  tapMeasurePreview,
+  toMeters,
+  type MeasureStep,
+  type Point2D,
+} from '@/lib/measurements';
 export interface Step3DynamicInputProps {
   category: Category;
   measurements: Measurements;
@@ -51,29 +60,43 @@ function MeasurementsStepContent({
   const capturedFileRef = useRef<File | null>(null);
 
   const [camUnit, setCamUnit] = useState<'m' | 'cm'>('m');
-  const [dimMode, setDimMode] = useState<CameraAssistDimensionMode>('lengthWidth');
   const [camLen, setCamLen] = useState('');
   const [camWid, setCamWid] = useState('');
-  const [camHt, setCamHt] = useState('');
+  const [manualExpanded, setManualExpanded] = useState(false);
 
   /** Tap-to-measure: two taps for length segment (calibrate with real meters), then two taps for width */
-  const [tapLengthPts, setTapLengthPts] = useState<{ x: number; y: number }[]>([]);
-  const [tapWidthPts, setTapWidthPts] = useState<{ x: number; y: number }[]>([]);
+  const [tapLengthPts, setTapLengthPts] = useState<Point2D[]>([]);
+  const [tapWidthPts, setTapWidthPts] = useState<Point2D[]>([]);
   const [realLengthMStr, setRealLengthMStr] = useState('');
   const [calibratedLengthM, setCalibratedLengthM] = useState<number | null>(null);
-  const [ppm, setPpm] = useState<number | null>(null);
 
   const hasCameraAssist = measurements.cameraAssist?.source === 'camera';
 
-  const pixelDist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
-    Math.hypot(b.x - a.x, b.y - a.y);
+  const measureStep: MeasureStep = deriveMeasureStep(tapLengthPts, calibratedLengthM, tapWidthPts);
+
+  const tapPreview = useMemo(() => {
+    if (calibratedLengthM == null) return null;
+    return tapMeasurePreview(tapLengthPts, tapWidthPts, calibratedLengthM);
+  }, [tapLengthPts, tapWidthPts, calibratedLengthM]);
 
   const resetTapMeasure = () => {
     setTapLengthPts([]);
     setTapWidthPts([]);
     setRealLengthMStr('');
     setCalibratedLengthM(null);
-    setPpm(null);
+  };
+
+  const stepBanner = (step: MeasureStep): string => {
+    switch (step) {
+      case 'length':
+        return 'Step 1: Tap both ends of the length';
+      case 'calibrate':
+        return 'Enter the real length (m), then tap Set length';
+      case 'width':
+        return 'Step 2: Tap both ends of the width';
+      case 'ready':
+        return 'Review your measurement, then save';
+    }
   };
 
   useEffect(() => {
@@ -119,31 +142,21 @@ function MeasurementsStepContent({
     };
   }, [cameraOpen, toast]);
 
-  const previewAreaM2 = useMemo(() => {
+  const manualPreviewAreaM2 = useMemo(() => {
     const w = parseFloat(camWid);
-    if (!Number.isFinite(w) || w <= 0) return null;
-    if (dimMode === 'lengthWidth') {
-      const l = parseFloat(camLen);
-      if (!Number.isFinite(l) || l <= 0) return null;
-      const lM = toMeters(l, camUnit);
-      const wM = toMeters(w, camUnit);
-      if (lM === undefined || wM === undefined) return null;
-      return calculateArea(lM, wM);
-    }
-    const h = parseFloat(camHt);
-    if (!Number.isFinite(h) || h <= 0) return null;
-    const hM = toMeters(h, camUnit);
+    const l = parseFloat(camLen);
+    if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(l) || l <= 0) return null;
+    const lM = toMeters(l, camUnit);
     const wM = toMeters(w, camUnit);
-    if (hM === undefined || wM === undefined) return null;
-    return calculateArea(hM, wM);
-  }, [camLen, camWid, camHt, camUnit, dimMode]);
+    if (lM === undefined || wM === undefined) return null;
+    return calculateArea(lM, wM);
+  }, [camLen, camWid, camUnit]);
 
   const resetDialogFields = () => {
     setCamLen('');
     setCamWid('');
-    setCamHt('');
     setCamUnit('m');
-    setDimMode('lengthWidth');
+    setManualExpanded(false);
     setCaptureReady(false);
     capturedFileRef.current = null;
     resetTapMeasure();
@@ -173,107 +186,70 @@ function MeasurementsStepContent({
     openCameraDialog();
   };
 
-  const captureFrame = () => {
-    const v = videoRef.current;
-    const c = canvasRef.current;
-    if (!v || !c || !v.videoWidth) {
-      toast({ title: 'Camera not ready', variant: 'destructive' });
-      return;
-    }
-    c.width = v.videoWidth;
-    c.height = v.videoHeight;
-    const ctx = c.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(v, 0, 0);
-    c.toBlob(
-      (blob) => {
-        if (!blob) return;
-        capturedFileRef.current = new File([blob], `measure-${Date.now()}.jpg`, {
-          type: 'image/jpeg',
-        });
-        setCaptureReady(true);
-        toast({ title: 'Frame captured', description: 'Enter dimensions, then apply.' });
-      },
-      'image/jpeg',
-      0.85
-    );
-  };
-
-  const applyCameraMeasurements = async () => {
-    if (!captureReady || !capturedFileRef.current) {
-      toast({ title: 'Capture a frame first', variant: 'destructive' });
-      return;
-    }
-    if (previewAreaM2 === null || previewAreaM2 < 0.5) {
-      toast({
-        title: 'Invalid measurement',
-        description: 'Enter valid dimensions. Area must be at least 0.5 m².',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const width = parseFloat(camWid);
-    if (!Number.isFinite(width) || width <= 0) {
-      toast({ title: 'Width required', variant: 'destructive' });
-      return;
-    }
-
-    let imageUrl: string | undefined;
-    if (appendImageUrls) {
-      try {
-        const urls = await appendImageUrls([capturedFileRef.current], { appendToJobImages: false });
-        imageUrl = urls[0];
-      } catch (e) {
-        toast({
-          title: 'Upload failed',
-          description: e instanceof Error ? e.message : 'Could not upload photo.',
-          variant: 'destructive',
-        });
+  const captureFrame = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const v = videoRef.current;
+      const c = canvasRef.current;
+      if (!v || !c || !v.videoWidth) {
+        resolve(false);
         return;
       }
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      const ctx = c.getContext('2d');
+      if (!ctx) {
+        resolve(false);
+        return;
+      }
+      ctx.drawImage(v, 0, 0);
+      c.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(false);
+            return;
+          }
+          capturedFileRef.current = new File([blob], `measure-${Date.now()}.jpg`, {
+            type: 'image/jpeg',
+          });
+          setCaptureReady(true);
+          resolve(true);
+        },
+        'image/jpeg',
+        0.85
+      );
+    });
+  };
+
+  const uploadCapturedFrame = async (): Promise<string | undefined> => {
+    if (!capturedFileRef.current || !appendImageUrls) return undefined;
+    const urls = await appendImageUrls([capturedFileRef.current], { appendToJobImages: false });
+    return urls[0];
+  };
+
+  const ensureFrameCaptured = async (): Promise<void> => {
+    if (captureReady && capturedFileRef.current) return;
+    const ok = await captureFrame();
+    if (!ok) {
+      toast({
+        title: 'Could not capture photo',
+        description: 'Measurement will be saved without a reference image.',
+      });
     }
+  };
 
-    const areaM2 = previewAreaM2;
-    const length = dimMode === 'lengthWidth' ? parseFloat(camLen) : undefined;
-    const height = dimMode === 'heightWidth' ? parseFloat(camHt) : undefined;
-
-    const cameraAssist: CameraAssistMeasurement = {
-      type: 'area',
-      unit: camUnit,
-      dimensionMode: dimMode,
-      width,
-      source: 'camera',
-      area: areaM2,
-      ...(imageUrl ? { imageUrl } : {}),
-      ...(length !== undefined && Number.isFinite(length) ? { length } : {}),
-      ...(height !== undefined && Number.isFinite(height) ? { height } : {}),
-    };
-
-    const widthM = toMeters(width, camUnit)!;
-    const values: Record<string, number> = {
-      width: widthM,
-      area: areaM2,
-    };
-    if (dimMode === 'lengthWidth') {
-      const l = parseFloat(camLen);
-      const lM = toMeters(l, camUnit)!;
-      values.length = lM;
-    } else {
-      const h = parseFloat(camHt);
-      const hM = toMeters(h, camUnit)!;
-      values.height = hM;
-    }
-
+  const persistCameraAssist = async (
+    cameraAssist: CameraAssistMeasurement,
+    values: Record<string, number>
+  ) => {
     setMeasurements({
       ...measurements,
       source: 'MANUAL',
       values: { ...measurements.values, ...values },
       cameraAssist,
     });
-
     setCameraOpen(false);
     resetDialogFields();
+    const areaM2 = values.area;
     toast({
       title: 'Camera assisted measurement saved',
       description: `Area ${areaM2.toFixed(2)} m² — visible to your provider.`,
@@ -283,7 +259,7 @@ function MeasurementsStepContent({
   const handleCalibrateLength = () => {
     if (tapLengthPts.length !== 2) return;
     const L = parseFloat(realLengthMStr);
-    const d = pixelDist(tapLengthPts[0], tapLengthPts[1]);
+    const d = pixelDistance(tapLengthPts[0], tapLengthPts[1]);
     if (!Number.isFinite(L) || L <= 0) {
       toast({ title: 'Enter a valid length in meters', variant: 'destructive' });
       return;
@@ -293,99 +269,166 @@ function MeasurementsStepContent({
       return;
     }
     setCalibratedLengthM(L);
-    setPpm(d / L);
     setTapWidthPts([]);
     toast({
       title: 'Calibration set',
-      description: 'Tap two points along the width. Optionally capture a frame first for your provider.',
+      description: 'Tap both ends of the width on the video.',
     });
   };
 
-  const onVideoOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (tapLengthPts.length < 2) {
-      setTapLengthPts((p) => [...p, { x, y }]);
+  const undoLastTap = () => {
+    if (tapWidthPts.length > 0) {
+      setTapWidthPts((p) => p.slice(0, -1));
       return;
     }
-    if (ppm == null) {
-      toast({
-        title: 'Calibrate length',
-        description: 'Enter the real length (m) for the first segment, then tap “Set length”.',
-        variant: 'destructive',
-      });
+    if (calibratedLengthM != null) {
+      setCalibratedLengthM(null);
       return;
     }
-    if (tapWidthPts.length < 2) {
-      setTapWidthPts((p) => [...p, { x, y }]);
+    if (tapLengthPts.length > 0) {
+      setTapLengthPts((p) => p.slice(0, -1));
     }
   };
 
-  const applyTapMeasurements = async () => {
-    if (!calibratedLengthM || ppm == null || tapWidthPts.length !== 2) return;
-    const dW = pixelDist(tapWidthPts[0], tapWidthPts[1]);
-    if (dW <= 0) {
-      toast({ title: 'Invalid width segment', variant: 'destructive' });
-      return;
-    }
-    const widthM = dW / ppm;
-    const lengthM = calibratedLengthM;
-    const areaM2 = lengthM * widthM;
-    if (areaM2 < 0.5) {
+  const onOverlayPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (manualExpanded) return;
+    const overlay = measureOverlayRef.current;
+    const video = videoRef.current;
+    if (!overlay) return;
+    const rect = overlay.getBoundingClientRect();
+    const display = getVideoDisplayRect(
+      rect.width,
+      rect.height,
+      video?.videoWidth ?? 0,
+      video?.videoHeight ?? 0
+    );
+    const pt = overlayPointFromClient(e.clientX, e.clientY, rect, display);
+    if (!pt.valid) {
       toast({
-        title: 'Area too small',
-        description: 'Area must be at least 0.5 m².',
+        title: 'Tap on the video',
+        description: 'Place points on the visible surface, not the black edges.',
         variant: 'destructive',
       });
       return;
     }
+    e.currentTarget.setPointerCapture(e.pointerId);
 
+    if (measureStep === 'length' && tapLengthPts.length < 2) {
+      setTapLengthPts((p) => [...p, { x: pt.x, y: pt.y }]);
+      return;
+    }
+    if (measureStep === 'calibrate') {
+      toast({
+        title: 'Set length first',
+        description: 'Enter the real length (m) and tap Set length.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (measureStep === 'width' && tapWidthPts.length < 2) {
+      setTapWidthPts((p) => [...p, { x: pt.x, y: pt.y }]);
+    }
+  };
+
+  const saveTapMeasurement = async () => {
+    if (!tapPreview || tapPreview.areaM2 < 0.5) {
+      toast({
+        title: 'Invalid measurement',
+        description: 'Complete tap steps. Area must be at least 0.5 m².',
+        variant: 'destructive',
+      });
+      return;
+    }
+    await ensureFrameCaptured();
     let imageUrl: string | undefined;
-    if (captureReady && capturedFileRef.current && appendImageUrls) {
+    if (capturedFileRef.current && appendImageUrls) {
       try {
-        const urls = await appendImageUrls([capturedFileRef.current], { appendToJobImages: false });
-        imageUrl = urls[0];
-      } catch (e) {
+        imageUrl = await uploadCapturedFrame();
+      } catch (err) {
         toast({
           title: 'Upload failed',
-          description: e instanceof Error ? e.message : 'Could not upload photo.',
+          description: err instanceof Error ? err.message : 'Could not upload photo.',
           variant: 'destructive',
         });
-        return;
+      }
+    }
+    const { lengthM, widthM, areaM2 } = tapPreview;
+    await persistCameraAssist(
+      {
+        type: 'area',
+        unit: 'm',
+        dimensionMode: 'lengthWidth',
+        width: widthM,
+        length: lengthM,
+        source: 'camera',
+        area: areaM2,
+        ...(imageUrl ? { imageUrl } : {}),
+      },
+      { length: lengthM, width: widthM, area: areaM2 }
+    );
+  };
+
+  const saveManualMeasurement = async () => {
+    if (manualPreviewAreaM2 === null || manualPreviewAreaM2 < 0.5) {
+      toast({
+        title: 'Invalid measurement',
+        description: 'Enter valid length and width. Area must be at least 0.5 m².',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const width = parseFloat(camWid);
+    const length = parseFloat(camLen);
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(length) || length <= 0) {
+      toast({ title: 'Length and width required', variant: 'destructive' });
+      return;
+    }
+
+    await ensureFrameCaptured();
+    let imageUrl: string | undefined;
+    if (capturedFileRef.current && appendImageUrls) {
+      try {
+        imageUrl = await uploadCapturedFrame();
+      } catch (err) {
+        toast({
+          title: 'Upload failed',
+          description: err instanceof Error ? err.message : 'Could not upload photo.',
+          variant: 'destructive',
+        });
       }
     }
 
-    const cameraAssist: CameraAssistMeasurement = {
-      type: 'area',
-      unit: 'm',
-      dimensionMode: 'lengthWidth',
-      width: widthM,
-      length: lengthM,
-      source: 'camera',
-      area: areaM2,
-      ...(imageUrl ? { imageUrl } : {}),
-    };
+    const areaM2 = manualPreviewAreaM2;
+    const widthM = toMeters(width, camUnit)!;
+    const lengthM = toMeters(length, camUnit)!;
 
-    setMeasurements({
-      ...measurements,
-      source: 'MANUAL',
-      values: {
-        ...measurements.values,
-        length: lengthM,
-        width: widthM,
+    await persistCameraAssist(
+      {
+        type: 'area',
+        unit: camUnit,
+        dimensionMode: 'lengthWidth',
+        width,
+        length,
+        source: 'camera',
         area: areaM2,
+        ...(imageUrl ? { imageUrl } : {}),
       },
-      cameraAssist,
-    });
-
-    setCameraOpen(false);
-    resetDialogFields();
-    toast({
-      title: 'Tap measurement saved',
-      description: `Area ${areaM2.toFixed(2)} m² — visible to your provider.`,
-    });
+      { length: lengthM, width: widthM, area: areaM2 }
+    );
   };
+
+  const handleSaveMeasurement = async () => {
+    if (manualExpanded) {
+      await saveManualMeasurement();
+      return;
+    }
+    await saveTapMeasurement();
+  };
+
+  const canSaveTap = measureStep === 'ready' && tapPreview != null && tapPreview.areaM2 >= 0.5;
+  const canSaveManual =
+    manualExpanded && manualPreviewAreaM2 != null && manualPreviewAreaM2 >= 0.5;
+  const canSave = manualExpanded ? canSaveManual : canSaveTap;
 
   return (
     <div className="space-y-6">
@@ -401,8 +444,7 @@ function MeasurementsStepContent({
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Camera assisted measurement</p>
               <p className="text-xs text-muted-foreground">
-                Tap two points for length, enter the real-world length in metres, then tap two points for width — or
-                capture a frame and enter dimensions manually.
+                Tap both ends of the length, enter its size in metres, then tap both ends of the width to calculate area.
               </p>
             </div>
             <Button variant="outline" size="sm" type="button" onClick={openCameraDialog}>
@@ -434,183 +476,212 @@ function MeasurementsStepContent({
             <DialogTitle>Camera assisted measurement</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <div ref={measureOverlayRef} className="relative aspect-video w-full overflow-hidden rounded-md bg-black">
+            <div
+              ref={measureOverlayRef}
+              className={cn(
+                'relative aspect-video w-full overflow-hidden rounded-md bg-black',
+                manualExpanded && 'sr-only absolute h-px w-px overflow-hidden opacity-0'
+              )}
+            >
               <video ref={videoRef} className="h-full w-full object-cover" playsInline muted />
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-[15] bg-black/55 px-2 py-2 text-center text-[11px] leading-snug text-white sm:text-xs">
-                <span className="block font-medium">Tap 2 points on length</span>
-                <span className="block opacity-90">Enter real-world length (m), then tap 2 points for width</span>
-              </div>
-              <div
-                role="presentation"
-                className="absolute inset-0 z-10 cursor-crosshair touch-none"
-                onClick={onVideoOverlayClick}
-              />
-              <div
-                className="pointer-events-none absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary bg-primary/90 shadow"
-                aria-hidden
-              />
-              <svg
-                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
-                width={overlaySize.w}
-                height={overlaySize.h}
-                aria-hidden
-              >
-                {tapLengthPts.length === 2 && (
-                  <line
-                    x1={tapLengthPts[0].x}
-                    y1={tapLengthPts[0].y}
-                    x2={tapLengthPts[1].x}
-                    y2={tapLengthPts[1].y}
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
+              {!manualExpanded && (
+                <>
+                  <div className="pointer-events-none absolute inset-x-0 top-0 z-[15] bg-black/55 px-2 py-2 text-center text-[11px] leading-snug text-white sm:text-xs">
+                    <span className="block font-medium">{stepBanner(measureStep)}</span>
+                  </div>
+                  <div
+                    role="presentation"
+                    className="absolute inset-0 z-10 cursor-crosshair"
+                    onPointerDown={onOverlayPointerDown}
                   />
-                )}
-                {tapWidthPts.length === 2 && (
-                  <line
-                    x1={tapWidthPts[0].x}
-                    y1={tapWidthPts[0].y}
-                    x2={tapWidthPts[1].x}
-                    y2={tapWidthPts[1].y}
-                    stroke="hsl(var(--accent))"
-                    strokeWidth={2}
-                  />
-                )}
-              </svg>
+                  <svg
+                    className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+                    width={overlaySize.w}
+                    height={overlaySize.h}
+                    aria-hidden
+                  >
+                    {tapLengthPts.map((p, i) => (
+                      <circle
+                        key={`len-${i}`}
+                        cx={p.x}
+                        cy={p.y}
+                        r={6}
+                        fill="hsl(var(--primary))"
+                        stroke="white"
+                        strokeWidth={1.5}
+                      />
+                    ))}
+                    {tapLengthPts.length === 2 && (
+                      <line
+                        x1={tapLengthPts[0].x}
+                        y1={tapLengthPts[0].y}
+                        x2={tapLengthPts[1].x}
+                        y2={tapLengthPts[1].y}
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                      />
+                    )}
+                    {tapWidthPts.map((p, i) => (
+                      <circle
+                        key={`wid-${i}`}
+                        cx={p.x}
+                        cy={p.y}
+                        r={6}
+                        fill="hsl(var(--accent))"
+                        stroke="white"
+                        strokeWidth={1.5}
+                      />
+                    ))}
+                    {tapWidthPts.length === 2 && (
+                      <line
+                        x1={tapWidthPts[0].x}
+                        y1={tapWidthPts[0].y}
+                        x2={tapWidthPts[1].x}
+                        y2={tapWidthPts[1].y}
+                        stroke="hsl(var(--accent))"
+                        strokeWidth={2}
+                      />
+                    )}
+                  </svg>
+                </>
+              )}
             </div>
             <canvas ref={canvasRef} className="hidden" />
-            <p className="text-xs text-muted-foreground">
-              Tap twice on the video for the first edge, enter its real length in metres, tap “Set length”, then tap twice
-              for the opposite edge — or capture a frame and type dimensions below.
-            </p>
 
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" size="sm" onClick={captureFrame}>
-                Capture image
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={resetTapMeasure}>
-                Reset taps
-              </Button>
-              {captureReady && (
-                <span className="self-center text-xs text-muted-foreground">Image ready for reference upload</span>
-              )}
-            </div>
-
-            {tapLengthPts.length === 2 && (
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="flex-1 min-w-[140px]">
-                  <Label htmlFor="tap-len-m">Real length (m)</Label>
-                  <Input
-                    id="tap-len-m"
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={realLengthMStr}
-                    onChange={(e) => setRealLengthMStr(e.target.value)}
-                    className="mt-1"
-                  />
+            {!manualExpanded && (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={undoLastTap}
+                    disabled={tapLengthPts.length === 0 && tapWidthPts.length === 0}
+                  >
+                    Undo last tap
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={resetTapMeasure}>
+                    Reset
+                  </Button>
                 </div>
-                <Button type="button" variant="secondary" size="sm" className="mb-0.5" onClick={handleCalibrateLength}>
-                  Set length
-                </Button>
-              </div>
-            )}
 
-            {ppm != null && tapWidthPts.length === 2 && (
-              <Button type="button" className="w-full sm:w-auto" onClick={() => void applyTapMeasurements()}>
-                Save tap measurement
-              </Button>
-            )}
+                {(measureStep === 'calibrate' || measureStep === 'width' || measureStep === 'ready') && (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-[140px] flex-1">
+                      <Label htmlFor="tap-len-m">Real length (m)</Label>
+                      <Input
+                        id="tap-len-m"
+                        type="number"
+                        step="any"
+                        min={0}
+                        value={realLengthMStr}
+                        onChange={(e) => setRealLengthMStr(e.target.value)}
+                        className="mt-1"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="mb-0.5"
+                      onClick={handleCalibrateLength}
+                      disabled={tapLengthPts.length !== 2}
+                    >
+                      Set length
+                    </Button>
+                  </div>
+                )}
 
-            <div className="flex flex-wrap gap-2">
-              <span className="text-xs font-medium text-muted-foreground self-center">Unit:</span>
-              {(['m', 'cm'] as const).map((u) => (
-                <Button
-                  key={u}
+                {tapPreview && measureStep === 'ready' && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+                    <p className="font-medium text-foreground">Your measurement</p>
+                    <p className="mt-1 text-muted-foreground">
+                      Length: {tapPreview.lengthM.toFixed(2)} m · Width: {tapPreview.widthM.toFixed(2)} m · Area:{' '}
+                      <span className="font-medium text-foreground">{tapPreview.areaM2.toFixed(2)} m²</span>
+                    </p>
+                  </div>
+                )}
+
+                <button
                   type="button"
-                  size="sm"
-                  variant={camUnit === u ? 'default' : 'outline'}
-                  className="h-8"
-                  onClick={() => setCamUnit(u)}
+                  className="text-xs text-primary underline-offset-2 hover:underline"
+                  onClick={() => setManualExpanded(true)}
                 >
-                  {u}
-                </Button>
-              ))}
-            </div>
+                  Enter dimensions manually instead
+                </button>
+              </>
+            )}
 
-            <div className="flex flex-wrap gap-2">
-              <span className="text-xs font-medium text-muted-foreground self-center">Mode:</span>
-              <Button
-                type="button"
-                size="sm"
-                variant={dimMode === 'lengthWidth' ? 'default' : 'outline'}
-                onClick={() => setDimMode('lengthWidth')}
-              >
-                Length × width
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={dimMode === 'heightWidth' ? 'default' : 'outline'}
-                onClick={() => setDimMode('heightWidth')}
-              >
-                Height × width
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {dimMode === 'lengthWidth' ? (
-                <div>
-                  <Label htmlFor="cam-len">Length ({camUnit})</Label>
-                  <Input
-                    id="cam-len"
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={camLen}
-                    onChange={(e) => setCamLen(e.target.value)}
-                    className="mt-1"
-                  />
+            {manualExpanded && (
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Manual dimensions</p>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => setManualExpanded(false)}
+                  >
+                    Back to tap measure
+                  </button>
                 </div>
-              ) : (
-                <div>
-                  <Label htmlFor="cam-ht">Height ({camUnit})</Label>
-                  <Input
-                    id="cam-ht"
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={camHt}
-                    onChange={(e) => setCamHt(e.target.value)}
-                    className="mt-1"
-                  />
+                <div className="flex flex-wrap gap-2">
+                  <span className="self-center text-xs font-medium text-muted-foreground">Unit:</span>
+                  {(['m', 'cm'] as const).map((u) => (
+                    <Button
+                      key={u}
+                      type="button"
+                      size="sm"
+                      variant={camUnit === u ? 'default' : 'outline'}
+                      className="h-8"
+                      onClick={() => setCamUnit(u)}
+                    >
+                      {u}
+                    </Button>
+                  ))}
                 </div>
-              )}
-              <div>
-                <Label htmlFor="cam-wid">Width ({camUnit})</Label>
-                <Input
-                  id="cam-wid"
-                  type="number"
-                  step="any"
-                  min={0}
-                  value={camWid}
-                  onChange={(e) => setCamWid(e.target.value)}
-                  className="mt-1"
-                />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="cam-len">Length ({camUnit})</Label>
+                    <Input
+                      id="cam-len"
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={camLen}
+                      onChange={(e) => setCamLen(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="cam-wid">Width ({camUnit})</Label>
+                    <Input
+                      id="cam-wid"
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={camWid}
+                      onChange={(e) => setCamWid(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Area →{' '}
+                  <span className="font-medium text-foreground">
+                    {manualPreviewAreaM2 !== null ? `${manualPreviewAreaM2.toFixed(2)} m²` : '—'}
+                  </span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  A reference photo is captured automatically when you save.
+                </p>
               </div>
-            </div>
-
-            <p className="text-sm text-muted-foreground">
-              Area →{' '}
-              <span className="font-medium text-foreground">
-                {previewAreaM2 !== null ? `${previewAreaM2.toFixed(2)} m²` : '—'}
-              </span>
-            </p>
+            )}
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={() => setCameraOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" onClick={() => void applyCameraMeasurements()} disabled={!captureReady}>
+            <Button type="button" onClick={() => void handleSaveMeasurement()} disabled={!canSave}>
               Save measurement
             </Button>
           </DialogFooter>
