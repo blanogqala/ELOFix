@@ -230,12 +230,23 @@ async function acceptProposedPrice(req, res) {
 }
 
 async function cancelJob(req, res) {
-  const result = await jobService.cancelJob(req.params.id, req.body?.reason, req.body?.details);
+  const result = await jobService.cancelJob(
+    req.params.id,
+    req.body?.reason,
+    req.body?.details,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, ...result });
 }
 
 async function confirmJobCompletion(req, res) {
-  const job = await jobService.confirmJobCompletion(req.params.id, req.body?.rating, req.body?.review);
+  const job = await jobService.confirmJobCompletion(
+    req.params.id,
+    req.body?.rating,
+    req.body?.review,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
@@ -274,7 +285,8 @@ async function payStoreOrderDelivery(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body?.fee
+    req.body?.fee,
+    req.user.userId
   );
   res.json({ success: true, job });
 }
@@ -284,7 +296,8 @@ async function payForStoreMaterials(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body || {}
+    req.body || {},
+    req.user.userId
   );
   res.json({ success: true, job });
 }
@@ -365,7 +378,8 @@ async function releaseEscrowPayment(req, res) {
     req.financialIdempotencyKey,
     req.financialRequestHash,
     req.financialIdempotencyRoute,
-    req.user.userId
+    req.user.userId,
+    req.user.role
   );
   res.json({ success: true, job });
 }
