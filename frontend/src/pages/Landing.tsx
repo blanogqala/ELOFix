@@ -37,10 +37,11 @@ export default function Landing() {
       <main>
         <HeroSection />
         <DualPathSection />
-        <CategoriesSection />
         <HowItWorksSection />
-        <PlatformFeaturesSection />
-        <TrustSection />
+        <CategoriesSection />
+       
+        {/* <PlatformFeaturesSection /> */}
+        {/* <TrustSection /> */}
         <SupplierShowcaseSection />
         {/* <ProviderCTASection /> */}
         <SupplierPartnershipSection />

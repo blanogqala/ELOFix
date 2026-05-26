@@ -4,7 +4,7 @@ import { LandingSection, SectionHeader } from './LandingSection';
 
 export function HowItWorksSection() {
   return (
-    <LandingSection id="how-it-works" className="bg-accent/20 backdrop-blur-sm">
+    <LandingSection id="how-it-works" className="bg-primary/10 border-y-2 border-accent/60">
       <SectionHeader
         eyebrow="Simple process"
         title="How EloFix works"
@@ -27,10 +27,10 @@ export function HowItWorksSection() {
                   isEven && 'md:[&>*:first-child]:order-2',
                 )}
               >
-                <div className={cn('md:text-left', isEven ? 'md:text-right ' : '')}>
+                <div className={cn('md:text-left', isEven ? 'md:text-right' : '')}>
                   <div
                     className={cn(
-                      'inline-flex items-center gap-3 ',
+                      'inline-flex items-center gap-3',
                       isEven ? 'md:flex-row-reverse' : '',
                     )}
                   >
@@ -43,7 +43,7 @@ export function HowItWorksSection() {
                 </div>
 
                 <div className={cn('flex', isEven ? 'md:justify-start' : 'md:justify-end')}>
-                  <div className="landing-card flex h-28 w-full max-w-sm items-center justify-center rounded-2xl border border-border/70 bg-gradient-to-br from-card to-muted/40 shadow-sm md:h-32">
+                  <div className="landing-card flex h-28 w-full max-w-sm items-center justify-center rounded-2xl border-2 border-accent bg-gradient-to-br from-card to-muted/40 shadow-sm md:h-32">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                       <Icon className="h-8 w-8" />
                     </div>

@@ -24,7 +24,7 @@ export function CategoriesSection() {
   }, []);
 
   return (
-    <LandingSection id="categories" className="border-y-2 border-accent/60 bg-primary/10">
+    <LandingSection id="categories" className="border-y border-accent/60 bg-accent/20 backdrop-blur-sm">
       <SectionHeader
         eyebrow="Maintenance services"
         title="Browse service categories"
