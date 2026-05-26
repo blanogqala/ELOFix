@@ -183,7 +183,7 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
 
   let user = await prisma.user.findFirst({
     where: {
-      OR: [{ email }, { googleId: profile.googleId }],
+      googleId: profile.googleId,
     },
     select: { ...authService.userPublicSelect, googleId: true },
   });
@@ -209,6 +209,22 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     }
 
     return { user, isNewUser: false };
+  }
+
+  const emailOwner = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, authProvider: true },
+  });
+  if (emailOwner) {
+    throw new AppError(
+      emailOwner.authProvider === "GOOGLE"
+        ? "An account with this Google email already exists. Please try signing in again."
+        : "An account with this email already exists. Please sign in with your password.",
+      409
+    );
+  }
+  if (mode !== "register") {
+    throw new AppError("No account found for this Google email. Please register first.", 404);
   }
 
   let legalData = {};
@@ -245,13 +261,7 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     return { user, isNewUser: true };
   } catch (err) {
     if (err.code === "P2002") {
-      user = await prisma.user.findUnique({
-        where: { email },
-        select: authService.userPublicSelect,
-      });
-      if (user) {
-        return { user, isNewUser: false };
-      }
+      throw new AppError("An account with this email already exists. Please sign in.", 409);
     }
     throw err;
   }

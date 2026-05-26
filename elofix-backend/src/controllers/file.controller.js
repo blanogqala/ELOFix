@@ -13,6 +13,9 @@ async function getFileById(req, res) {
   if (!file) {
     throw new AppError("File not found", 404);
   }
+  if (file.type === "jobQuotation") {
+    throw new AppError("File not found", 404);
+  }
 
   const filename = contentDispositionFilename(file.originalName);
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");

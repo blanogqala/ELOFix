@@ -53,6 +53,20 @@ function jobSiteAddressFromRow(job) {
   return "";
 }
 
+function assertActorIsJobCustomer(job, actorUserId, message = "Only the customer can perform this action") {
+  if (String(job.customerId) !== String(actorUserId)) {
+    throw new AppError(message, 403);
+  }
+}
+
+function assertActorCanCancelJob(job, actorUserId, actorRole) {
+  const role = String(actorRole || "").toUpperCase();
+  if (role === "ADMIN") return;
+  if (role === "CUSTOMER" && String(job.customerId) === String(actorUserId)) return;
+  if (role === "PROVIDER" && String(job.providerId || "") === String(actorUserId)) return;
+  throw new AppError("Forbidden", 403);
+}
+
 function normalizeValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -1378,9 +1392,10 @@ async function acceptProposedPrice(jobId) {
   return enriched;
 }
 
-async function cancelJob(jobId, reason, details) {
+async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorCanCancelJob(job, actorUserId, actorRole);
   const preMeta = await getJobMeta(jobId);
   const originalPaymentRef = preMeta?.servicePayment?.paymentRef || preMeta?.servicePayment?.reference || null;
   const providerRow = job.providerId
@@ -1432,9 +1447,10 @@ async function cancelJob(jobId, reason, details) {
   return { job: await finalizeJob(updated, meta), refundAmount: Number(refundAmount) || 0 };
 }
 
-async function confirmJobCompletion(jobId, rating, review) {
+async function confirmJobCompletion(jobId, rating, review, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorIsJobCustomer(job, customerUserId, "Only the customer can confirm job completion");
   const r = Number(rating);
   if (!Number.isFinite(r) || r < 1 || r > 5) {
     throw new AppError("rating must be between 1 and 5", 400);
@@ -1637,9 +1653,10 @@ async function rejectStoreOrderDelivery(jobId, storeId) {
   return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" });
 }
 
-async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
+async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorIsJobCustomer(job, customerUserId, "Only the customer can pay for delivery");
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1670,9 +1687,10 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
   return enriched;
 }
 
-async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
+async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorIsJobCustomer(job, customerUserId, "Only the customer can pay for materials");
 
   const metaPeek = await getJobMeta(jobId);
   const storeOrders = Array.isArray(metaPeek.storeOrders) ? metaPeek.storeOrders : [];
@@ -1914,7 +1932,10 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
   return enriched;
 }
 
-async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, route, actingUserId) {
+async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, route, actingUserId, actingRole) {
+  if (String(actingRole || "").toUpperCase() !== "ADMIN") {
+    throw new AppError("Forbidden", 403);
+  }
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   if (job.paymentReleased || (paymentService.isEscrowV2Job(job) && job.isFullyReleased)) {

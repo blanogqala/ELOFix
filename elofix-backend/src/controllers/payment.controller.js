@@ -55,7 +55,8 @@ async function releaseEscrow(req, res) {
     req.financialIdempotencyKey,
     req.financialRequestHash,
     req.financialIdempotencyRoute,
-    req.user.userId
+    req.user.userId,
+    req.user.role
   );
   res.json({ success: true, job });
 }
