@@ -554,14 +554,14 @@ export function UnifiedTrackingSection({
           </div>
         ) : null}
 
-        {fullTrackingHref && embed ? (
-          <Button variant="secondary" size="sm" className="w-full" asChild>
+        {fullTrackingHref ? (
+          <Button variant="secondary" size="sm" className="w-full hover:bg-accent/80 border-primary border" asChild>
             <a href={fullTrackingHref}>Full tracking view</a>
           </Button>
         ) : null}
       </div>
 
-      <FulfillmentPhaseTimeline fulfillmentStatus={fulfillmentStatus} />
+      {!embed ? <FulfillmentPhaseTimeline fulfillmentStatus={fulfillmentStatus} /> : null}
 
       {showConfirmDelivery && !locked ? (
         <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/8 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm ring-1 ring-emerald-500/15">
@@ -581,7 +581,8 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {!mapActive &&
+      {!embed &&
+      !mapActive &&
       mode !== 'self_pickup' &&
       !['FAILED', 'CANCELLED', 'COMPLETED', 'DELAYED'].includes(fulfillmentU) &&
       !locked ? (

@@ -251,6 +251,26 @@
   .label-text {
     @apply block text-sm font-medium text-foreground mb-2;
   }
+
+  .legal-prose {
+    @apply text-foreground;
+  }
+
+  .legal-section {
+    @apply mb-10 pb-2 last:mb-0;
+  }
+
+  .legal-section-title {
+    @apply mb-4 text-xl font-semibold tracking-tight text-foreground md:text-2xl;
+  }
+
+  .legal-paragraph {
+    @apply text-[15px] leading-7 text-muted-foreground md:text-base md:leading-8;
+  }
+
+  .legal-content-scroll {
+    scroll-behavior: smooth;
+  }
 }
 
 @layer utilities {
@@ -290,6 +310,108 @@
     to { 
       opacity: 1;
       transform: scale(1);
+    }
+  }
+
+  /* Landing page */
+  .landing-hero-bg {
+    background-image: url('/hero-background.png');
+    background-size: cover;
+    background-position: center 40%;
+    background-repeat: no-repeat;
+  }
+
+  .landing-hero-overlay {
+    background:
+      linear-gradient(
+        to bottom,
+        hsl(213 80% 12% / 0.82) 0%,
+        hsla(214, 67%, 26%, 0.55) 45%,
+        hsl(213 80% 10% / 0.88) 100%
+      ),
+      radial-gradient(ellipse 70% 50% at 50% 20%, hsl(33 100% 55% / 0.12), transparent);
+  }
+
+  .landing-hero-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.345) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.644) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .landing-reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+
+  .landing-reveal-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .landing-fade-in {
+    animation: landingFadeIn 0.8s ease forwards;
+    opacity: 0;
+  }
+
+  .landing-delay-1 { animation-delay: 0.1s; }
+  .landing-delay-2 { animation-delay: 0.2s; }
+  .landing-delay-3 { animation-delay: 0.35s; }
+  .landing-delay-4 { animation-delay: 0.5s; }
+  .landing-delay-5 { animation-delay: 0.65s; }
+
+  @keyframes landingFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .landing-marquee {
+    animation: landingMarquee 40s linear infinite;
+  }
+
+  .landing-marquee:hover {
+    animation-play-state: paused;
+  }
+
+  @keyframes landingMarquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  .landing-float > div {
+    animation: landingFloat 4s ease-in-out infinite;
+  }
+
+  @keyframes landingFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .landing-stagger {
+    animation: slideUp 0.5s ease-out both;
+  }
+
+  .landing-card {
+    @apply bg-card;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .landing-reveal,
+    .landing-fade-in,
+    .landing-marquee,
+    .landing-float > div,
+    .landing-stagger {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+      transition: none !important;
     }
   }
 }

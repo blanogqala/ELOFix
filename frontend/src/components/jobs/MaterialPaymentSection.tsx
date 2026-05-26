@@ -597,11 +597,6 @@ export function MaterialPaymentSection({
                 {paidCards.map((storeOrder) => {
                   const storeId = storeOrder.storeId;
                   const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
-                  const isLegacyCard = storeOrder.orderId.startsWith('legacy-');
-                  const paymentRecord = isLegacyCard
-                    ? (job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId)
-                        || job.materialPayments?.find(payment => !payment.orderId && payment.supplierId === storeId))
-                    : job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId);
                   const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
                   const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
                   const materialOrderKey = mo?.id ? String(mo.id) : storeOrder.orderId;
@@ -743,11 +738,6 @@ export function MaterialPaymentSection({
                             showConfirmDelivery={false}
                             fullTrackingHref={fullHref}
                           />
-                          <p>Invoice: {storeOrder.invoiceId || 'Pending assignment'}</p>
-                          <p>Paid at: {paymentRecord?.paidAt ? new Date(paymentRecord.paidAt).toLocaleString() : 'N/A'}</p>
-                          <Button variant="outline" size="sm" className="mt-1 w-full sm:w-auto" onClick={() => onViewStoreOrder(storeOrder.orderId)}>
-                            View order
-                          </Button>
                         </div>
                       }
                     />

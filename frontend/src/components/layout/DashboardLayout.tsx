@@ -12,6 +12,7 @@ import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSupplierMe } from '@/lib/api/supplierPortal';
 import { socket } from '@/lib/socket';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -371,6 +372,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             ) : (
               children
             )}
+          </div>
+          <div className="border-t border-border px-4 py-4 lg:px-8">
+            <LegalFooterLinks className="justify-start lg:justify-center" />
           </div>
         </main>
       </div>

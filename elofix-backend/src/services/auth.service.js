@@ -5,6 +5,7 @@ const AppError = require("../utils/AppError");
 const providerService = require("./provider.service");
 const supplierService = require("./supplier.service");
 const branchUserService = require("./branchUser.service");
+const { validateLegalAcceptance } = require("./legalAcceptance.service");
 
 const VALID_ROLES = ["CUSTOMER", "PROVIDER", "ADMIN"];
 
@@ -14,6 +15,7 @@ const userPublicSelect = {
   name: true,
   phone: true,
   profileImage: true,
+  authProvider: true,
   role: true,
   createdAt: true,
 };
@@ -65,17 +67,28 @@ async function register(body) {
   }
 
   const roleToUse = parseRole(role);
+  const legalData = validateLegalAcceptance(body, roleToUse);
   const hashed = await bcrypt.hash(password, 12);
   const phoneNorm = phone != null && String(phone).trim() ? String(phone).trim() : null;
 
   try {
+    const existing = await prisma.user.findUnique({
+      where: { email: String(email).toLowerCase().trim() },
+      select: { id: true, authProvider: true },
+    });
+    if (existing?.authProvider === "GOOGLE") {
+      throw new AppError("An account with this email already exists. Continue with Google instead.", 409);
+    }
+
     const user = await prisma.user.create({
       data: {
         email: String(email).toLowerCase().trim(),
         password: hashed,
         name: String(name).trim(),
         phone: phoneNorm,
+        authProvider: "LOCAL",
         role: roleToUse,
+        ...legalData,
         ...(roleToUse === "PROVIDER"
           ? {
               providerProfile: {
@@ -146,6 +159,10 @@ async function login(body) {
       },
       token,
     };
+  }
+
+  if (!user.password) {
+    throw new AppError("This account uses Google sign-in. Please continue with Google.", 401);
   }
 
   const match = await bcrypt.compare(password, user.password);
@@ -235,7 +252,7 @@ async function changePassword(ctx, body = {}) {
     select: { password: true },
   });
   if (!user?.password) {
-    throw new AppError("Unable to update password", 400);
+    throw new AppError("This account uses Google sign-in and does not have a password set.", 400);
   }
   const ok = await bcrypt.compare(String(currentPassword), user.password);
   if (!ok) {
@@ -253,4 +270,6 @@ module.exports = {
   login,
   getMe,
   changePassword,
+  signToken,
+  userPublicSelect,
 };

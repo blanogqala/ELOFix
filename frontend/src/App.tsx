@@ -10,9 +10,14 @@ import { AuthGuard } from "@/components/guards/AuthGuard";
 import Landing from "./pages/Landing";
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
+import GoogleCallback from "./pages/auth/GoogleCallback";
 import NotFound from "./pages/NotFound";
 import Unauthorized from "./pages/Unauthorized";
 import TrackDelivery from "./pages/TrackDelivery";
+import TermsPage from "./pages/legal/Terms";
+import PrivacyPage from "./pages/legal/Privacy";
+import ProviderAgreementPage from "./pages/legal/ProviderAgreement";
+import RefundPolicyPage from "./pages/legal/RefundPolicy";
 
 // User pages
 import UserDashboard from "./pages/user/Dashboard";
@@ -88,8 +93,13 @@ const App = () => (
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/auth/google/callback" element={<GoogleCallback />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
             <Route path="/track/:trackingId" element={<TrackDelivery />} />
+            <Route path="/terms" element={<TermsPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/provider-agreement" element={<ProviderAgreementPage />} />
+            <Route path="/refund-policy" element={<RefundPolicyPage />} />
 
             {/* User Routes */}
             <Route path="/user/dashboard" element={<AuthGuard allowedRoles={['user']}><UserDashboard /></AuthGuard>} />

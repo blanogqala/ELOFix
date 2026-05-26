@@ -1,0 +1,12 @@
+export { HeroSection } from './HeroSection';
+export { DualPathSection } from './DualPathSection';
+export { CategoriesSection } from './CategoriesSection';
+export { HowItWorksSection } from './HowItWorksSection';
+export { PlatformFeaturesSection } from './PlatformFeaturesSection';
+export { TrustSection } from './TrustSection';
+export { SupplierShowcaseSection } from './SupplierShowcaseSection';
+export { SupplierPartnershipSection } from './SupplierPartnershipSection';
+// export { ProviderCTASection } from './SupplierPartnershipSection';
+// export { TestimonialsSection } from './TestimonialsSection';
+export { FAQSection } from './FAQSection';
+export { FinalCTASection } from './FinalCTASection';

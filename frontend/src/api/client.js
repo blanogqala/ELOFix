@@ -70,13 +70,18 @@ apiClient.interceptors.response.use(
               'Request failed';
 
     if (status === 401 && typeof window !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEYS.AUTH);
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
       const path = window.location.pathname || '/';
-      if (!AUTH_PATHS.has(path)) {
-        const next = path + (window.location.search || '');
-        const loginUrl = `/login?next=${encodeURIComponent(next)}`;
-        window.location.assign(loginUrl);
+      const isOAuthFlow =
+        path.startsWith('/auth/google/callback') ||
+        String(error?.config?.url || '').includes('/auth/google/exchange');
+      if (!isOAuthFlow) {
+        localStorage.removeItem(STORAGE_KEYS.AUTH);
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+        if (!AUTH_PATHS.has(path)) {
+          const next = path + (window.location.search || '');
+          const loginUrl = `/login?next=${encodeURIComponent(next)}`;
+          window.location.assign(loginUrl);
+        }
       }
     }
 

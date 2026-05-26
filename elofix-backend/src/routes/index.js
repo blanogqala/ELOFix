@@ -21,10 +21,12 @@ const trackingRoutes = require("./tracking.routes");
 const ratingRoutes = require("./rating.routes");
 const providerReviewRoutes = require("./providerReview.routes");
 const branchRoutes = require("./branch.routes");
+const legalRoutes = require("./legal.routes");
 
 const router = express.Router();
 
 router.use("/auth", authRoutes);
+router.use("/legal", legalRoutes);
 router.use("/geocode", geocodeRoutes);
 router.use("/jobs", jobRoutes);
 router.use("/categories", categoryRoutes);

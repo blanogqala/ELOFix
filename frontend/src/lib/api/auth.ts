@@ -1,3 +1,4 @@
+import type { LegalAcceptancePayload } from '@/lib/legal/versions';
 import type { AuthUser, Provider, SupplierAccountProfile, SupplierUser, UserRole } from '@/types';
 import { getFromStorage, setToStorage, removeFromStorage, STORAGE_KEYS } from './storage';
 import apiClient from '@/api/client';
@@ -180,7 +181,8 @@ export async function register(
   email: string,
   phone: string,
   password: string,
-  role: 'user' | 'provider'
+  role: 'user' | 'provider',
+  legalAcceptance: LegalAcceptancePayload
 ): Promise<AuthSession> {
   const response = await apiClient.post<AuthResponse>('/auth/register', {
     name,
@@ -188,6 +190,7 @@ export async function register(
     password,
     phone,
     role: mapFrontendRole(role),
+    ...legalAcceptance,
   });
 
   const { data } = response;
@@ -251,8 +254,67 @@ export async function changePassword(currentPassword: string, newPassword: strin
   await apiClient.post('/auth/change-password', { currentPassword, newPassword });
 }
 
+function getApiBaseUrl(): string {
+  return (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/$/, '');
+}
+
+export interface GoogleAuthOptions {
+  mode?: 'login' | 'register';
+  role?: 'CUSTOMER' | 'PROVIDER';
+  next?: string;
+  legalAcceptance?: LegalAcceptancePayload;
+}
+
+export function getGoogleAuthUrl(options: GoogleAuthOptions = {}): string {
+  const params = new URLSearchParams();
+  params.set('mode', options.mode || 'login');
+  params.set('role', options.role || 'CUSTOMER');
+  if (options.next) {
+    params.set('next', options.next);
+  }
+  if (options.legalAcceptance) {
+    params.set('acceptedTerms', String(options.legalAcceptance.acceptedTerms));
+    params.set('acceptedPrivacy', String(options.legalAcceptance.acceptedPrivacy));
+    params.set('acceptedProviderAgreement', String(options.legalAcceptance.acceptedProviderAgreement));
+    params.set('acceptedRefundPolicy', String(options.legalAcceptance.acceptedRefundPolicy));
+    params.set('termsVersion', options.legalAcceptance.termsVersion);
+    params.set('privacyVersion', options.legalAcceptance.privacyVersion);
+    params.set('providerAgreementVersion', options.legalAcceptance.providerAgreementVersion);
+    params.set('refundPolicyVersion', options.legalAcceptance.refundPolicyVersion);
+  }
+  return `${getApiBaseUrl()}/auth/google?${params.toString()}`;
+}
+
+export function redirectToGoogleAuth(options: GoogleAuthOptions = {}): void {
+  window.location.assign(getGoogleAuthUrl(options));
+}
+
+export async function exchangeGoogleAuth(exchangeToken: string): Promise<AuthSession> {
+  const { data } = await apiClient.post<AuthResponse>('/auth/google/exchange', {
+    exchange: exchangeToken,
+  });
+
+  if (!data?.token || !data?.user) {
+    throw new Error('Invalid Google sign-in response from server');
+  }
+
+  const session = saveSession({
+    user: toAuthUser(data.user),
+    token: data.token,
+  });
+
+  if (session.token) {
+    return refreshSessionUser();
+  }
+
+  return session;
+}
+
 export async function socialLogin(_provider: 'google'): Promise<AuthSession> {
-  throw new Error('Google login is not configured in the Express auth API');
+  redirectToGoogleAuth({ mode: 'login' });
+  return new Promise(() => {
+    /* browser navigates away to Google OAuth */
+  });
 }
 
 export function getCurrentSession(): AuthSession | null {

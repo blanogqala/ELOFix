@@ -56,6 +56,11 @@ enum BranchUserRole {
   STAFF
 }
 
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+}
+
 enum NotificationCategory {
   ORDERS
   DELIVERY
@@ -68,12 +73,23 @@ enum NotificationCategory {
 model User {
   id                  String               @id @default(uuid())
   email               String               @unique
-  password            String
+  password            String?
   name                String
   phone               String?
   profileImage        String?
+  authProvider        AuthProvider         @default(LOCAL)
+  googleId            String?              @unique
   role                Role
   createdAt           DateTime             @default(now())
+  acceptedTerms              Boolean   @default(false)
+  acceptedPrivacy            Boolean   @default(false)
+  acceptedProviderAgreement  Boolean   @default(false)
+  acceptedRefundPolicy       Boolean   @default(false)
+  acceptedAt                 DateTime?
+  termsVersion               String?
+  privacyVersion             String?
+  providerAgreementVersion   String?
+  refundPolicyVersion        String?
   providerProfile     Provider?
   jobsAsCustomer      Job[]                @relation("JobCustomer")
   jobsAsProvider      Job[]                @relation("JobProvider")
