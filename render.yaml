@@ -1,5 +1,5 @@
 # Render Blueprint: New > Blueprint > paste this repo URL, or connect GitHub and apply this file.
-# After deploy, set JWT_SECRET (and optional ADMIN_* if you run seed) in the service Environment tab.
+# After deploy, set JWT_SECRET and Google OAuth vars in the service Environment tab (see envVars with sync: false).
 
 databases:
   - name: elofix-db
@@ -27,4 +27,12 @@ services:
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: FRONTEND_URL
         sync: false

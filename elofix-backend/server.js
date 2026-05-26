@@ -16,6 +16,21 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
     console.error("[FATAL] DATABASE_URL is missing or empty. Set it in Render and redeploy.");
     process.exit(1);
   }
+
+  const googleId = process.env.GOOGLE_CLIENT_ID;
+  const googleSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!googleId || !googleSecret) {
+    console.warn(
+      "[WARN] GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing. Google sign-in will return 503/502 until set in Render Environment."
+    );
+  } else if (/0{8,}/.test(String(googleSecret))) {
+    console.warn("[WARN] GOOGLE_CLIENT_SECRET looks like a placeholder. Google sign-in will fail with invalid_client.");
+  }
+  if (!process.env.GOOGLE_CALLBACK_URL || !process.env.FRONTEND_URL) {
+    console.warn(
+      "[WARN] GOOGLE_CALLBACK_URL and/or FRONTEND_URL missing. Set production URLs in Render (see elofix-backend/.env.example)."
+    );
+  }
 })();
 
 const http = require("http");
