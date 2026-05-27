@@ -13,6 +13,7 @@ const DOC_TYPES = new Set([
   "proofOfSkill",
   "certifications",
 ]);
+const PUBLIC_FILE_TYPES = new Set(["avatar", "workImage"]);
 const IMAGE_EXT_TO_MIME = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -276,10 +277,58 @@ async function resolveFileForDownload(fileIdParam) {
   return getRegisteredFile(legacy.fileId);
 }
 
+async function assertActorCanDownloadFile(file, actor) {
+  if (!file) return;
+
+  const type = String(file.type || "").trim();
+  if (PUBLIC_FILE_TYPES.has(type)) {
+    return;
+  }
+
+  const actorUserId = String(actor?.userId || actor?.id || "").trim();
+  const actorRole = String(actor?.role || "").toUpperCase();
+  if (!actorUserId) {
+    throw new AppError("Authentication required", 401);
+  }
+  if (actorRole === "ADMIN") {
+    return;
+  }
+
+  if (DOC_TYPES.has(type)) {
+    if (file.ownerUserId && String(file.ownerUserId) === actorUserId) {
+      return;
+    }
+    throw new AppError("Forbidden", 403);
+  }
+
+  if (type === "jobQuotation") {
+    const job = await prisma.job.findFirst({
+      where: { quotationFileUrl: toApiFileUrl(file.fileId) },
+      select: { customerId: true, providerId: true },
+    });
+    if (
+      job &&
+      (String(job.customerId) === actorUserId || String(job.providerId || "") === actorUserId)
+    ) {
+      return;
+    }
+    if (file.ownerUserId && String(file.ownerUserId) === actorUserId) {
+      return;
+    }
+    throw new AppError("Forbidden", 403);
+  }
+
+  if (file.ownerUserId && String(file.ownerUserId) === actorUserId) {
+    return;
+  }
+  throw new AppError("Forbidden", 403);
+}
+
 module.exports = {
   FILES_URL_PREFIX,
   toApiFileUrl,
   registerUploadedFile,
   resolveExistingFileReference,
   resolveFileForDownload,
+  assertActorCanDownloadFile,
 };

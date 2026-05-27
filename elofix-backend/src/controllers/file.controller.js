@@ -1,6 +1,9 @@
 const path = require("path");
 const AppError = require("../utils/AppError");
-const { resolveFileForDownload } = require("../services/fileStorage.service");
+const {
+  assertActorCanDownloadFile,
+  resolveFileForDownload,
+} = require("../services/fileStorage.service");
 
 function contentDispositionFilename(name) {
   const fallback = path.basename(String(name || "file"));
@@ -13,6 +16,7 @@ async function getFileById(req, res) {
   if (!file) {
     throw new AppError("File not found", 404);
   }
+  await assertActorCanDownloadFile(file, req.user);
 
   const filename = contentDispositionFilename(file.originalName);
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");

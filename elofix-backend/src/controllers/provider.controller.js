@@ -18,12 +18,16 @@ async function listProviders(req, res) {
     category: req.query.category,
     forAdmin: false,
     nearCity: req.query.city || req.query.nearCity,
+    viewer: req.user,
   });
   res.json({ success: true, providers });
 }
 
 async function getProvider(req, res) {
-  const provider = await providerService.getProviderById(req.params.id);
+  const provider = await providerService.getProviderById(req.params.id, {
+    viewer: req.user,
+    publicView: true,
+  });
   res.json({ success: true, provider });
 }
 

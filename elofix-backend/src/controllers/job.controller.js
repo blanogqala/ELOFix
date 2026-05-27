@@ -235,7 +235,13 @@ async function cancelJob(req, res) {
 }
 
 async function confirmJobCompletion(req, res) {
-  const job = await jobService.confirmJobCompletion(req.params.id, req.body?.rating, req.body?.review);
+  const job = await jobService.confirmJobCompletion(
+    req.params.id,
+    req.user.userId,
+    req.user.role,
+    req.body?.rating,
+    req.body?.review
+  );
   res.json({ success: true, job });
 }
 

@@ -1,7 +1,7 @@
 const express = require("express");
 const providerController = require("../controllers/provider.controller");
 const asyncHandler = require("../middleware/asyncHandler");
-const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
+const { authenticate, optionalAuthenticate, authorizeRoles } = require("../middleware/auth.middleware");
 const {
   uploadProviderDocument,
   uploadProviderAvatar,
@@ -10,9 +10,9 @@ const {
 
 const router = express.Router();
 
-router.get("/", asyncHandler(providerController.listProviders));
+router.get("/", optionalAuthenticate, asyncHandler(providerController.listProviders));
 router.get("/:id/reviews", asyncHandler(providerController.listProviderReviews));
-router.get("/:id", asyncHandler(providerController.getProvider));
+router.get("/:id", optionalAuthenticate, asyncHandler(providerController.getProvider));
 
 router.post(
   "/:id/avatar",

@@ -30,6 +30,26 @@ function hasDocApproved(doc) {
   return Boolean(doc && doc.status === "approved" && hasDocUrl(doc));
 }
 
+function canViewDocumentFiles(profile, viewer, forAdmin = false) {
+  if (forAdmin) return true;
+  const role = String(viewer?.role || "").toUpperCase();
+  if (role === "ADMIN") return true;
+  const viewerUserId = String(viewer?.userId || viewer?.id || "").trim();
+  return Boolean(viewerUserId && String(profile?.userId || "") === viewerUserId);
+}
+
+function redactDocumentFiles(documents) {
+  const safe = {};
+  for (const [docType, doc] of Object.entries(normalizeDocuments(documents))) {
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) continue;
+    safe[docType] = {
+      status: doc.status || (hasDocUrl(doc) ? "pending" : undefined),
+      type: doc.type || docType,
+    };
+  }
+  return safe;
+}
+
 async function normalizeDocumentReference(ownerUserId, docType, doc) {
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return doc;
 
@@ -281,6 +301,7 @@ function toProviderResponse(
     completedLaborByCategory = undefined,
     ratingBreakdown = undefined,
     includeLaborHistory = false,
+    includeDocumentFiles = true,
   } = {}
 ) {
   const documents = normalizeDocuments(profile.documents);
@@ -309,7 +330,7 @@ function toProviderResponse(
     serviceAreas: Array.isArray(profile.serviceAreas) ? profile.serviceAreas : [],
     skills: Array.isArray(profile.skills) ? profile.skills : [],
     laborPricing,
-    documents,
+    documents: includeDocumentFiles ? documents : redactDocumentFiles(documents),
     portfolioImages: Array.isArray(profile.portfolioImages) ? profile.portfolioImages : [],
     profileImage: profile.profileImage || "",
     workPosts: mappedPosts,
@@ -761,7 +782,7 @@ async function publicUrlFromUploadedFile(requestUserId, file) {
   return { url: stored.url, fileId: stored.fileId };
 }
 
-async function listProviders({ category, forAdmin = false, nearCity } = {}) {
+async function listProviders({ category, forAdmin = false, nearCity, viewer } = {}) {
   const normalizedCategory = String(category || "").trim();
   const nearCityTrim = String(nearCity || "").trim();
 
@@ -843,6 +864,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
           status: s.status,
           createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
         })),
+        includeDocumentFiles: canViewDocumentFiles(profile, viewer, forAdmin),
       });
     })
   );
@@ -863,7 +885,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
   return providers;
 }
 
-async function getProviderById(id) {
+async function getProviderById(id, { viewer, forAdmin = false, publicView = false } = {}) {
   const profile = await loadProviderBundleByAnyId(id);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -914,6 +936,7 @@ async function getProviderById(id) {
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
     ratingBreakdown,
+    includeDocumentFiles: !publicView || canViewDocumentFiles(profile, viewer, forAdmin),
   });
 }
 

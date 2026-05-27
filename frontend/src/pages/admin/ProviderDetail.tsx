@@ -16,6 +16,7 @@ import {
   approveProviderDocument,
   rejectProviderDocument,
 } from '@/lib/api/providers';
+import { fetchStoredFileBlob, openBlobInNewTab } from '@/lib/api/files';
 import { getCategories } from '@/lib/api/categories';
 import { Category, Provider } from '@/types';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -35,6 +36,7 @@ import {
   Trash2,
   ExternalLink,
   Images,
+  Loader2,
   Plus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -78,6 +80,26 @@ function AdminDocumentRow({
   onApprove: () => void;
   onReject: () => void;
 }) {
+  const { toast } = useToast();
+  const [isOpening, setIsOpening] = useState(false);
+
+  const handleOpen = async () => {
+    if (!doc?.url || isOpening) return;
+    setIsOpening(true);
+    try {
+      const blob = await fetchStoredFileBlob(doc.url);
+      openBlobInNewTab(blob);
+    } catch (error) {
+      toast({
+        title: 'Could not open document',
+        description: error instanceof Error ? error.message : 'Download failed.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsOpening(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border-2 border-primary p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 flex-1 space-y-2">
@@ -116,16 +138,16 @@ function AdminDocumentRow({
             <X className="mr-1 h-3 w-3" />
             Reject
           </Button>
-          <Button type="button" variant="outline" size="sm" className="h-8 px-3 text-xs" asChild>
-            <a
-              href={resolveUploadUrl(doc!.url)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1"
-            >
-              <ExternalLink className="h-3 w-3" />
-              Open
-            </a>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={isOpening}
+            onClick={() => void handleOpen()}
+          >
+            {isOpening ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+            Open
           </Button>
         </div>
       ) : null}
