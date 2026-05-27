@@ -12,8 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { uploadProviderDocument } from '@/lib/api/providers';
+import { fetchStoredFileBlob, openBlobInNewTab } from '@/lib/api/files';
 import { compressImageForUpload } from '@/lib/imageCompression';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   OPTIONAL_PROVIDER_DOCUMENTS,
   PROVIDER_DOC_ACCEPT,
@@ -80,6 +80,7 @@ function DocumentUploadCard({
   const status = hasFile ? getDocStatus(doc) : null;
   const StatusIcon = status?.icon;
   const isUploading = uploading === docType;
+  const [isOpening, setIsOpening] = useState(false);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -111,6 +112,23 @@ function DocumentUploadCard({
       });
     } finally {
       onUploadEnd();
+    }
+  };
+
+  const handleOpenUploadedFile = async () => {
+    if (!doc?.url || isOpening) return;
+    setIsOpening(true);
+    try {
+      const blob = await fetchStoredFileBlob(doc.url);
+      openBlobInNewTab(blob);
+    } catch (error) {
+      toast({
+        title: 'Could not open file',
+        description: error instanceof Error ? error.message : 'Download failed.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsOpening(false);
     }
   };
 
@@ -172,14 +190,14 @@ function DocumentUploadCard({
       )}
 
       {hasFile && doc?.url && (
-        <a
-          href={resolveUploadUrl(doc.url)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+        <button
+          type="button"
+          disabled={isOpening}
+          onClick={() => void handleOpenUploadedFile()}
+          className="w-fit text-sm font-medium text-primary underline-offset-2 hover:underline disabled:opacity-60"
         >
-          View uploaded file
-        </a>
+          {isOpening ? 'Opening file...' : 'View uploaded file'}
+        </button>
       )}
 
       <div className="flex flex-wrap gap-2">
