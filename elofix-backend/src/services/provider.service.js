@@ -2,6 +2,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const notificationEvents = require("./notificationEvents.service");
 const { randomUUID } = require("crypto");
+const jwt = require("jsonwebtoken");
 const {
   toApiFileUrl,
   registerUploadedFile,
@@ -16,6 +17,7 @@ const {
 const REQUIRED_DOCUMENT_TYPES = ["idDoc", "companyReg", "proofOfAddress"];
 const OPTIONAL_DOCUMENT_TYPES = ["proofOfSkill", "certifications"];
 const DOCUMENT_TYPES = [...REQUIRED_DOCUMENT_TYPES, ...OPTIONAL_DOCUMENT_TYPES];
+const FILE_DOWNLOAD_TOKEN_TTL = "15m";
 
 function normalizeDocuments(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -28,6 +30,17 @@ function hasDocUrl(doc) {
 
 function hasDocApproved(doc) {
   return Boolean(doc && doc.status === "approved" && hasDocUrl(doc));
+}
+
+function signPrivateFileUrl(url, fileId) {
+  const id = String(fileId || "").trim();
+  const rawUrl = String(url || "").trim();
+  if (!id || !rawUrl || !process.env.JWT_SECRET) return rawUrl;
+  const token = jwt.sign({ purpose: "private_file_download", fileId: id }, process.env.JWT_SECRET, {
+    expiresIn: FILE_DOWNLOAD_TOKEN_TTL,
+  });
+  const separator = rawUrl.includes("?") ? "&" : "?";
+  return `${rawUrl}${separator}token=${encodeURIComponent(token)}`;
 }
 
 async function normalizeDocumentReference(ownerUserId, docType, doc) {
@@ -281,6 +294,7 @@ function toProviderResponse(
     completedLaborByCategory = undefined,
     ratingBreakdown = undefined,
     includeLaborHistory = false,
+    includeDocumentFiles = false,
   } = {}
 ) {
   const documents = normalizeDocuments(profile.documents);
@@ -309,7 +323,7 @@ function toProviderResponse(
     serviceAreas: Array.isArray(profile.serviceAreas) ? profile.serviceAreas : [],
     skills: Array.isArray(profile.skills) ? profile.skills : [],
     laborPricing,
-    documents,
+    documents: includeDocumentFiles ? withSignedDocumentUrls(documents) : redactDocumentFiles(documents),
     portfolioImages: Array.isArray(profile.portfolioImages) ? profile.portfolioImages : [],
     profileImage: profile.profileImage || "",
     workPosts: mappedPosts,
@@ -355,6 +369,30 @@ function toProviderResponse(
       ? { completedLaborByCategory }
       : {}),
   };
+}
+
+function redactDocumentFiles(documents) {
+  const out = {};
+  for (const [docType, doc] of Object.entries(normalizeDocuments(documents))) {
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) continue;
+    out[docType] = {
+      type: doc.type || docType,
+      status: doc.status || "pending",
+    };
+  }
+  return out;
+}
+
+function withSignedDocumentUrls(documents) {
+  const out = {};
+  for (const [docType, doc] of Object.entries(normalizeDocuments(documents))) {
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) continue;
+    out[docType] = {
+      ...doc,
+      url: signPrivateFileUrl(doc.url, doc.fileId),
+    };
+  }
+  return out;
 }
 
 async function loadProviderBundleByUserId(userId) {
@@ -485,7 +523,8 @@ function mergeDocuments(prev, next) {
   for (const key of Object.keys(next)) {
     const v = next[key];
     if (v && typeof v === "object" && !Array.isArray(v)) {
-      merged[key] = { ...base[key], ...v };
+      const existing = base[key] && typeof base[key] === "object" && !Array.isArray(base[key]) ? base[key] : {};
+      merged[key] = { ...existing };
     }
   }
   return merged;
@@ -843,6 +882,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
           status: s.status,
           createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
         })),
+        includeDocumentFiles: forAdmin,
       });
     })
   );
@@ -863,11 +903,15 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
   return providers;
 }
 
-async function getProviderById(id) {
+async function getProviderById(id, { viewerUserId = null, viewerRole = null, includeDocumentFiles = false } = {}) {
   const profile = await loadProviderBundleByAnyId(id);
   if (!profile) {
     throw new AppError("Provider not found", 404);
   }
+  const canViewDocumentFiles =
+    includeDocumentFiles ||
+    String(viewerRole || "").toUpperCase() === "ADMIN" ||
+    (viewerUserId && String(profile.userId) === String(viewerUserId));
 
   const completedJobs = await prisma.job.count({
     where: {
@@ -914,11 +958,12 @@ async function getProviderById(id) {
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
     ratingBreakdown,
+    includeDocumentFiles: canViewDocumentFiles,
   });
 }
 
 async function getProviderByUserId(userId) {
-  return getProviderById(userId);
+  return getProviderById(userId, { includeDocumentFiles: true });
 }
 
 /** Resolve public route :id (user id or provider profile id) to user id. */
@@ -970,7 +1015,7 @@ async function approveProviderDocumentByUserId(targetUserId, docType) {
     data: { documents: next },
   });
   await persistProfileCompleted(profile.id);
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 async function rejectProviderDocumentByUserId(targetUserId, docType, feedback) {
@@ -999,7 +1044,7 @@ async function rejectProviderDocumentByUserId(targetUserId, docType, feedback) {
     data: { documents: next },
   });
   await persistProfileCompleted(profile.id);
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 async function approveProviderByUserId(targetUserId) {
@@ -1022,7 +1067,7 @@ async function approveProviderByUserId(targetUserId) {
 
   await notificationEvents.notifyProviderApproved(targetUserId);
 
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 async function rejectProviderByUserId(targetUserId, reason) {
@@ -1040,7 +1085,7 @@ async function rejectProviderByUserId(targetUserId, reason) {
     },
   });
 
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 async function blockProviderByUserId(targetUserId) {
@@ -1054,7 +1099,7 @@ async function blockProviderByUserId(targetUserId) {
     data: { blocked: true },
   });
 
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 async function unblockProviderByUserId(targetUserId) {
@@ -1068,7 +1113,7 @@ async function unblockProviderByUserId(targetUserId) {
     data: { blocked: false },
   });
 
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 async function softDeleteProviderByUserId(targetUserId) {
@@ -1082,7 +1127,7 @@ async function softDeleteProviderByUserId(targetUserId) {
     data: { deletedAt: new Date() },
   });
 
-  return getProviderById(targetUserId);
+  return getProviderById(targetUserId, { includeDocumentFiles: true });
 }
 
 function isProviderActiveRow(profile) {

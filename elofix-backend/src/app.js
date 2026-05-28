@@ -29,6 +29,13 @@ app.post(
 );
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true, limit: "12mb" }));
+app.use("/uploads", (req, res, next) => {
+  const uploadPath = String(req.path || "").replace(/\\/g, "/");
+  if (/^\/providers\/[^/]+\/documents\//.test(uploadPath) || /^\/jobs\/[^/]+\/quotations\//.test(uploadPath)) {
+    return res.status(404).json({ success: false, message: "Not found" });
+  }
+  return next();
+});
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 app.use((req, res, next) => {
