@@ -26,6 +26,31 @@ function authenticate(req, res, next) {
   }
 }
 
+function optionalAuthenticate(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    return next();
+  }
+
+  const token = header.slice(7);
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = {
+      userId: payload.sub,
+      id: payload.sub,
+      email: payload.email,
+      name: payload.name || null,
+      role: payload.role,
+      branchId: payload.branchId || null,
+      supplierOrgId: payload.supplierOrgId || null,
+    };
+  } catch {
+    // Public endpoints can still render redacted data when a stale token is present.
+  }
+  return next();
+}
+
 function authorizeRoles(allowedRoles) {
   const normalized = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
 
@@ -55,4 +80,4 @@ function authorizeSupplierPortal() {
   };
 }
 
-module.exports = { authenticate, authorizeRoles, authorizeSupplierPortal };
+module.exports = { authenticate, optionalAuthenticate, authorizeRoles, authorizeSupplierPortal };

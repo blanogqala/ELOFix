@@ -181,23 +181,16 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
   const roleToUse = parseGoogleRole(statePayload.role);
   const mode = statePayload.mode === "register" ? "register" : "login";
 
-  let user = await prisma.user.findFirst({
-    where: {
-      OR: [{ email }, { googleId: profile.googleId }],
-    },
+  let user = await prisma.user.findUnique({
+    where: { googleId: profile.googleId },
     select: { ...authService.userPublicSelect, googleId: true },
   });
 
   if (user) {
     const updates = {};
-    if (!user.googleId) updates.googleId = profile.googleId;
     if (!user.profileImage && profile.profileImage) updates.profileImage = profile.profileImage;
-    if (user.authProvider === "LOCAL" && !user.googleId) {
-      // Link Google to an existing local account without changing authProvider.
-    } else if (user.authProvider === "GOOGLE") {
-      if (profile.profileImage && user.profileImage !== profile.profileImage) {
-        updates.profileImage = profile.profileImage;
-      }
+    if (user.authProvider === "GOOGLE" && profile.profileImage && user.profileImage !== profile.profileImage) {
+      updates.profileImage = profile.profileImage;
     }
 
     if (Object.keys(updates).length > 0) {
@@ -209,6 +202,24 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     }
 
     return { user, isNewUser: false };
+  }
+
+  const emailUser = await prisma.user.findUnique({
+    where: { email },
+    select: { ...authService.userPublicSelect, googleId: true },
+  });
+
+  if (emailUser) {
+    if (emailUser.googleId === profile.googleId) {
+      return { user: emailUser, isNewUser: false };
+    }
+    if (!emailUser.googleId) {
+      throw new AppError(
+        "An account with this email already exists. Please sign in with your password.",
+        409
+      );
+    }
+    throw new AppError("This Google account is linked to a different email.", 409);
   }
 
   let legalData = {};
@@ -245,13 +256,14 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     return { user, isNewUser: true };
   } catch (err) {
     if (err.code === "P2002") {
-      user = await prisma.user.findUnique({
-        where: { email },
+      const googleUser = await prisma.user.findUnique({
+        where: { googleId: profile.googleId },
         select: authService.userPublicSelect,
       });
-      if (user) {
-        return { user, isNewUser: false };
+      if (googleUser) {
+        return { user: googleUser, isNewUser: false };
       }
+      throw new AppError("An account with this email already exists.", 409);
     }
     throw err;
   }

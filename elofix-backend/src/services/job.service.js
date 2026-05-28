@@ -816,8 +816,15 @@ async function updateJobStatus(jobId, status) {
 async function deleteJob(jobId, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) throw new AppError("Job not found", 404);
+  const providerRow = job.providerId
+    ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
+    : null;
   if (actorRole === "ADMIN") {
     await prisma.job.delete({ where: { id: jobId } });
+    if (providerRow) {
+      const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+      await syncProviderAggregateRating(providerRow.id);
+    }
     return { id: jobId };
   }
   if (actorRole === "CUSTOMER") {
@@ -832,6 +839,10 @@ async function deleteJob(jobId, actorUserId, actorRole) {
     throw new AppError("Forbidden", 403);
   }
   await prisma.job.delete({ where: { id: jobId } });
+  if (providerRow) {
+    const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+    await syncProviderAggregateRating(providerRow.id);
+  }
   return { id: jobId };
 }
 
@@ -1378,9 +1389,24 @@ async function acceptProposedPrice(jobId) {
   return enriched;
 }
 
-async function cancelJob(jobId, reason, details) {
+function assertActorCanCancelJob(job, actorUserId, actorRole) {
+  const role = String(actorRole || "").toUpperCase();
+  if (role === "ADMIN") return;
+  if (role === "CUSTOMER" && String(job.customerId) === String(actorUserId)) return;
+  if (role === "PROVIDER" && String(job.providerId || "") === String(actorUserId)) return;
+  throw new AppError("Forbidden", 403);
+}
+
+function assertActorCanConfirmCompletion(job, actorUserId, actorRole) {
+  const role = String(actorRole || "").toUpperCase();
+  if (role === "CUSTOMER" && String(job.customerId) === String(actorUserId)) return;
+  throw new AppError("Only the customer can confirm completion", 403);
+}
+
+async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorCanCancelJob(job, actorUserId, actorRole);
   const preMeta = await getJobMeta(jobId);
   const originalPaymentRef = preMeta?.servicePayment?.paymentRef || preMeta?.servicePayment?.reference || null;
   const providerRow = job.providerId
@@ -1432,9 +1458,10 @@ async function cancelJob(jobId, reason, details) {
   return { job: await finalizeJob(updated, meta), refundAmount: Number(refundAmount) || 0 };
 }
 
-async function confirmJobCompletion(jobId, rating, review) {
+async function confirmJobCompletion(jobId, rating, review, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorCanConfirmCompletion(job, actorUserId, actorRole);
   const r = Number(rating);
   if (!Number.isFinite(r) || r < 1 || r > 5) {
     throw new AppError("rating must be between 1 and 5", 400);
