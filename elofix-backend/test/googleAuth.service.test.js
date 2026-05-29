@@ -4,13 +4,16 @@ const test = require("node:test");
 function loadGoogleAuthService(prisma) {
   globalThis.prisma = prisma;
 
-  for (const modulePath of [
-    "../src/config/prisma",
-    "../src/services/auth.service",
-    "../src/services/googleAuth.service",
-  ]) {
+  for (const modulePath of ["../src/services/auth.service", "../src/services/googleAuth.service"]) {
     delete require.cache[require.resolve(modulePath)];
   }
+  const prismaPath = require.resolve("../src/config/prisma");
+  require.cache[prismaPath] = {
+    id: prismaPath,
+    filename: prismaPath,
+    loaded: true,
+    exports: prisma,
+  };
 
   return require("../src/services/googleAuth.service");
 }
