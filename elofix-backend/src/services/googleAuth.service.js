@@ -181,20 +181,15 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
   const roleToUse = parseGoogleRole(statePayload.role);
   const mode = statePayload.mode === "register" ? "register" : "login";
 
-  let user = await prisma.user.findFirst({
-    where: {
-      OR: [{ email }, { googleId: profile.googleId }],
-    },
+  let user = await prisma.user.findUnique({
+    where: { googleId: profile.googleId },
     select: { ...authService.userPublicSelect, googleId: true },
   });
 
   if (user) {
     const updates = {};
-    if (!user.googleId) updates.googleId = profile.googleId;
     if (!user.profileImage && profile.profileImage) updates.profileImage = profile.profileImage;
-    if (user.authProvider === "LOCAL" && !user.googleId) {
-      // Link Google to an existing local account without changing authProvider.
-    } else if (user.authProvider === "GOOGLE") {
+    if (user.authProvider === "GOOGLE") {
       if (profile.profileImage && user.profileImage !== profile.profileImage) {
         updates.profileImage = profile.profileImage;
       }
@@ -211,10 +206,23 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     return { user, isNewUser: false };
   }
 
-  let legalData = {};
-  if (mode === "register") {
-    legalData = validateLegalAcceptance(statePayload.legal || {}, roleToUse);
+  const existingEmailUser = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, googleId: true },
+  });
+  if (existingEmailUser) {
+    throw new AppError(
+      "An account with this email already exists. Sign in with your password before connecting Google.",
+      409
+    );
   }
+
+  if (mode !== "register") {
+    throw new AppError("No account exists for this Google email. Please create an account first.", 404);
+  }
+
+  let legalData = {};
+  legalData = validateLegalAcceptance(statePayload.legal || {}, roleToUse);
 
   try {
     user = await prisma.user.create({
@@ -246,12 +254,16 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
   } catch (err) {
     if (err.code === "P2002") {
       user = await prisma.user.findUnique({
-        where: { email },
+        where: { googleId: profile.googleId },
         select: authService.userPublicSelect,
       });
       if (user) {
         return { user, isNewUser: false };
       }
+      throw new AppError(
+        "An account with this email already exists. Sign in with your password before connecting Google.",
+        409
+      );
     }
     throw err;
   }
@@ -329,4 +341,7 @@ module.exports = {
   exchangeGoogleSession,
   getCallbackUrl,
   getFrontendUrl,
+  _private: {
+    findOrCreateGoogleUser,
+  },
 };
