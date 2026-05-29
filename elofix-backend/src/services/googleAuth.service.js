@@ -221,8 +221,7 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     throw new AppError("No account exists for this Google email. Please create an account first.", 404);
   }
 
-  let legalData = {};
-  legalData = validateLegalAcceptance(statePayload.legal || {}, roleToUse);
+  const legalData = validateLegalAcceptance(statePayload.legal || {}, roleToUse);
 
   try {
     user = await prisma.user.create({
