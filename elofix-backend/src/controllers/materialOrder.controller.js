@@ -127,27 +127,51 @@ async function createMaterialOrder(req, res) {
 }
 
 async function updateMaterialOrderDelivery(req, res) {
-  const order = await materialOrderService.updateMaterialOrderDelivery(req.params.id, req.body || {});
+  const order = await materialOrderService.updateMaterialOrderDelivery(
+    req.params.id,
+    req.body || {},
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, order });
 }
 
 async function approveMaterialOrderDelivery(req, res) {
-  const order = await materialOrderService.approveMaterialOrderDelivery(req.params.id);
+  const order = await materialOrderService.approveMaterialOrderDelivery(
+    req.params.id,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, order });
 }
 
 async function rejectMaterialOrderDelivery(req, res) {
-  const order = await materialOrderService.rejectMaterialOrderDelivery(req.params.id);
+  const order = await materialOrderService.rejectMaterialOrderDelivery(
+    req.params.id,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, order });
 }
 
 async function payMaterialOrderDelivery(req, res) {
-  const order = await materialOrderService.payMaterialOrderDelivery(req.params.id, req.body?.cardLast4, req.body?.fee);
+  const order = await materialOrderService.payMaterialOrderDelivery(
+    req.params.id,
+    req.body?.cardLast4,
+    req.body?.fee,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, order });
 }
 
 async function updateMaterialOrderDeliveryStatus(req, res) {
-  const order = await materialOrderService.updateMaterialOrderDeliveryStatus(req.params.id, req.body?.status);
+  const order = await materialOrderService.updateMaterialOrderDeliveryStatus(
+    req.params.id,
+    req.body?.status,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, order });
 }
 
