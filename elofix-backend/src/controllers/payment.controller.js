@@ -2,44 +2,56 @@ const AppError = require("../utils/AppError");
 const paymentService = require("../services/payment.service");
 const jobService = require("../services/job.service");
 
+function resolveTargetUserId(req, requestedUserId) {
+  const target = String(requestedUserId || req.user.userId || "").trim();
+  if (!target) {
+    throw new AppError("userId is required", 400);
+  }
+  if (String(req.user?.role || "").toUpperCase() === "ADMIN" || target === String(req.user.userId)) {
+    return target;
+  }
+  throw new AppError("Forbidden", 403);
+}
+
 async function getSavedCards(req, res) {
-  const userId = req.query.userId || req.user.userId;
-  const cards = await paymentService.getSavedCards(String(userId));
+  const userId = resolveTargetUserId(req, req.query.userId);
+  const cards = await paymentService.getSavedCards(userId);
   res.json({ success: true, cards });
 }
 
 async function addCard(req, res) {
-  const userId = req.body?.userId || req.user.userId;
-  const card = await paymentService.addCard(String(userId), req.body || {});
+  const userId = resolveTargetUserId(req, req.body?.userId);
+  const card = await paymentService.addCard(userId, req.body || {});
   res.status(201).json({ success: true, card });
 }
 
 async function deleteCard(req, res) {
-  const userId = req.query.userId || req.user.userId;
-  await paymentService.deleteCard(String(userId), req.params.cardId);
+  const userId = resolveTargetUserId(req, req.query.userId);
+  await paymentService.deleteCard(userId, req.params.cardId);
   res.json({ success: true });
 }
 
 async function setDefaultCard(req, res) {
-  const userId = req.body?.userId || req.user.userId;
-  await paymentService.setDefaultCard(String(userId), req.params.cardId);
+  const userId = resolveTargetUserId(req, req.body?.userId);
+  await paymentService.setDefaultCard(userId, req.params.cardId);
   res.json({ success: true });
 }
 
 async function getInvoices(req, res) {
-  const userId = req.query.userId || req.user.userId;
-  const invoices = await paymentService.getInvoices(String(userId));
+  const userId = resolveTargetUserId(req, req.query.userId);
+  const invoices = await paymentService.getInvoices(userId);
   res.json({ success: true, invoices });
 }
 
 async function getInvoice(req, res) {
-  const userId = req.query.userId || req.user.userId;
-  const invoice = await paymentService.getInvoiceById(String(userId), req.params.invoiceId);
+  const userId = resolveTargetUserId(req, req.query.userId);
+  const invoice = await paymentService.getInvoiceById(userId, req.params.invoiceId);
   res.json({ success: true, invoice });
 }
 
 async function createInvoice(req, res) {
-  const invoice = await paymentService.createInvoice(req.body || {});
+  const userId = resolveTargetUserId(req, req.body?.userId);
+  const invoice = await paymentService.createInvoice({ ...(req.body || {}), userId });
   res.status(201).json({ success: true, invoice });
 }
 
@@ -55,14 +67,18 @@ async function releaseEscrow(req, res) {
     req.financialIdempotencyKey,
     req.financialRequestHash,
     req.financialIdempotencyRoute,
-    req.user.userId
+    req.user.userId,
+    req.user.role
   );
   res.json({ success: true, job });
 }
 
 async function createRefundInvoice(req, res) {
+  if (String(req.user?.role || "").toUpperCase() !== "ADMIN") {
+    throw new AppError("Forbidden", 403);
+  }
   const invoice = await paymentService.createRefundInvoice(
-    req.body?.userId || req.user.userId,
+    resolveTargetUserId(req, req.body?.userId),
     req.body?.jobId,
     req.body?.laborRefund,
     req.body?.materialsRefund,
