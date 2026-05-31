@@ -281,6 +281,7 @@ function toProviderResponse(
     completedLaborByCategory = undefined,
     ratingBreakdown = undefined,
     includeLaborHistory = false,
+    includeDocuments = true,
   } = {}
 ) {
   const documents = normalizeDocuments(profile.documents);
@@ -309,7 +310,7 @@ function toProviderResponse(
     serviceAreas: Array.isArray(profile.serviceAreas) ? profile.serviceAreas : [],
     skills: Array.isArray(profile.skills) ? profile.skills : [],
     laborPricing,
-    documents,
+    ...(includeDocuments ? { documents } : {}),
     portfolioImages: Array.isArray(profile.portfolioImages) ? profile.portfolioImages : [],
     profileImage: profile.profileImage || "",
     workPosts: mappedPosts,
@@ -843,6 +844,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
           status: s.status,
           createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
         })),
+        includeDocuments: Boolean(forAdmin),
       });
     })
   );
@@ -863,7 +865,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
   return providers;
 }
 
-async function getProviderById(id) {
+async function getProviderById(id, options = {}) {
   const profile = await loadProviderBundleByAnyId(id);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -914,7 +916,12 @@ async function getProviderById(id) {
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
     ratingBreakdown,
+    includeDocuments: options.includeDocuments !== false,
   });
+}
+
+async function getPublicProviderById(id) {
+  return getProviderById(id, { includeDocuments: false });
 }
 
 async function getProviderByUserId(userId) {
@@ -1097,6 +1104,7 @@ module.exports = {
   toProviderResponse,
   listProviders,
   getProviderById,
+  getPublicProviderById,
   getProviderByUserId,
   resolveProviderUserIdFromRouteParam,
   updateProviderForUser,
