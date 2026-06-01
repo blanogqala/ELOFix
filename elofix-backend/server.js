@@ -95,7 +95,8 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   socket.on("join", (userId) => {
-    if (!userId) return;
+    if (!userId || !socket.userId) return;
+    if (String(socket.userId) !== String(userId)) return;
     socket.join(String(userId));
     if (String(socket.userRole || "") === "BRANCH_STAFF" && socket.branchId) {
       socket.join(`branch:${String(socket.branchId)}`);

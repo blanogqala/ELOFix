@@ -281,9 +281,12 @@ function toProviderResponse(
     completedLaborByCategory = undefined,
     ratingBreakdown = undefined,
     includeLaborHistory = false,
+    includePrivateDocuments = true,
   } = {}
 ) {
-  const documents = normalizeDocuments(profile.documents);
+  const documents = includePrivateDocuments
+    ? normalizeDocuments(profile.documents)
+    : publicDocumentStatuses(profile.documents);
   const laborPricing =
     profile.laborPricing && typeof profile.laborPricing === "object" ? profile.laborPricing : {};
   const settings =
@@ -355,6 +358,19 @@ function toProviderResponse(
       ? { completedLaborByCategory }
       : {}),
   };
+}
+
+function publicDocumentStatuses(raw) {
+  const documents = normalizeDocuments(raw);
+  const out = {};
+  for (const docType of DOCUMENT_TYPES) {
+    const doc = documents[docType];
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) continue;
+    if (doc.status) {
+      out[docType] = { status: String(doc.status) };
+    }
+  }
+  return out;
 }
 
 async function loadProviderBundleByUserId(userId) {
@@ -485,7 +501,8 @@ function mergeDocuments(prev, next) {
   for (const key of Object.keys(next)) {
     const v = next[key];
     if (v && typeof v === "object" && !Array.isArray(v)) {
-      merged[key] = { ...base[key], ...v };
+      const { status: _status, feedback: _feedback, reviewedAt: _reviewedAt, reviewedBy: _reviewedBy, ...safe } = v;
+      merged[key] = { ...base[key], ...safe };
     }
   }
   return merged;
@@ -843,6 +860,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
           status: s.status,
           createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
         })),
+        includePrivateDocuments: forAdmin,
       });
     })
   );
@@ -863,7 +881,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
   return providers;
 }
 
-async function getProviderById(id) {
+async function getProviderById(id, { includePrivateDocuments = true } = {}) {
   const profile = await loadProviderBundleByAnyId(id);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -914,6 +932,7 @@ async function getProviderById(id) {
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
     ratingBreakdown,
+    includePrivateDocuments,
   });
 }
 
