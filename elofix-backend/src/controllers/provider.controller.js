@@ -23,7 +23,9 @@ async function listProviders(req, res) {
 }
 
 async function getProvider(req, res) {
-  const provider = await providerService.getProviderById(req.params.id);
+  const provider = await providerService.getProviderById(req.params.id, {
+    includePrivateDocuments: false,
+  });
   res.json({ success: true, provider });
 }
 

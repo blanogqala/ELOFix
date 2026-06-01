@@ -29,6 +29,12 @@ app.post(
 );
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true, limit: "12mb" }));
+app.use("/uploads/providers/:providerUserId/documents", (_req, res) => {
+  res.status(404).json({ success: false, message: "Not found" });
+});
+app.use("/uploads/jobs/:jobId/quotations", (_req, res) => {
+  res.status(404).json({ success: false, message: "Not found" });
+});
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 app.use((req, res, next) => {

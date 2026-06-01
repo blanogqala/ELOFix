@@ -1432,9 +1432,12 @@ async function cancelJob(jobId, reason, details) {
   return { job: await finalizeJob(updated, meta), refundAmount: Number(refundAmount) || 0 };
 }
 
-async function confirmJobCompletion(jobId, rating, review) {
+async function confirmJobCompletion(jobId, customerUserId, rating, review) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (String(job.customerId) !== String(customerUserId || "")) {
+    throw new AppError("Forbidden", 403);
+  }
   const r = Number(rating);
   if (!Number.isFinite(r) || r < 1 || r > 5) {
     throw new AppError("rating must be between 1 and 5", 400);

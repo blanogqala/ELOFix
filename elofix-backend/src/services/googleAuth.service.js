@@ -211,10 +211,10 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     return { user, isNewUser: false };
   }
 
-  let legalData = {};
-  if (mode === "register") {
-    legalData = validateLegalAcceptance(statePayload.legal || {}, roleToUse);
+  if (mode !== "register") {
+    throw new AppError("No account found. Please sign up and accept the required legal documents.", 404);
   }
+  const legalData = validateLegalAcceptance(statePayload.legal || {}, roleToUse);
 
   try {
     user = await prisma.user.create({
