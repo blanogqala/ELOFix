@@ -208,6 +208,8 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
       });
     }
 
+    authService.assertCustomerAccountActive(user);
+
     return { user, isNewUser: false };
   }
 

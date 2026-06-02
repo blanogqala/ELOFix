@@ -81,6 +81,25 @@ async function notifyDeliveryUpdate(customerId, jobId, jobTitle, statusLabel) {
   });
 }
 
+async function notifyDeliveryQuoteSubmitted(customerId, orderId, fee, jobId) {
+  return notifyUser(customerId, {
+    type: "delivery_quote",
+    title: "Delivery quote received",
+    message: `Your courier quoted R ${Number(fee || 0).toFixed(2)} for delivery. Review and pay when ready.`,
+    jobId: jobId || undefined,
+    orderId: String(orderId),
+  });
+}
+
+async function notifyCourierDeliveryRequest(courierUserId, orderId) {
+  return notifyUser(courierUserId, {
+    type: "courier_delivery_request",
+    title: "New delivery request",
+    message: "A customer requested you for a delivery. Open your deliveries inbox to quote.",
+    orderId: String(orderId),
+  });
+}
+
 async function notifyProviderApproved(providerUserId) {
   return notifyUser(providerUserId, {
     type: "provider_approved",
@@ -135,6 +154,8 @@ module.exports = {
   notifyProposedPriceAccepted,
   notifyPaymentMade,
   notifyDeliveryUpdate,
+  notifyDeliveryQuoteSubmitted,
+  notifyCourierDeliveryRequest,
   notifyProviderApproved,
   notifyCategorySuggestion,
   notifyMaterialsListSubmitted,

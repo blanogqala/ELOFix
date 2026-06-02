@@ -75,8 +75,11 @@ interface BackendJob {
   rejectedByProviderUserId?: string | null;
   escrow?: Job['escrow'];
   requiresInspection?: boolean;
+  requiresMaterials?: boolean;
   progressStep?: number;
   hasStarted?: boolean;
+  deliveryRequestId?: string | null;
+  courierFlow?: boolean;
   totalPrice?: number | null;
   commissionAmount?: number | null;
   providerAmount?: number | null;
@@ -125,6 +128,8 @@ function toFrontendJob(job: BackendJob): Job {
     backendStatus === 'ACCEPTED' ? 'ASSIGNED' : ((backendStatus as JobStatus) || 'PENDING');
   const requiresInspection =
     typeof job.requiresInspection === 'boolean' ? job.requiresInspection : true;
+  const requiresMaterials =
+    typeof job.requiresMaterials === 'boolean' ? job.requiresMaterials : false;
   const category = String(job.category || job.title || '').trim();
   const measurements =
     job.measurements && typeof job.measurements === 'object'
@@ -196,7 +201,10 @@ function toFrontendJob(job: BackendJob): Job {
     createdAt: job.createdAt,
     updatedAt: job.updatedAt ?? job.createdAt,
     requiresInspection,
+    requiresMaterials,
     categoryStep3Type: job.categoryStep3Type,
+    deliveryRequestId: job.deliveryRequestId ?? null,
+    courierFlow: Boolean(job.courierFlow),
     totalPrice: numOrUndef(job.totalPrice),
     commissionAmount: numOrUndef(job.commissionAmount),
     providerAmount: numOrUndef(job.providerAmount),
@@ -680,8 +688,7 @@ export async function payStoreOrderDelivery(
 export async function payForStoreMaterials(
   jobId: string,
   branchId: string,
-  cardId: string,
-  cardLast4: string,
+  paymentIntentId: string,
   options?: {
     deliveryType: StoreOrderDeliveryType;
     deliveryFee: number;
@@ -691,7 +698,7 @@ export async function payForStoreMaterials(
 ): Promise<Job> {
   const { data } = await apiClient.post<BackendJobResponse>(
     `/jobs/${jobId}/store-orders/${branchId}/pay-materials`,
-    { cardId, cardLast4, ...options }
+    { paymentIntentId, cardLast4: '****', ...options }
   );
   return ensureJob(data, 'pay for store materials');
 }

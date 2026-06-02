@@ -9,9 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
-import { getSavedCards } from '@/lib/api/payments';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
-import { Supplier, Product, SavedCard, DeliveryProvider } from '@/types';
+import { PaymentModal } from '@/components/payments/PaymentModal';
+import { Supplier, Product, DeliveryProvider } from '@/types';
 import {
   ArrowLeft,
   ArrowRight,
@@ -103,11 +103,10 @@ export default function OrderMaterials() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [deliveryType, setDeliveryType] = useState<'SELF' | 'STORE_DELIVERY' | 'DELIVERY_PROVIDER'>('SELF');
   const [selectedDeliveryProvider, setSelectedDeliveryProvider] = useState('');
-  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
   const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
   const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
-  const [selectedCardId, setSelectedCardId] = useState('');
-  const [cvc, setCvc] = useState('');
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryCity, setDeliveryCity] = useState('');
   const [deliveryArea, setDeliveryArea] = useState('');
@@ -118,21 +117,6 @@ export default function OrderMaterials() {
   const [locationLoading, setLocationLoading] = useState(false);
 
   const geocodeCacheRef = useRef<Map<string, Awaited<ReturnType<typeof reverseGeocode>>>>(new Map());
-
-  const loadData = useCallback(async () => {
-    try {
-      const cards = user ? await getSavedCards(user.id) : [];
-      setSavedCards(cards);
-      const def = cards.find(c => c.isDefault) || cards[0];
-      if (def) setSelectedCardId(def.id);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to load payment cards.');
-    }
-  }, [user]);
-
-  useEffect(() => {
-    void loadData();
-  }, [loadData]);
 
   const loadStores = useCallback(async () => {
     setStoresLoading(true);
@@ -318,15 +302,12 @@ export default function OrderMaterials() {
 
   const handlePay = async () => {
     if (!user || !selectedSupplier) return;
-    if (!selectedCardId) { setError('Select a card'); return; }
-    if (!/^\d{3,4}$/.test(cvc)) { setError('Enter valid CVC (3-4 digits)'); return; }
     if (!deliveryAddress.trim()) { setError('Delivery address is required.'); return; }
     if (!deliveryCity.trim()) { setError('City is required.'); return; }
 
     setIsProcessing(true);
     setError(null);
     try {
-      const card = savedCards.find(c => c.id === selectedCardId);
       const deliveryTypeMap = deliveryType === 'SELF' ? 'SELF' : deliveryType === 'STORE_DELIVERY' ? 'STORE' : 'PROVIDER';
       const deliveryStatus = deliveryType === 'SELF' ? 'SelfCollect' as const : 'PendingApproval' as const;
       const order = await createMaterialOrder({
@@ -359,12 +340,12 @@ export default function OrderMaterials() {
             : {}),
         },
         materialsTotal,
-        cardLast4: card?.last4 || '****',
+        paymentStatus: 'unpaid',
       });
-      toast({ title: 'Order Placed!', description: 'Materials paid. You can pay for delivery once it\'s approved.' });
-      navigate('/user/orders/' + order.id);
+      setPendingOrderId(order.id);
+      setPaymentModalOpen(true);
     } catch {
-      setError('Payment failed.');
+      setError('Could not create order. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -800,30 +781,9 @@ export default function OrderMaterials() {
                 </div>
               </div>
 
-              <div>
-                <Label className="mb-2 block">Payment Method</Label>
-                <RadioGroup value={selectedCardId} onValueChange={setSelectedCardId}>
-                  {savedCards.map(card => (
-                    <div key={card.id} className={cn("flex items-center space-x-3 p-3 border rounded-lg", selectedCardId === card.id ? "border-primary bg-primary/5" : "border-border")}>
-                      <RadioGroupItem value={card.id} id={`oc-${card.id}`} />
-                      <Label htmlFor={`oc-${card.id}`} className="flex-1 cursor-pointer">
-                        <div className="flex items-center gap-2">
-                          <CreditCard className="h-4 w-4" />
-                          <span className="capitalize">{card.brand}</span>
-                          <span>•••• {card.last4}</span>
-                          {card.isDefault && <Badge variant="secondary" className="text-xs">Default</Badge>}
-                        </div>
-                      </Label>
-                    </div>
-                  ))}
-                </RadioGroup>
-              </div>
-
-              <div>
-                <Label htmlFor="order-cvc" className="mb-2 block">CVC</Label>
-                <Input id="order-cvc" type="text" inputMode="numeric" maxLength={4} placeholder="123" value={cvc}
-                  onChange={e => setCvc(e.target.value.replace(/\D/g, ''))} className="max-w-[120px]" />
-              </div>
+              <p className="text-sm text-muted-foreground">
+                Pay with PayFast, Payflex, or PayJustNow. You will be redirected to complete payment securely.
+              </p>
 
               {error && (
                 <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-sm text-destructive">
@@ -833,12 +793,28 @@ export default function OrderMaterials() {
 
               <Button className="btn-accent w-full" onClick={handlePay} disabled={isProcessing}>
                 <Lock className="h-4 w-4 mr-2" />
-                {isProcessing ? 'Processing...' : `Pay materials ${formatCurrency(total, { decimals: 2 })}`}
+                {isProcessing ? 'Preparing…' : `Continue to payment ${formatCurrency(total, { decimals: 2 })}`}
               </Button>
             </div>
           )}
         </div>
       </div>
+
+      {pendingOrderId && (
+        <PaymentModal
+          open={paymentModalOpen}
+          onOpenChange={setPaymentModalOpen}
+          title="Pay for materials"
+          description="Complete payment to place your order."
+          amount={total}
+          kind="MATERIAL_ORDER"
+          materialOrderId={pendingOrderId}
+          breakdown={[
+            { label: 'Materials', amount: subtotal },
+            { label: 'Total due now', amount: total, isBold: true },
+          ]}
+        />
+      )}
     </DashboardLayout>
   );
 }

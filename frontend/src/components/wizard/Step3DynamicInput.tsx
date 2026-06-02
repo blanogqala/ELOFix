@@ -1223,7 +1223,9 @@ export function Step3DynamicInput({
         <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-4">
           <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            The provider will confirm exact requirements and provide a final quote after reviewing your request.
+            {category.requiresInspection === false
+              ? 'Provide complete issue details now. The provider will price from your submitted requirements.'
+              : 'The provider will confirm exact requirements and provide a final quote after reviewing your request.'}
           </p>
         </div>
       </div>

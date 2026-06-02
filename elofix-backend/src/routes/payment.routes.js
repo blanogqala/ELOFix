@@ -8,12 +8,19 @@ const router = express.Router();
 
 router.use(authenticate);
 
+router.get("/providers", asyncHandler(paymentController.listPaymentProviders));
+
 router.post(
-  "/paystack/verify",
+  "/intents",
+  authorizeRoles(["CUSTOMER"]),
   financialIdem.attachFinancialRequestFingerprint,
   financialIdem.requireIdempotencyKey,
-  asyncHandler(paymentController.verifyPaystack)
+  asyncHandler(paymentController.createPaymentIntent)
 );
+
+router.get("/intents/:id", asyncHandler(paymentController.getPaymentIntent));
+
+router.post("/intents/:id/confirm-return", asyncHandler(paymentController.confirmPaymentReturn));
 
 router.post(
   "/release",

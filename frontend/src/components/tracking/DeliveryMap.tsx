@@ -1,10 +1,21 @@
-import { GoogleMap, Marker, useJsApiLoader, DirectionsRenderer } from '@react-google-maps/api';
+import { GoogleMap, Marker, DirectionsRenderer } from '@react-google-maps/api';
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { cn } from '@/lib/utils';
 import { haversineMeters } from '@/lib/geolocationSendGate';
+import { useGoogleMapsContext } from '@/components/map/GoogleMapsProvider';
+import { ELOFIX_MAP_OPTIONS } from '@/lib/map/googleMapStyles';
+import {
+  bearingBetween,
+  destinationMarkerIcon,
+  vehicleMarkerIcon,
+  type DestinationPinKind,
+} from '@/lib/map/mapMarkerIcons';
+import { useSmoothedLatLng } from '@/lib/map/smoothCoords';
 
 const DRIVER_NEAR_METERS = 500;
 const DRIVER_ARRIVING_METERS = 120;
+
+export type DeliveryRoutePhase = 'to_collection' | 'to_destination';
 
 export type DriverProximityPayload = {
   near: boolean;
@@ -19,7 +30,10 @@ export interface DeliveryMapProps {
   lng?: number | null;
   destination?: string;
   destinationCoords?: { lat: number; lng: number } | null;
+  /** Collection pickup vs customer drop-off — drives route label and pin style. */
+  routePhase?: DeliveryRoutePhase;
   className?: string;
+  mapContainerClassName?: string;
   /** Live map expected but driver position not yet available */
   showWaitingBanner?: boolean;
   /** Session no longer valid (customer view) */
@@ -33,31 +47,38 @@ function MapBody({
   lng,
   destination,
   destinationCoords,
+  routePhase = 'to_destination',
   className,
+  mapContainerClassName = 'h-64 w-full min-h-[220px]',
   showWaitingBanner,
   trackingEnded,
   onProximityChange,
   onEtaChange,
 }: Omit<DeliveryMapProps, 'className'> & { className?: string }) {
   const mapRef = useRef<google.maps.Map | null>(null);
+  const prevDriverRef = useRef<{ lat: number; lng: number } | null>(null);
+  const [headingDeg, setHeadingDeg] = useState(0);
   const proximityRef = useRef({ near: false, arriving: false, distanceMeters: null as number | null });
   const onProximityChangeRef = useRef(onProximityChange);
   onProximityChangeRef.current = onProximityChange;
   const onEtaChangeRef = useRef(onEtaChange);
   onEtaChangeRef.current = onEtaChange;
 
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: String(import.meta.env?.VITE_GOOGLE_MAPS_API_KEY || ''),
-    id: 'elofix-google-maps',
-  });
+  const { isLoaded, loadError, authFailed } = useGoogleMapsContext();
 
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [geocodedDest, setGeocodedDest] = useState<google.maps.LatLngLiteral | null>(null);
   const [etaText, setEtaText] = useState<string | null>(null);
 
-  const driverPos =
+  const rawDriverPos =
     lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
       ? { lat: Number(lat), lng: Number(lng) }
+      : null;
+
+  const smoothed = useSmoothedLatLng(rawDriverPos?.lat, rawDriverPos?.lng);
+  const driverPos =
+    smoothed.lat != null && smoothed.lng != null
+      ? { lat: smoothed.lat, lng: smoothed.lng }
       : null;
 
   const destForRoute = useMemo(() => {
@@ -67,6 +88,26 @@ function MapBody({
     if (geocodedDest) return geocodedDest;
     return null;
   }, [destinationCoords, geocodedDest]);
+
+  const pinKind: DestinationPinKind = routePhase === 'to_collection' ? 'collection' : 'delivery';
+
+  useEffect(() => {
+    if (!rawDriverPos) {
+      prevDriverRef.current = null;
+      return;
+    }
+    const prev = prevDriverRef.current;
+    if (prev) {
+      const moved =
+        Math.abs(prev.lat - rawDriverPos.lat) > 0.00001 || Math.abs(prev.lng - rawDriverPos.lng) > 0.00001;
+      if (moved) {
+        setHeadingDeg(bearingBetween(prev.lat, prev.lng, rawDriverPos.lat, rawDriverPos.lng));
+      }
+    } else if (destForRoute) {
+      setHeadingDeg(bearingBetween(rawDriverPos.lat, rawDriverPos.lng, destForRoute.lat, destForRoute.lng));
+    }
+    prevDriverRef.current = rawDriverPos;
+  }, [rawDriverPos?.lat, rawDriverPos?.lng, destForRoute?.lat, destForRoute?.lng]);
 
   const center = useMemo(() => {
     if (driverPos) return driverPos;
@@ -92,7 +133,7 @@ function MapBody({
   }, [isLoaded, destination, destinationCoords]);
 
   useEffect(() => {
-    if (!isLoaded || !driverPos || !destForRoute) {
+    if (!isLoaded || !rawDriverPos || !destForRoute) {
       setDirections(null);
       setEtaText(null);
       onEtaChangeRef.current?.(null);
@@ -101,7 +142,7 @@ function MapBody({
     const svc = new google.maps.DirectionsService();
     svc.route(
       {
-        origin: driverPos,
+        origin: rawDriverPos,
         destination: destForRoute,
         travelMode: google.maps.TravelMode.DRIVING,
       },
@@ -119,7 +160,7 @@ function MapBody({
         }
       }
     );
-  }, [isLoaded, driverPos, destForRoute]);
+  }, [isLoaded, rawDriverPos?.lat, rawDriverPos?.lng, destForRoute?.lat, destForRoute?.lng]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -175,7 +216,7 @@ function MapBody({
     destForRoute &&
     haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng) < DRIVER_ARRIVING_METERS;
 
-  if (loadError) {
+  if (loadError || authFailed) {
     return (
       <div
         className={cn(
@@ -183,8 +224,12 @@ function MapBody({
           className
         )}
       >
-        <p className="font-medium text-foreground">Live map</p>
-        <p className="mt-1">Could not load Google Maps.</p>
+        <p className="font-medium text-foreground">Live map unavailable</p>
+        <p className="mt-1 leading-relaxed">
+          {authFailed
+            ? 'Google Maps rejected this site. In Google Cloud Console, allow your app URL under API key HTTP referrers (e.g. http://localhost:8080/*) and enable Maps JavaScript API + Directions API with billing on.'
+            : 'Could not load Google Maps. Check VITE_GOOGLE_MAPS_API_KEY and restart the dev server.'}
+        </p>
         {driverPos && (
           <p className="mt-2 text-xs tabular-nums">
             Last position: {driverPos.lat.toFixed(5)}, {driverPos.lng.toFixed(5)}
@@ -244,7 +289,10 @@ function MapBody({
       ) : null}
       {destination ? (
         <p className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Delivering to:</span> {destination}
+          <span className="font-medium text-foreground">
+            {routePhase === 'to_collection' ? 'Heading to collect at:' : 'Delivering to:'}
+          </span>{' '}
+          {destination}
         </p>
       ) : null}
       {arrivingBanner ? (
@@ -262,9 +310,10 @@ function MapBody({
         </p>
       ) : null}
       <GoogleMap
-        mapContainerClassName="h-64 w-full"
+        mapContainerClassName={mapContainerClassName}
         center={center}
         zoom={driverPos ? 14 : 12}
+        options={ELOFIX_MAP_OPTIONS}
         onLoad={(m) => {
           mapRef.current = m;
         }}
@@ -274,20 +323,24 @@ function MapBody({
             directions={directions}
             options={{
               suppressMarkers: true,
-              polylineOptions: { strokeColor: '#2563eb', strokeOpacity: 0.92, strokeWeight: 4 },
+              polylineOptions: { strokeColor: '#1a73e8', strokeOpacity: 0.95, strokeWeight: 5 },
             }}
           />
         ) : null}
-        {driverPos ? <Marker position={driverPos} label="D" /> : null}
-        {destForRoute ? <Marker position={destForRoute} label="B" /> : null}
+        {driverPos ? (
+          <Marker position={driverPos} icon={vehicleMarkerIcon(headingDeg)} zIndex={1000} />
+        ) : null}
+        {destForRoute ? (
+          <Marker position={destForRoute} icon={destinationMarkerIcon(pinKind)} zIndex={900} />
+        ) : null}
       </GoogleMap>
     </div>
   );
 }
 
 function DeliveryMapComponent(props: DeliveryMapProps) {
-  const apiKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) || '';
-  if (!apiKey || !String(apiKey).trim()) {
+  const { apiKey } = useGoogleMapsContext();
+  if (!apiKey) {
     const driverPos =
       props.lat != null &&
       props.lng != null &&

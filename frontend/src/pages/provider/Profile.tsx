@@ -83,6 +83,8 @@ export default function ProviderProfile() {
   const [pricing, setPricing] = useState<Provider['laborPricing']>({});
   /** Local string so providers can edit per-km Rand without keystroke jitter. */
   const [deliveryKmInput, setDeliveryKmInput] = useState('');
+  const [vehicleTypeInput, setVehicleTypeInput] = useState('');
+  const [numberPlateInput, setNumberPlateInput] = useState('');
 
   // Work posts state
   const [workPosts, setWorkPosts] = useState<WorkPost[]>([]);
@@ -178,6 +180,8 @@ export default function ProviderProfile() {
             ? String(set.deliveryRatePerKm)
             : ''
         );
+        setVehicleTypeInput(data.vehicleType || '');
+        setNumberPlateInput(data.numberPlate || '');
       }
     } catch (error) {
       toast({
@@ -341,6 +345,8 @@ export default function ProviderProfile() {
         skills: selectedSkills,
         laborPricing: pricing,
         settings: settingsOut,
+        vehicleType: selectedSkills.includes('delivery') ? vehicleTypeInput.trim() || null : null,
+        numberPlate: selectedSkills.includes('delivery') ? numberPlateInput.trim() || null : null,
       });
       setProvider(next);
       const savedSet = next.settings ?? settingsOut;
@@ -978,6 +984,26 @@ export default function ProviderProfile() {
                     onChange={(e) => setDeliveryKmInput(e.target.value)}
                     placeholder="e.g. 12"
                   />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 max-w-xl">
+                  <div className="space-y-2">
+                    <Label htmlFor="vehicle-type">Vehicle type</Label>
+                    <Input
+                      id="vehicle-type"
+                      value={vehicleTypeInput}
+                      onChange={(e) => setVehicleTypeInput(e.target.value)}
+                      placeholder="e.g. Bakkie, Van"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="number-plate">Number plate</Label>
+                    <Input
+                      id="number-plate"
+                      value={numberPlateInput}
+                      onChange={(e) => setNumberPlateInput(e.target.value)}
+                      placeholder="e.g. CA 123-456"
+                    />
+                  </div>
                 </div>
               </div>
             )}

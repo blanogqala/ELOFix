@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { getJobs } from '@/lib/api/jobs';
 import { getCategories } from '@/lib/api/categories';
 import { Category, Job } from '@/types';
-import { Search, Briefcase, ArrowRight, X, ArrowUpDown, MapPin } from 'lucide-react';
+import { Search, Briefcase, ArrowRight, X, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
@@ -14,6 +14,13 @@ import {
   jobMatchesAdminStatusFilter,
   ADMIN_JOB_STATUS_FILTER_LABELS,
 } from '@/lib/jobStatusMapping';
+import {
+  ADMIN_FILTER_SELECT_CLASS,
+  collectJobCities,
+  jobMatchesAdminSearch,
+  jobMatchesCategoryFilter,
+  jobMatchesCityFilter,
+} from '@/lib/adminJobFilters';
 
 type SortKey = 'newest' | 'oldest' | 'status' | 'category';
 
@@ -25,7 +32,10 @@ export default function AdminJobs() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [cityFilter, setCityFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<SortKey>('newest');
+
+  const cities = useMemo(() => collectJobCities(jobs), [jobs]);
 
   useEffect(() => {
     void loadJobs();
@@ -53,24 +63,22 @@ export default function AdminJobs() {
       label: ADMIN_JOB_STATUS_FILTER_LABELS[statusFilter] ?? statusFilter,
     },
     categoryFilter !== 'all' && { key: 'category', label: categories.find(c => c.id === categoryFilter)?.name || categoryFilter },
+    cityFilter !== 'all' && { key: 'city', label: cityFilter },
   ].filter(Boolean) as { key: string; label: string }[];
 
   const clearFilter = (key: string) => {
     if (key === 'status') setStatusFilter('all');
     if (key === 'category') setCategoryFilter('all');
+    if (key === 'city') setCityFilter('all');
   };
 
   const filteredJobs = useMemo(() => {
     const result = jobs.filter(job => {
-      const matchesSearch = !searchQuery ||
-        job.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.userName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (job.providerName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.categoryName.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = jobMatchesAdminSearch(job, searchQuery);
       const matchesStatus = jobMatchesAdminStatusFilter(job.status, statusFilter);
-      const matchesCategory = categoryFilter === 'all' || job.category === categoryFilter;
-      return matchesSearch && matchesStatus && matchesCategory;
+      const matchesCategory = jobMatchesCategoryFilter(job, categoryFilter);
+      const matchesCity = jobMatchesCityFilter(job, cityFilter);
+      return matchesSearch && matchesStatus && matchesCategory && matchesCity;
     });
 
     // Sort
@@ -84,7 +92,17 @@ export default function AdminJobs() {
     });
 
     return result;
-  }, [jobs, searchQuery, statusFilter, categoryFilter, sortBy]);
+  }, [jobs, searchQuery, statusFilter, categoryFilter, cityFilter, sortBy]);
+
+  const stats = useMemo(
+    () => ({
+      totalJobs: filteredJobs.length,
+      completedJobs: filteredJobs.filter((j) => j.status === 'COMPLETED').length,
+      cancelledJobs: filteredJobs.filter((j) => j.status === 'CANCELLED').length,
+      pendingJobs: filteredJobs.filter((j) => j.status === 'PENDING').length,
+    }),
+    [filteredJobs],
+  );
 
   const getStatusBadge = (job: Job) => (
     <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
@@ -100,33 +118,120 @@ export default function AdminJobs() {
           <p className="text-muted-foreground">Monitor and manage platform jobs</p>
         </div>
 
+        {/* Jobs overview stats (scoped to current filters) */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="card-elevated p-4 sm:p-5">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+                <Briefcase className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-xl font-bold sm:text-2xl">{stats.totalJobs}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Total Jobs</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card-elevated p-4 sm:p-5">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-5 w-5 text-success" />
+              </div>
+              <div>
+                <p className="text-xl font-bold sm:text-2xl">{stats.completedJobs}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Completed Jobs</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card-elevated p-4 sm:p-5">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
+                <Clock className="h-5 w-5 text-warning" />
+              </div>
+              <div>
+                <p className="text-xl font-bold sm:text-2xl">{stats.pendingJobs}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Pending Jobs</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card-elevated p-4 sm:p-5">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10 sm:h-12 sm:w-12">
+                <XCircle className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <p className="text-xl font-bold sm:text-2xl">{stats.cancelledJobs}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Cancelled Jobs</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Filters */}
         <div className="space-y-3">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative min-w-0 flex-1 sm:min-w-[12rem]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
-                placeholder="Search by ID, name, category..."
+                placeholder="Search by ID, name, category, city..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10"
               />
             </div>
-            <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="input-field h-10 w-40 px-3 text-sm bg-accent/50 border border-accent">
-              <option value="all">All Categories</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-            </select>
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="input-field h-10 min-w-[12rem] px-3 text-sm bg-accent/50 border border-accent">
-              {Object.entries(ADMIN_JOB_STATUS_FILTER_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <select value={sortBy} onChange={e => setSortBy(e.target.value as SortKey)} className="input-field h-10 w-40 px-3 text-sm bg-accent/50 border border-accent">
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="status">By Status</option>
-              <option value="category">By Category</option>
-            </select>
+            <div className="flex flex-wrap gap-3">
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Filter by category"
+              >
+                <option value="all">All Categories</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.icon} {c.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={cityFilter}
+                onChange={(e) => setCityFilter(e.target.value)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Filter by city"
+              >
+                <option value="all">All Cities</option>
+                {cities.map((city) => (
+                  <option key={city} value={city}>
+                    {city}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Filter by status"
+              >
+                {Object.entries(ADMIN_JOB_STATUS_FILTER_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortKey)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Sort jobs"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="status">By Status</option>
+                <option value="category">By Category</option>
+              </select>
+            </div>
           </div>
 
           {/* Active filter chips */}
@@ -141,7 +246,11 @@ export default function AdminJobs() {
                 </span>
               ))}
               <button
-                onClick={() => { setStatusFilter('all'); setCategoryFilter('all'); }}
+                onClick={() => {
+                  setStatusFilter('all');
+                  setCategoryFilter('all');
+                  setCityFilter('all');
+                }}
                 className="text-xs text-muted-foreground hover:text-foreground underline"
               >
                 Clear all

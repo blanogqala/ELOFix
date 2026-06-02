@@ -8,6 +8,7 @@ const { getCommissionSummary } = require("../services/commission.service");
 const AppError = require("../utils/AppError");
 const supplierService = require("../services/supplier.service");
 const materialOrderService = require("../services/materialOrder.service");
+const adminCustomersService = require("../services/adminCustomers.service");
 
 async function listProviders(req, res) {
   const providers = await providerService.listProviders({
@@ -15,6 +16,39 @@ async function listProviders(req, res) {
     forAdmin: true,
   });
   res.json({ success: true, providers });
+}
+
+async function listProviderNetRevenues(req, res) {
+  const revenues = await providerService.listProviderNetRevenues();
+  res.json({ success: true, revenues });
+}
+
+async function listCustomers(req, res) {
+  const data = await adminCustomersService.listCustomers(req.query || {});
+  res.json({ success: true, ...data });
+}
+
+async function getCustomerById(req, res) {
+  const customer = await adminCustomersService.getCustomerById(req.params.userId);
+  if (!customer) {
+    throw new AppError("Customer not found", 404);
+  }
+  res.json({ success: true, customer });
+}
+
+async function blockCustomer(req, res) {
+  const customer = await adminCustomersService.blockCustomerByUserId(req.params.userId);
+  res.json({ success: true, customer });
+}
+
+async function unblockCustomer(req, res) {
+  const customer = await adminCustomersService.unblockCustomerByUserId(req.params.userId);
+  res.json({ success: true, customer });
+}
+
+async function deleteCustomer(req, res) {
+  const customer = await adminCustomersService.softDeleteCustomerByUserId(req.params.userId);
+  res.json({ success: true, customer });
 }
 
 async function approveProvider(req, res) {
@@ -236,6 +270,12 @@ async function listAllPlatformMaterialOrders(req, res) {
 
 module.exports = {
   listProviders,
+  listProviderNetRevenues,
+  listCustomers,
+  getCustomerById,
+  blockCustomer,
+  unblockCustomer,
+  deleteCustomer,
   getAnalytics,
   approveProvider,
   rejectProvider,

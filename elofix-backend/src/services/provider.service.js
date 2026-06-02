@@ -323,6 +323,8 @@ function toProviderResponse(
     responseTime: "N/A",
     bio: profile.bio || "",
     businessName: profile.businessName || "",
+    vehicleType: profile.vehicleType || undefined,
+    numberPlate: profile.numberPlate || undefined,
     certifications: [],
     reviews: (reviewRows || []).map((r) => ({
       id: r.id,
@@ -651,6 +653,18 @@ async function updateProviderForUser(requestUserId, body) {
     const loc = String(data.location || "").trim();
     providerUpdate.location = loc || "UNKNOWN";
   }
+  if (data.vehicleType !== undefined) {
+    providerUpdate.vehicleType =
+      data.vehicleType != null && String(data.vehicleType).trim()
+        ? String(data.vehicleType).trim()
+        : null;
+  }
+  if (data.numberPlate !== undefined) {
+    providerUpdate.numberPlate =
+      data.numberPlate != null && String(data.numberPlate).trim()
+        ? String(data.numberPlate).trim()
+        : null;
+  }
 
   if (Object.keys(providerUpdate).length > 0) {
     await prisma.provider.update({
@@ -774,11 +788,19 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
         deletedAt: null,
       };
 
+  const courierCategory =
+    normalizedCategory === "delivery" || normalizedCategory === "moving";
+
   const where = {
     ...baseWhere,
-    ...(normalizedCategory
+    ...(normalizedCategory && !courierCategory
       ? {
           skills: { has: normalizedCategory },
+        }
+      : {}),
+    ...(courierCategory
+      ? {
+          OR: [{ skills: { has: "delivery" } }, { skills: { has: "moving" } }],
         }
       : {}),
   };
@@ -847,9 +869,9 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
     })
   );
 
-  if (normalizedCategory === "delivery" && nearCityTrim) {
+  if (courierCategory && nearCityTrim) {
     const needle = nearCityTrim.toLowerCase();
-    return providers.filter((p) => {
+    const cityMatched = providers.filter((p) => {
       const c = String(p.city || "")
         .trim()
         .toLowerCase();
@@ -858,9 +880,48 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
       if (areas.some((a) => String(a).toLowerCase().includes(needle))) return true;
       return false;
     });
+    if (cityMatched.length > 0) return cityMatched;
   }
 
   return providers;
+}
+
+/**
+ * Admin-only: net provider revenue (provider share) for completed + paid labor jobs.
+ * "Net revenue" here = sum(job.providerAmount).
+ */
+async function listProviderNetRevenues() {
+  const providers = await prisma.provider.findMany({
+    where: { deletedAt: null },
+    select: { userId: true },
+  });
+
+  const ids = [...new Set((providers || []).map((p) => String(p.userId || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const grouped = await prisma.job.groupBy({
+    by: ['providerId'],
+    where: {
+      providerId: { in: ids },
+      status: 'COMPLETED',
+      laborPaid: true,
+      providerAmount: { not: null },
+    },
+    _sum: { providerAmount: true },
+  });
+
+  const revenueByProviderId = new Map();
+  for (const row of grouped) {
+    const providerId = row.providerId;
+    if (!providerId) continue;
+    const sum = prismaDecimalToNumber(row._sum?.providerAmount);
+    revenueByProviderId.set(String(providerId), Number.isFinite(sum) ? sum : 0);
+  }
+
+  return ids.map((id) => ({
+    providerId: id,
+    netRevenue: revenueByProviderId.get(id) ?? 0,
+  }));
 }
 
 async function getProviderById(id) {
@@ -1096,6 +1157,7 @@ module.exports = {
   checkProviderProfileCompletion,
   toProviderResponse,
   listProviders,
+  listProviderNetRevenues,
   getProviderById,
   getProviderByUserId,
   resolveProviderUserIdFromRouteParam,

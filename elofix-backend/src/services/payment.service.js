@@ -350,7 +350,7 @@ async function runSettleLaborInTransaction(
       amount: commissionAmount,
       source: "labor_payment",
       totalPrice: t,
-      currency: String(process.env.PAYSTACK_CURRENCY || "NGN"),
+      currency: String(process.env.PAYMENT_CURRENCY || process.env.PAYSTACK_CURRENCY || "ZAR"),
     },
   });
 
@@ -503,15 +503,19 @@ function computeCancelRefundAmount(job) {
 /**
  * @param {import("@prisma/client").Prisma.TransactionClient} tx
  */
-async function runCancelJobFinancialsInTransaction(tx, { job, providerProfileId }) {
+async function runCancelJobFinancialsInTransaction(tx, { job, providerProfileId, refundOverride }) {
   if (!job.laborPaid) {
     return { refundAmount: 0, cleanedEarnings: 0, refundKind: "none" };
   }
+  const computedRefund = computeCancelRefundAmount(job);
+  const refundAmount =
+    refundOverride !== undefined && refundOverride !== null
+      ? Math.max(0, Number(refundOverride) || 0)
+      : computedRefund;
   if (!isEscrowV2Job(job)) {
-    return { refundAmount: computeCancelRefundAmount(job), cleanedEarnings: 0, refundKind: "legacy" };
+    return { refundAmount, cleanedEarnings: 0, refundKind: refundAmount > 0 ? "legacy" : "none" };
   }
 
-  const refundAmount = computeCancelRefundAmount(job);
   const released = toPrismaDecimal(job.releasedAmount || 0);
   if (released.lte(0)) {
     await tx.earning.deleteMany({ where: { jobId: job.id } });

@@ -156,10 +156,11 @@ async function listBranchesForLocation(query = {}) {
     });
   }
 
-  // No search text: keep suggestions local (city + radius). With `q`, list every branch
-  // that matches the name/search tokens — customers and providers can pick any store in the system.
+  // No search text: prefer branches in the job city. If none match (e.g. job in Bellville,
+  // branch listed as Cape Town), fall back to full list and rank by distance below.
   if (cityFilter && !qRaw) {
-    list = list.filter((s) => {
+    const beforeCity = list;
+    const cityMatched = list.filter((s) => {
       const c = (s.city || "").toLowerCase();
       const ar = (s.area || "").toLowerCase();
       const addr = (s.address || "").toLowerCase();
@@ -169,6 +170,11 @@ async function listBranchesForLocation(query = {}) {
         (addr && addr.includes(cityFilter))
       );
     });
+    if (cityMatched.length > 0) {
+      list = cityMatched;
+    } else {
+      list = beforeCity;
+    }
   }
 
   if (hasUserCoords && !qRaw) {

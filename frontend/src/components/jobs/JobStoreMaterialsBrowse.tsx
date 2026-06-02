@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Supplier, Product, MaterialLine, JobLocation } from '@/types';
-import { getStores, type StoreRow } from '@/lib/api/stores';
+import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   ArrowLeft,
@@ -31,7 +31,13 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { categoryKeysMatch } from '@/lib/categoryKey';
-import { formatDistanceKm } from '@/lib/geo/haversine';
+import { formatDistanceKm, haversineKm } from '@/lib/geo/haversine';
+import {
+  distanceProximityBand,
+  distanceProximityBadgeClass,
+  distanceProximityCardClass,
+  distanceProximityLabel,
+} from '@/lib/geo/distanceProximity';
 
 const ALL_CATEGORIES_VALUE = '__all__';
 
@@ -116,13 +122,59 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [isSavingCart, setIsSavingCart] = useState(false);
 
+  const jobSiteCoords = useMemo(() => {
+    const lat = jobLocation?.coordinates?.lat;
+    const lng = jobLocation?.coordinates?.lng;
+    if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng };
+    }
+    return null;
+  }, [jobLocation?.coordinates?.lat, jobLocation?.coordinates?.lng]);
+
+  const jobSiteLabel = useMemo(() => {
+    const city = jobLocation?.city?.trim();
+    const addr = jobLocation?.address?.trim();
+    if (addr && city) return `${addr}, ${city}`;
+    return addr || city || 'job site';
+  }, [jobLocation?.address, jobLocation?.city]);
+
+  const resolveStoreDistanceKm = useCallback(
+    (s: StoreRow): number | null => {
+      if (typeof s.distanceKm === 'number' && Number.isFinite(s.distanceKm)) {
+        return s.distanceKm;
+      }
+      if (
+        jobSiteCoords &&
+        typeof s.latitude === 'number' &&
+        typeof s.longitude === 'number' &&
+        Number.isFinite(s.latitude) &&
+        Number.isFinite(s.longitude)
+      ) {
+        return haversineKm(jobSiteCoords.lat, jobSiteCoords.lng, s.latitude, s.longitude);
+      }
+      return null;
+    },
+    [jobSiteCoords]
+  );
+
+  const sortedStores = useMemo(() => {
+    return [...stores].sort((a, b) => {
+      const dA = resolveStoreDistanceKm(a);
+      const dB = resolveStoreDistanceKm(b);
+      if (dA != null && dB != null && dA !== dB) return dA - dB;
+      if (dA != null && dB == null) return -1;
+      if (dA == null && dB != null) return 1;
+      return String(a.displayName || a.name).localeCompare(String(b.displayName || b.name));
+    });
+  }, [stores, resolveStoreDistanceKm]);
+
   useEffect(() => {
     let alive = true;
     setStoresLoading(true);
-    void getStores({
+    void getBranchesNearby({
       city: jobLocation?.city?.trim(),
-      lat: jobLocation?.coordinates?.lat,
-      lng: jobLocation?.coordinates?.lng,
+      lat: jobSiteCoords?.lat,
+      lng: jobSiteCoords?.lng,
       q: storeSearch.trim() || undefined,
     })
       .then((list) => {
@@ -137,7 +189,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
     return () => {
       alive = false;
     };
-  }, [jobLocation?.city, jobLocation?.coordinates?.lat, jobLocation?.coordinates?.lng, storeSearch]);
+  }, [jobLocation?.city, jobSiteCoords?.lat, jobSiteCoords?.lng, storeSearch]);
 
   useEffect(() => {
     if (variant !== 'provider_cart') return;
@@ -374,6 +426,13 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
       <div className="space-y-5 py-6">
         {view === 'stores' && (
           <>
+            <p className="text-xs text-muted-foreground flex items-start gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+              <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                Ranking branches near <span className="font-medium text-foreground">{jobSiteLabel}</span>
+                {jobSiteCoords ? ' (by distance)' : jobLocation?.city ? '' : ' — add job coordinates for distance sorting'}
+              </span>
+            </p>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
@@ -391,14 +450,17 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
             )}
             {!storesLoading && (
               <ul className="m-0 list-none space-y-3 p-0 pb-6">
-                {stores.map((supplier) => (
+                {sortedStores.map((supplier) => {
+                  const distKm = resolveStoreDistanceKm(supplier);
+                  const proxBand = distanceProximityBand(distKm);
+                  return (
                   <li key={supplier.id}>
                     <button
                       type="button"
                       onClick={() => handleSelectSupplier(supplier)}
                       className={cn(
                         'w-full flex items-start gap-4 p-4 rounded-xl border-2 transition-all text-left',
-                        'border-primary bg-card  hover:bg-card/80',
+                        distanceProximityCardClass(proxBand),
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
                       )}
                     >
@@ -418,10 +480,15 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                           </p>
                         )}
                         <div className="flex flex-wrap gap-2 mt-3 text-xs text-muted-foreground">
-                          {typeof supplier.distanceKm === 'number' && Number.isFinite(supplier.distanceKm) && (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+                          {distKm != null && (
+                            <span
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium',
+                                distanceProximityBadgeClass(proxBand)
+                              )}
+                            >
                               <Navigation className="h-3 w-3" />
-                              {formatDistanceKm(supplier.distanceKm)}
+                              {formatDistanceKm(distKm)} · {distanceProximityLabel(proxBand)}
                             </span>
                           )}
                           {supplier.hasDelivery && (
@@ -439,11 +506,14 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                       </div>
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
-            {!storesLoading && stores.length === 0 && (
-              <p className="text-center text-sm text-muted-foreground py-16">No stores found for this search or area.</p>
+            {!storesLoading && sortedStores.length === 0 && (
+              <p className="text-center text-sm text-muted-foreground py-16">
+                No stores match this search or area. Try another keyword or widen your search.
+              </p>
             )}
           </>
         )}

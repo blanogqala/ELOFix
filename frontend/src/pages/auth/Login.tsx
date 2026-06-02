@@ -48,6 +48,7 @@ export default function Login() {
     }
 
     if (role === 'admin') {
+      if (attemptedPath === '/admin') return defaultPath;
       return attemptedPath.startsWith('/admin/') ? attemptedPath : defaultPath;
     }
     if (role === 'provider') {

@@ -70,7 +70,23 @@ function createPrismaClient() {
   return new PrismaClient({ adapter, log });
 }
 
-const prisma = globalForPrisma.prisma ?? createPrismaClient();
-globalForPrisma.prisma = prisma;
+/** Bump when Prisma schema/client changes so dev servers reload the client (nodemon keeps global). */
+const PRISMA_CLIENT_GENERATION = "20260601-courier-fulfillment";
 
-module.exports = prisma;
+function getPrismaClient() {
+  if (
+    globalForPrisma.prisma &&
+    globalForPrisma.prismaClientGeneration === PRISMA_CLIENT_GENERATION
+  ) {
+    return globalForPrisma.prisma;
+  }
+  if (globalForPrisma.prisma?.$disconnect) {
+    void globalForPrisma.prisma.$disconnect().catch(() => {});
+  }
+  const client = createPrismaClient();
+  globalForPrisma.prisma = client;
+  globalForPrisma.prismaClientGeneration = PRISMA_CLIENT_GENERATION;
+  return client;
+}
+
+module.exports = getPrismaClient();

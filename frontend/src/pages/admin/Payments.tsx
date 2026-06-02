@@ -1,14 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { Input } from '@/components/ui/input';
 import { getJobs } from '@/lib/api/jobs';
+import { getCategories } from '@/lib/api/categories';
 import { getAdminCommissions } from '@/lib/api/admin';
-import { Job } from '@/types';
-import { DollarSign, Clock, CheckCircle } from 'lucide-react';
+import { Category, Job } from '@/types';
+import { DollarSign, Clock, CheckCircle, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getAdminEscrowV2Breakdown } from '@/lib/adminJobFinancial';
 import { safeMoney } from '@/lib/jobMoney';
+import {
+  ADMIN_FILTER_SELECT_CLASS,
+  collectJobCities,
+  jobMatchesAdminSearch,
+  jobMatchesCategoryFilter,
+  jobMatchesCityFilter,
+} from '@/lib/adminJobFilters';
 
 function rowFinancials(job: Job) {
   const fin = getAdminEscrowV2Breakdown(job);
@@ -24,11 +33,16 @@ function rowFinancials(job: Job) {
 export default function AdminPayments() {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [totalCommissionEarned, setTotalCommissionEarned] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [cityFilter, setCityFilter] = useState('all');
 
   useEffect(() => {
-    loadJobs();
+    void loadJobs();
+    void loadCategories();
   }, []);
 
   const loadJobs = async () => {
@@ -51,10 +65,42 @@ export default function AdminPayments() {
     }
   };
 
-  const jobsWithEscrow = jobs.filter((j) => j.escrow.enabled);
-  /** Sum of each job's provider share (93% of labor = total price minus platform commission). */
-  const totalProviderShare = jobs.reduce((sum, j) => sum + safeMoney(j.providerAmount), 0);
-  const totalReleasedToProviders = jobs.reduce((sum, j) => sum + safeMoney(j.releasedAmount), 0);
+  const loadCategories = async () => {
+    try {
+      setCategories(await getCategories());
+    } catch (error) {
+      console.error('Failed to load categories:', error);
+      setCategories([]);
+    }
+  };
+
+  const cities = useMemo(() => collectJobCities(jobs), [jobs]);
+
+  const activeFilters = [
+    categoryFilter !== 'all' && {
+      key: 'category',
+      label: categories.find((c) => c.id === categoryFilter)?.name || categoryFilter,
+    },
+    cityFilter !== 'all' && { key: 'city', label: cityFilter },
+  ].filter(Boolean) as { key: string; label: string }[];
+
+  const clearFilter = (key: string) => {
+    if (key === 'category') setCategoryFilter('all');
+    if (key === 'city') setCityFilter('all');
+  };
+
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((job) => {
+      const matchesSearch = jobMatchesAdminSearch(job, searchQuery);
+      const matchesCategory = jobMatchesCategoryFilter(job, categoryFilter);
+      const matchesCity = jobMatchesCityFilter(job, cityFilter);
+      return matchesSearch && matchesCategory && matchesCity;
+    });
+  }, [jobs, searchQuery, categoryFilter, cityFilter]);
+
+  const jobsWithEscrow = filteredJobs.filter((j) => j.escrow.enabled);
+  const totalProviderShare = filteredJobs.reduce((sum, j) => sum + safeMoney(j.providerAmount), 0);
+  const totalReleasedToProviders = filteredJobs.reduce((sum, j) => sum + safeMoney(j.releasedAmount), 0);
 
   const getPaymentStatus = (job: Job) => {
     if (job.status === 'COMPLETED') return { label: 'Released', class: 'text-success' };
@@ -70,9 +116,78 @@ export default function AdminPayments() {
           <p className="text-muted-foreground">Monitor escrow and payment transactions (ZAR)</p>
         </div>
 
-        {/* Stats */}
+        {/* Filters */}
+        <div className="space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative min-w-0 flex-1 sm:min-w-[12rem]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Search by ID, name, category, city..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 h-10"
+              />
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Filter by category"
+              >
+                <option value="all">All Categories</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.icon} {c.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={cityFilter}
+                onChange={(e) => setCityFilter(e.target.value)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Filter by city"
+              >
+                <option value="all">All Cities</option>
+                {cities.map((city) => (
+                  <option key={city} value={city}>
+                    {city}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {activeFilters.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {activeFilters.map((f) => (
+                <span
+                  key={f.key}
+                  className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium"
+                >
+                  {f.label}
+                  <button type="button" onClick={() => clearFilter(f.key)} className="hover:text-primary/70">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setCategoryFilter('all');
+                  setCityFilter('all');
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground underline"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Stats (scoped to current filters) */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-         <div className="card-elevated p-6">
+          <div className="card-elevated p-6">
             <div className="flex items-center gap-4">
               <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
                 <DollarSign className="h-6 w-6 text-primary" />
@@ -91,7 +206,6 @@ export default function AdminPayments() {
               <div className="min-w-0">
                 <p className="text-2xl font-bold tabular-nums">{formatCurrency(totalProviderShare)}</p>
                 <p className="text-sm font-medium text-foreground">Total provider share</p>
-
               </div>
             </div>
           </div>
@@ -152,8 +266,8 @@ export default function AdminPayments() {
                       </td>
                     </tr>
                   ))
-                ) : jobs.length > 0 ? (
-                  jobs.map((job) => {
+                ) : filteredJobs.length > 0 ? (
+                  filteredJobs.map((job) => {
                     const paymentStatus = getPaymentStatus(job);
                     const f = rowFinancials(job);
                     return (
@@ -186,12 +300,19 @@ export default function AdminPayments() {
                 ) : (
                   <tr>
                     <td colSpan={9} className="px-6 py-12 text-center">
-                      <p className="text-muted-foreground">No transactions yet</p>
+                      <p className="text-muted-foreground">
+                        {activeFilters.length > 0 || searchQuery
+                          ? 'No transactions match your filters'
+                          : 'No transactions yet'}
+                      </p>
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="px-6 py-3 border-t border-border text-sm text-muted-foreground">
+            {filteredJobs.length} of {jobs.length} jobs
           </div>
         </div>
       </div>

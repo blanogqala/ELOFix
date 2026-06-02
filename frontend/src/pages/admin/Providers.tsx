@@ -5,12 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { getAdminProviders, approveProvider } from '@/lib/api/providers';
+import { getAdminProviderRevenueSummary } from '@/lib/api/admin';
 import { getCategories } from '@/lib/api/categories';
 import { Category, Provider } from '@/types';
 import { 
-  Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin
+  Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin, Users, DollarSign
 } from 'lucide-react';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { formatCurrency } from '@/lib/formatCurrency';
 
 export default function AdminProviders() {
   const navigate = useNavigate();
@@ -23,6 +25,7 @@ export default function AdminProviders() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'blocked'>('all');
   const [cityFilter, setCityFilter] = useState<string>('all');
   const [approvingProviderId, setApprovingProviderId] = useState<string | null>(null);
+  const [providerRevenueById, setProviderRevenueById] = useState<Record<string, number>>({});
 
   useEffect(() => {
     void loadProviders();
@@ -32,11 +35,22 @@ export default function AdminProviders() {
   const loadProviders = async () => {
     try {
       setProvidersError(null);
-      setProviders(await getAdminProviders());
+      const [providerRows, revenueSummary] = await Promise.all([
+        getAdminProviders(),
+        getAdminProviderRevenueSummary(),
+      ]);
+
+      setProviders(providerRows);
+      const map: Record<string, number> = {};
+      (revenueSummary?.revenues || []).forEach((r) => {
+        map[r.providerId] = r.netRevenue;
+      });
+      setProviderRevenueById(map);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load providers';
       setProvidersError(message);
       setProviders([]);
+      setProviderRevenueById({});
     }
     finally { setIsLoading(false); }
   };
@@ -87,6 +101,10 @@ export default function AdminProviders() {
     });
   }, [providers, searchQuery, statusFilter, cityFilter]);
 
+  const filteredNetRevenue = useMemo(() => {
+    return filteredProviders.reduce((sum, p) => sum + (providerRevenueById[p.id] ?? 0), 0);
+  }, [filteredProviders, providerRevenueById]);
+
   const activeFilters = [
     statusFilter !== 'all' && { key: 'status', label: statusFilter },
     cityFilter !== 'all' && { key: 'city', label: cityFilter },
@@ -126,6 +144,36 @@ export default function AdminProviders() {
               : providersError}
           </div>
         )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="card-elevated p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total providers</p>
+                <p className="mt-2 text-2xl font-semibold tabular-nums">
+                  {filteredProviders.length}
+                </p>
+              </div>
+              <div className="rounded-lg bg-primary/10 p-2">
+                <Users className="h-5 w-5 text-primary" />
+              </div>
+            </div>
+          </div>
+          <div className="card-elevated p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider net revenue</p>
+                <p className="mt-2 text-2xl font-semibold tabular-nums">
+                  {formatCurrency(filteredNetRevenue)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">All-time net revenue from provider jobs</p>
+              </div>
+              <div className="rounded-lg bg-accent/10 p-2">
+                <DollarSign className="h-5 w-5 text-accent" />
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Filters */}
         <div className="space-y-3">

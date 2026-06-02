@@ -17,16 +17,31 @@ app.use(
       "Idempotency-Key",
       "idempotency-key",
       "X-Requested-With",
-      "x-paystack-signature",
+      "x-payflex-signature",
+      "x-payjustnow-signature",
+      "x-signature",
+      "x-webhook-signature",
     ],
   })
 );
-// Paystack webhook must receive the raw body for HMAC (same string Paystack signed).
+
+// Payment webhooks (before JSON parser where raw body is required)
 app.post(
-  "/api/payments/webhooks/paystack",
-  express.raw({ type: "application/json" }),
-  asyncHandler(paymentController.paystackWebhook)
+  "/api/payments/webhooks/payfast",
+  express.urlencoded({ extended: false }),
+  asyncHandler(paymentController.payfastWebhook)
 );
+app.post(
+  "/api/payments/webhooks/payflex",
+  express.raw({ type: "application/json" }),
+  asyncHandler(paymentController.payflexWebhook)
+);
+app.post(
+  "/api/payments/webhooks/payjustnow",
+  express.raw({ type: "application/json" }),
+  asyncHandler(paymentController.payjustnowWebhook)
+);
+
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true, limit: "12mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));

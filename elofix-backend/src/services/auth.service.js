@@ -17,8 +17,20 @@ const userPublicSelect = {
   profileImage: true,
   authProvider: true,
   role: true,
+  blocked: true,
+  deletedAt: true,
   createdAt: true,
 };
+
+function assertCustomerAccountActive(user) {
+  if (user.role !== "CUSTOMER") return;
+  if (user.deletedAt) {
+    throw new AppError("This account has been removed", 403);
+  }
+  if (user.blocked) {
+    throw new AppError("This account has been suspended. Contact support.", 403);
+  }
+}
 
 function parseRole(role) {
   if (role == null || role === "") {
@@ -170,6 +182,8 @@ async function login(body) {
     throw new AppError("Invalid email or password", 401);
   }
 
+  assertCustomerAccountActive(user);
+
   const { password: _p, ...safe } = user;
   const token = signToken(user);
 
@@ -231,6 +245,8 @@ async function getMe(ctx) {
     };
   }
 
+  assertCustomerAccountActive(user);
+
   const { password: _p, ...safe } = user;
   return { user: safe };
 }
@@ -272,4 +288,5 @@ module.exports = {
   changePassword,
   signToken,
   userPublicSelect,
+  assertCustomerAccountActive,
 };

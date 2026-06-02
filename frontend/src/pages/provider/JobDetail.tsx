@@ -74,6 +74,14 @@ import {
   getProviderJobTimelineViewState,
   getProviderTimelineStepInsight,
 } from '@/lib/providerJobTimeline';
+import {
+  COURIER_TIMELINE_STEPS,
+  getCourierTimelineViewState,
+  getCourierTimelineStepInsight,
+  getCourierJobDisplayStatusLabel,
+} from '@/lib/courierJobTimeline';
+import { getDeliveryRequestByJobId } from '@/lib/api/deliveryRequests';
+import { JobDeliverySection } from '@/components/delivery/JobDeliverySection';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
@@ -158,6 +166,14 @@ export default function ProviderJobDetail() {
     refetchInterval: 8_000,
   });
   const materialRequests = materialRequestsData ?? [];
+
+  const { data: deliveryRequest } = useQuery({
+    queryKey: ['delivery-request-by-job', jobId],
+    queryFn: () => getDeliveryRequestByJobId(jobId),
+    enabled: Boolean(jobId),
+    staleTime: 4_000,
+    refetchInterval: 8_000,
+  });
   const [noteTitle, setNoteTitle] = useState('');
   const [noteMessage, setNoteMessage] = useState('');
   const [chatMessage, setChatMessage] = useState('');
@@ -511,6 +527,14 @@ export default function ProviderJobDetail() {
 
   const handleSaveRequirements = async () => {
     if (!job) return;
+    if (job.requiresInspection === false) {
+      toast({
+        title: 'Requirements are locked',
+        description: 'This category uses customer-provided requirements and cannot be edited by providers.',
+        variant: 'destructive',
+      });
+      return;
+    }
     const step3 = getJobCategoryStep3Type(job);
 
     if (categoryUsesMeasurementFields(step3)) {
@@ -616,6 +640,7 @@ export default function ProviderJobDetail() {
     job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
       ? 'Measurements & Requirements'
       : 'Requirements';
+  const canProviderEditRequirements = job?.requiresInspection !== false;
   const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
   const isCancelledJob = job?.status === 'CANCELLED';
   const cancellationReasonText =
@@ -676,13 +701,21 @@ export default function ProviderJobDetail() {
   const draftMrFromApi = materialRequests.find((r) => r.status === 'draft');
   const hasSubmittedMaterialRequests = materialRequests.some((r) => r.status === 'submitted');
 
-  const showMarkComplete = job ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) : false;
+  const isCourierJob = Boolean(job?.courierFlow);
+  const linkedJobDelivery =
+    deliveryRequest && deliveryRequest.source === 'job_context' && !isCourierJob;
+  const showMarkComplete =
+    job && !isCourierJob ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) : false;
   const showCancel = job
     ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION'
     : false;
 
   const getStatusBadge = (current: Job) => (
-    <Badge variant={getProviderJobBadgeVariantForJob(current)}>{getJobDisplayStatusLabel(current)}</Badge>
+    <Badge variant={getProviderJobBadgeVariantForJob(current)}>
+      {current.courierFlow && deliveryRequest
+        ? getCourierJobDisplayStatusLabel(current, deliveryRequest)
+        : getJobDisplayStatusLabel(current)}
+    </Badge>
   );
 
   if (isLoading) {
@@ -709,7 +742,9 @@ export default function ProviderJobDetail() {
     );
   }
 
-  const providerTimelineView = getProviderJobTimelineViewState(job, materialRequests);
+  const providerTimelineView = isCourierJob
+    ? getCourierTimelineViewState(job, deliveryRequest ?? null, materialRequests)
+    : getProviderJobTimelineViewState(job, materialRequests);
 
   return (
     <DashboardLayout>
@@ -731,14 +766,18 @@ export default function ProviderJobDetail() {
           job={job}
           view={providerTimelineView}
           variant="provider"
-          getStepInsight={(stepIndex) => getProviderTimelineStepInsight(job, materialRequests, stepIndex)}
+          steps={isCourierJob ? COURIER_TIMELINE_STEPS : undefined}
+          getStepInsight={(stepIndex) =>
+            isCourierJob
+              ? getCourierTimelineStepInsight(job, deliveryRequest ?? null, stepIndex)
+              : getProviderTimelineStepInsight(job, materialRequests, stepIndex)
+          }
           cancellationReasonText={cancellationReasonText}
           lockedTimelineStep={lockedTimelineStep}
           setLockedTimelineStep={setLockedTimelineStep}
           hoveredTimelineStep={hoveredTimelineStep}
           setHoveredTimelineStep={setHoveredTimelineStep}
         />
-
         {/* Job Overview */}
         <div className="card-elevated p-6 space-y-4">
           <h2 className="font-semibold text-lg">Job Overview</h2>
@@ -797,7 +836,9 @@ export default function ProviderJobDetail() {
                 variant="ghost"
                 size="sm"
                 className="h-8"
+                disabled={!canProviderEditRequirements}
                 onClick={() => {
+                  if (!canProviderEditRequirements) return;
                   setEditRequirementsOpen(true);
                   setEditMeasurements(job.providerAdjustedRequirements?.measurements || {});
                   const openValues =
@@ -810,7 +851,7 @@ export default function ProviderJobDetail() {
                 }}
               >
                 <Pencil className="h-3 w-3 mr-1" />
-                Edit
+                {canProviderEditRequirements ? 'Edit' : 'Locked'}
               </Button>
             </div>
             {effectiveMeasurements && (
@@ -885,6 +926,8 @@ export default function ProviderJobDetail() {
             </div>
           )}
 
+          {!isCourierJob ? (
+          <>
           <div
             role="button"
             tabIndex={0}
@@ -1119,35 +1162,58 @@ export default function ProviderJobDetail() {
               </Button>
             </div>
           )}
+          </>
+          ) : null}
           
         </div>
+        {/* Courier delivery section */}
+        {isCourierJob && deliveryRequest ? (
+          <JobDeliverySection
+            job={job}
+            deliveryRequest={deliveryRequest}
+            variant="provider"
+          />
+        ) : null}
 
-        <MaterialsSection
-          job={job}
-          materialRequests={materialRequests}
-          paidBatches={paidMaterialBatches}
-          pendingOrders={pendingProviderMaterialCardsOnly}
-          draftCardsByStore={draftCardsByStore}
-          hasDraftMaterials={hasDraftMaterials}
-          hasSubmittedMaterialRequests={hasSubmittedMaterialRequests}
-          customerSuggestionsForDisplay={customerSuggestionsForDisplay}
-          getPendingOrderForAcceptedSuggestion={getPendingOrderForAcceptedSuggestion}
-          allMaterialsPaid={allMaterialsPaid}
-          hasAnyMaterialPaid={hasAnyMaterialPaid}
-          canEditMaterials={canEditMaterials}
-          profileBlocksWorkflow={profileBlocksWorkflow}
-          materialsBuilder={materialsBuilder}
-          draftMrFromApi={draftMrFromApi}
-          onNavigateProfile={() => navigate('/provider/profile')}
-          onAddMaterials={() => navigate(`/provider/jobs/${job.id}/materials/browse`)}
-          onSubmitMaterials={handleSubmitMaterials}
-          onAcceptSuggestion={handleAcceptUserSuggestion}
-          onRejectSuggestion={handleRejectUserSuggestion}
-          onWithdrawAcceptedSuggestion={handleWithdrawAcceptedSuggestion}
-          onPurgeWithdrawnSuggestion={handlePurgeWithdrawnSuggestion}
-          onProviderCancelBatch={handleProviderCancelBatch}
-          onDismissMaterialBatch={handleDismissMaterialBatch}
-        />
+        
+
+        {linkedJobDelivery && deliveryRequest ? (
+          <JobDeliverySection
+            job={job}
+            deliveryRequest={deliveryRequest}
+            variant="provider"
+            embedded
+          />
+        ) : null}
+
+        {job.requiresMaterials !== false && !isCourierJob && (
+          <MaterialsSection
+            job={job}
+            materialRequests={materialRequests}
+            paidBatches={paidMaterialBatches}
+            pendingOrders={pendingProviderMaterialCardsOnly}
+            draftCardsByStore={draftCardsByStore}
+            hasDraftMaterials={hasDraftMaterials}
+            hasSubmittedMaterialRequests={hasSubmittedMaterialRequests}
+            customerSuggestionsForDisplay={customerSuggestionsForDisplay}
+            getPendingOrderForAcceptedSuggestion={getPendingOrderForAcceptedSuggestion}
+            allMaterialsPaid={allMaterialsPaid}
+            hasAnyMaterialPaid={hasAnyMaterialPaid}
+            canEditMaterials={canEditMaterials}
+            profileBlocksWorkflow={profileBlocksWorkflow}
+            materialsBuilder={materialsBuilder}
+            draftMrFromApi={draftMrFromApi}
+            onNavigateProfile={() => navigate('/provider/profile')}
+            onAddMaterials={() => navigate(`/provider/jobs/${job.id}/materials/browse`)}
+            onSubmitMaterials={handleSubmitMaterials}
+            onAcceptSuggestion={handleAcceptUserSuggestion}
+            onRejectSuggestion={handleRejectUserSuggestion}
+            onWithdrawAcceptedSuggestion={handleWithdrawAcceptedSuggestion}
+            onPurgeWithdrawnSuggestion={handlePurgeWithdrawnSuggestion}
+            onProviderCancelBatch={handleProviderCancelBatch}
+            onDismissMaterialBatch={handleDismissMaterialBatch}
+          />
+        )}
 
         {/* Communication */}
         <div className="card-elevated p-6 space-y-4">
@@ -1430,7 +1496,7 @@ export default function ProviderJobDetail() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditRequirementsOpen(false)}>Cancel</Button>
-              <Button onClick={handleSaveRequirements}>Save</Button>
+              <Button onClick={handleSaveRequirements} disabled={!canProviderEditRequirements}>Save</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

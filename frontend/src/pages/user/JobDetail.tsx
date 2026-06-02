@@ -15,7 +15,6 @@ import {
   cancelJob,
   confirmJobCompletion,
   payForStoreMaterials,
-  payLabor,
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
   deleteJob,
@@ -28,8 +27,6 @@ import {
 } from '@/lib/api/jobs';
 import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
-import { MeasurementCard } from '@/components/measurements/MeasurementCard';
-import { getSavedCards } from '@/lib/api/payments';
 import { getStores } from '@/lib/api/stores';
 import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
@@ -61,43 +58,36 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
+import { JobDeliveryRequirementsBlock } from '@/components/jobs/JobDeliveryRequirementsBlock';
+import { JobCustomerRequirementsBlock } from '@/components/jobs/JobCustomerRequirementsBlock';
+import { isDeliveryOrMovingJob } from '@/lib/courierCategories';
+import {
+  getCustomerQuoteTotal,
+  getQuoteDeliveryLine,
+  getQuoteLaborLine,
+} from '@/lib/jobQuoteDisplay';
+import { getCustomerCancelPreview } from '@/lib/jobCancellationPolicy';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/jobProgressDisplay';
+import { getCourierJobDisplayStatusLabel, getCourierTimelineStepIndex } from '@/lib/courierJobTimeline';
 import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
-import { categoryUsesMeasurementFields, getJobCategoryStep3Type } from '@/lib/jobSpecifications';
+import {
+  COURIER_TIMELINE_STEPS,
+  getCourierTimelineViewState,
+  getCourierTimelineStepInsight,
+} from '@/lib/courierJobTimeline';
+import { getDeliveryRequestByJobId } from '@/lib/api/deliveryRequests';
+import { JobDeliverySection } from '@/components/delivery/JobDeliverySection';
+import {
+  categoryUsesMeasurementFields,
+  getJobCategoryStep3Type,
+  measurementsHaveStructuredSpecs,
+} from '@/lib/jobSpecifications';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
 import { ActivityDot } from '@/components/ui/ActivityDot';
-
-function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
-  if (!values) return undefined;
-  const exact = values[key];
-  if (typeof exact === 'number' && Number.isFinite(exact)) return exact;
-  const fallback = Object.entries(values).find(([k, v]) => k.toLowerCase() === key && Number.isFinite(Number(v)));
-  if (!fallback) return undefined;
-  return Number(fallback[1]);
-}
-
-function formatMeasurementRows(values: Record<string, number> | undefined): Array<{ label: string; value: string }> {
-  if (!values) return [];
-  const area = getMeasurementValue(values, 'area');
-  const length = getMeasurementValue(values, 'length');
-  const width = getMeasurementValue(values, 'width');
-  const rows: Array<{ label: string; value: string }> = [];
-
-  if (area !== undefined) rows.push({ label: 'Area', value: `${area} m²` });
-  if (length !== undefined) rows.push({ label: 'Length', value: `${length} m` });
-  if (width !== undefined) rows.push({ label: 'Width', value: `${width} m` });
-
-  for (const [k, v] of Object.entries(values)) {
-    const key = k.toLowerCase();
-    if (key === 'area' || key === 'length' || key === 'width') continue;
-    rows.push({ label: k, value: String(v) });
-  }
-
-  return rows;
-}
+import { getSavedCards } from '@/lib/api/payments';
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -139,6 +129,15 @@ export default function JobDetail() {
     refetchInterval: 8_000,
   });
   const materialRequests = materialRequestsData ?? [];
+
+  const { data: deliveryRequest } = useQuery({
+    queryKey: ['delivery-request-by-job', jobId],
+    queryFn: () => getDeliveryRequestByJobId(jobId),
+    enabled: Boolean(jobId),
+    staleTime: 4_000,
+    refetchInterval: 8_000,
+  });
+
   const [newMessage, setNewMessage] = useState('');
   const initialTab = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'messages'>(
@@ -305,26 +304,6 @@ export default function JobDetail() {
     }
   };
 
-  const handlePayLabor = async (cardId: string, cvc: string) => {
-    if (!job || !user || isActionPending) return;
-    setIsActionPending(true);
-    try {
-      const selectedCard = savedCards.find(c => c.id === cardId);
-      await payLabor(job.id, user.id, cardId, selectedCard?.last4 || '****');
-      await syncJobsAfterMutation();
-      setPayLaborModalOpen(false);
-      toast({ title: 'Service paid', description: 'Your labor payment has been processed.' });
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to process payment.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsActionPending(false);
-    }
-  };
-
   const handleCancelJob = async (reason: string, details: string) => {
     if (!job || isActionPending) return;
     setIsActionPending(true);
@@ -332,9 +311,24 @@ export default function JobDetail() {
       const { refundAmount } = await cancelJob(job.id, reason, details);
       await syncJobsAfterMutation();
       setCancelDialogOpen(false);
-      toast({ 
-        title: 'Job Cancelled', 
-        description: `Your job has been cancelled. Refund of ${formatCurrency(refundAmount, { decimals: 2 })} will be processed.` 
+      const matsPaid =
+        job.materialPayments?.some((p) => p.status === 'paid') ||
+        (job.jobMaterialOrders ?? []).some((o) => {
+          const ps = String(o.paymentStatus ?? '').toLowerCase();
+          const fs = String(o.fulfillmentStatus ?? '').toUpperCase();
+          return ps === 'paid' && fs !== 'CANCELLED';
+        }) ||
+        false;
+      const forfeit =
+        getCustomerCancelPreview(job, deliveryRequest ?? null, matsPaid).customerForfeits &&
+        refundAmount === 0;
+      toast({
+        title: 'Job Cancelled',
+        description: forfeit
+          ? 'Your job was cancelled. Service payment is non-refundable because collection or delivery was already underway.'
+          : refundAmount > 0
+            ? `Your job has been cancelled. Refund of ${formatCurrency(refundAmount, { decimals: 2 })} will be processed.`
+            : 'Your job has been cancelled.',
       });
       navigate('/user/jobs');
     } catch (error) {
@@ -372,8 +366,7 @@ export default function JobDetail() {
 
   const handlePayForStore = async (
     supplierId: string,
-    cardId: string,
-    cardLast4: string,
+    paymentIntentId: string,
     options?: {
       deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
       deliveryFee: number;
@@ -384,13 +377,7 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      await payForStoreMaterials(
-        job.id,
-        supplierId,
-        cardId,
-        cardLast4,
-        options
-      );
+      await payForStoreMaterials(job.id, supplierId, paymentIntentId, options);
       await syncJobsAfterMutation();
       toast({ 
         title: 'Materials paid', 
@@ -422,8 +409,11 @@ export default function JobDetail() {
       await setStoreDeliveryOption(job.id, storeId, params);
       await syncJobsAfterMutation();
       toast({
-        title: 'Delivery option selected',
-        description: 'Your delivery preference has been saved for this store.',
+        title: params.deliveryType === 'PROVIDER' ? 'Delivery request sent' : 'Delivery option selected',
+        description:
+          params.deliveryType === 'PROVIDER'
+            ? 'The delivery provider has been notified and can send you a quote.'
+            : 'Your delivery preference has been saved for this store.',
       });
     } catch (error) {
       toast({
@@ -551,7 +541,10 @@ export default function JobDetail() {
   };
 
   const getStatusBadge = (current: Job) => {
-    const label = getJobDisplayStatusLabel(current);
+    const label =
+      current.courierFlow && deliveryRequest
+        ? getCourierJobDisplayStatusLabel(current, deliveryRequest)
+        : getJobDisplayStatusLabel(current);
     const status = current.status;
     if (status === 'CANCELLED' || status === 'REJECTED') {
       return (
@@ -561,7 +554,9 @@ export default function JobDetail() {
         </Badge>
       );
     }
-    const idx = getMonotonicTimelineStepIndex(current);
+    const idx = current.courierFlow
+      ? getCourierTimelineStepIndex(current, deliveryRequest ?? null)
+      : getMonotonicTimelineStepIndex(current);
     const stepClasses: Record<number, string> = {
       0: 'bg-yellow-100 text-yellow-800',
       1: 'bg-blue-100 text-blue-800',
@@ -579,32 +574,6 @@ export default function JobDetail() {
       </Badge>
     );
   };
-
-  const materialsTotal = job ? getQuoteMaterialsTotal(job) : 0;
-  const laborTotal = job ? getUserLaborGross(job) : 0;
-  const effectiveMeasurements = job
-    ? { ...job.measurements, ...job.providerAdjustedRequirements?.measurements }
-    : null;
-  const hasMaterialsPaid =
-    job?.materialPayments?.some((p) => p.status === 'paid') ||
-    (job?.jobMaterialOrders ?? []).some((o) => {
-      const ps = String(o.paymentStatus ?? '').toLowerCase();
-      const fs = String(o.fulfillmentStatus ?? '').toUpperCase();
-      return ps === 'paid' && fs !== 'CANCELLED';
-    }) ||
-    false;
-  const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
-  const providerReqText = job?.providerAdjustedRequirements?.requirementText?.trim();
-  const specsCardTitle =
-    job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
-      ? 'Measurements & Requirements'
-      : 'Requirements';
-  const cancellationReasonText =
-    (job?.cancellationDetails && job.cancellationDetails.trim()) ||
-    (job?.cancellationReason && job.cancellationReason.trim()) ||
-    'No reason provided';
-
-  const awaitingUserConfirmation = job?.status === 'AWAITING_CONFIRMATION';
 
   if (isLoading) {
     return (
@@ -628,7 +597,43 @@ export default function JobDetail() {
     );
   }
 
-  const timelineView = getUserTimelineViewState(job, materialRequests);
+  const materialsTotal = getQuoteMaterialsTotal(job);
+  const laborTotal = job.laborPaid
+    ? getUserLaborGross(job)
+    : job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? getUserLaborGross(job);
+  const quoteLaborLine = getQuoteLaborLine(job, deliveryRequest ?? null);
+  const quoteDeliveryLine = getQuoteDeliveryLine(job, deliveryRequest ?? null);
+  const quoteGrandTotal = getCustomerQuoteTotal(job, deliveryRequest ?? null);
+  const effectiveMeasurements = {
+    ...job.measurements,
+    ...job.providerAdjustedRequirements?.measurements,
+  };
+  const hasMaterialsPaid =
+    job.materialPayments?.some((p) => p.status === 'paid') ||
+    (job.jobMaterialOrders ?? []).some((o) => {
+      const ps = String(o.paymentStatus ?? '').toLowerCase();
+      const fs = String(o.fulfillmentStatus ?? '').toUpperCase();
+      return ps === 'paid' && fs !== 'CANCELLED';
+    }) ||
+    false;
+  const cancelPreview = getCustomerCancelPreview(job, deliveryRequest ?? null, hasMaterialsPaid);
+  const showDeliveryRequirements = isDeliveryOrMovingJob(job);
+  const providerReqText = job.providerAdjustedRequirements?.requirementText?.trim();
+  const specsCardTitle = categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
+    ? 'Measurements & Requirements'
+    : 'Requirements';
+  const cancellationReasonText =
+    (job.cancellationDetails && job.cancellationDetails.trim()) ||
+    (job.cancellationReason && job.cancellationReason.trim()) ||
+    'No reason provided';
+  const awaitingUserConfirmation = job.status === 'AWAITING_CONFIRMATION';
+
+  const isCourierJob = Boolean(job.courierFlow);
+  const linkedJobDelivery =
+    deliveryRequest && deliveryRequest.source === 'job_context' && !isCourierJob;
+  const timelineView = isCourierJob
+    ? getCourierTimelineViewState(job, deliveryRequest ?? null, materialRequests)
+    : getUserTimelineViewState(job, materialRequests);
 
   return (
     <DashboardLayout>
@@ -680,13 +685,22 @@ export default function JobDetail() {
           job={job}
           view={timelineView}
           variant="user"
-          getStepInsight={(stepIndex) => getTimelineStepInsight(job, stepIndex, materialRequests)}
+          steps={isCourierJob ? COURIER_TIMELINE_STEPS : undefined}
+          getStepInsight={(stepIndex) =>
+            isCourierJob
+              ? getCourierTimelineStepInsight(job, deliveryRequest ?? null, stepIndex)
+              : getTimelineStepInsight(job, stepIndex, materialRequests)
+          }
           cancellationReasonText={cancellationReasonText}
           lockedTimelineStep={lockedTimelineStep}
           setLockedTimelineStep={setLockedTimelineStep}
           hoveredTimelineStep={hoveredTimelineStep}
           setHoveredTimelineStep={setHoveredTimelineStep}
         />
+
+        {isCourierJob && deliveryRequest ? (
+          <JobDeliverySection job={job} deliveryRequest={deliveryRequest} variant="user" />
+        ) : null}
 
         {/* Revised quote from provider */}
         {!job.laborPaid && job.proposedLaborPrice && (
@@ -789,25 +803,36 @@ export default function JobDetail() {
           </Card>
         )}
 
+        {linkedJobDelivery && deliveryRequest ? (
+          <JobDeliverySection
+            job={job}
+            deliveryRequest={deliveryRequest}
+            variant="user"
+            embedded
+          />
+        ) : null}
+
         {/* Material Payment Section */}
-        <MaterialPaymentSection
-          job={job}
-          materialRequests={materialRequests}
-          userSuggestions={job.userMaterialSuggestions || []}
-          savedCards={savedCards}
-          deliveryProviders={deliveryProviders}
-          deliveryProvidersError={deliveryProvidersError}
-          onPayForStore={handlePayForStore}
-          onSuggestAlternatives={() => navigate(`/user/jobs/${job.id}/suggest-materials`)}
-          suppliers={suppliers}
-          onSelectDeliveryOption={handleSelectDeliveryOption}
-          onSimulateProviderApproval={handleSimulateProviderApproval}
-          onViewStoreOrder={(orderId) => navigate(`/user/orders/${orderId}`)}
-          onCustomerRejectMaterialBatch={handleCustomerRejectMaterialBatch}
-          onDismissMaterialBatch={handleCustomerDismissMaterialBatch}
-          onWithdrawAcceptedSuggestion={handleCustomerWithdrawSuggestion}
-          onPurgeWithdrawnSuggestion={handleCustomerPurgeWithdrawnSuggestion}
-        />
+        {job.requiresMaterials !== false && !isCourierJob && (
+          <MaterialPaymentSection
+            job={job}
+            materialRequests={materialRequests}
+            userSuggestions={job.userMaterialSuggestions || []}
+            savedCards={savedCards}
+            deliveryProviders={deliveryProviders}
+            deliveryProvidersError={deliveryProvidersError}
+            onPayForStore={handlePayForStore}
+            onSuggestAlternatives={() => navigate(`/user/jobs/${job.id}/suggest-materials`)}
+            suppliers={suppliers}
+            onSelectDeliveryOption={handleSelectDeliveryOption}
+            onSimulateProviderApproval={handleSimulateProviderApproval}
+            onViewStoreOrder={(orderId) => navigate(`/user/material-orders/${orderId}`)}
+            onCustomerRejectMaterialBatch={handleCustomerRejectMaterialBatch}
+            onDismissMaterialBatch={handleCustomerDismissMaterialBatch}
+            onWithdrawAcceptedSuggestion={handleCustomerWithdrawSuggestion}
+            onPurgeWithdrawnSuggestion={handleCustomerPurgeWithdrawnSuggestion}
+          />
+        )}
 
         {/* Tabs */}
         <div className="border-b border-border">
@@ -1002,60 +1027,45 @@ export default function JobDetail() {
                 <CardTitle className="text-lg">{specsCardTitle}</CardTitle>
               </CardHeader>
               <CardContent>
-                {effectiveMeasurements?.cameraAssist && (
-                  <div className="mb-4 space-y-2">
-                    <p className="text-sm text-muted-foreground">Guided measurement</p>
-                    <MeasurementCard measurement={effectiveMeasurements.cameraAssist} />
-                  </div>
-                )}
-                {effectiveMeasurements?.movingItems && effectiveMeasurements.movingItems.length > 0 ? (
-                  <div className="space-y-2">
-                    {effectiveMeasurements.movingItems.map(item => (
-                      <div key={item.id} className="flex justify-between text-sm">
-                        <span>{item.name}</span>
-                        <span className="text-muted-foreground">× {item.qty}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : effectiveMeasurements?.plumbingIssue ? (
-                  <div className="space-y-2">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Issue Type</p>
-                      <p>{effectiveMeasurements.plumbingIssue.type}</p>
-                    </div>
-                    {(effectiveMeasurements.plumbingIssue.description?.trim() || job.description) && (
-                      <div className="min-w-0">
-                        <p className="text-sm text-muted-foreground">Details</p>
-                        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
-                          {effectiveMeasurements.plumbingIssue.description?.trim() || job.description}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                ) : measurementRows.length > 0 ? (
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    {measurementRows.map((row) => (
-                      <div key={row.label}>
-                        <p className="text-muted-foreground">{row.label}</p>
-                        <p className="font-medium">{row.value}</p>
-                      </div>
-                    ))}
-                  </div>
+                {showDeliveryRequirements ? (
+                  <JobDeliveryRequirementsBlock
+                    job={job}
+                    deliveryRequest={deliveryRequest ?? null}
+                  />
                 ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
-                      ? 'No measurement values provided.'
-                      : 'No checklist or issue details yet. Your provider may add a written requirement after inspection.'}
-                  </p>
+                  <JobCustomerRequirementsBlock job={job} measurements={job.measurements} />
                 )}
-                {providerReqText && (
+                {showDeliveryRequirements && providerReqText ? (
+                  <div className="mt-4 min-w-0 pt-4 border-t border-border">
+                    <p className="text-sm text-muted-foreground mb-1">Additional notes from provider</p>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
+                      {providerReqText}
+                    </p>
+                  </div>
+                ) : null}
+                {!showDeliveryRequirements && providerReqText ? (
                   <div className="mt-4 min-w-0 pt-4 border-t border-border">
                     <p className="text-sm text-muted-foreground mb-1">Provider-confirmed requirements</p>
                     <p className="whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
                       {providerReqText}
                     </p>
                   </div>
-                )}
+                ) : null}
+                {!showDeliveryRequirements &&
+                effectiveMeasurements &&
+                measurementsHaveStructuredSpecs(effectiveMeasurements) &&
+                measurementsHaveStructuredSpecs(job.measurements) === false ? (
+                  <div className="mt-4 min-w-0 pt-4 border-t border-border space-y-2">
+                    <p className="text-sm text-muted-foreground mb-1">Updated measurements (provider)</p>
+                    <JobCustomerRequirementsBlock
+                      job={job}
+                      measurements={{
+                        ...job.measurements,
+                        ...job.providerAdjustedRequirements?.measurements,
+                      }}
+                    />
+                  </div>
+                ) : null}
                 {job.providerAdjustedRequirements?.requirementNotes && (
                   <div className="mt-4 min-w-0 pt-4 border-t border-border">
                     <p className="text-sm text-muted-foreground mb-1">Notes</p>
@@ -1064,9 +1074,6 @@ export default function JobDetail() {
                     </p>
                   </div>
                 )}
-                <p className=" text-xs text-muted-foreground mt-4">
-                  Source: {effectiveMeasurements?.source ?? job.measurements.source}
-                </p>
               </CardContent>
             </Card>
 
@@ -1085,19 +1092,35 @@ export default function JobDetail() {
                     {formatCurrency(materialsTotal, { decimals: 2 })}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Labor / Service</span>
-                  <span>
-                    {job.servicePrice || (job.totalPrice != null && job.totalPrice > 0)
-                      ? formatCurrency(getUserLaborGross(job), { decimals: 2 })
-                      : `${formatCurrency(job.laborEstimateRange.min, { decimals: 2 })} – ${formatCurrency(job.laborEstimateRange.max, { decimals: 2 })}`}
-                  </span>
-                </div>
+                {quoteDeliveryLine ? (
+                  <div className="flex justify-between gap-3 min-w-0">
+                    <span className="shrink-0 text-muted-foreground">{quoteDeliveryLine.label}</span>
+                    <span className="min-w-0 text-right font-medium tabular-nums">{quoteDeliveryLine.amountText}</span>
+                  </div>
+                ) : null}
+                {quoteLaborLine ? (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex justify-between gap-3 min-w-0">
+                      <span className="shrink-0 text-muted-foreground">{quoteLaborLine.label}</span>
+                      <span
+                        className={cn(
+                          'min-w-0 text-right font-medium tabular-nums',
+                          quoteLaborLine.pendingAcceptance && 'text-amber-700 dark:text-amber-300'
+                        )}
+                      >
+                        {quoteLaborLine.amountText}
+                      </span>
+                    </div>
+                    {quoteLaborLine.hint ? (
+                      <p className="text-xs text-muted-foreground text-right">{quoteLaborLine.hint}</p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="border-t border-border pt-2">
                   <div className="flex justify-between font-bold">
                     <span>Total</span>
                     <span className="text-primary">
-                      {formatCurrency(materialsTotal + laborTotal, { decimals: 2 })}
+                      {formatCurrency(quoteGrandTotal, { decimals: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1213,7 +1236,8 @@ export default function JobDetail() {
         onConfirm={handleCancelJob}
         hasMaterialsPaid={hasMaterialsPaid}
         materialsAmount={materialsTotal}
-        laborAmount={laborTotal}
+        laborAmount={job.laborPaid ? getUserLaborGross(job) : laborTotal}
+        cancelPreview={cancelPreview}
       />
 
       <JobCompletionDialog
@@ -1237,13 +1261,22 @@ export default function JobDetail() {
         onOpenChange={setPayLaborModalOpen}
         title="Pay Service / Labor"
         description="Pay the provider's labor fee to proceed with the job."
-        amount={laborTotal}
+        amount={
+          job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? laborTotal
+        }
+        kind="LABOR"
+        jobId={job.id}
         breakdown={[
-          { label: 'Service / Labor', amount: laborTotal },
-          { label: 'Total Due', amount: laborTotal, isBold: true },
+          {
+            label: 'Service / Labor',
+            amount: job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? laborTotal,
+          },
+          {
+            label: 'Total Due',
+            amount: job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? laborTotal,
+            isBold: true,
+          },
         ]}
-        savedCards={savedCards}
-        onPaySuccess={handlePayLabor}
       />
 
       {/* Delete Job Dialog */}

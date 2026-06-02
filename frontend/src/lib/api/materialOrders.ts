@@ -53,7 +53,9 @@ export async function createMaterialOrder(params: {
     coordinates?: { lat: number; lng: number };
   };
   materialsTotal: number;
-  cardLast4: string;
+  cardLast4?: string;
+  paymentStatus?: 'unpaid' | 'paid';
+  paymentIntentId?: string;
   customerLocation?: {
     address: string;
     city?: string;
@@ -141,6 +143,11 @@ export async function patchProviderMaterialOrderFulfillment(
 /** Customer confirms pickup (READY→COMPLETED) or delivery receipt after COMPLETED. */
 export async function confirmMaterialOrderCollection(orderId: string): Promise<MaterialOrder | null> {
   const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/confirm-collection`, {});
+  return data?.order ?? null;
+}
+
+export async function acceptMaterialOrderDeliveryQuote(orderId: string): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.patch<OrderResponse>(`/material-orders/${orderId}/delivery/accept-quote`);
   return data?.order ?? null;
 }
 

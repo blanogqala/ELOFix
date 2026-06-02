@@ -9,11 +9,31 @@ router.use(authenticate);
 
 router.get("/", asyncHandler(materialOrderController.getMaterialOrders));
 router.get("/all", asyncHandler(materialOrderController.getAllMaterialOrdersForUser));
+router.get(
+  "/delivery-inbox",
+  authorizeRoles("PROVIDER"),
+  asyncHandler(materialOrderController.getDeliveryInbox)
+);
 router.get("/:id", asyncHandler(materialOrderController.getMaterialOrder));
 router.post("/", asyncHandler(materialOrderController.createMaterialOrder));
 router.patch("/:id/delivery", asyncHandler(materialOrderController.updateMaterialOrderDelivery));
 router.patch("/:id/delivery/approve", asyncHandler(materialOrderController.approveMaterialOrderDelivery));
 router.patch("/:id/delivery/reject", asyncHandler(materialOrderController.rejectMaterialOrderDelivery));
+router.patch(
+  "/:id/delivery/quote",
+  authorizeRoles("PROVIDER"),
+  asyncHandler(materialOrderController.submitDeliveryQuote)
+);
+router.patch(
+  "/:id/delivery/reject-request",
+  authorizeRoles("PROVIDER"),
+  asyncHandler(materialOrderController.rejectDeliveryRequest)
+);
+router.patch(
+  "/:id/delivery/accept-quote",
+  authorizeRoles("CUSTOMER"),
+  asyncHandler(materialOrderController.acceptDeliveryQuote)
+);
 router.post("/:id/delivery/pay", asyncHandler(materialOrderController.payMaterialOrderDelivery));
 router.patch("/:id/delivery/status", asyncHandler(materialOrderController.updateMaterialOrderDeliveryStatus));
 router.patch(

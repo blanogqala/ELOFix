@@ -9,8 +9,6 @@ import { getSuppliers } from '@/lib/api/suppliers';
 import {
   getMaterialOrderById,
   updateMaterialOrderDelivery,
-  approveMaterialOrderDelivery,
-  rejectMaterialOrderDelivery,
   payMaterialOrderDelivery,
   confirmMaterialOrderCollection,
   cancelMaterialOrder,
@@ -18,11 +16,10 @@ import {
 import {
   getJobsByUser,
   updateStoreOrderDelivery,
-  approveStoreOrderDelivery,
-  rejectStoreOrderDelivery,
   payStoreOrderDelivery,
 } from '@/lib/api/jobs';
 import { getSavedCards, getInvoiceById } from '@/lib/api/payments';
+import { getDeliveryProviders } from '@/lib/api/specials';
 import { DeliveryProvider, SavedCard, MaterialOrder, Supplier } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -31,7 +28,7 @@ import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfi
 import { useStableMapCoords } from '@/hooks/useStableMapCoords';
 import { format, parseISO } from 'date-fns';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getDeliveryProviders } from '@/lib/api/specials';
+import { acceptMaterialOrderDeliveryQuote } from '@/lib/api/materialOrders';
 import type { JobMaterialOrderSnapshot } from '@/types';
 import { resolveMaterialBatchFromSnapshot } from '@/lib/materialBatchTracking';
 import { toCanonicalDeliveryType } from '@/lib/deliveryTypes';
@@ -161,6 +158,8 @@ export default function OrderDetails() {
   const [receiptPending, setReceiptPending] = useState(false);
   const [deliveryFeedbackOpen, setDeliveryFeedbackOpen] = useState(false);
   const [deliveryJustCompleted, setDeliveryJustCompleted] = useState(false);
+  const [orderLoading, setOrderLoading] = useState(true);
+  const [orderLoadError, setOrderLoadError] = useState<string | null>(null);
   const loadOrderRef = useRef<(() => Promise<void>) | null>(null);
 
   const effectiveOrderId = orderId || storeOrderId;
@@ -222,21 +221,44 @@ export default function OrderDetails() {
     s === 'delivered' ? 'delivered' : s === 'out_for_delivery' ? 'out_for_delivery' : 'processing';
 
   const mapDeliveryState = (s: string): NormalizedDeliveryState =>
-    (['SelfCollect', 'PendingApproval', 'Approved', 'Rejected', 'Cancelled', 'InProgress', 'Processing', 'OnTheWay', 'Delivered'].includes(s)
+    (['SelfCollect', 'PendingApproval', 'Quoted', 'Approved', 'Rejected', 'Cancelled', 'InProgress', 'Processing', 'OnTheWay', 'Delivered'].includes(s)
       ? (s as NormalizedDeliveryState)
       : 'Processing');
+
+  const addressFromMaterialOrder = (mo: MaterialOrder | null | undefined) => ({
+    collectionAddress:
+      mo?.collectionPoint?.address || mo?.materialBatch?.pickupAddress || undefined,
+    destinationAddress:
+      mo?.destinationPoint?.address || mo?.materialBatch?.deliveryAddress || mo?.customerAddress || undefined,
+  });
 
   const loadOrder = async () => {
     if (!user) return;
     const effectiveOrderId = orderId || storeOrderId;
-    if (!effectiveOrderId) return;
+    if (!effectiveOrderId) {
+      setOrderLoading(false);
+      setOrderLoadError('Missing order id.');
+      return;
+    }
+
+    setOrderLoading(true);
+    setOrderLoadError(null);
 
     try {
       const found = await getMaterialOrderById(effectiveOrderId);
-      if (found && found.userId === user.id) {
+      const customerOwnsOrder =
+        found &&
+        (!found.userId || String(found.userId) === String(user.id));
+      if (found && customerOwnsOrder) {
         const d = found.delivery;
         const p = found.payment;
         const deliveryState = mapDeliveryState(d?.status ?? (found.deliveryType === 'SELF' ? 'SelfCollect' : 'PendingApproval'));
+        const quotedFee = (found as MaterialOrder).deliveryQuote?.fee;
+        const deliveryFee =
+          deliveryState === 'Quoted' && quotedFee != null
+            ? Number(quotedFee)
+            : found.deliveryFee;
+        const addr = addressFromMaterialOrder(found);
         const provider = found.deliveryProviderId
           ? deliveryProviders.find(dp => dp.id === found.deliveryProviderId)
           : null;
@@ -244,22 +266,29 @@ export default function OrderDetails() {
           id: found.id,
           storeName: found.storeName,
           storeId: found.storeId,
-          items: found.items.map(i => ({ productId: i.productId, name: i.name, qty: i.qty, unitPrice: i.unitPrice })),
+          items: (Array.isArray(found.items) ? found.items : []).map((i) => ({
+            productId: i.productId,
+            name: i.name,
+            qty: i.qty,
+            unitPrice: i.unitPrice,
+          })),
           deliveryType: found.deliveryType === 'SELF' ? 'SELF' : found.deliveryType === 'STORE_DELIVERY' ? 'STORE' : 'PROVIDER',
-          deliveryFee: found.deliveryFee,
+          deliveryFee,
           totalPaid: found.total,
           createdAt: found.createdAt,
           deliveryStatus: mapDeliveryStatus(found.deliveryStatus),
           deliveryState,
           deliveryPaid: p?.deliveryPaid ?? false,
           materialsPaid: p?.materialsPaid ?? true,
-          invoiceId: found.invoiceId,
+          invoiceId: found.invoiceId || `INV-${found.id.slice(-8)}`,
           deliveryInvoiceId: found.deliveryInvoiceId,
           providerName: provider?.name,
           providerPhone: provider?.phone,
           providerEmail: provider?.email,
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
-          jobId: typeof (found as { jobId?: string }).jobId === 'string' ? (found as { jobId?: string }).jobId : undefined,
+          jobId: found.jobId,
+          collectionAddress: addr.collectionAddress,
+          destinationAddress: addr.destinationAddress,
         };
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === found.storeId);
@@ -283,6 +312,7 @@ export default function OrderDetails() {
             ? f.branchDeliveryFee
             : supplier?.deliveryFee ?? 0
         );
+        setOrderLoading(false);
         return;
       }
 
@@ -294,7 +324,17 @@ export default function OrderDetails() {
 
         const d = storeOrder.delivery;
         const p = storeOrder.payment;
-        const deliveryState = mapDeliveryState(d?.status ?? storeOrder.deliveryStatus);
+        const moRow = await getMaterialOrderById(effectiveOrderId);
+        const moDeliveryState = moRow?.delivery?.status
+          ? mapDeliveryState(moRow.delivery.status)
+          : mapDeliveryState(d?.status ?? storeOrder.deliveryStatus);
+        const quotedFee = moRow?.deliveryQuote?.fee;
+        const deliveryFee =
+          moDeliveryState === 'Quoted' && quotedFee != null
+            ? Number(quotedFee)
+            : storeOrder.deliveryFee;
+        const deliveryState = moDeliveryState;
+        const addr = addressFromMaterialOrder(moRow);
         const materialsTotal = storeOrder.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
         const provider = storeOrder.deliveryProviderId
           ? deliveryProviders.find(dp => dp.id === storeOrder.deliveryProviderId)
@@ -304,7 +344,7 @@ export default function OrderDetails() {
           storeName: storeOrder.storeName || job.materials.find(m => m.supplierId === storeOrder.storeId)?.supplierName || 'Store',
           items: storeOrder.items.map(i => ({ productId: i.productId, name: i.name, qty: i.qty, unitPrice: i.unitPrice })),
           deliveryType: storeOrder.deliveryType === 'STORE' ? 'STORE' : storeOrder.deliveryType,
-          deliveryFee: storeOrder.deliveryFee,
+          deliveryFee,
           totalPaid: materialsTotal + (p?.deliveryPaid ? (storeOrder.deliveryFee || 0) : 0),
           createdAt: storeOrder.createdAt,
           deliveryStatus:
@@ -322,8 +362,9 @@ export default function OrderDetails() {
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: job.id,
           storeId: storeOrder.storeId,
+          collectionAddress: addr.collectionAddress,
+          destinationAddress: addr.destinationAddress || job.location?.address,
         };
-        const moRow = await getMaterialOrderById(effectiveOrderId);
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === storeOrder.storeId);
         setOrder(
@@ -345,10 +386,19 @@ export default function OrderDetails() {
             ? m.branchDeliveryFee
             : supplier?.deliveryFee ?? 0
         );
+        setOrderLoading(false);
         return;
       }
-    } catch {
-      // noop
+
+      setOrder(null);
+      setOrderLoadError('We could not find this order. It may have been removed or you may not have access.');
+    } catch (e) {
+      setOrder(null);
+      setOrderLoadError(
+        e instanceof Error ? e.message : 'Failed to load order details. Please try again.'
+      );
+    } finally {
+      setOrderLoading(false);
     }
   };
   loadOrderRef.current = loadOrder;
@@ -374,33 +424,14 @@ export default function OrderDetails() {
     }
   };
 
-  const handleSimulateApproval = async () => {
+  const handleAcceptQuote = async () => {
     if (!order || !effectiveOrderId) return;
     try {
-      if (jobContext) {
-        await approveStoreOrderDelivery(jobContext.jobId, jobContext.storeId);
-      } else {
-        await approveMaterialOrderDelivery(effectiveOrderId);
-      }
-      toast({ title: 'Delivery approved', description: 'You can now pay for delivery.' });
+      await acceptMaterialOrderDeliveryQuote(effectiveOrderId);
+      toast({ title: 'Quote accepted', description: 'You can now pay for delivery.' });
       loadOrder();
     } catch {
-      toast({ title: 'Error', description: 'Failed to approve.', variant: 'destructive' });
-    }
-  };
-
-  const handleSimulateRejection = async () => {
-    if (!order || !effectiveOrderId) return;
-    try {
-      if (jobContext) {
-        await rejectStoreOrderDelivery(jobContext.jobId, jobContext.storeId);
-      } else {
-        await rejectMaterialOrderDelivery(effectiveOrderId);
-      }
-      toast({ title: 'Delivery rejected', description: 'You can choose a new delivery provider.' });
-      loadOrder();
-    } catch {
-      toast({ title: 'Error', description: 'Failed to reject.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to accept quote.', variant: 'destructive' });
     }
   };
 
@@ -605,7 +636,18 @@ export default function OrderDetails() {
           </div>
         </div>
 
-        {order ? (
+        {orderLoading ? (
+          <div className="card-elevated p-8 text-center text-sm text-muted-foreground animate-pulse">
+            Loading order details…
+          </div>
+        ) : orderLoadError && !order ? (
+          <div className="card-elevated p-8 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">{orderLoadError}</p>
+            <Button variant="outline" size="sm" onClick={() => void loadOrder()}>
+              Try again
+            </Button>
+          </div>
+        ) : order ? (
           <>
             <OrderDetailsView
               order={order}
@@ -636,12 +678,7 @@ export default function OrderDetails() {
                   ? handlePayDelivery
                   : undefined
               }
-              onSimulateApproval={
-                order.deliveryState === 'PendingApproval' ? handleSimulateApproval : undefined
-              }
-              onSimulateRejection={
-                order.deliveryState === 'PendingApproval' ? handleSimulateRejection : undefined
-              }
+              onAcceptQuote={order.deliveryState === 'Quoted' ? handleAcceptQuote : undefined}
               onViewMaterialInvoice={user ? handleViewInvoice : undefined}
               onViewDeliveryInvoice={user ? handleViewInvoice : undefined}
               onConfirmReceipt={handleConfirmReceipt}

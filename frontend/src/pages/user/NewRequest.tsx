@@ -14,7 +14,6 @@ export default function NewRequest() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
-          {/* Request a Service */}
           <div
             onClick={() => navigate('/user/request/service')}
             className="card-elevated group cursor-pointer p-6 transition-all hover:border-primary/40 sm:p-8"
@@ -24,7 +23,7 @@ export default function NewRequest() {
             </div>
             <h2 className="mb-2 text-lg font-semibold sm:text-xl">Request a Service</h2>
             <p className="mb-6 text-sm text-muted-foreground sm:text-base">
-              Hire a verified professional for plumbing, tiling, construction, moving, and more.
+              Hire a verified professional for plumbing, tiling, delivery, moving, construction, and more.
             </p>
             <div className="flex items-center gap-2 text-primary font-medium text-sm group-hover:gap-3 transition-all">
               Continue
@@ -32,7 +31,6 @@ export default function NewRequest() {
             </div>
           </div>
 
-          {/* Order Materials */}
           <div
             onClick={() => navigate('/user/order-materials')}
             className="card-elevated group cursor-pointer p-6 transition-all hover:border-accent/40 sm:p-8"

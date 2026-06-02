@@ -1,6 +1,6 @@
-import type { JobLocation, Measurements } from '@/types';
+import type { DeliveryGeoPoint, DeliveryRequestItem, JobLocation, Measurements } from '@/types';
 
-const KEY = 'elofix_service_request_draft_v1';
+const KEY = 'elofix_service_request_draft_v2';
 
 export type ServiceRequestDraft = {
   currentStep: number;
@@ -11,12 +11,18 @@ export type ServiceRequestDraft = {
   measurements: Measurements;
   useMeasurements: boolean;
   selectedProvider: string;
+  /** Courier flow (delivery / moving categories) */
+  collection?: DeliveryGeoPoint;
+  destination?: DeliveryGeoPoint;
+  deliveryItems?: DeliveryRequestItem[];
+  selectedCourier?: string;
+  lockDestination?: boolean;
   savedAt: number;
 };
 
 export function readServiceRequestDraft(): ServiceRequestDraft | null {
   try {
-    const raw = sessionStorage.getItem(KEY);
+    const raw = sessionStorage.getItem(KEY) || sessionStorage.getItem('elofix_service_request_draft_v1');
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ServiceRequestDraft>;
     if (typeof parsed.currentStep !== 'number' || parsed.currentStep < 1 || parsed.currentStep > 4) {
@@ -34,6 +40,13 @@ export function readServiceRequestDraft(): ServiceRequestDraft | null {
           : { source: 'MANUAL', values: {} },
       useMeasurements: Boolean(parsed.useMeasurements),
       selectedProvider: typeof parsed.selectedProvider === 'string' ? parsed.selectedProvider : '',
+      collection:
+        parsed.collection && typeof parsed.collection === 'object' ? parsed.collection : undefined,
+      destination:
+        parsed.destination && typeof parsed.destination === 'object' ? parsed.destination : undefined,
+      deliveryItems: Array.isArray(parsed.deliveryItems) ? parsed.deliveryItems : undefined,
+      selectedCourier: typeof parsed.selectedCourier === 'string' ? parsed.selectedCourier : undefined,
+      lockDestination: Boolean(parsed.lockDestination),
       savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
     };
   } catch {
@@ -52,6 +65,7 @@ export function writeServiceRequestDraft(draft: Omit<ServiceRequestDraft, 'saved
 export function clearServiceRequestDraft(): void {
   try {
     sessionStorage.removeItem(KEY);
+    sessionStorage.removeItem('elofix_service_request_draft_v1');
   } catch {
     /* ignore */
   }

@@ -5,6 +5,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UNIFIED_TIMELINE_STEPS } from '@/lib/jobStatusMapping';
+
+const DEFAULT_STEPS = UNIFIED_TIMELINE_STEPS;
 import type { UserTimelineViewState } from '@/lib/userJobTimeline';
 import type { ProviderJobTimelineViewState } from '@/lib/providerJobTimeline';
 
@@ -12,6 +14,8 @@ export interface JobWorkflowTimelineProps {
   job: Job;
   view: UserTimelineViewState | ProviderJobTimelineViewState;
   variant: 'user' | 'provider';
+  /** Override default service timeline labels (e.g. courier delivery flow). */
+  steps?: readonly string[];
   getStepInsight: (stepIndex: number) => { stepLabel: string; nextAction: string };
   cancellationReasonText: string;
   lockedTimelineStep: number | null;
@@ -24,6 +28,7 @@ export function JobWorkflowTimeline({
   job,
   view,
   variant,
+  steps = DEFAULT_STEPS,
   getStepInsight,
   cancellationReasonText,
   lockedTimelineStep,
@@ -42,7 +47,7 @@ export function JobWorkflowTimeline({
     <Card>
       <CardContent className="pt-6">
         <div className="flex items-center justify-between overflow-x-auto pb-2">
-          {UNIFIED_TIMELINE_STEPS.map((label, index, arr) => {
+          {steps.map((label, index, arr) => {
             const insight = getStepInsight(index);
             const isTerminalStep = isTerminal && index === pinIndex;
             const isFutureTerminalStep = isTerminal && index > pinIndex;

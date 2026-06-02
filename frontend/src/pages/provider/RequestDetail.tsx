@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { queryKeys } from '@/lib/queryKeys';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,7 +12,9 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { getJobById, acceptJob, addChatMessage } from '@/lib/api/jobs';
 import { rejectJobByProvider } from '@/lib/api/jobs';
-import { Job } from '@/types';
+import { getDeliveryRequestByJobId } from '@/lib/api/deliveryRequests';
+import { ProviderCourierQuotePanel } from '@/components/delivery/ProviderCourierQuotePanel';
+import { Job, DeliveryRequestRecord, DeliveryGeoPoint } from '@/types';
 import {
   ArrowLeft, Check, X, MapPin, Calendar, User,
   MessageSquare, Send, Package, XCircle,
@@ -38,9 +41,11 @@ export default function ProviderRequestDetail() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const { isProfileComplete } = useProviderStatus();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [job, setJob] = useState<Job | null>(null);
+  const [deliveryRequest, setDeliveryRequest] = useState<DeliveryRequestRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [chatMessage, setChatMessage] = useState('');
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -54,6 +59,16 @@ export default function ProviderRequestDetail() {
     try {
       const data = await getJobById(id);
       setJob(data);
+      if (data?.courierFlow || data?.deliveryRequestId) {
+        try {
+          const dr = await getDeliveryRequestByJobId(id);
+          setDeliveryRequest(dr);
+        } catch {
+          setDeliveryRequest(null);
+        }
+      } else {
+        setDeliveryRequest(null);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -83,8 +98,13 @@ export default function ProviderRequestDetail() {
       await acceptJob(job.id);
       await queryClient.refetchQueries({ queryKey: queryKeys.jobs.detail(job.id) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
-      toast({ title: 'Job accepted!', description: 'The job is now assigned to you.' });
-      navigate('/provider/jobs');
+      toast({
+        title: 'Request accepted',
+        description: job.courierFlow
+          ? 'Submit your delivery quote from the job page.'
+          : 'The job is now assigned to you.',
+      });
+      navigate(job.courierFlow ? `/provider/jobs/${job.id}` : '/provider/jobs');
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to accept job.', variant: 'destructive' });
     } finally {
@@ -191,8 +211,33 @@ export default function ProviderRequestDetail() {
             </div>
           )}
 
+          {/* Courier route */}
+          {job.courierFlow && (
+            <div className="space-y-3 p-3 bg-muted/50 rounded-lg text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery route</p>
+              {(() => {
+                const collection = (job.measurements as { collectionPoint?: DeliveryGeoPoint })?.collectionPoint
+                  || (job.location as { collection?: DeliveryGeoPoint })?.collection;
+                const destination = (job.measurements as { destinationPoint?: DeliveryGeoPoint })?.destinationPoint
+                  || job.location;
+                return (
+                  <>
+                    <div>
+                      <span className="font-medium text-primary">Collect: </span>
+                      {collection?.address || '—'}
+                    </div>
+                    <div>
+                      <span className="font-medium text-accent">Deliver: </span>
+                      {destination?.address || '—'}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Location */}
-          {job.location && (
+          {!job.courierFlow && job.location && (
             <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg">
               <MapPin className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
               <div>
@@ -208,11 +253,21 @@ export default function ProviderRequestDetail() {
           )}
 
           {/* Measurements / Requirements */}
-          {(Object.keys(job.measurements?.values || {}).length > 0 || job.measurements?.movingItems?.length || job.measurements?.plumbingIssue) && (
+          {(job.measurements?.deliveryItems?.length ||
+            Object.keys(job.measurements?.values || {}).length > 0 ||
+            job.measurements?.movingItems?.length ||
+            job.measurements?.plumbingIssue) && (
             <div className="p-3 bg-muted/50 rounded-lg">
               <p className="text-xs font-medium text-muted-foreground mb-2">REQUIREMENTS</p>
               <div className="flex flex-wrap gap-4 text-sm">
-                {job.measurements.movingItems && job.measurements.movingItems.length > 0 ? (
+                {job.measurements.deliveryItems && job.measurements.deliveryItems.length > 0 ? (
+                  job.measurements.deliveryItems.map((item, idx) => (
+                    <span key={`${item.name}-${idx}`}>
+                      {item.name} × {item.qty}
+                      {item.weightKg != null ? ` (${item.weightKg} kg)` : ''}
+                    </span>
+                  ))
+                ) : job.measurements.movingItems && job.measurements.movingItems.length > 0 ? (
                   job.measurements.movingItems.map(item => (
                     <span key={item.id}>{item.name} × {item.qty}</span>
                   ))
@@ -232,6 +287,13 @@ export default function ProviderRequestDetail() {
             </div>
           )}
         </div>
+
+        {job.courierFlow && deliveryRequest && job.status !== 'PENDING' && (
+          <ProviderCourierQuotePanel
+            deliveryRequest={deliveryRequest}
+            onUpdated={(updated) => setDeliveryRequest(updated)}
+          />
+        )}
 
         {/* Rejection Status - when REJECTED */}
         {job.status === 'REJECTED' && (
@@ -332,7 +394,13 @@ export default function ProviderRequestDetail() {
           </div>
         )}
 
-        {/* Action Buttons - only for PENDING */}
+        {job.courierFlow && job.status === 'PENDING' && !deliveryRequest && (
+          <p className="text-sm text-muted-foreground">
+            Loading delivery details… If this persists, refresh the page.
+          </p>
+        )}
+
+        {/* Accept / decline — all pending requests including delivery & moving */}
         {job.status === 'PENDING' && (
           <div className="sticky bottom-4 flex flex-col gap-3 sm:flex-row">
             <Button className="h-11 flex-1 whitespace-nowrap sm:h-12" onClick={handleAccept} disabled={isMutating || !isProfileComplete}>

@@ -273,6 +273,86 @@ async function createActiveTrackingSession(orderId, options = {}) {
   return { trackingId, accessToken };
 }
 
+async function deactivateSessionsForDeliveryRequest(deliveryRequestId, reason = "fulfillment_terminal") {
+  const did = String(deliveryRequestId);
+  try {
+    await prisma.trackingSession.updateMany({
+      where: { deliveryRequestId: did, isActive: true },
+      data: { isActive: false },
+    });
+    trackingLog("tracking_sessions_deactivated", { deliveryRequestId: did, reason });
+  } catch (e) {
+    console.error("deactivateSessionsForDeliveryRequest", e);
+  }
+}
+
+async function createActiveTrackingSessionForDeliveryRequest(deliveryRequestId, options = {}) {
+  const did = String(deliveryRequestId);
+  const trackingSource = options.trackingSource === "provider" ? "provider" : "supplier";
+  await prisma.trackingSession.updateMany({
+    where: { deliveryRequestId: did },
+    data: { isActive: false },
+  });
+  const trackingId = randomUUID();
+  const accessToken = randomUUID();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await prisma.trackingSession.create({
+    data: {
+      deliveryRequestId: did,
+      trackingId,
+      accessToken,
+      expiresAt,
+      isActive: true,
+      currentTrackingSource: trackingSource,
+    },
+  });
+  trackingLog("tracking_started", { deliveryRequestId: did, trackingSource, trackingId });
+  return { trackingId, accessToken };
+}
+
+async function persistAndEmitDeliveryRequestLocation(deliveryRequestId, lat, lng, options = {}) {
+  const source = options.source === "provider" ? "provider" : "supplier";
+  const did = String(deliveryRequestId);
+  if (!isValidCoord(lat, lng)) throw new AppError("Invalid coordinates", 400);
+  const la = Number(lat);
+  const lo = Number(lng);
+  let session = await prisma.trackingSession.findFirst({
+    where: { deliveryRequestId: did, isActive: true },
+  });
+  if (!session && source === "provider") {
+    await createActiveTrackingSessionForDeliveryRequest(did, { trackingSource: "provider" });
+    session = await prisma.trackingSession.findFirst({
+      where: { deliveryRequestId: did, isActive: true },
+    });
+  }
+  if (session) {
+    await prisma.trackingSession.update({
+      where: { id: session.id },
+      data: { lastLat: la, lastLng: lo, lastPingAt: new Date() },
+    });
+  }
+  const row = await prisma.deliveryRequest.findUnique({ where: { id: did } });
+  if (row) {
+    const payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+    payload.driverLocation = { lat: la, lng: lo, updatedAt: new Date().toISOString() };
+    await prisma.deliveryRequest.update({ where: { id: did }, data: { payload } });
+  }
+  try {
+    if (global.io) {
+      global.io.to(did).emit("order:location:update", { orderId: did, lat: la, lng: lo });
+    }
+  } catch (e) {
+    console.error("emitDeliveryRequestLocation", e);
+  }
+  return { skipped: false };
+}
+
+async function canUserPostDeliveryRequestLocation(userId, deliveryRequestId) {
+  const row = await prisma.deliveryRequest.findUnique({ where: { id: String(deliveryRequestId) } });
+  if (!row) return false;
+  return String(row.courierId || "") === String(userId || "");
+}
+
 async function getPublicTrackingView(trackingId, accessToken) {
   await expireOldSessions();
   const session = await prisma.trackingSession.findFirst({
@@ -322,6 +402,38 @@ async function getPublicTrackingView(trackingId, accessToken) {
   };
 }
 
+async function getLatestLocationForDeliveryRequest(deliveryRequestId) {
+  const did = String(deliveryRequestId);
+  const session = await prisma.trackingSession.findFirst({
+    where: { deliveryRequestId: did, isActive: true },
+  });
+  const row = await prisma.deliveryRequest.findUnique({ where: { id: did } });
+  const pay = row?.payload && typeof row.payload === "object" ? row.payload : {};
+  const dl = pay.driverLocation;
+  let lastLat = null;
+  let lastLng = null;
+  let lastPingAt = null;
+  if (session?.lastLat != null && session?.lastLng != null) {
+    lastLat = Number(session.lastLat);
+    lastLng = Number(session.lastLng);
+    lastPingAt = session.lastPingAt;
+  }
+  if (dl && Number.isFinite(Number(dl.lat)) && Number.isFinite(Number(dl.lng))) {
+    const dlTime = dl.updatedAt ? new Date(dl.updatedAt).getTime() : 0;
+    const sessTime = lastPingAt ? new Date(lastPingAt).getTime() : 0;
+    if (!lastPingAt || dlTime >= sessTime) {
+      lastLat = Number(dl.lat);
+      lastLng = Number(dl.lng);
+      lastPingAt = dl.updatedAt ? new Date(dl.updatedAt) : lastPingAt;
+    }
+  }
+  return {
+    lastLat,
+    lastLng,
+    lastPingAt: lastPingAt ? (lastPingAt instanceof Date ? lastPingAt.toISOString() : String(lastPingAt)) : null,
+  };
+}
+
 async function getLatestLocationForOrder(orderId, userId, role) {
   const ok = await canUserAccessOrderRoom(userId, role, orderId);
   if (!ok) {
@@ -329,6 +441,10 @@ async function getLatestLocationForOrder(orderId, userId, role) {
   }
   await expireOldSessions();
   const sid = String(orderId);
+  const dr = await prisma.deliveryRequest.findUnique({ where: { id: sid } });
+  if (dr) {
+    return getLatestLocationForDeliveryRequest(sid);
+  }
   const session = await prisma.trackingSession.findFirst({
     where: { orderId: sid, isActive: true },
   });
@@ -363,6 +479,19 @@ async function getLatestLocationForOrder(orderId, userId, role) {
   };
 }
 
+async function canUserAccessDeliveryRequestRoom(userId, role, deliveryRequestId) {
+  const uid = String(userId || "");
+  const did = String(deliveryRequestId || "");
+  if (!uid || !did) return false;
+  const r = String(role || "").toUpperCase();
+  if (r === "ADMIN") return true;
+  const row = await prisma.deliveryRequest.findUnique({ where: { id: did } });
+  if (!row) return false;
+  if (r === "CUSTOMER" || r === "USER") return String(row.customerId) === uid;
+  if (r === "PROVIDER") return String(row.courierId || "") === uid;
+  return false;
+}
+
 async function canUserAccessOrderRoom(userId, role, orderId) {
   const uid = String(userId || "");
   const oid = String(orderId || "");
@@ -370,6 +499,9 @@ async function canUserAccessOrderRoom(userId, role, orderId) {
   const r = String(role || "").toUpperCase();
 
   if (r === "ADMIN") return true;
+
+  const drOk = await canUserAccessDeliveryRequestRoom(userId, role, oid);
+  if (drOk) return true;
 
   const row = await prisma.materialOrder.findUnique({
     where: { id: oid },
@@ -427,8 +559,13 @@ async function canUserPostDriverLocation(userId, role, orderId) {
   const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
   const deliveryType = String(payload.deliveryType || "SELF").toUpperCase();
 
-  if (r === "PROVIDER" && deliveryType === "DELIVERY_PROVIDER" && row.job && String(row.job.providerId || "") === uid) {
-    return true;
+  if (r === "PROVIDER" && deliveryType === "DELIVERY_PROVIDER") {
+    const batch =
+      payload.materialBatch && typeof payload.materialBatch === "object" ? payload.materialBatch : {};
+    const assignedCourierId = String(
+      batch.assignedDriverId || payload.deliveryProviderId || payload.delivery?.providerId || ""
+    ).trim();
+    if (assignedCourierId && assignedCourierId === uid) return true;
   }
 
   if (r === "SUPPLIER") {
@@ -469,6 +606,10 @@ module.exports = {
   expireOldSessions,
   canUserAccessOrderRoom,
   canUserPostDriverLocation,
+  createActiveTrackingSessionForDeliveryRequest,
+  deactivateSessionsForDeliveryRequest,
+  persistAndEmitDeliveryRequestLocation,
+  canUserPostDeliveryRequestLocation,
   isValidCoord,
   haversineMeters,
   trackingLog,

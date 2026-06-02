@@ -66,7 +66,7 @@ export function DeliveryOptionChooser({
         onSelect({
           type: 'PROVIDER',
           status: 'PendingApproval',
-          fee: provider.baseRate,
+          fee: 0,
           providerId: provider.id,
         });
       }
@@ -78,11 +78,11 @@ export function DeliveryOptionChooser({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
           <DialogTitle>Choose Delivery Option for {storeName}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 py-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-2">
           <RadioGroup value={selectedType} onValueChange={v => setSelectedType(v as 'SELF' | 'STORE' | 'PROVIDER')}>
             <div className="p-3 border rounded-lg">
               <div className="flex items-center space-x-3">
@@ -130,7 +130,8 @@ export function DeliveryOptionChooser({
               {deliveryProvidersError && (
                 <p className="text-xs text-destructive">{deliveryProvidersError}</p>
               )}
-              <RadioGroup value={selectedProviderId} onValueChange={setSelectedProviderId}>
+              <div className="max-h-[min(40vh,280px)] overflow-y-auto rounded-md border border-border/60 pr-1">
+              <RadioGroup value={selectedProviderId} onValueChange={setSelectedProviderId} className="space-y-2 p-2">
                 {deliveryProviders.map(provider => (
                   <div
                     key={provider.id}
@@ -151,10 +152,11 @@ export function DeliveryOptionChooser({
                   </div>
                 ))}
               </RadioGroup>
+              </div>
             </div>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-border px-6 py-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -164,7 +166,7 @@ export function DeliveryOptionChooser({
             className="btn-accent"
           >
             <Truck className="h-3 w-3 mr-1" />
-            Save Delivery Option
+            {selectedType === 'PROVIDER' ? 'Request provider' : 'Save Delivery Option'}
           </Button>
         </DialogFooter>
       </DialogContent>

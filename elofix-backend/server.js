@@ -127,14 +127,29 @@ io.on("connection", (socket) => {
       const lat = data?.lat;
       const lng = data?.lng;
       if (!socket.userId || !orderId) return;
-      const ok = await trackingService.canUserPostDriverLocation(socket.userId, socket.userRole, orderId);
-      if (!ok) return;
       const role = String(socket.userRole || "").toUpperCase();
-      let source = null;
-      if (role === "PROVIDER") source = "provider";
-      else if (role === "SUPPLIER" || role === "BRANCH_STAFF") source = "supplier";
-      else return;
-      await trackingService.persistAndEmitDriverLocation(orderId, lat, lng, { source });
+      const canMaterial = await trackingService.canUserPostDriverLocation(
+        socket.userId,
+        socket.userRole,
+        orderId
+      );
+      if (canMaterial) {
+        let source = null;
+        if (role === "PROVIDER") source = "provider";
+        else if (role === "SUPPLIER" || role === "BRANCH_STAFF") source = "supplier";
+        else return;
+        await trackingService.persistAndEmitDriverLocation(orderId, lat, lng, { source });
+        return;
+      }
+      const canDelivery = await trackingService.canUserPostDeliveryRequestLocation(
+        socket.userId,
+        orderId
+      );
+      if (canDelivery) {
+        await trackingService.persistAndEmitDeliveryRequestLocation(orderId, lat, lng, {
+          source: "provider",
+        });
+      }
     } catch (e) {
       console.error("update_location", e);
     }

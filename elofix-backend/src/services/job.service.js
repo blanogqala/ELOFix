@@ -53,6 +53,30 @@ function jobSiteAddressFromRow(job) {
   return "";
 }
 
+function jobSiteLocationFromRow(job) {
+  const loc = job.locationDetails;
+  const address = jobSiteAddressFromRow(job);
+  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
+    const coords =
+      loc.coordinates &&
+      typeof loc.coordinates === "object" &&
+      Number.isFinite(Number(loc.coordinates.lat)) &&
+      Number.isFinite(Number(loc.coordinates.lng))
+        ? { lat: Number(loc.coordinates.lat), lng: Number(loc.coordinates.lng) }
+        : Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))
+          ? { lat: Number(loc.lat), lng: Number(loc.lng) }
+          : undefined;
+    return {
+      address,
+      city: loc.city ? String(loc.city) : undefined,
+      area: loc.area ? String(loc.area) : undefined,
+      suburb: loc.suburb ? String(loc.suburb) : undefined,
+      coordinates: coords,
+    };
+  }
+  return { address };
+}
+
 function normalizeValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -261,11 +285,15 @@ function parseLocation(location) {
   };
 }
 
-function computeJobMatchScore(job, providerSkillsSet, providerLocation, providerRating) {
+function computeJobMatchScore(job, providerSkillsSet, providerLocation, providerRating, providerUserId) {
   let score = providerRating;
 
   const category = normalizeValue(job.category);
   const location = normalizeValue(job.location);
+
+  if (providerUserId && job.providerId && String(job.providerId) === String(providerUserId)) {
+    score += 100;
+  }
 
   if (category && providerSkillsSet.has(category)) {
     score += 5;
@@ -377,6 +405,13 @@ async function createJob(userId, body) {
     ...(measurements && typeof measurements === "object" && !Array.isArray(measurements)
       ? {
           ...(Array.isArray(measurements.movingItems) ? { movingItems: measurements.movingItems } : {}),
+          ...(Array.isArray(measurements.deliveryItems) ? { deliveryItems: measurements.deliveryItems } : {}),
+          ...(measurements.collectionPoint && typeof measurements.collectionPoint === "object"
+            ? { collectionPoint: measurements.collectionPoint }
+            : {}),
+          ...(measurements.destinationPoint && typeof measurements.destinationPoint === "object"
+            ? { destinationPoint: measurements.destinationPoint }
+            : {}),
           ...(plumbingIssuePayload && typeof plumbingIssuePayload === "object"
             ? { plumbingIssue: plumbingIssuePayload }
             : {}),
@@ -387,6 +422,13 @@ async function createJob(userId, body) {
 
   const { location: normalizedLocation, locationDetails } = parseLocation(location);
   const providerUserId = await resolveProviderUserId(selectedProviderId);
+  const categorySettings = await resolveCategorySettings(normalizedCategory);
+  if (categorySettings.requiresInspection === false && !hasMeaningfulMeasurements(normalizedMeasurements)) {
+    throw new AppError(
+      "Detailed requirements are required for this category before submitting the request.",
+      400
+    );
+  }
 
   let priceNum = 0;
   if (price !== undefined && price !== null && price !== "") {
@@ -481,7 +523,8 @@ async function getMatchedJobsForProvider(userId) {
         job,
         providerSkillsSet,
         providerLocation,
-        providerRating
+        providerRating,
+        provider.userId
       ),
     }))
     .sort((a, b) => {
@@ -720,20 +763,24 @@ function hasMeaningfulMeasurements(measurements) {
   return Boolean(hasValues || hasMovingItems || hasIssue || hasCameraAssist);
 }
 
-async function resolveCategoryStep3(slug) {
+async function resolveCategorySettings(slug) {
   let requiresInspection = true;
+  let requiresMaterials = false;
   let step3Type = "measurements";
   const key = String(slug || "").trim();
   if (!key) {
-    return { requiresInspection, step3Type };
+    return { requiresInspection, requiresMaterials, step3Type };
   }
   try {
     const cat = await prisma.category.findUnique({
       where: { id: key },
-      select: { requiresInspection: true, step3Type: true },
+      select: { requiresInspection: true, requiresMaterials: true, step3Type: true },
     });
     if (cat && typeof cat.requiresInspection === "boolean") {
       requiresInspection = cat.requiresInspection;
+    }
+    if (cat && typeof cat.requiresMaterials === "boolean") {
+      requiresMaterials = cat.requiresMaterials;
     }
     if (cat && cat.step3Type) {
       step3Type = String(cat.step3Type);
@@ -741,12 +788,20 @@ async function resolveCategoryStep3(slug) {
   } catch {
     // keep defaults
   }
-  return { requiresInspection, step3Type };
+  return { requiresInspection, requiresMaterials, step3Type };
+}
+
+async function assertJobCategoryAllowsMaterials(job) {
+  const slug = String(job?.category || "").trim();
+  const { requiresMaterials } = await resolveCategorySettings(slug);
+  if (requiresMaterials === false) {
+    throw new AppError("This category does not allow materials.", 400);
+  }
 }
 
 async function assertSpecificationsReadyForPricing(job, meta) {
   const slug = String(job?.category || "").trim();
-  const { step3Type } = await resolveCategoryStep3(slug);
+  const { step3Type } = await resolveCategorySettings(slug);
   const providerAdjusted = meta?.providerAdjustedRequirements?.measurements;
   const mergedMeasurements = {
     ...(job?.measurements && typeof job.measurements === "object" ? job.measurements : {}),
@@ -776,7 +831,8 @@ async function assertSpecificationsReadyForPricing(job, meta) {
 async function finalizeJob(job, meta) {
   const base = enrichJob(job, meta);
   const slug = String(base.category || "").trim();
-  const { requiresInspection, step3Type: categoryStep3Type } = await resolveCategoryStep3(slug);
+  const { requiresInspection, requiresMaterials, step3Type: categoryStep3Type } =
+    await resolveCategorySettings(slug);
   let jobMaterialOrders = [];
   if (job?.id) {
     try {
@@ -786,7 +842,21 @@ async function finalizeJob(job, meta) {
       console.error("getJobMaterialOrdersForJob", e);
     }
   }
-  return { ...base, requiresInspection, categoryStep3Type, jobMaterialOrders };
+  const deliveryRequestId =
+    meta && typeof meta === "object" && meta.deliveryRequestId
+      ? String(meta.deliveryRequestId)
+      : null;
+  const courierFlow = Boolean(meta && typeof meta === "object" && meta.courierFlow);
+
+  return {
+    ...base,
+    requiresInspection,
+    requiresMaterials,
+    categoryStep3Type,
+    jobMaterialOrders,
+    deliveryRequestId,
+    courierFlow,
+  };
 }
 
 async function updateJobStatus(jobId, status) {
@@ -838,6 +908,7 @@ async function deleteJob(jobId, actorUserId, actorRole) {
 async function addMaterials(jobId, newMaterials = []) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const existing = Array.isArray(job.materials) ? job.materials : [];
   const next = [...existing, ...newMaterials];
   const updated = await prisma.job.update({
@@ -852,6 +923,7 @@ async function addMaterials(jobId, newMaterials = []) {
 async function removeMaterial(jobId, productId, supplierId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const existing = Array.isArray(job.materials) ? job.materials : [];
   const next = existing.filter(
     (m) => !(String(m.productId) === String(productId) && String(m.supplierId) === String(supplierId))
@@ -1139,6 +1211,9 @@ async function submitMaterials(jobId, materials, providerUserId) {
   if (!effectiveProviderId) {
     throw new AppError("Provider context is required", 400);
   }
+  const jobForCategory = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!jobForCategory) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(jobForCategory);
   await materialRequestService.finalizeProviderMaterialsSubmit(
     jobId,
     materials,
@@ -1164,6 +1239,15 @@ async function rejectJobByProvider(jobId, reason, details, rejectingProviderUser
       ? { rejectedByProviderUserId: String(rejectingProviderUserId) }
       : {}),
   }));
+  try {
+    const deliveryRequestService = require("./deliveryRequest.service");
+    await deliveryRequestService.rejectDeliveryRequestsForJob(
+      jobId,
+      rejectingProviderUserId || job.providerId
+    );
+  } catch (e) {
+    console.error("rejectDeliveryRequestsForJob", e);
+  }
   return await finalizeJob(job, meta);
 }
 
@@ -1188,9 +1272,20 @@ async function deleteRejectedRequestFromProviderView(jobId, actorUserId) {
   return { id: jobId };
 }
 
-async function updateProviderRequirements(jobId, updates) {
+async function updateProviderRequirements(jobId, updates, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  const role = String(actorRole || "").toUpperCase();
+  if (role !== "ADMIN" && role !== "PROVIDER") {
+    throw new AppError("Only providers can update requirements.", 403);
+  }
+  if (role === "PROVIDER" && String(job.providerId || "") !== String(actorUserId || "")) {
+    throw new AppError("Only the assigned provider can update requirements.", 403);
+  }
+  const { requiresInspection } = await resolveCategorySettings(job.category);
+  if (requiresInspection === false) {
+    throw new AppError("Provider requirement editing is disabled for this category.", 400);
+  }
   const payload = updates && typeof updates === "object" ? updates : {};
   const meta = await mutateJobMeta(jobId, (m) => {
     const prev =
@@ -1215,6 +1310,7 @@ async function updateProviderRequirements(jobId, updates) {
 async function addUserMaterialSuggestion(jobId, suggested, message) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const suggestion = {
     id: randomUUID(),
     productId: suggested.productId,
@@ -1234,6 +1330,7 @@ async function addUserMaterialSuggestion(jobId, suggested, message) {
 async function acceptUserSuggestion(jobId, suggestionId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => {
     const suggestions = m.userMaterialSuggestions.map((s) =>
       s.id === suggestionId ? { ...s, status: "accepted" } : s
@@ -1287,6 +1384,7 @@ async function acceptUserSuggestion(jobId, suggestionId) {
 async function rejectUserSuggestion(jobId, suggestionId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
     userMaterialSuggestions: m.userMaterialSuggestions.map((s) =>
@@ -1299,6 +1397,7 @@ async function rejectUserSuggestion(jobId, suggestionId) {
 async function addProviderMaterialSuggestion(jobId, suggested, message) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const suggestion = {
     id: randomUUID(),
     productId: suggested.productId,
@@ -1318,6 +1417,7 @@ async function addProviderMaterialSuggestion(jobId, suggested, message) {
 async function acceptProviderSuggestion(jobId, suggestionId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
     providerSuggestions: m.providerSuggestions.map((s) =>
@@ -1330,6 +1430,7 @@ async function acceptProviderSuggestion(jobId, suggestionId) {
 async function rejectProviderSuggestion(jobId, suggestionId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
     providerSuggestions: m.providerSuggestions.map((s) =>
@@ -1378,10 +1479,17 @@ async function acceptProposedPrice(jobId) {
   return enriched;
 }
 
-async function cancelJob(jobId, reason, details) {
+async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   const preMeta = await getJobMeta(jobId);
+  const cancellationPolicy = require("../utils/jobCancellationPolicy.util");
+  const policy = await cancellationPolicy.resolveJobCancellationPolicy(
+    job,
+    preMeta,
+    actorUserId,
+    actorRole
+  );
   const originalPaymentRef = preMeta?.servicePayment?.paymentRef || preMeta?.servicePayment?.reference || null;
   const providerRow = job.providerId
     ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
@@ -1396,6 +1504,7 @@ async function cancelJob(jobId, reason, details) {
       const { refundAmount: rAmt, refundKind } = await paymentService.runCancelJobFinancialsInTransaction(tx, {
         job: j,
         providerProfileId: providerRow?.id,
+        refundOverride: policy.refundAmount,
       });
       const u = await tx.job.update({
         where: { id: jobId },
@@ -1408,18 +1517,30 @@ async function cancelJob(jobId, reason, details) {
         cancellationReason: reason || null,
         cancellationDetails: details || null,
         cancelledAt: new Date().toISOString(),
+        cancelledBy: policy.cancelledBy,
+        cancellationProviderEnRoute: policy.providerEnRoute,
         ...(rAmt > 0
           ? {
               refund: {
                 amount: rAmt,
                 reason: "cancel",
                 at: new Date().toISOString(),
-                kind: String(refundKind || ""),
+                kind: String(refundKind || policy.refundKind || ""),
                 status: "recorded",
                 ...(originalPaymentRef ? { originalPaymentRef: String(originalPaymentRef) } : {}),
               },
             }
-          : {}),
+          : policy.customerForfeits
+            ? {
+                refund: {
+                  amount: 0,
+                  reason: "cancel_forfeit",
+                  at: new Date().toISOString(),
+                  kind: String(policy.refundKind || "forfeit_customer_en_route"),
+                  status: "forfeited",
+                },
+              }
+            : {}),
       }));
       return { updated: u, meta: meta0, refundAmount: rAmt };
     },
@@ -1429,7 +1550,20 @@ async function cancelJob(jobId, reason, details) {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
   );
-  return { job: await finalizeJob(updated, meta), refundAmount: Number(refundAmount) || 0 };
+  try {
+    const escrowSettlement = require("./payments/escrowSettlement.service");
+    await escrowSettlement.markLaborIntentRefunded(jobId);
+  } catch (e) {
+    console.error("markLaborIntentRefunded", e);
+  }
+  return {
+    job: await finalizeJob(updated, meta),
+    refundAmount: Number(refundAmount) || 0,
+    cancelledBy: policy.cancelledBy,
+    providerEnRoute: policy.providerEnRoute,
+    customerForfeits: policy.customerForfeits,
+    refundKind: policy.refundKind,
+  };
 }
 
 async function confirmJobCompletion(jobId, rating, review) {
@@ -1499,6 +1633,8 @@ async function confirmJobCompletion(jobId, rating, review) {
             providerProfileId: providerRow.id,
             jobId,
           });
+          const escrowSettlement = require("./payments/escrowSettlement.service");
+          await escrowSettlement.markLaborEscrowFullyReleased(jobId);
         }
       }
       return { updated: updated0, meta: meta0 };
@@ -1564,11 +1700,26 @@ function ensureStoreOrder(meta, storeId, fallback) {
 async function setStoreDeliveryOption(jobId, storeId, params) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
+  const wantOrderId = params.orderId ? String(params.orderId).trim() : "";
+  let resolvedStoreOrderId = wantOrderId || "";
+  let courierUserId = null;
+
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
       "Store";
-    const { order } = ensureStoreOrder(m, storeId, { storeName: fallbackStoreName });
+    let order;
+    if (wantOrderId && Array.isArray(m.storeOrders)) {
+      const idx = m.storeOrders.findIndex(
+        (o) => String(o.orderId) === wantOrderId && String(o.storeId) === String(storeId)
+      );
+      if (idx >= 0) order = m.storeOrders[idx];
+    }
+    if (!order) {
+      const found = ensureStoreOrder(m, storeId, { storeName: fallbackStoreName });
+      order = found.order;
+    }
     order.deliveryType = params.deliveryType;
     order.deliveryFee = coerceNumber(params.deliveryFee);
     order.deliveryProviderId = params.deliveryProviderId || undefined;
@@ -1580,13 +1731,61 @@ async function setStoreDeliveryOption(jobId, storeId, params) {
       fee: order.deliveryFee,
     };
     order.payment = order.payment || { materialsPaid: false, deliveryPaid: false };
+    resolvedStoreOrderId = String(order.orderId || resolvedStoreOrderId || "");
+    if (params.deliveryType === "PROVIDER" && params.deliveryProviderId) {
+      courierUserId = String(params.deliveryProviderId);
+    }
     return m;
   });
   const enriched = await finalizeJob(job, meta);
   if (job.customerId) {
     await notificationEvents.notifyDeliveryUpdate(job.customerId, jobId, job.title, "Delivery option updated");
   }
+  if (courierUserId && resolvedStoreOrderId) {
+    try {
+      const materialOrderService = require("./materialOrder.service");
+      const materialsLines = Array.isArray(job.materials)
+        ? job.materials.filter((m) => String(m.supplierId) === String(storeId) || String(m.branchId) === String(storeId))
+        : [];
+      const storeOrder =
+        Array.isArray(meta.storeOrders) &&
+        meta.storeOrders.find((o) => String(o.orderId) === String(resolvedStoreOrderId));
+      const linesFromOrder =
+        storeOrder && Array.isArray(storeOrder.items)
+          ? storeOrder.items.map((item) => ({
+              supplierId: String(storeId),
+              supplierName: storeOrder.storeName || fallbackStoreNameFromJob(job, storeId),
+              productId: item.productId,
+              name: item.name,
+              qty: item.qty,
+              unitPrice: item.unitPrice,
+              qualityTier: item.qualityTier,
+              imageUrl: item.imageUrl,
+            }))
+          : materialsLines;
+      await materialOrderService.syncJobStoreCourierDeliveryRequest({
+        jobId,
+        jobStoreOrderId: resolvedStoreOrderId,
+        supplierBranchId: storeId,
+        customerUserId: job.customerId,
+        jobProviderUserId: job.providerId,
+        courierUserId,
+        materialsLines: linesFromOrder,
+        jobSiteAddress: jobSiteAddressFromRow(job),
+        jobSiteLocation: jobSiteLocationFromRow(job),
+      });
+    } catch (e) {
+      console.error("syncJobStoreCourierDeliveryRequest", e);
+    }
+  }
   return enriched;
+}
+
+function fallbackStoreNameFromJob(job, storeId) {
+  const fromMaterials = Array.isArray(job.materials)
+    ? job.materials.find((x) => String(x.supplierId) === String(storeId) || String(x.branchId) === String(storeId))
+    : null;
+  return fromMaterials?.supplierName || "Store";
 }
 
 async function approveStoreDeliveryRequest(jobId, storeId) {
@@ -1600,6 +1799,7 @@ async function updateStoreOrderDeliveryStatus(jobId, storeId, status) {
 async function updateStoreOrderDelivery(jobId, storeId, updates) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1640,6 +1840,7 @@ async function rejectStoreOrderDelivery(jobId, storeId) {
 async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1671,8 +1872,21 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
 }
 
 async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
+  if (options.paymentIntentId) {
+    const intent = await prisma.paymentIntent.findUnique({
+      where: { id: String(options.paymentIntentId) },
+    });
+    if (!intent || intent.state !== "PAID") {
+      throw new AppError("Valid paid payment intent is required", 400);
+    }
+    if (intent.kind !== "JOB_STORE_ORDER" || String(intent.jobId) !== String(jobId)) {
+      throw new AppError("Payment intent does not match this job", 400);
+    }
+  }
+
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
 
   const metaPeek = await getJobMeta(jobId);
   const storeOrders = Array.isArray(metaPeek.storeOrders) ? metaPeek.storeOrders : [];
@@ -1792,6 +2006,7 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
         jobDeliveryType: options.deliveryType || so?.deliveryType || "SELF",
         deliveryProviderId: options.deliveryProviderId || so?.deliveryProviderId,
         jobSiteAddress: jobSiteAddressFromRow(job),
+        jobSiteLocation: jobSiteLocationFromRow(job),
       });
     } catch (e) {
       console.error("ensureJobMaterialPurchaseOrder", e);
@@ -1899,6 +2114,7 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
       jobDeliveryType: options.deliveryType || order.deliveryType || "SELF",
       deliveryProviderId: options.deliveryProviderId || order.deliveryProviderId,
       jobSiteAddress: jobSiteAddressFromRow(job),
+      jobSiteLocation: jobSiteLocationFromRow(job),
     });
   } catch (e) {
     console.error("ensureJobMaterialPurchaseOrder", e);
@@ -2158,8 +2374,12 @@ async function reconcileMaterialRequestAfterDismiss(jobId, materialRequestId) {
 }
 
 async function customerRejectProviderMaterialBatch(jobId, orderId, customerUserId) {
-  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { id: true, customerId: true } });
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { id: true, customerId: true, category: true },
+  });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   if (String(job.customerId) !== String(customerUserId)) {
     throw new AppError("Forbidden", 403);
   }
@@ -2194,9 +2414,10 @@ async function customerRejectProviderMaterialBatch(jobId, orderId, customerUserI
 async function providerCancelProviderMaterialBatch(jobId, orderId, providerUserId) {
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, providerId: true },
+    select: { id: true, providerId: true, category: true },
   });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   if (String(job.providerId || "") !== String(providerUserId)) {
     throw new AppError("Forbidden", 403);
   }
@@ -2225,6 +2446,7 @@ async function providerCancelProviderMaterialBatch(jobId, orderId, providerUserI
 async function dismissMaterialBatch(jobId, orderId, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   if (
     actorRole === "CUSTOMER" &&
     String(job.customerId) !== String(actorUserId)
@@ -2274,6 +2496,7 @@ async function dismissMaterialBatch(jobId, orderId, actorUserId, actorRole) {
 async function withdrawAcceptedUserMaterialSuggestion(jobId, suggestionId, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   if (
     actorRole === "CUSTOMER" &&
     String(job.customerId) !== String(actorUserId)
@@ -2330,9 +2553,10 @@ async function withdrawAcceptedUserMaterialSuggestion(jobId, suggestionId, actor
 async function purgeWithdrawnUserMaterialSuggestion(jobId, suggestionId, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, customerId: true, providerId: true },
+    select: { id: true, customerId: true, providerId: true, category: true },
   });
   if (!job) throw new AppError("Job not found", 404);
+  await assertJobCategoryAllowsMaterials(job);
   if (
     actorRole === "CUSTOMER" &&
     String(job.customerId) !== String(actorUserId)

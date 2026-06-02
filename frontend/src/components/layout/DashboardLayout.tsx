@@ -1,6 +1,5 @@
-import { ReactNode, useMemo, useState } from 'react';
+import { ReactNode, useMemo, useState, useCallback, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
@@ -29,14 +28,18 @@ import {
   DollarSign,
   ClipboardList,
   ShoppingCart,
+  Truck,
   AlertCircle,
   Bell,
   Activity,
   Wallet,
   Store,
   Building2,
+  ChevronDown,
+  UserCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -63,16 +66,44 @@ const providerNavItems: NavItem[] = [
   { label: 'Earnings', path: '/provider/earnings', icon: <DollarSign className="h-4 w-4 shrink-0" /> },
 ];
 
-const adminNavItems: NavItem[] = [
-  { label: 'Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
-  { label: 'Analytics', path: '/admin/analytics', icon: <Activity className="h-4 w-4 shrink-0" /> },
-  { label: 'Providers', path: '/admin/providers', icon: <Users className="h-4 w-4 shrink-0" /> },
-  { label: 'Suppliers', path: '/admin/suppliers', icon: <Package className="h-4 w-4 shrink-0" /> },
-  { label: 'Categories', path: '/admin/categories', icon: <Tags className="h-4 w-4 shrink-0" /> },
-  { label: 'Jobs', path: '/admin/jobs', icon: <Briefcase className="h-4 w-4 shrink-0" /> },
-  { label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
-  { label: 'Withdrawals', path: '/admin/withdrawals', icon: <Wallet className="h-4 w-4 shrink-0" /> },
+type AdminNavChild = { label: string; path: string };
+type AdminNavGroup = { type: 'group'; label: string; icon: ReactNode; children: AdminNavChild[] };
+type AdminNavLink = { type: 'link'; label: string; path: string; icon: ReactNode };
+type AdminNavEntry = AdminNavLink | AdminNavGroup;
+
+const adminNavStructure: AdminNavEntry[] = [
+  { type: 'link', label: 'Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
+  { type: 'link', label: 'Analytics', path: '/admin/analytics', icon: <Activity className="h-4 w-4 shrink-0" /> },
+  {
+    type: 'group',
+    label: 'Users',
+    icon: <Users className="h-4 w-4 shrink-0" />,
+    children: [
+      { label: 'Customers', path: '/admin/customers' },
+      { label: 'Providers', path: '/admin/providers' },
+      { label: 'Suppliers', path: '/admin/suppliers' },
+    ],
+  },
+  {
+    type: 'group',
+    label: 'Work',
+    icon: <Briefcase className="h-4 w-4 shrink-0" />,
+    children: [
+      { label: 'Jobs', path: '/admin/jobs' },
+      { label: 'Categories', path: '/admin/categories' },
+    ],
+  },
+  { type: 'link', label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
+  { type: 'link', label: 'Withdrawals', path: '/admin/withdrawals', icon: <Wallet className="h-4 w-4 shrink-0" /> },
 ];
+
+function adminPathMatches(pathname: string, path: string) {
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
+
+function adminGroupActive(pathname: string, children: AdminNavChild[]) {
+  return children.some((c) => adminPathMatches(pathname, c.path));
+}
 
 const branchStaffNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/supplier/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
@@ -171,10 +202,31 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     location.pathname !== '/provider/profile' &&
     !isActiveProvider;
 
+  const [adminGroupOpen, setAdminGroupOpen] = useState<Record<string, boolean>>({});
+
+  const setAdminGroupExpanded = useCallback((label: string, open: boolean) => {
+    setAdminGroupOpen((prev) => ({ ...prev, [label]: open }));
+  }, []);
+
+  const isAdminGroupExpanded = useCallback(
+    (group: AdminNavGroup) => {
+      if (adminGroupOpen[group.label] !== undefined) return adminGroupOpen[group.label];
+      return adminGroupActive(location.pathname, group.children);
+    },
+    [adminGroupOpen, location.pathname],
+  );
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    adminNavStructure.forEach((entry) => {
+      if (entry.type === 'group' && adminGroupActive(location.pathname, entry.children)) {
+        setAdminGroupOpen((prev) => (prev[entry.label] === undefined ? { ...prev, [entry.label]: true } : prev));
+      }
+    });
+  }, [location.pathname, user?.role]);
+
   const getNavItems = (): NavItem[] => {
     switch (user?.role) {
-      case 'admin':
-        return adminNavItems;
       case 'provider':
         return providerNavItems;
       case 'supplier':
@@ -285,26 +337,103 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
           {/* Navigation — scrolls if many items; logout stays at bottom */}
           <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-4">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setSidebarOpen(false)}
-                className={cn(
-                  "nav-link relative",
-                  location.pathname === item.path && "active"
-                )}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-                {jobsNavPath && item.path === jobsNavPath && hasJobsNavActivity && (
-                  <ActivityDot className="ml-1" aria-label="Job activity" />
-                )}
-                {location.pathname === item.path && (
-                  <ChevronRight className="ml-auto h-4 w-4" />
-                )}
-              </Link>
-            ))}
+            {user?.role === 'admin' ? (
+              adminNavStructure.map((entry) => {
+                if (entry.type === 'link') {
+                  const active = adminPathMatches(location.pathname, entry.path);
+                  return (
+                    <Link
+                      key={entry.path}
+                      to={entry.path}
+                      onClick={() => setSidebarOpen(false)}
+                      className={cn('nav-link relative', active && 'active')}
+                    >
+                      {entry.icon}
+                      <span>{entry.label}</span>
+                      {active && <ChevronRight className="ml-auto h-4 w-4" />}
+                    </Link>
+                  );
+                }
+                const expanded = isAdminGroupExpanded(entry);
+                const groupActive = adminGroupActive(location.pathname, entry.children);
+                return (
+                  <Collapsible
+                    key={entry.label}
+                    open={expanded}
+                    onOpenChange={(open) => setAdminGroupExpanded(entry.label, open)}
+                  >
+                    <CollapsibleTrigger
+                      type="button"
+                      className={cn(
+                        'nav-link w-full',
+                        groupActive && 'text-foreground font-medium',
+                      )}
+                      aria-expanded={expanded}
+                    >
+                      {entry.icon}
+                      <span>{entry.label}</span>
+                      <ChevronDown
+                        className={cn(
+                          'ml-auto h-4 w-4 shrink-0 transition-transform',
+                          expanded && 'rotate-180',
+                        )}
+                      />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-0.5 pl-2 pt-0.5">
+                      {entry.children.map((child) => {
+                        const childActive = adminPathMatches(location.pathname, child.path);
+                        return (
+                          <Link
+                            key={child.path}
+                            to={child.path}
+                            onClick={() => setSidebarOpen(false)}
+                            className={cn(
+                              'nav-link relative pl-8 text-sm',
+                              childActive && 'active',
+                            )}
+                          >
+                            {child.path === '/admin/customers' ? (
+                              <UserCircle className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/providers' ? (
+                              <Users className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/suppliers' ? (
+                              <Package className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/jobs' ? (
+                              <Briefcase className="h-4 w-4 shrink-0" />
+                            ) : (
+                              <Tags className="h-4 w-4 shrink-0" />
+                            )}
+                            <span>{child.label}</span>
+                            {childActive && <ChevronRight className="ml-auto h-4 w-4" />}
+                          </Link>
+                        );
+                      })}
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })
+            ) : (
+              navItems.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setSidebarOpen(false)}
+                  className={cn(
+                    'nav-link relative',
+                    location.pathname === item.path && 'active',
+                  )}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                  {jobsNavPath && item.path === jobsNavPath && hasJobsNavActivity && (
+                    <ActivityDot className="ml-1" aria-label="Job activity" />
+                  )}
+                  {location.pathname === item.path && (
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  )}
+                </Link>
+              ))
+            )}
           </nav>
 
           {/* Bell + Logout */}

@@ -21,6 +21,14 @@ export async function getSpecialsByCategory(category: string): Promise<Special[]
   return Array.isArray(data?.specials) ? data.specials : [];
 }
 
+/** Customer-facing courier label: personal name, not company/business name. */
+export function deliveryProviderDisplayName(p: Provider): string {
+  const personal = String(p.name || '').trim();
+  if (personal) return personal;
+  const business = String(p.businessName || '').trim();
+  return business || 'Provider';
+}
+
 function providerToDeliveryCard(p: Provider): DeliveryProvider {
   const rateFromSettings =
     p.settings?.deliveryRatePerKm != null && Number.isFinite(p.settings.deliveryRatePerKm)
@@ -36,29 +44,32 @@ function providerToDeliveryCard(p: Provider): DeliveryProvider {
 
   return {
     id: p.id,
-    name: (p.businessName && p.businessName.trim()) || p.name,
+    name: deliveryProviderDisplayName(p),
     logo: p.profileImage,
     baseRate,
     perKmRate: rateFromSettings,
     estimatedTime: p.responseTime || '—',
-    vehicleType: undefined,
+    vehicleType: p.vehicleType,
+    numberPlate: p.numberPlate,
     rating: p.rating,
     phone: p.phone,
     email: p.email,
   };
 }
 
-/** Couriers: approved providers with skill/category `delivery` (see seed categories). */
+/** Couriers: approved providers with delivery/moving skill (see admin categories). */
 export async function getDeliveryProviders(options?: {
+  category?: string;
   city?: string;
   lat?: number;
   lng?: number;
 }): Promise<DeliveryProvider[]> {
+  const category = options?.category?.trim() || 'delivery';
   const { data } = await apiClient.get<{ success: boolean; providers: Provider[] }>(
     '/providers',
     {
       params: {
-        category: 'delivery',
+        category,
         city: options?.city?.trim() || undefined,
       },
     }

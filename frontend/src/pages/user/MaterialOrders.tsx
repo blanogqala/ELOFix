@@ -106,7 +106,7 @@ export default function MaterialOrders() {
               emptyHint="When you pay for materials on a job, they appear here with full tracking."
               emptyActionLabel="View jobs"
               onEmptyAction={() => navigate('/user/jobs')}
-              onOrderClick={(id) => navigate(`/user/orders/${id}`)}
+              onOrderClick={(id) => navigate(`/user/material-orders/${id}`)}
             />
           </TabsContent>
           <TabsContent value="standalone" className="mt-0">
@@ -117,7 +117,7 @@ export default function MaterialOrders() {
               emptyHint="Order hardware from stores — deliveries appear here."
               emptyActionLabel="Order materials"
               onEmptyAction={() => navigate('/user/order-materials')}
-              onOrderClick={(id) => navigate(`/user/orders/${id}`)}
+              onOrderClick={(id) => navigate(`/user/material-orders/${id}`)}
             />
           </TabsContent>
         </Tabs>

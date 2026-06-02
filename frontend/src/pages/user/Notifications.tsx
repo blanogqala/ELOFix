@@ -123,6 +123,10 @@ function navigateForNotification(n: AppNotification, role: UserRole, navigate: N
     navigate(`/supplier/orders?orderId=${encodeURIComponent(mat)}`);
     return;
   }
+  if (role === 'user' && mat) {
+    navigate(`/user/material-orders/${encodeURIComponent(mat)}`);
+    return;
+  }
   if (!n.jobId) return;
   const tab =
     n.type === 'job_chat' ? '?tab=messages' : '';

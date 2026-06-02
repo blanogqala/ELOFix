@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -30,12 +31,12 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { UnifiedTrackingSection } from '@/components/tracking/UnifiedTrackingSection';
 import {
   fulfillmentStatusBadgeLabel,
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
+import { PaymentModal } from '@/components/payments/PaymentModal';
 
 interface MaterialPaymentSectionProps {
   job: Job;
@@ -46,9 +47,8 @@ interface MaterialPaymentSectionProps {
   deliveryProviders: DeliveryProvider[];
   deliveryProvidersError?: string | null;
   onPayForStore: (
-    supplierId: string, 
-    cardId: string, 
-    cardLast4: string,
+    supplierId: string,
+    paymentIntentId: string,
     options?: {
       deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
       deliveryFee: number;
@@ -154,6 +154,15 @@ export function MaterialPaymentSection({
   const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [purchaseFlowOpen, setPurchaseFlowOpen] = useState(false);
   const [purchaseFlowStep, setPurchaseFlowStep] = useState<1 | 2>(1);
+  const [gatewayPayOpen, setGatewayPayOpen] = useState(false);
+  const [gatewayPayAmount, setGatewayPayAmount] = useState(0);
+  const [gatewayPayMeta, setGatewayPayMeta] = useState<{
+    supplierId: string;
+    deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
+    deliveryFee: number;
+    deliveryProviderId?: string;
+    orderId?: string;
+  } | null>(null);
   const [userMaterialTab, setUserMaterialTab] = useState<'pending' | 'suggested'>('pending');
   const [purchaseFlowStore, setPurchaseFlowStore] = useState<{
     orderId?: string;
@@ -308,18 +317,11 @@ export function MaterialPaymentSection({
   };
 
   const handleConfirmPayment = async () => {
-    if (!selectedStore || !selectedCardId) {
-      setError('Please select a payment card');
+    if (!selectedStore) {
+      setError('Please select a store');
       return;
     }
 
-    if (!validateCvc(cvc)) {
-      setError('Please enter a valid CVC (3-4 digits)');
-      return;
-    }
-    
-    const selectedCard = savedCards.find(c => c.id === selectedCardId);
-    
     setIsProcessing(true);
     setError(null);
     try {
@@ -332,8 +334,7 @@ export function MaterialPaymentSection({
 
       await onPayForStore(
         selectedStore.id,
-        selectedCardId,
-        selectedCard?.last4 || '****',
+        '', // paymentIntentId will be supplied by the redirect flow; legacy card path is disabled
         {
           deliveryType,
           deliveryFee,
@@ -402,31 +403,19 @@ export function MaterialPaymentSection({
     setPurchaseFlowOpen(true);
   };
 
-  const handlePurchaseFlowStep1Next = () => {
+  const handlePurchaseFlowStep1Next = async () => {
+    if (!purchaseFlowStore) return;
     if (
-      purchaseFlowStore &&
       hasCourierOption &&
       selectedDeliveryType === 'PROVIDER' &&
       !selectedProviderId
     ) {
       return;
     }
-    setPurchaseFlowStep(2);
-  };
-
-  const handlePurchaseFlowComplete = async () => {
-    if (!purchaseFlowStore || !selectedCardId) {
-      setError('Please select a payment card');
-      return;
-    }
-    if (!validateCvc(cvc)) {
-      setError('Please enter a valid CVC (3-4 digits)');
-      return;
-    }
     const supplier = getSupplierMeta(purchaseFlowStore.id);
     let fee = 0;
     if (selectedDeliveryType === 'STORE') {
-      fee = supplier?.deliveryFee || 0;
+      fee = supplier?.deliveryFee || purchaseFlowStore.deliveryFee || 0;
     } else if (selectedDeliveryType === 'PROVIDER') {
       const provider = deliveryProviders.find(p => p.id === selectedProviderId);
       fee = provider?.baseRate || 0;
@@ -440,23 +429,44 @@ export function MaterialPaymentSection({
         deliveryProviderId: selectedDeliveryType === 'PROVIDER' ? selectedProviderId : undefined,
         orderId: purchaseFlowStore.orderId,
       });
-      const selectedCard = savedCards.find(c => c.id === selectedCardId);
-      await onPayForStore(
-        purchaseFlowStore.id,
-        selectedCardId,
-        selectedCard?.last4 || '****',
-        {
-          deliveryType: selectedDeliveryType,
-          deliveryFee: fee,
-          deliveryProviderId: selectedDeliveryType === 'PROVIDER' ? selectedProviderId : undefined,
-          orderId: purchaseFlowStore.orderId,
-        }
-      );
+      setPurchaseFlowStep(2);
+    } catch {
+      setError('Could not send delivery request. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePurchaseFlowComplete = async () => {
+    if (!purchaseFlowStore) return;
+    const supplier = getSupplierMeta(purchaseFlowStore.id);
+    let fee = 0;
+    if (selectedDeliveryType === 'STORE') {
+      fee = supplier?.deliveryFee || 0;
+    } else if (selectedDeliveryType === 'PROVIDER') {
+      const provider = deliveryProviders.find(p => p.id === selectedProviderId);
+      fee = provider?.baseRate || 0;
+    }
+    const materialsTotal = purchaseFlowStore.materials.reduce(
+      (sum, m) => sum + m.qty * m.unitPrice,
+      0
+    );
+    setIsProcessing(true);
+    setError(null);
+    try {
+      setGatewayPayMeta({
+        supplierId: purchaseFlowStore.id,
+        deliveryType: selectedDeliveryType,
+        deliveryFee: fee,
+        deliveryProviderId: selectedDeliveryType === 'PROVIDER' ? selectedProviderId : undefined,
+        orderId: purchaseFlowStore.orderId,
+      });
+      setGatewayPayAmount(materialsTotal);
       setPurchaseFlowOpen(false);
       setPurchaseFlowStore(null);
-      setCvc('');
-    } catch (err) {
-      setError('Payment failed. Please try again.');
+      setGatewayPayOpen(true);
+    } catch {
+      setError('Could not prepare payment. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -464,6 +474,13 @@ export function MaterialPaymentSection({
 
   const handleConfirmDeliveryOption = async () => {
     if (!deliveryStoreId) return;
+    if (
+      hasCourierOption &&
+      selectedDeliveryType === 'PROVIDER' &&
+      !selectedProviderId
+    ) {
+      return;
+    }
     const supplier = getSupplierMeta(deliveryStoreId);
     let fee = 0;
 
@@ -474,13 +491,20 @@ export function MaterialPaymentSection({
       fee = provider?.baseRate || 0;
     }
 
-    await onSelectDeliveryOption(deliveryStoreId, {
-      deliveryType: selectedDeliveryType,
-      deliveryFee: fee,
-      deliveryProviderId: selectedDeliveryType === 'PROVIDER' ? selectedProviderId : undefined,
-    });
-
-    setDeliveryDialogOpen(false);
+    setIsProcessing(true);
+    setError(null);
+    try {
+      await onSelectDeliveryOption(deliveryStoreId, {
+        deliveryType: selectedDeliveryType,
+        deliveryFee: fee,
+        deliveryProviderId: selectedDeliveryType === 'PROVIDER' ? selectedProviderId : undefined,
+      });
+      setDeliveryDialogOpen(false);
+    } catch {
+      setError('Could not send delivery request. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const hasAnyMaterialSurface =
@@ -606,19 +630,7 @@ export function MaterialPaymentSection({
                   const driverLabel =
                     batch?.assignedDriverId &&
                     deliveryProviders.find((d) => d.id === batch.assignedDriverId)?.name;
-                  const chosenCourier = storeOrder.deliveryProviderId
-                    ? deliveryProviders.find((d) => d.id === storeOrder.deliveryProviderId)
-                    : undefined;
-                  const courierVehicleStr = chosenCourier
-                    ? [chosenCourier.vehicleType, chosenCourier.numberPlate].filter(Boolean).join(' · ')
-                    : undefined;
-                  const moExtra = mo as unknown as {
-                    activeTrackingId?: string;
-                    activeTrackingToken?: string;
-                  };
-                  const trackingU = String(mo?.fulfillmentStatus || '').toUpperCase();
-                  const trackingEligibleForStore = trackingU === 'OUT_FOR_DELIVERY';
-                  const fullHref = `/user/jobs/${job.id}/store-orders/${encodeURIComponent(storeOrder.orderId)}`;
+                  const fullHref = `/user/material-orders/${encodeURIComponent(materialOrderKey)}`;
 
                   const deliveryLocation =
                     summaryIsPickup ? (
@@ -707,38 +719,16 @@ export function MaterialPaymentSection({
                         </div>
                       }
                       footer={
-                        <div className="text-xs text-muted-foreground space-y-2">
-                          <UnifiedTrackingSection
-                            variant="embedded"
-                            mode={
-                              storeOrder.deliveryType === 'SELF'
-                                ? 'self_pickup'
-                                : storeOrder.deliveryType === 'STORE'
-                                  ? 'store_delivery'
-                                  : 'provider_delivery'
-                            }
-                            fulfillmentStatus={String(mo?.fulfillmentStatus || '')}
-                            materialBatch={batch}
-                            showLiveMap={false}
-                            mapLat={null}
-                            mapLng={null}
-                            destination={batch?.deliveryAddress || undefined}
-                            destinationCoords={job.location?.coordinates ?? null}
-                            activeTrackingId={trackingEligibleForStore ? moExtra.activeTrackingId ?? null : null}
-                            activeTrackingToken={trackingEligibleForStore ? moExtra.activeTrackingToken ?? null : null}
-                            supplierDisplayName={mo?.supplierName || storeName}
-                            supplierAddress={
-                              batch?.pickupAddress && batch.pickupAddress.trim() !== ''
-                                ? batch.pickupAddress
-                                : undefined
-                            }
-                            assignedDriverName={driverLabel ?? null}
-                            courierName={chosenCourier?.name ?? null}
-                            courierVehicle={courierVehicleStr || null}
-                            showConfirmDelivery={false}
-                            fullTrackingHref={fullHref}
-                          />
-                        </div>
+                        storeOrder.deliveryType !== 'SELF' ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="w-full hover:bg-accent/80 border-primary border"
+                            asChild
+                          >
+                            <Link to={fullHref}>Full tracking view</Link>
+                          </Button>
+                        ) : null
                       }
                     />
                   );
@@ -1126,15 +1116,15 @@ export function MaterialPaymentSection({
 
       {/* Delivery Option Dialog */}
       <Dialog open={deliveryDialogOpen} onOpenChange={setDeliveryDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
             <DialogTitle>
               {deliveryStoreId
                 ? `Choose Delivery Option for ${materialsByStore[deliveryStoreId].name}`
                 : 'Choose Delivery Option'}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-2">
             <RadioGroup
               value={selectedDeliveryType}
               onValueChange={(value) => {
@@ -1194,9 +1184,11 @@ export function MaterialPaymentSection({
             {hasCourierOption && selectedDeliveryType === 'PROVIDER' && (
               <div className="space-y-2">
                 <Label>Select a provider</Label>
+                <div className="max-h-[min(40vh,280px)] overflow-y-auto rounded-md border border-border/60 pr-1">
                 <RadioGroup
                   value={selectedProviderId}
                   onValueChange={setSelectedProviderId}
+                  className="space-y-2 p-2"
                 >
                   {deliveryProviders.map(provider => (
                     <div
@@ -1224,21 +1216,27 @@ export function MaterialPaymentSection({
                     <p className="text-xs text-muted-foreground">No delivery providers available.</p>
                   )}
                 </RadioGroup>
+                </div>
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-border px-6 py-4">
             <Button variant="outline" onClick={() => setDeliveryDialogOpen(false)}>
               Cancel
             </Button>
             <Button
-              onClick={handleConfirmDeliveryOption}
+              onClick={() => void handleConfirmDeliveryOption()}
               disabled={
-                hasCourierOption && selectedDeliveryType === 'PROVIDER' && !selectedProviderId
+                isProcessing ||
+                (hasCourierOption && selectedDeliveryType === 'PROVIDER' && !selectedProviderId)
               }
               className="btn-accent"
             >
-              Save Delivery Option
+              {isProcessing
+                ? 'Sending request…'
+                : selectedDeliveryType === 'PROVIDER'
+                  ? 'Request provider'
+                  : 'Save Delivery Option'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1400,8 +1398,8 @@ export function MaterialPaymentSection({
           setError(null);
         }
       }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
             <DialogTitle>
               {purchaseFlowStep === 1
                 ? `Purchase from ${purchaseFlowStore?.name}`
@@ -1416,7 +1414,7 @@ export function MaterialPaymentSection({
 
           {purchaseFlowStep === 1 && purchaseFlowStore && (
             <>
-              <div className="space-y-4 py-4">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-2">
                 <div className="p-3 bg-muted/50 rounded-lg text-sm">
                   <p className="font-medium mb-2">Order Summary</p>
                   {purchaseFlowStore.materials.map(m => (
@@ -1475,7 +1473,8 @@ export function MaterialPaymentSection({
                 {hasCourierOption && selectedDeliveryType === 'PROVIDER' && (
                   <div className="space-y-2">
                     <Label>Select a delivery provider</Label>
-                    <RadioGroup value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                    <div className="max-h-[min(40vh,280px)] overflow-y-auto rounded-md border border-border/60 pr-1">
+                    <RadioGroup value={selectedProviderId} onValueChange={setSelectedProviderId} className="space-y-2 p-2">
                       {deliveryProviders.map(provider => (
                         <div key={provider.id} className="flex items-center space-x-3 p-3 border border-border rounded-lg">
                           <RadioGroupItem value={provider.id} id={`purchase-${provider.id}`} />
@@ -1505,17 +1504,25 @@ export function MaterialPaymentSection({
                         <p className="text-xs text-muted-foreground">No delivery providers available.</p>
                       )}
                     </RadioGroup>
+                    </div>
                   </div>
                 )}
               </div>
-              <DialogFooter>
+              <DialogFooter className="shrink-0 border-t border-border px-6 py-4">
                 <Button variant="outline" onClick={() => setPurchaseFlowOpen(false)}>Cancel</Button>
                 <Button
-                  onClick={handlePurchaseFlowStep1Next}
-                  disabled={hasCourierOption && selectedDeliveryType === 'PROVIDER' && !selectedProviderId}
+                  onClick={() => void handlePurchaseFlowStep1Next()}
+                  disabled={
+                    isProcessing ||
+                    (hasCourierOption && selectedDeliveryType === 'PROVIDER' && !selectedProviderId)
+                  }
                   className="btn-accent"
                 >
-                  Continue to Payment
+                  {isProcessing
+                    ? 'Sending request…'
+                    : selectedDeliveryType === 'PROVIDER'
+                      ? 'Request provider & continue'
+                      : 'Continue to Payment'}
                 </Button>
               </DialogFooter>
             </>
@@ -1523,7 +1530,7 @@ export function MaterialPaymentSection({
 
           {purchaseFlowStep === 2 && purchaseFlowStore && (
             <>
-              <div className="space-y-4 py-4">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-2">
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <p className="font-medium mb-2">Order Summary</p>
                   <div className="space-y-1 text-sm">
@@ -1601,20 +1608,40 @@ export function MaterialPaymentSection({
                   </div>
                 )}
               </div>
-              <DialogFooter>
+              <DialogFooter className="shrink-0 border-t border-border px-6 py-4">
                 <Button variant="outline" onClick={() => setPurchaseFlowStep(1)}>Back</Button>
                 <Button
-                  onClick={handlePurchaseFlowComplete}
-                  disabled={!selectedCardId || isProcessing}
+                  onClick={() => void handlePurchaseFlowComplete()}
+                  disabled={isProcessing}
                   className="btn-accent"
                 >
-                  {isProcessing ? 'Processing...' : `Pay ${formatCurrency(purchaseFlowStore.materials.reduce((s, m) => s + m.qty * m.unitPrice, 0), { decimals: 2 })}`}
+                  {isProcessing ? 'Preparing…' : `Continue to payment ${formatCurrency(purchaseFlowStore.materials.reduce((s, m) => s + m.qty * m.unitPrice, 0), { decimals: 2 })}`}
                 </Button>
               </DialogFooter>
             </>
           )}
         </DialogContent>
       </Dialog>
+
+      {gatewayPayMeta && (
+        <PaymentModal
+          open={gatewayPayOpen}
+          onOpenChange={setGatewayPayOpen}
+          title="Pay for materials"
+          description="Complete payment to confirm your material order."
+          amount={gatewayPayAmount}
+          kind="JOB_STORE_ORDER"
+          jobId={job.id}
+          metadata={gatewayPayMeta}
+          breakdown={[
+            {
+              label: 'Materials',
+              amount: gatewayPayAmount,
+            },
+            { label: 'Total due', amount: gatewayPayAmount, isBold: true },
+          ]}
+        />
+      )}
     </>
   );
 }

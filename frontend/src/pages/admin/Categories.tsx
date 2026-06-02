@@ -2,11 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Search, Tags, Trash2 } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { Category } from '@/types';
 import {
   createCategory,
@@ -21,35 +18,36 @@ import {
   type AdminCategorySuggestion,
 } from '@/lib/api/adminCategories';
 import { useToast } from '@/hooks/use-toast';
+import { useIsLgUp } from '@/hooks/use-media-query';
 import { socket } from '@/lib/socket';
-
-const EMPTY_FORM = {
-  name: '',
-  icon: '',
-  description: '',
-  requiresMaterials: false,
-  requiresInspection: true,
-  skillsCsv: '',
-  step3Type: 'measurements' as Category['step3Type'],
-  issueTypesCsv: '',
-  sortOrder: 0,
-};
+import { CategoryStatsCards } from '@/components/admin/categories/CategoryStatsCards';
+import { CategoryListCards } from '@/components/admin/categories/CategoryListCards';
+import { CategoryEditorForm } from '@/components/admin/categories/CategoryEditorForm';
+import { PendingCategorySuggestionsPanel } from '@/components/admin/categories/PendingCategorySuggestionsPanel';
+import {
+  EMPTY_CATEGORY_FORM,
+  categoryToForm,
+  parseSkillsCsv,
+  type CategoryFormState,
+} from '@/components/admin/categories/categoryForm';
 
 export default function AdminCategories() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isSplitLayout = useIsLgUp();
   const [searchQuery, setSearchQuery] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState<CategoryFormState>(EMPTY_CATEGORY_FORM);
   const [isSaving, setIsSaving] = useState(false);
+  const [compactDetailView, setCompactDetailView] = useState(false);
   const { toast } = useToast();
   const skipSelectNext = useRef(false);
   const [pendingSuggestions, setPendingSuggestions] = useState<AdminCategorySuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  const [providerFilterId, setProviderFilterId] = useState<string>(searchParams.get('providerId') || '');
-  const [suggestionFilterId, setSuggestionFilterId] = useState<string>(searchParams.get('suggestionId') || '');
+  const [providerFilterId, setProviderFilterId] = useState(searchParams.get('providerId') || '');
+  const [suggestionFilterId, setSuggestionFilterId] = useState(searchParams.get('suggestionId') || '');
 
   const loadCategories = useCallback(async () => {
     try {
@@ -93,10 +91,11 @@ export default function AdminCategories() {
     if (prefill?.name) {
       skipSelectNext.current = true;
       setSelectedCategoryId(null);
-      setForm({ ...EMPTY_FORM, name: prefill.name });
+      setForm({ ...EMPTY_CATEGORY_FORM, name: prefill.name });
+      if (!isSplitLayout) setCompactDetailView(true);
       navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location.pathname, location.state, navigate]);
+  }, [location.pathname, location.state, navigate, isSplitLayout]);
 
   useEffect(() => {
     const providerIdFromState = (location.state as { providerId?: string } | null)?.providerId;
@@ -104,7 +103,7 @@ export default function AdminCategories() {
     if (providerIdFromState || suggestionIdFromState) {
       const nextProviderId = providerIdFromState || providerFilterId;
       const nextSuggestionId = suggestionIdFromState || suggestionFilterId;
-      setProviderFilterId(providerIdFromState);
+      setProviderFilterId(providerIdFromState ?? providerFilterId);
       if (suggestionIdFromState) setSuggestionFilterId(suggestionIdFromState);
       const params = new URLSearchParams();
       if (nextProviderId) params.set('providerId', nextProviderId);
@@ -115,13 +114,15 @@ export default function AdminCategories() {
   }, [location.pathname, location.state, navigate, setSearchParams, providerFilterId, suggestionFilterId]);
 
   useEffect(() => {
+    if (!isSplitLayout) return;
+    setCompactDetailView(false);
     if (categories.length === 0 || selectedCategoryId !== null) return;
     if (skipSelectNext.current) {
       skipSelectNext.current = false;
       return;
     }
     setSelectedCategoryId(categories[0].id);
-  }, [categories, selectedCategoryId]);
+  }, [categories, selectedCategoryId, isSplitLayout]);
 
   const filtered = useMemo(
     () =>
@@ -129,9 +130,9 @@ export default function AdminCategories() {
         (c) =>
           !searchQuery ||
           c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.id.toLowerCase().includes(searchQuery.toLowerCase())
+          c.id.toLowerCase().includes(searchQuery.toLowerCase()),
       ),
-    [categories, searchQuery]
+    [categories, searchQuery],
   );
 
   const selected = selectedCategoryId
@@ -140,104 +141,8 @@ export default function AdminCategories() {
 
   useEffect(() => {
     if (!selected) return;
-    setForm({
-      name: selected.name,
-      icon: selected.icon,
-      description: selected.description,
-      requiresMaterials: selected.requiresMaterials,
-      requiresInspection: selected.requiresInspection !== false,
-      skillsCsv: (selected.skills || []).join(', '),
-      step3Type: selected.step3Type,
-      issueTypesCsv: (selected.issueTypes || []).join(', '),
-      sortOrder: selected.sortOrder || 0,
-    });
+    setForm(categoryToForm(selected));
   }, [selected]);
-
-  const startCreateCategory = () => {
-    skipSelectNext.current = true;
-    setSelectedCategoryId(null);
-    setForm(EMPTY_FORM);
-  };
-
-  const handleCreate = async () => {
-    if (!form.name.trim()) return;
-    setIsSaving(true);
-    try {
-      const created = await createCategory({
-        name: form.name,
-        icon: form.icon || '🛠️',
-        description: form.description || 'Service category',
-        requiresMaterials: form.requiresMaterials,
-        requiresInspection: form.requiresInspection,
-        skills: form.skillsCsv.split(',').map((s) => s.trim()).filter(Boolean),
-        step3Type: form.step3Type,
-        issueTypes: form.issueTypesCsv.split(',').map((s) => s.trim()).filter(Boolean),
-        sortOrder: Number(form.sortOrder) || 0,
-        isActive: true,
-      });
-      setCategories((prev) => [...prev, created]);
-      setSelectedCategoryId(created.id);
-      toast({ title: 'Category created' });
-    } catch (error) {
-      toast({
-        title: 'Create failed',
-        description: error instanceof Error ? error.message : 'Could not create category.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!selected) return;
-    setIsSaving(true);
-    try {
-      const updated = await updateCategory(selected.id, {
-        name: form.name,
-        icon: form.icon,
-        description: form.description,
-        requiresMaterials: form.requiresMaterials,
-        requiresInspection: form.requiresInspection,
-        skills: form.skillsCsv.split(',').map((s) => s.trim()).filter(Boolean),
-        step3Type: form.step3Type,
-        issueTypes: form.issueTypesCsv.split(',').map((s) => s.trim()).filter(Boolean),
-        sortOrder: Number(form.sortOrder) || 0,
-      });
-      setCategories((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-      toast({ title: 'Category updated' });
-    } catch (error) {
-      toast({
-        title: 'Update failed',
-        description: error instanceof Error ? error.message : 'Could not update category.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selected) return;
-    setIsSaving(true);
-    try {
-      await deleteCategory(selected.id);
-      const remaining = categories.filter((c) => c.id !== selected.id);
-      setCategories(remaining);
-      setSelectedCategoryId(remaining[0]?.id || null);
-      toast({ title: 'Category deleted' });
-    } catch (error) {
-      toast({
-        title: 'Delete failed',
-        description: error instanceof Error ? error.message : 'Could not delete category.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const isCreateMode = !selected;
 
   const filteredPendingSuggestions = useMemo(() => {
     return pendingSuggestions.filter((s) => {
@@ -265,6 +170,108 @@ export default function AdminCategories() {
       window.removeEventListener('focus', onFocus);
     };
   }, [loadPendingSuggestions]);
+
+  const syncSuggestionFiltersToUrl = (providerId: string, suggestionId: string) => {
+    const params = new URLSearchParams();
+    if (providerId) params.set('providerId', providerId);
+    if (suggestionId) params.set('suggestionId', suggestionId);
+    setSearchParams(params);
+  };
+
+  const startCreateCategory = () => {
+    skipSelectNext.current = true;
+    setSelectedCategoryId(null);
+    setForm(EMPTY_CATEGORY_FORM);
+    if (!isSplitLayout) setCompactDetailView(true);
+  };
+
+  const selectCategory = (categoryId: string) => {
+    setSelectedCategoryId(categoryId);
+    if (!isSplitLayout) setCompactDetailView(true);
+  };
+
+  const backToCategoryList = () => {
+    setCompactDetailView(false);
+  };
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) return;
+    setIsSaving(true);
+    try {
+      const created = await createCategory({
+        name: form.name,
+        icon: form.icon || '🛠️',
+        description: form.description || 'Service category',
+        requiresMaterials: form.requiresMaterials,
+        requiresInspection: form.requiresInspection,
+        skills: parseSkillsCsv(form.skillsCsv),
+        step3Type: form.step3Type,
+        issueTypes: parseSkillsCsv(form.issueTypesCsv),
+        sortOrder: Number(form.sortOrder) || 0,
+        isActive: true,
+      });
+      setCategories((prev) => [...prev, created]);
+      setSelectedCategoryId(created.id);
+      toast({ title: 'Category created' });
+    } catch (error) {
+      toast({
+        title: 'Create failed',
+        description: error instanceof Error ? error.message : 'Could not create category.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selected) return;
+    setIsSaving(true);
+    try {
+      const updated = await updateCategory(selected.id, {
+        name: form.name,
+        icon: form.icon,
+        description: form.description,
+        requiresMaterials: form.requiresMaterials,
+        requiresInspection: form.requiresInspection,
+        skills: parseSkillsCsv(form.skillsCsv),
+        step3Type: form.step3Type,
+        issueTypes: parseSkillsCsv(form.issueTypesCsv),
+        sortOrder: Number(form.sortOrder) || 0,
+      });
+      setCategories((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      toast({ title: 'Category updated' });
+    } catch (error) {
+      toast({
+        title: 'Update failed',
+        description: error instanceof Error ? error.message : 'Could not update category.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selected) return;
+    setIsSaving(true);
+    try {
+      await deleteCategory(selected.id);
+      const remaining = categories.filter((c) => c.id !== selected.id);
+      setCategories(remaining);
+      setSelectedCategoryId(remaining[0]?.id ?? null);
+      if (!isSplitLayout) setCompactDetailView(false);
+      toast({ title: 'Category deleted' });
+    } catch (error) {
+      toast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'Could not delete category.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleApproveSuggestion = async (id: string) => {
     setIsSaving(true);
@@ -306,253 +313,117 @@ export default function AdminCategories() {
     }
   };
 
+  const isCreateMode = !selected;
+  const showCompactList = !isSplitLayout && !compactDetailView;
+  const showCompactDetail = !isSplitLayout && compactDetailView;
+
+  const editorPanel = (
+    <CategoryEditorForm
+      form={form}
+      onFormChange={setForm}
+      isCreateMode={isCreateMode}
+      isSaving={isSaving}
+      selectedCategory={selected}
+      onSave={() => void handleSave()}
+      onCreate={() => void handleCreate()}
+      onDelete={() => void handleDelete()}
+      onStartCreate={startCreateCategory}
+      mobileHeader={
+        showCompactDetail
+          ? {
+              title: isCreateMode ? 'New category' : selected?.name || 'Category',
+              onBack: backToCategoryList,
+            }
+          : undefined
+      }
+    />
+  );
+
+  const suggestionsPanel = (
+    <PendingCategorySuggestionsPanel
+      suggestions={filteredPendingSuggestions}
+      isLoading={suggestionsLoading}
+      isSaving={isSaving}
+      providerFilterId={providerFilterId}
+      suggestionFilterId={suggestionFilterId}
+      onProviderFilterChange={(value) => {
+        setProviderFilterId(value);
+        syncSuggestionFiltersToUrl(value, suggestionFilterId);
+      }}
+      onSuggestionFilterChange={(value) => {
+        setSuggestionFilterId(value);
+        syncSuggestionFiltersToUrl(providerFilterId, value);
+      }}
+      onRefresh={() => void loadPendingSuggestions()}
+      onApprove={(id) => void handleApproveSuggestion(id)}
+      onReject={(id) => void handleRejectSuggestion(id)}
+    />
+  );
+
+  const categorySearch = (
+    <div className="relative max-w-md">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <Input
+        id="category-search"
+        placeholder="Search categories..."
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        className="pl-10"
+        aria-label="Search categories"
+      />
+    </div>
+  );
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Service Categories</h1>
-            <p className="text-muted-foreground">Manage categories used in user service requests</p>
-          </div>
-          <Button type="button" onClick={startCreateCategory}>
-            Create Category
-          </Button>
-        </div>
-
-        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold">Pending category suggestions</h2>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Filter by provider id"
-                value={providerFilterId}
-                onChange={(e) => {
-                  const value = e.target.value.trim();
-                  setProviderFilterId(value);
-                  const params = new URLSearchParams();
-                  if (value) params.set('providerId', value);
-                  if (suggestionFilterId) params.set('suggestionId', suggestionFilterId);
-                  setSearchParams(params);
-                }}
-                className="h-8 w-56"
-              />
-              <Input
-                placeholder="Filter by suggestion id"
-                value={suggestionFilterId}
-                onChange={(e) => {
-                  const value = e.target.value.trim();
-                  setSuggestionFilterId(value);
-                  const params = new URLSearchParams();
-                  if (providerFilterId) params.set('providerId', providerFilterId);
-                  if (value) params.set('suggestionId', value);
-                  setSearchParams(params);
-                }}
-                className="h-8 w-56"
-              />
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadPendingSuggestions()}>
-                Refresh
-              </Button>
+        {showCompactList || isSplitLayout ? (
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">Service Categories</h1>
+              <p className="text-muted-foreground">Manage categories used in user service requests</p>
             </div>
+            <Button type="button" onClick={startCreateCategory} className="w-full sm:w-auto shrink-0">
+              Create Category
+            </Button>
           </div>
-          {suggestionsLoading ? (
-            <p className="text-sm text-muted-foreground mt-2">Loading…</p>
-          ) : filteredPendingSuggestions.length === 0 ? (
-            <p className="text-sm text-muted-foreground mt-2">No pending suggestions</p>
-          ) : (
-            <ul className="mt-3 space-y-2">
-              {filteredPendingSuggestions.map((s) => (
-                <li
-                  key={s.id}
-                  className="flex flex-col gap-2 rounded-lg border border-border/80 p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    <p className="font-medium">{s.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      From {s.user?.name ?? s.userId}
-                      {s.provider?.businessName ? ` · ${s.provider.businessName}` : ''}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(s.createdAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={isSaving}
-                      onClick={() => void handleApproveSuggestion(s.id)}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      disabled={isSaving}
-                      onClick={() => void handleRejectSuggestion(s.id)}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        ) : null}
 
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            id="category-search"
-            placeholder="Search categories..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-            aria-label="Search categories"
+        {(showCompactList || isSplitLayout) && (
+          <CategoryStatsCards
+            totalCategories={categories.length}
+            pendingSuggestions={pendingSuggestions.length}
           />
-        </div>
+        )}
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-2">
-            {filtered.map((cat) => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => setSelectedCategoryId(cat.id)}
-                className={cn(
-                  'w-full p-4 rounded-lg border-2 text-left transition-all flex items-center gap-3',
-                  selectedCategoryId === cat.id
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/30 card-elevated'
-                )}
-              >
-                <span className="text-2xl">{cat.icon}</span>
-                <div>
-                  <p className="font-medium text-sm">{cat.name}</p>
-                  <p className="text-xs text-muted-foreground">{cat.id}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <div className="lg:col-span-2 card-elevated p-6 space-y-4">
-            {isCreateMode ? (
-              <div className="text-center py-6 border-b border-border">
-                <Tags className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm font-medium">New category</p>
-                <p className="text-sm text-muted-foreground">Fill in the fields and save to create.</p>
-              </div>
-            ) : null}
-
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="cat-name">Name</Label>
-                <Input
-                  id="cat-name"
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+        {isSplitLayout ? (
+          <>
+            {suggestionsPanel}
+            {categorySearch}
+            <div className="grid lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-1">
+                <CategoryListCards
+                  categories={filtered}
+                  selectedCategoryId={selectedCategoryId}
+                  onSelect={selectCategory}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="cat-icon">Icon (emoji)</Label>
-                <Input
-                  id="cat-icon"
-                  value={form.icon}
-                  onChange={(e) => setForm((f) => ({ ...f, icon: e.target.value }))}
-                />
-              </div>
+              <div className="lg:col-span-2">{editorPanel}</div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="cat-desc">Description</Label>
-              <Input
-                id="cat-desc"
-                value={form.description}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              />
-            </div>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="cat-skills">Skills (comma separated)</Label>
-                <Input
-                  id="cat-skills"
-                  value={form.skillsCsv}
-                  onChange={(e) => setForm((f) => ({ ...f, skillsCsv: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cat-issues">Issue types (comma separated)</Label>
-                <Input
-                  id="cat-issues"
-                  value={form.issueTypesCsv}
-                  onChange={(e) => setForm((f) => ({ ...f, issueTypesCsv: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4 items-end">
-              <div className="space-y-2">
-                <Label htmlFor="cat-step3">Step 3 type</Label>
-                <select
-                  id="cat-step3"
-                  className="h-10 w-full rounded-md border border-input bg-background px-3"
-                  value={form.step3Type}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, step3Type: e.target.value as Category['step3Type'] }))
-                  }
-                >
-                  <option value="measurements">measurements</option>
-                  <option value="items">items</option>
-                  <option value="issue">issue</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cat-sort">Sort order</Label>
-                <Input
-                  id="cat-sort"
-                  type="number"
-                  value={form.sortOrder}
-                  onChange={(e) => setForm((f) => ({ ...f, sortOrder: Number(e.target.value) }))}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="cat-req-mat"
-                  checked={form.requiresMaterials}
-                  onCheckedChange={(v) => setForm((f) => ({ ...f, requiresMaterials: Boolean(v) }))}
-                />
-                <Label htmlFor="cat-req-mat" className="font-normal cursor-pointer">
-                  Requires materials
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="cat-req-insp"
-                  checked={form.requiresInspection}
-                  onCheckedChange={(v) => setForm((f) => ({ ...f, requiresInspection: Boolean(v) }))}
-                />
-                <Label htmlFor="cat-req-insp" className="font-normal cursor-pointer">
-                  Requires inspection
-                </Label>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" onClick={isCreateMode ? handleCreate : handleSave} disabled={isSaving}>
-                {isCreateMode ? 'Save new category' : 'Save Changes'}
-              </Button>
-              <Button type="button" variant="outline" onClick={startCreateCategory}>
-                Clear / new
-              </Button>
-              {!isCreateMode ? (
-                <Button type="button" variant="destructive" onClick={handleDelete} disabled={isSaving}>
-                  <Trash2 className="h-4 w-4 mr-1" /> Delete
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        </div>
+          </>
+        ) : showCompactList ? (
+          <>
+            {suggestionsPanel}
+            {categorySearch}
+            <CategoryListCards
+              categories={filtered}
+              selectedCategoryId={selectedCategoryId}
+              onSelect={selectCategory}
+            />
+          </>
+        ) : showCompactDetail ? (
+          editorPanel
+        ) : null}
       </div>
     </DashboardLayout>
   );

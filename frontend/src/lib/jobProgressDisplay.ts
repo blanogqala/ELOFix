@@ -6,6 +6,7 @@ import {
   getUserStatusBadgeClass,
   getProviderStatusBadgeVariant,
 } from '@/lib/jobStatusMapping';
+import { getCourierJobDisplayStatusLabel } from '@/lib/courierJobTimeline';
 
 /** Re-export canonical six timeline labels (Provider & Customer). */
 export const JOB_TIMELINE_LABELS = UNIFIED_TIMELINE_STEPS;
@@ -14,6 +15,9 @@ export const JOB_TIMELINE_LABELS = UNIFIED_TIMELINE_STEPS;
 export function getJobDisplayStatusLabel(job: Job): string {
   if (job.status === 'CANCELLED') return 'Cancelled';
   if (job.status === 'REJECTED') return 'Rejected';
+  if (job.courierFlow) {
+    return getCourierJobDisplayStatusLabel(job);
+  }
   return getJobStatusLabelFromProgressStep(getMonotonicTimelineStepIndex(job));
 }
 
@@ -21,7 +25,9 @@ export function getUserJobBadgeClassForJob(job: Job): string {
   if (job.status === 'CANCELLED' || job.status === 'REJECTED') {
     return getUserStatusBadgeClass(job.status);
   }
-  const idx = getMonotonicTimelineStepIndex(job);
+  const idx = job.courierFlow
+    ? Math.min(5, Math.max(0, Number(job.progressStep) || 0))
+    : getMonotonicTimelineStepIndex(job);
   const classes: Record<number, string> = {
     0: 'status-created',
     1: 'status-assigned',
@@ -37,7 +43,9 @@ export function getProviderJobBadgeVariantForJob(job: Job): ProviderBadgeVariant
   if (job.status === 'CANCELLED' || job.status === 'REJECTED' || job.status === 'COMPLETED') {
     return getProviderStatusBadgeVariant(job.status);
   }
-  const idx = getMonotonicTimelineStepIndex(job);
+  const idx = job.courierFlow
+    ? Math.min(5, Math.max(0, Number(job.progressStep) || 0))
+    : getMonotonicTimelineStepIndex(job);
   if (idx === 0) return 'secondary';
   if (idx === 1) return 'outline';
   if (idx === 2) return 'default';

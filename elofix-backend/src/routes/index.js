@@ -21,6 +21,7 @@ const trackingRoutes = require("./tracking.routes");
 const ratingRoutes = require("./rating.routes");
 const providerReviewRoutes = require("./providerReview.routes");
 const branchRoutes = require("./branch.routes");
+const deliveryRequestRoutes = require("./deliveryRequest.routes");
 const legalRoutes = require("./legal.routes");
 
 const router = express.Router();
@@ -37,6 +38,7 @@ router.use("/branches", branchRoutes);
 router.use("/stores", storeRoutes);
 router.use("/payments", paymentRoutes);
 router.use("/material-orders", materialOrderRoutes);
+router.use("/delivery-requests", deliveryRequestRoutes);
 router.use("/orders", ordersRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/specials", specialRoutes);

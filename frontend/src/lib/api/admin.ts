@@ -43,6 +43,23 @@ export async function getAdminCommissions(params?: { from?: string; to?: string 
   return data;
 }
 
+export interface AdminProviderRevenueSummaryRow {
+  providerId: string;
+  /** Provider share of completed + paid labor jobs (sum(job.providerAmount)). */
+  netRevenue: number;
+}
+
+export interface AdminProviderRevenueSummaryResponse {
+  success: boolean;
+  revenues: AdminProviderRevenueSummaryRow[];
+}
+
+/** Admin-only: provider net revenue broken down per providerId. */
+export async function getAdminProviderRevenueSummary(): Promise<AdminProviderRevenueSummaryResponse> {
+  const { data } = await apiClient.get<AdminProviderRevenueSummaryResponse>('/admin/providers/revenue-summary');
+  return data;
+}
+
 /** Material-order analytics: completed + paid only; commission = commissionRate × totalRevenue. */
 export interface AdminSupplierOrderAnalytics {
   orderCount: number;

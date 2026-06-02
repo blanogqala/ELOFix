@@ -2,9 +2,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AuthGuard } from "@/components/guards/AuthGuard";
+import { GoogleMapsProvider } from "@/components/map/GoogleMapsProvider";
 
 // Public pages
 import Landing from "./pages/Landing";
@@ -32,7 +33,10 @@ import UserNotifications from "./pages/user/Notifications";
 import OrderMaterials from "./pages/user/OrderMaterials";
 import MaterialOrders from "./pages/user/MaterialOrders";
 import OrderDetails from "./pages/user/OrderDetails";
+import PaymentReturn from "./pages/payments/PaymentReturn";
+import PaymentCancel from "./pages/payments/PaymentCancel";
 import UserJobSuggestMaterials from "./pages/user/UserJobSuggestMaterials";
+import DeliveryRequestDetailPage from "./pages/user/DeliveryRequestDetail";
 
 // Provider pages
 import ProviderDashboard from "./pages/provider/Dashboard";
@@ -44,6 +48,9 @@ import ProviderJobBrowseMaterials from "./pages/provider/ProviderJobBrowseMateri
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderProfile from "./pages/provider/Profile";
 import ProviderDocuments from "./pages/provider/Documents";
+import ProviderDeliveryInbox from "./pages/provider/DeliveryInbox";
+import ProviderDeliveryDetail from "./pages/provider/DeliveryDetail";
+import ProviderDirectDeliveryDetail from "./pages/provider/DirectDeliveryDetail";
 
 // Admin pages
 import AdminDashboard from "./pages/admin/Dashboard";
@@ -60,6 +67,8 @@ import AdminSupplierBranchCatalogPage from "./pages/admin/AdminSupplierBranchCat
 import AdminCategories from "./pages/admin/Categories.tsx";
 import AdminAnalytics from "./pages/admin/Analytics";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
+import AdminCustomers from "./pages/admin/Customers";
+import AdminCustomerDetail from "./pages/admin/CustomerDetail";
 
 // Supplier portal
 import SupplierDashboard from "./pages/supplier/Dashboard";
@@ -84,6 +93,7 @@ const queryClient = new QueryClient({
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
+      <GoogleMapsProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -111,11 +121,22 @@ const App = () => (
             <Route path="/user/jobs/:id/suggest-materials" element={<AuthGuard allowedRoles={['user']}><UserJobSuggestMaterials /></AuthGuard>} />
             <Route path="/user/jobs/:id" element={<AuthGuard allowedRoles={['user']}><JobDetail /></AuthGuard>} />
             <Route path="/user/payments" element={<AuthGuard allowedRoles={['user']}><UserPayments /></AuthGuard>} />
+            <Route path="/payments/return" element={<AuthGuard allowedRoles={['user']}><PaymentReturn /></AuthGuard>} />
+            <Route path="/payments/cancel" element={<AuthGuard allowedRoles={['user']}><PaymentCancel /></AuthGuard>} />
             <Route path="/user/profile" element={<AuthGuard allowedRoles={['user']}><UserProfile /></AuthGuard>} />
             <Route path="/user/notifications" element={<AuthGuard allowedRoles={['user']}><UserNotifications /></AuthGuard>} />
             <Route path="/provider/notifications" element={<AuthGuard allowedRoles={['provider']}><UserNotifications /></AuthGuard>} />
             <Route path="/admin/notifications" element={<AuthGuard allowedRoles={['admin']}><UserNotifications /></AuthGuard>} />
             <Route path="/supplier/notifications" element={<AuthGuard allowedRoles={['supplier', 'branch_staff']}><UserNotifications /></AuthGuard>} />
+            <Route
+              path="/user/request/delivery"
+              element={
+                <AuthGuard allowedRoles={['user']}>
+                  <Navigate to="/user/request/service?category=delivery" replace />
+                </AuthGuard>
+              }
+            />
+            <Route path="/user/delivery-requests/:id" element={<AuthGuard allowedRoles={['user']}><DeliveryRequestDetailPage /></AuthGuard>} />
             <Route path="/user/order-materials" element={<AuthGuard allowedRoles={['user']}><OrderMaterials /></AuthGuard>} />
             <Route path="/user/material-orders" element={<AuthGuard allowedRoles={['user']}><MaterialOrders /></AuthGuard>} />
             <Route path="/user/material-orders/:orderId" element={<AuthGuard allowedRoles={['user']}><OrderDetails /></AuthGuard>} />
@@ -132,6 +153,30 @@ const App = () => (
             <Route path="/provider/earnings" element={<AuthGuard allowedRoles={['provider']}><ProviderEarnings /></AuthGuard>} />
             <Route path="/provider/profile" element={<AuthGuard allowedRoles={['provider']}><ProviderProfile /></AuthGuard>} />
             <Route path="/provider/documents" element={<AuthGuard allowedRoles={['provider']}><ProviderDocuments /></AuthGuard>} />
+            <Route
+              path="/provider/deliveries"
+              element={
+                <AuthGuard allowedRoles={['provider']}>
+                  <Navigate to="/provider/requests" replace />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/provider/deliveries/:orderId"
+              element={
+                <AuthGuard allowedRoles={['provider']}>
+                  <Navigate to="/provider/requests" replace />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/provider/direct-deliveries/:id"
+              element={
+                <AuthGuard allowedRoles={['provider']}>
+                  <Navigate to="/provider/requests" replace />
+                </AuthGuard>
+              }
+            />
 
             {/* Supplier Routes */}
             <Route path="/supplier/dashboard" element={<AuthGuard allowedRoles={['supplier', 'branch_staff']}><SupplierDashboard /></AuthGuard>} />
@@ -145,8 +190,11 @@ const App = () => (
             <Route path="/supplier/branch-profile" element={<AuthGuard allowedRoles={['branch_staff']}><BranchStaffProfilePage /></AuthGuard>} />
 
             {/* Admin Routes */}
+            <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
             <Route path="/admin/dashboard" element={<AuthGuard allowedRoles={['admin']}><AdminDashboard /></AuthGuard>} />
             <Route path="/admin/analytics" element={<AuthGuard allowedRoles={['admin']}><AdminAnalytics /></AuthGuard>} />
+            <Route path="/admin/customers" element={<AuthGuard allowedRoles={['admin']}><AdminCustomers /></AuthGuard>} />
+            <Route path="/admin/customers/:id" element={<AuthGuard allowedRoles={['admin']}><AdminCustomerDetail /></AuthGuard>} />
             <Route path="/admin/providers" element={<AuthGuard allowedRoles={['admin']}><AdminProviders /></AuthGuard>} />
             <Route path="/admin/providers/:id" element={<AuthGuard allowedRoles={['admin']}><AdminProviderDetail /></AuthGuard>} />
             <Route path="/admin/suppliers" element={<AuthGuard allowedRoles={['admin']}><AdminSuppliers /></AuthGuard>} />
@@ -171,6 +219,7 @@ const App = () => (
           </Routes>
         </BrowserRouter>
       </TooltipProvider>
+      </GoogleMapsProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

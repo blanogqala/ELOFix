@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DeliveryMap } from '@/components/tracking/DeliveryMap';
@@ -253,8 +254,12 @@ function actionCueLine(
   return null;
 }
 
+export type UnifiedTrackingSectionArea = 'all' | 'order' | 'delivery';
+
 export interface UnifiedTrackingSectionProps {
   variant?: 'full' | 'embedded';
+  /** Split UI: supplier timeline in order summary; map + live courier in delivery card. */
+  section?: UnifiedTrackingSectionArea;
   mode: UnifiedDeliveryMode;
   fulfillmentStatus?: string;
   materialBatch?: MaterialBatch | null;
@@ -298,6 +303,7 @@ export interface UnifiedTrackingSectionProps {
 
 export function UnifiedTrackingSection({
   variant = 'full',
+  section = 'all',
   mode,
   fulfillmentStatus,
   materialBatch,
@@ -348,7 +354,7 @@ export function UnifiedTrackingSection({
   }, [proximity?.arriving]);
 
   const locked = Boolean(trackingLocked) && fulfillmentU === 'COMPLETED';
-  const mapActive = Boolean(showLiveMap) && !locked;
+  const mapActive = Boolean(showLiveMap) && !locked && variant !== 'embedded';
 
   const banner = deriveStatusBanner(mode, fulfillmentStatus, proximity, showConfirmDelivery);
   const cue = !locked ? actionCueLine(mode, fulfillmentStatus, proximity, showConfirmDelivery) : null;
@@ -370,15 +376,29 @@ export function UnifiedTrackingSection({
       : '';
 
   const embed = variant === 'embedded';
+  const orderArea = section === 'all' || section === 'order';
+  const deliveryArea = section === 'all' || section === 'delivery';
+
+  const supplierPhaseBanner =
+    banner &&
+    !['OUT_FOR_DELIVERY', 'DELAYED'].includes(fulfillmentU) &&
+    !(fulfillmentU === 'COMPLETED' && mode !== 'self_pickup');
+
+  const courierPhaseBanner =
+    banner &&
+    (['OUT_FOR_DELIVERY', 'DELAYED'].includes(fulfillmentU) ||
+      (fulfillmentU === 'COMPLETED' && mode !== 'self_pickup'));
 
   const storeDriverVisible =
     mode === 'store_delivery' &&
     !['FAILED', 'CANCELLED', 'COMPLETED'].includes(fulfillmentU) &&
     Boolean(assignedDriverName || supplierPhone || courierVehicle);
 
+  if (section !== 'all' && !orderArea && !deliveryArea) return null;
+
   return (
     <div className={cn('space-y-4', embed && 'space-y-3')}>
-      {showDeliverySuccessHighlight ? (
+      {deliveryArea && showDeliverySuccessHighlight ? (
         <div className="relative rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 pr-10 text-sm text-emerald-950 dark:text-emerald-50">
           <p className="font-semibold">Delivery completed successfully</p>
           <p className="mt-1 text-xs opacity-90">Thanks — you can rate the experience in the dialog.</p>
@@ -395,7 +415,7 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {locked ? (
+      {deliveryArea && locked ? (
         <div className="rounded-lg border border-border bg-muted/25 px-4 py-3 flex gap-2 text-sm text-muted-foreground">
           <Lock className="h-4 w-4 shrink-0 text-foreground mt-0.5" aria-hidden />
           <div>
@@ -405,13 +425,17 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
+      {orderArea ? (
       <div className="rounded-lg border border-border bg-muted/15 p-4 space-y-3">
         {embed ? <EmbeddedProgressStrip fulfillmentStatus={fulfillmentStatus} mode={mode} /> : null}
 
+        {(section === 'all' || section === 'order') ? (
         <div className="flex flex-wrap items-center gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live delivery</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {section === 'order' ? 'Supplier order status' : 'Order from supplier'}
+          </p>
           <Badge variant="outline" className="text-[10px] gap-1">
-            <Truck className="h-3 w-3" aria-hidden />
+            <Package className="h-3 w-3" aria-hidden />
             {modeHeadline(mode)}
           </Badge>
           {fulfillmentStatus ? (
@@ -421,59 +445,30 @@ export function UnifiedTrackingSection({
             </Badge>
           ) : null}
         </div>
+        ) : null}
 
-        {cue ? (
+        {orderArea && cue && !['OUT_FOR_DELIVERY', 'DELAYED'].includes(fulfillmentU) ? (
           <p className="text-xs font-medium text-primary border-l-2 border-primary pl-2 py-0.5">{cue}</p>
         ) : null}
 
-        {banner ? (
-          <div className={cn('rounded-lg border px-4 py-3 text-sm shadow-sm', banner.className)}>
-            <p className="font-semibold leading-snug">{banner.title}</p>
-            {banner.description ? (
-              <p className={cn('mt-1 text-xs leading-relaxed opacity-95', banner.title && 'opacity-90')}>
-                {banner.description}
+        {orderArea && supplierPhaseBanner ? (
+          <div className={cn('rounded-lg border px-4 py-3 text-sm shadow-sm', banner!.className)}>
+            <p className="font-semibold leading-snug">{banner!.title}</p>
+            {banner!.description ? (
+              <p className={cn('mt-1 text-xs leading-relaxed opacity-95', banner!.title && 'opacity-90')}>
+                {banner!.description}
               </p>
             ) : null}
           </div>
         ) : null}
 
-        {mode === 'store_delivery' ? (
+        {orderArea && mode === 'store_delivery' && ['READY', 'PREPARING', 'ACCEPTED', 'PENDING'].includes(fulfillmentU) ? (
           <div className="rounded-lg border border-border bg-background/70 px-3 py-2.5 space-y-2 text-xs">
             <p className="font-semibold text-foreground flex items-center gap-1.5">
               <Truck className="h-3.5 w-3.5 shrink-0" aria-hidden />
               Delivered by Store
             </p>
-            {fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED' ? (
-              storeDriverVisible ? (
-                <ul className="space-y-1 text-muted-foreground">
-                  {assignedDriverName ? (
-                    <li className="flex gap-2 text-foreground">
-                      <span className="text-muted-foreground shrink-0">Driver</span>
-                      {assignedDriverName}
-                    </li>
-                  ) : null}
-                  {supplierPhone ? (
-                    <li className="flex gap-2 items-center">
-                      <Phone className="h-3 w-3 shrink-0" aria-hidden />
-                      <a className="underline-offset-2 hover:underline" href={`tel:${supplierPhone.replace(/\s/g, '')}`}>
-                        {supplierPhone}
-                      </a>
-                      <span className="text-[10px] text-muted-foreground">(store contact)</span>
-                    </li>
-                  ) : null}
-                  {courierVehicle ? (
-                    <li>
-                      <span className="text-muted-foreground">Vehicle </span>
-                      {courierVehicle}
-                    </li>
-                  ) : null}
-                </ul>
-              ) : (
-                <p className="text-muted-foreground leading-relaxed">Store delivery in progress — we’ll show driver details when available.</p>
-              )
-            ) : ['READY', 'PREPARING', 'ACCEPTED', 'PENDING'].includes(fulfillmentU) ? (
-              <p className="text-muted-foreground leading-relaxed">Store delivery in progress — tracking activates when the driver heads out.</p>
-            ) : null}
+              <p className="text-muted-foreground leading-relaxed">Store delivery in progress — live map activates when the driver heads out.</p>
           </div>
         ) : null}
 
@@ -514,56 +509,17 @@ export function UnifiedTrackingSection({
           </div>
         ) : null}
 
-        {mode === 'provider_delivery' && (courierName || courierVehicle) && fulfillmentU === 'OUT_FOR_DELIVERY' ? (
-          <div className="rounded-md border border-border bg-background/80 px-3 py-2 text-xs">
-            <p className="font-semibold text-foreground mb-1">Courier</p>
-            {courierName ? <p>{courierName}</p> : null}
-            {courierVehicle ? <p className="text-muted-foreground">{courierVehicle}</p> : null}
-          </div>
-        ) : null}
-
-        {mode === 'store_delivery' && trackingUrl ? (
-          <div className="rounded-md border border-border p-3 space-y-2">
-            <p className="text-xs font-medium flex items-center gap-1">
-              <Link2 className="h-3.5 w-3.5" /> Driver GPS link (store delivery)
-            </p>
-            <p className="text-[11px] text-muted-foreground break-all">{trackingUrl}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void navigator.clipboard.writeText(trackingUrl);
-                  toast({ title: 'Copied', description: 'Tracking link copied to clipboard.' });
-                }}
-              >
-                Copy link
-              </Button>
-              <Button type="button" variant="ghost" size="sm" className="gap-1" asChild>
-                <a href={trackingUrl} target="_blank" rel="noreferrer">
-                  Open <ExternalLink className="h-3 w-3" />
-                </a>
-              </Button>
-            </div>
-            {embed ? (
-              <p className="text-[11px] text-muted-foreground">
-                Share this with whoever is driving. Your live map syncs once their phone sends GPS.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {fullTrackingHref ? (
+        {fullTrackingHref && section === 'all' ? (
           <Button variant="secondary" size="sm" className="w-full hover:bg-accent/80 border-primary border" asChild>
-            <a href={fullTrackingHref}>Full tracking view</a>
+            <Link to={fullTrackingHref}>Full tracking view</Link>
           </Button>
         ) : null}
       </div>
+      ) : null}
 
-      {!embed ? <FulfillmentPhaseTimeline fulfillmentStatus={fulfillmentStatus} /> : null}
+      {orderArea && !embed ? <FulfillmentPhaseTimeline fulfillmentStatus={fulfillmentStatus} /> : null}
 
-      {showConfirmDelivery && !locked ? (
+      {orderArea && showConfirmDelivery && !locked && mode === 'self_pickup' ? (
         <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/8 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm ring-1 ring-emerald-500/15">
           <p className="text-sm text-muted-foreground">
             {mode === 'self_pickup'
@@ -581,7 +537,94 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {!embed &&
+      {deliveryArea && courierPhaseBanner ? (
+        <div className={cn('rounded-lg border px-4 py-3 text-sm shadow-sm', banner!.className)}>
+          <p className="font-semibold leading-snug">{banner!.title}</p>
+          {banner!.description ? (
+            <p className="mt-1 text-xs leading-relaxed opacity-90">{banner!.description}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {deliveryArea && cue && ['OUT_FOR_DELIVERY', 'DELAYED'].includes(fulfillmentU) ? (
+        <p className="text-xs font-medium text-primary border-l-2 border-primary pl-2 py-0.5">{cue}</p>
+      ) : null}
+
+      {deliveryArea && mode === 'store_delivery' && (fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED') ? (
+        <div className="rounded-lg border border-border bg-background/70 px-3 py-2.5 space-y-2 text-xs">
+          <p className="font-semibold text-foreground flex items-center gap-1.5">
+            <Truck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Store driver
+          </p>
+          {storeDriverVisible ? (
+            <ul className="space-y-1 text-muted-foreground">
+              {assignedDriverName ? (
+                <li className="flex gap-2 text-foreground">
+                  <span className="text-muted-foreground shrink-0">Driver</span>
+                  {assignedDriverName}
+                </li>
+              ) : null}
+              {supplierPhone ? (
+                <li className="flex gap-2 items-center">
+                  <Phone className="h-3 w-3 shrink-0" aria-hidden />
+                  <a className="underline-offset-2 hover:underline" href={`tel:${supplierPhone.replace(/\s/g, '')}`}>
+                    {supplierPhone}
+                  </a>
+                </li>
+              ) : null}
+              {courierVehicle ? (
+                <li>
+                  <span className="text-muted-foreground">Vehicle </span>
+                  {courierVehicle}
+                </li>
+              ) : null}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground leading-relaxed">Driver details will appear when the store dispatches.</p>
+          )}
+        </div>
+      ) : null}
+
+      {deliveryArea && mode === 'store_delivery' && trackingUrl ? (
+        <div className="rounded-md border border-border p-3 space-y-2">
+          <p className="text-xs font-medium flex items-center gap-1">
+            <Link2 className="h-3.5 w-3.5" /> Driver GPS link
+          </p>
+          <p className="text-[11px] text-muted-foreground break-all">{trackingUrl}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void navigator.clipboard.writeText(trackingUrl);
+                toast({ title: 'Copied', description: 'Tracking link copied to clipboard.' });
+              }}
+            >
+              Copy link
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="gap-1" asChild>
+              <a href={trackingUrl} target="_blank" rel="noreferrer">
+                Open <ExternalLink className="h-3 w-3" />
+              </a>
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {deliveryArea && showConfirmDelivery && !locked && mode !== 'self_pickup' ? (
+        <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/8 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm ring-1 ring-emerald-500/15">
+          <p className="text-sm text-muted-foreground">
+            Your courier or store marked delivery. Confirm you received everything.
+          </p>
+          <Button className="btn-accent shrink-0 font-semibold" onClick={onConfirmDelivery} disabled={confirmDeliveryPending}>
+            {confirmDeliveryPending ? 'Confirming…' : confirmDeliveryLabel || 'Confirm delivery'}
+          </Button>
+        </div>
+      ) : null}
+
+      {deliveryArea &&
+      !embed &&
       !mapActive &&
       mode !== 'self_pickup' &&
       !['FAILED', 'CANCELLED', 'COMPLETED', 'DELAYED'].includes(fulfillmentU) &&
@@ -596,7 +639,7 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {mapActive ? (
+      {deliveryArea && mapActive ? (
         <div className="space-y-2">
           {socketReconnecting ? (
             <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">

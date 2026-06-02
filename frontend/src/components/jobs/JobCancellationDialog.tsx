@@ -13,6 +13,10 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  EMPTY_CUSTOMER_CANCEL_PREVIEW,
+  type CustomerCancelPreview,
+} from '@/lib/jobCancellationPolicy';
 
 interface JobCancellationDialogProps {
   open: boolean;
@@ -21,6 +25,7 @@ interface JobCancellationDialogProps {
   hasMaterialsPaid: boolean;
   materialsAmount: number;
   laborAmount: number;
+  cancelPreview?: CustomerCancelPreview;
 }
 
 const CANCELLATION_REASONS = [
@@ -39,11 +44,16 @@ export function JobCancellationDialog({
   hasMaterialsPaid,
   materialsAmount,
   laborAmount,
+  cancelPreview,
 }: JobCancellationDialogProps) {
   const [reason, setReason] = useState('');
   const [details, setDetails] = useState('');
 
-  const refundAmount = hasMaterialsPaid ? laborAmount : laborAmount + materialsAmount;
+  const preview = cancelPreview ?? EMPTY_CUSTOMER_CANCEL_PREVIEW;
+  const laborRefund = preview.customerForfeits ? 0 : preview.laborRefund;
+  const materialsRefund =
+    preview.materialsRefundable && !hasMaterialsPaid ? materialsAmount : 0;
+  const totalRefund = preview.refundAmount;
 
   const handleConfirm = () => {
     if (!reason) return;
@@ -66,49 +76,70 @@ export function JobCancellationDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Refund Info */}
+          {preview.warning ? (
+            <div
+              className={
+                preview.customerForfeits
+                  ? 'rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive'
+                  : 'rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100'
+              }
+            >
+              {cancelPreview.warning}
+            </div>
+          ) : null}
+
           <div className="p-4 bg-muted/50 rounded-lg space-y-2">
-            <p className="font-medium text-sm">Refund Breakdown</p>
+            <p className="font-medium text-sm">Refund breakdown</p>
             <div className="text-sm space-y-1">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Labor</span>
-                <span className="text-success">+{formatCurrency(laborAmount, { decimals: 2 })}</span>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Labor / service</span>
+                {laborRefund > 0 ? (
+                  <span className="text-success shrink-0">+{formatCurrency(laborRefund, { decimals: 2 })}</span>
+                ) : laborAmount > 0 && preview.customerForfeits ? (
+                  <span className="text-destructive shrink-0 text-right">Non-refundable</span>
+                ) : (
+                  <span className="text-muted-foreground shrink-0">—</span>
+                )}
               </div>
-              {!hasMaterialsPaid && (
-                <div className="flex justify-between">
+              {!hasMaterialsPaid && materialsRefund > 0 && (
+                <div className="flex justify-between gap-2">
                   <span className="text-muted-foreground">Materials (not ordered)</span>
-                  <span className="text-success">+{formatCurrency(materialsAmount, { decimals: 2 })}</span>
+                  <span className="text-success shrink-0">
+                    +{formatCurrency(materialsRefund, { decimals: 2 })}
+                  </span>
                 </div>
               )}
               {hasMaterialsPaid && (
-                <div className="flex justify-between">
+                <div className="flex justify-between gap-2">
                   <span className="text-muted-foreground">Materials (already ordered)</span>
-                  <span className="text-destructive">Non-refundable</span>
+                  <span className="text-destructive shrink-0 text-right">Non-refundable</span>
                 </div>
               )}
               <div className="border-t border-border pt-1 mt-1">
-                <div className="flex justify-between font-medium">
-                  <span>Total Refund</span>
-                  <span className="text-success">{formatCurrency(refundAmount, { decimals: 2 })}</span>
+                <div className="flex justify-between font-medium gap-2">
+                  <span>Total refund</span>
+                  <span className={totalRefund > 0 ? 'text-success shrink-0' : 'text-muted-foreground shrink-0'}>
+                    {formatCurrency(totalRefund, { decimals: 2 })}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Reason Selection */}
           <div>
             <Label className="mb-2 block">Reason for cancellation</Label>
             <RadioGroup value={reason} onValueChange={setReason}>
-              {CANCELLATION_REASONS.map(r => (
+              {CANCELLATION_REASONS.map((r) => (
                 <div key={r} className="flex items-center space-x-2">
                   <RadioGroupItem value={r} id={r} />
-                  <Label htmlFor={r} className="font-normal cursor-pointer">{r}</Label>
+                  <Label htmlFor={r} className="font-normal cursor-pointer">
+                    {r}
+                  </Label>
                 </div>
               ))}
             </RadioGroup>
           </div>
 
-          {/* Additional Details */}
           <div>
             <Label htmlFor="details">Additional details (optional)</Label>
             <Textarea
@@ -126,11 +157,7 @@ export function JobCancellationDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Keep Job
           </Button>
-          <Button 
-            variant="destructive" 
-            onClick={handleConfirm}
-            disabled={!reason}
-          >
+          <Button variant="destructive" onClick={handleConfirm} disabled={!reason}>
             Cancel Job
           </Button>
         </DialogFooter>

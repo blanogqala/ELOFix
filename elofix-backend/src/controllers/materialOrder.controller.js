@@ -109,6 +109,13 @@ async function getMaterialOrder(req, res) {
     if (!sup || !row || !(await materialOrderBelongsToSupplierStore(row, sup.id))) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
+  } else if (req.user.role === "PROVIDER") {
+    const row = await prisma.materialOrder.findUnique({ where: { id: req.params.id } });
+    const payload = row?.payload && typeof row.payload === "object" ? row.payload : {};
+    const assigned = materialOrderService.resolveAssignedCourierId(payload);
+    if (assigned !== String(req.user.userId)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
   } else if (req.user.role !== "ADMIN" && String(order.userId) !== String(req.user.userId)) {
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
@@ -175,6 +182,33 @@ async function cancelMaterialOrder(req, res) {
   res.json({ success: true, order: out.order, refund: out.refund });
 }
 
+async function getDeliveryInbox(req, res) {
+  const orders = await materialOrderService.listDeliveryInboxForProvider(req.user.userId);
+  res.json({ success: true, orders });
+}
+
+async function submitDeliveryQuote(req, res) {
+  const order = await materialOrderService.submitDeliveryQuote(req.params.id, req.user.userId, {
+    fee: req.body?.fee,
+    note: req.body?.note,
+  });
+  res.json({ success: true, order });
+}
+
+async function rejectDeliveryRequest(req, res) {
+  const order = await materialOrderService.rejectDeliveryRequestByProvider(
+    req.params.id,
+    req.user.userId,
+    req.body?.reason
+  );
+  res.json({ success: true, order });
+}
+
+async function acceptDeliveryQuote(req, res) {
+  const order = await materialOrderService.acceptDeliveryQuote(req.params.id, req.user.userId);
+  res.json({ success: true, order });
+}
+
 module.exports = {
   listOrdersQuery,
   getMaterialOrders,
@@ -189,4 +223,8 @@ module.exports = {
   patchProviderFulfillment,
   confirmDeliveryReceipt,
   cancelMaterialOrder,
+  getDeliveryInbox,
+  submitDeliveryQuote,
+  rejectDeliveryRequest,
+  acceptDeliveryQuote,
 };

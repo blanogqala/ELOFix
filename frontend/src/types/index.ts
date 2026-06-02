@@ -54,6 +54,8 @@ export interface Provider {
   phone: string;
   role: 'provider';
   businessName?: string;
+  vehicleType?: string;
+  numberPlate?: string;
   city?: string;
   serviceAreas?: string[];
   skills: string[];
@@ -306,6 +308,9 @@ export type MaterialFulfillmentStatus =
   | 'ACCEPTED'
   | 'PREPARING'
   | 'READY'
+  | 'COLLECTING'
+  | 'COLLECTED'
+  | 'AT_DESTINATION'
   | 'OUT_FOR_DELIVERY'
   | 'COMPLETED'
   | 'FAILED'
@@ -402,6 +407,9 @@ export interface Measurements {
   source: 'AI' | 'MANUAL';
   values: Record<string, number>;
   movingItems?: MovingItem[];
+  deliveryItems?: Array<{ name: string; qty: number; weightKg?: number }>;
+  collectionPoint?: { address?: string; city?: string; area?: string; suburb?: string };
+  destinationPoint?: { address?: string; city?: string; area?: string; suburb?: string };
   plumbingIssue?: PlumbingIssue;
   /** Guided / camera pipeline; backward compatible when absent. */
   cameraAssist?: CameraAssistMeasurement;
@@ -484,10 +492,13 @@ export interface MaterialPayment {
 export type DeliveryStatus =
   | 'SelfCollect'
   | 'PendingApproval'
+  | 'Quoted'
   | 'Approved'
   | 'Rejected'
   | 'Cancelled'
   | 'InProgress'
+  | 'Processing'
+  | 'OnTheWay'
   | 'Delivered';
 
 export interface OrderDelivery {
@@ -508,6 +519,7 @@ export type StoreOrderDeliveryType = 'SELF' | 'STORE' | 'PROVIDER';
 export type StoreOrderDeliveryStatus =
   | 'SelfCollect'
   | 'PendingApproval'
+  | 'Quoted'
   | 'Approved'
   | 'Rejected'
   | 'Cancelled'
@@ -664,6 +676,11 @@ export interface Job {
   updatedAt: string;
   /** From category; when false, inspection step is skipped for this job */
   requiresInspection?: boolean;
+  /** From category; when false, materials workflow is disabled */
+  requiresMaterials?: boolean;
+  /** Linked standalone delivery request (courier quote flow). */
+  deliveryRequestId?: string | null;
+  courierFlow?: boolean;
   /** Customer gross (labor) after settlement; source of truth from API */
   totalPrice?: number;
   commissionAmount?: number;
@@ -854,4 +871,113 @@ export interface MaterialOrder {
   branchHasDelivery?: boolean;
   branchDeliveryFee?: number;
   branchCoordinates?: { lat: number; lng: number };
+  jobId?: string;
+  fulfillmentStatus?: string;
+  materialBatch?: MaterialBatch | null;
+  collectionPoint?: DeliveryGeoPoint;
+  destinationPoint?: DeliveryGeoPoint;
+  deliveryQuote?: { fee: number; note?: string; submittedAt?: string; providerId?: string };
+  source?: string;
+}
+
+export interface DeliveryGeoPoint {
+  address?: string;
+  city?: string;
+  area?: string;
+  suburb?: string;
+  label?: string;
+  coordinates?: { lat: number; lng: number };
+}
+
+export interface DeliveryRequestItem {
+  name: string;
+  qty: number;
+  weightKg?: number;
+}
+
+export interface DeliveryRequestRecord {
+  id: string;
+  customerId: string;
+  courierId?: string;
+  source?: string;
+  jobId?: string;
+  category: string;
+  description?: string;
+  photos: string[];
+  items: DeliveryRequestItem[];
+  collectionPoint: DeliveryGeoPoint;
+  destinationPoint: DeliveryGeoPoint;
+  status: string;
+  quotedFee?: number;
+  quoteNote?: string;
+  fulfillmentStatus?: string;
+  payment?: { deliveryPaid?: boolean };
+  activeTrackingId?: string;
+  activeTrackingToken?: string;
+  driverLocation?: { lat: number; lng: number; updatedAt?: string };
+  courierPhase?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AdminCustomerJobCounts {
+  total: number;
+  completed: number;
+  active: number;
+  open: number;
+  rejected: number;
+  cancelled: number;
+}
+
+export interface AdminCustomerListItem {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  profileImage: string | null;
+  authProvider: string;
+  blocked: boolean;
+  deletedAt: string | null;
+  city: string | null;
+  registeredAt: string;
+  jobCounts: AdminCustomerJobCounts;
+  servicesRequested: string[];
+  totalPaid: number;
+}
+
+export interface AdminCustomerProviderSummary {
+  id: string;
+  name: string;
+  email: string;
+  businessName: string | null;
+}
+
+export interface AdminCustomerMaterialStore {
+  branchId: string;
+  branchName: string;
+  branchCity: string | null;
+  supplierId: string;
+  supplierName: string;
+  orderCount: number;
+  totalSpent: number;
+}
+
+export interface AdminCustomerJobRow {
+  id: string;
+  title: string;
+  categoryId: string;
+  categoryName: string;
+  status: JobStatus;
+  createdAt: string;
+  siteAddress: string;
+  totalPaid: number;
+  providerId: string | null;
+  provider: AdminCustomerProviderSummary | null;
+}
+
+export interface AdminCustomerDetail extends AdminCustomerListItem {
+  cities: string[];
+  topMaterialStore: AdminCustomerMaterialStore | null;
+  materialStores: AdminCustomerMaterialStore[];
+  jobs: AdminCustomerJobRow[];
 }

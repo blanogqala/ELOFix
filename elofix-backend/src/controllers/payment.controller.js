@@ -1,6 +1,8 @@
 const AppError = require("../utils/AppError");
 const paymentService = require("../services/payment.service");
 const jobService = require("../services/job.service");
+const paymentIntentService = require("../services/payments/paymentIntent.service");
+const webhookService = require("../services/payments/webhook.service");
 
 async function getSavedCards(req, res) {
   const userId = req.query.userId || req.user.userId;
@@ -48,10 +50,9 @@ async function releaseEscrow(req, res) {
   if (!jobId) {
     return res.status(400).json({ success: false, message: "jobId is required" });
   }
-  const amount = req.body?.amount;
   const job = await jobService.releaseEscrowPayment(
     String(jobId),
-    amount,
+    req.body?.amount,
     req.financialIdempotencyKey,
     req.financialRequestHash,
     req.financialIdempotencyRoute,
@@ -71,49 +72,87 @@ async function createRefundInvoice(req, res) {
   res.status(201).json({ success: true, invoice });
 }
 
-async function verifyPaystack(req, res) {
+async function listPaymentProviders(req, res) {
+  const providers = await paymentIntentService.listProviders();
+  res.json({ success: true, providers });
+}
+
+async function createPaymentIntent(req, res) {
   if (String(req.user?.role) !== "CUSTOMER") {
-    throw new AppError("Only customers can verify labor payment", 403);
+    throw new AppError("Only customers can create payment intents", 403);
   }
-  const jobId = String(req.body?.jobId || "").trim();
-  const reference = String(req.body?.reference || "").trim();
-  if (!jobId || !reference) {
-    throw new AppError("jobId and reference are required", 400);
-  }
-  if (!paymentService.isPaystackConfigured()) {
-    throw new AppError("Paystack is not configured", 503);
-  }
-  const out = await paymentService.verifyPaystackAndSettleLabor({
-    jobId,
-    customerUserId: req.user.userId,
-    reference,
+  const body = req.body || {};
+  const out = await paymentIntentService.createPaymentIntent({
+    userId: req.user.userId,
+    role: req.user.role,
+    kind: body.kind,
+    jobId: body.jobId,
+    materialOrderId: body.materialOrderId,
+    amount: body.amount,
+    provider: body.provider,
+    returnUrl: body.returnUrl,
+    cancelUrl: body.cancelUrl,
+    metadata: body.metadata,
     idempotencyKey: req.financialIdempotencyKey,
     requestHash: req.financialRequestHash,
     route: req.financialIdempotencyRoute,
   });
-  const job = await jobService.getJobByIdForActor(
-    jobId,
+  res.status(201).json({ success: true, ...out });
+}
+
+async function getPaymentIntent(req, res) {
+  const intent = await paymentIntentService.getPaymentIntentById(
+    req.params.id,
     req.user.userId,
-    String(req.user?.role || "CUSTOMER")
+    req.user.role
   );
-  res.json({
-    success: true,
-    job,
-    replay: Boolean(out.replay),
-    alreadySettled: Boolean(out.alreadySettled),
+  res.json({ success: true, intent });
+}
+
+async function confirmPaymentReturn(req, res) {
+  const out = await paymentIntentService.confirmPaymentReturn(
+    req.params.id,
+    req.user.userId,
+    req.user.role
+  );
+  res.json({ success: true, ...out });
+}
+
+async function adminForceSettle(req, res) {
+  const out = await paymentIntentService.adminForceSettle(req.body?.intentId || req.params.id, req.user.userId);
+  res.json({ success: true, ...out });
+}
+
+async function payfastWebhook(req, res) {
+  res.status(200).send("OK");
+  const data = req.body && typeof req.body === "object" ? req.body : {};
+  const clientIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress;
+  webhookService.handlePayfastWebhook(data, clientIp).catch((e) => {
+    console.error("[webhook payfast]", e);
   });
 }
 
-/**
- * Body is raw Buffer; registered with express.raw in app.js.
- */
-async function paystackWebhook(req, res) {
+async function payflexWebhook(req, res) {
   const buf = req.body;
   if (!Buffer.isBuffer(buf)) {
-    return res.status(400).json({ success: false, message: "Expected application/json raw body" });
+    return res.status(400).json({ success: false, message: "Expected raw body" });
   }
-  const sig = req.headers["x-paystack-signature"] || req.headers["X-Paystack-Signature"];
-  const out = await paymentService.processPaystackWebhookBuffer(buf, sig);
+  const sig = req.headers["x-payflex-signature"] || req.headers["x-signature"];
+  const out = await webhookService.handlePayflexWebhook(buf, sig);
+  const status = out.httpStatus != null ? out.httpStatus : 200;
+  res.status(status).json({ success: status < 400, ...out });
+}
+
+async function payjustnowWebhook(req, res) {
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf)) {
+    return res.status(400).json({ success: false, message: "Expected raw body" });
+  }
+  const sig =
+    req.headers["x-payjustnow-signature"] ||
+    req.headers["x-signature"] ||
+    req.headers["x-webhook-signature"];
+  const out = await webhookService.handlePayjustnowWebhook(buf, sig);
   const status = out.httpStatus != null ? out.httpStatus : 200;
   res.status(status).json({ success: status < 400, ...out });
 }
@@ -128,6 +167,12 @@ module.exports = {
   getInvoice,
   createInvoice,
   createRefundInvoice,
-  verifyPaystack,
-  paystackWebhook,
+  listPaymentProviders,
+  createPaymentIntent,
+  getPaymentIntent,
+  confirmPaymentReturn,
+  adminForceSettle,
+  payfastWebhook,
+  payflexWebhook,
+  payjustnowWebhook,
 };

@@ -1,5 +1,6 @@
 const express = require("express");
 const adminController = require("../controllers/admin.controller");
+const paymentController = require("../controllers/payment.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
 
@@ -10,10 +11,18 @@ router.use(authorizeRoles(["ADMIN"]));
 
 router.get("/material-orders", asyncHandler(adminController.listAllPlatformMaterialOrders));
 router.get("/analytics", asyncHandler(adminController.getAnalytics));
+router.post("/payments/force-settle", asyncHandler(paymentController.adminForceSettle));
+
 router.get("/financial-summary", asyncHandler(adminController.getFinancialSummaryEndpoint));
 router.get("/commissions", asyncHandler(adminController.getCommissions));
 router.get("/reconcile/:providerId", asyncHandler(adminController.getReconcileProvider));
+router.get("/customers", asyncHandler(adminController.listCustomers));
+router.get("/customers/:userId", asyncHandler(adminController.getCustomerById));
+router.patch("/customers/:userId/block", asyncHandler(adminController.blockCustomer));
+router.patch("/customers/:userId/unblock", asyncHandler(adminController.unblockCustomer));
+router.patch("/customers/:userId/delete", asyncHandler(adminController.deleteCustomer));
 router.get("/providers", asyncHandler(adminController.listProviders));
+router.get("/providers/revenue-summary", asyncHandler(adminController.listProviderNetRevenues));
 router.patch(
   "/providers/:userId/documents/:docType/approve",
   asyncHandler(adminController.approveProviderDocument)

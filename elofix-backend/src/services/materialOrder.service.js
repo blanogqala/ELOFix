@@ -55,6 +55,35 @@ function deliveryJobTypeToCanonical(dt) {
   return "delivery";
 }
 
+/** Assigned courier userId from order payload (not the job's service provider). */
+function resolveAssignedCourierId(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const batch =
+    payload.materialBatch && typeof payload.materialBatch === "object" ? payload.materialBatch : {};
+  return String(
+    batch.assignedDriverId || payload.deliveryProviderId || payload.delivery?.providerId || ""
+  ).trim();
+}
+
+function buildGeoPoint({ address, city, area, suburb, coordinates, label } = {}) {
+  const point = {
+    address: address != null ? String(address).trim() : "",
+    city: city != null ? String(city).trim() : undefined,
+    area: area != null ? String(area).trim() : undefined,
+    suburb: suburb != null ? String(suburb).trim() : undefined,
+    label: label != null ? String(label).trim() : undefined,
+  };
+  if (
+    coordinates &&
+    typeof coordinates === "object" &&
+    Number.isFinite(Number(coordinates.lat)) &&
+    Number.isFinite(Number(coordinates.lng))
+  ) {
+    point.coordinates = { lat: Number(coordinates.lat), lng: Number(coordinates.lng) };
+  }
+  return point;
+}
+
 function stripClientTrackingFromOrderInput(raw = {}) {
   const input = raw && typeof raw === "object" ? { ...raw } : {};
   delete input.activeTrackingId;
@@ -190,6 +219,7 @@ function patchPayloadForFulfillmentDelivery(payload, next) {
 
 function enrichOrderFromDbRow(row, payload) {
   const p = payload && typeof payload === "object" ? { ...payload } : {};
+  if (row.userId) p.userId = String(row.userId);
   if (row.supplierId) p.supplierId = row.supplierId;
   if (row.branchId) p.branchId = row.branchId;
   if (row.jobId) p.jobId = row.jobId;
@@ -221,6 +251,7 @@ function normalizeDeliveryStatus(status) {
   const allowed = new Set([
     "SelfCollect",
     "PendingApproval",
+    "Quoted",
     "Approved",
     "Rejected",
     "Cancelled",
@@ -289,7 +320,10 @@ function normalizeOrder(input) {
     deliveryProviderId: delivery.providerId || undefined,
     deliveryFee,
     total: materialsTotal + deliveryFee,
-    paymentStatus: "paid",
+    paymentStatus:
+      input.paymentStatus === "paid" || input.paymentStatus === "unpaid"
+        ? String(input.paymentStatus)
+        : "unpaid",
     deliveryStatus:
       delivery.status === "Delivered"
         ? "delivered"
@@ -338,7 +372,7 @@ function normalizeOrder(input) {
     paymentStatus:
       input.paymentStatus === "unpaid" || input.paymentStatus === "paid"
         ? String(input.paymentStatus)
-        : "paid",
+        : "unpaid",
     source: input.source === "job_materials" ? "job_materials" : "store_checkout",
     fulfillmentStatus: "PENDING",
     materialsSubtotal: new Prisma.Decimal(materialsSubtotal),
@@ -356,6 +390,20 @@ function normalizeOrder(input) {
 async function createMaterialOrder(params) {
   const clean = stripClientTrackingFromOrderInput(params || {});
   const { prismaRow, order } = normalizeOrder(clean);
+
+  if (clean.paymentIntentId) {
+    const intent = await prisma.paymentIntent.findUnique({
+      where: { id: String(clean.paymentIntentId) },
+    });
+    if (!intent || intent.state !== "PAID") {
+      throw new AppError("Valid paid payment intent is required", 400);
+    }
+    if (String(intent.userId) !== String(prismaRow.userId)) {
+      throw new AppError("Payment intent does not belong to this user", 403);
+    }
+    prismaRow.paymentStatus = "paid";
+    order.paymentStatus = "paid";
+  }
   if (prismaRow.source === "store_checkout" && !String(order.customerLocation?.address || "").trim()) {
     throw new AppError("Delivery address is required to order materials", 400);
   }
@@ -392,11 +440,44 @@ async function createMaterialOrder(params) {
       {}
     ),
   };
+  const pickupAddr = branch.address ? String(branch.address) : "";
+  nextPayload.materialBatch.pickupAddress = pickupAddr;
+  nextPayload.materialBatch.deliveryAddress = String(order.customerLocation?.address || "");
+  if (order.delivery?.providerId) {
+    nextPayload.materialBatch.assignedDriverId = String(order.delivery.providerId);
+  }
+  nextPayload.collectionPoint = buildGeoPoint({
+    address: pickupAddr,
+    city: branch.city,
+    area: branch.area,
+    coordinates:
+      branch.latitude != null && branch.longitude != null
+        ? { lat: Number(branch.latitude), lng: Number(branch.longitude) }
+        : undefined,
+    label: branchService.branchPublicDisplay(branch, branch.supplier) || "Collection point",
+  });
+  nextPayload.destinationPoint = buildGeoPoint({
+    address: order.customerLocation?.address,
+    city: order.customerLocation?.city,
+    area: order.customerLocation?.area,
+    suburb: order.customerLocation?.suburb,
+    coordinates: order.customerLocation?.coordinates,
+    label: "Delivery destination",
+  });
+  if (String(order.delivery?.type || "").toUpperCase() === "PROVIDER" && order.delivery?.providerId) {
+    nextPayload.delivery = {
+      ...(nextPayload.delivery || {}),
+      type: "PROVIDER",
+      status: "PendingApproval",
+      providerId: String(order.delivery.providerId),
+      fee: 0,
+    };
+  }
   delete nextPayload.activeTrackingId;
   delete nextPayload.activeTrackingToken;
   delete nextPayload.driverLocation;
 
-  await prisma.materialOrder.create({
+  const created = await prisma.materialOrder.create({
     data: {
       id: prismaRow.id,
       userId: prismaRow.userId,
@@ -413,10 +494,20 @@ async function createMaterialOrder(params) {
       payload: nextPayload,
     },
   });
+
+  if (clean.paymentIntentId) {
+    await prisma.paymentIntent.update({
+      where: { id: String(clean.paymentIntentId) },
+      data: { materialOrderId: created.id },
+    });
+  }
   try {
     await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, branchId, prismaRow.jobId);
   } catch (_) {
     /* non-fatal socket */
+  }
+  if (String(order.delivery?.type || "").toUpperCase() === "PROVIDER" && order.delivery?.providerId) {
+    await notifyAssignedCourier(prismaRow.id, order.delivery.providerId);
   }
   return nextPayload;
 }
@@ -600,6 +691,166 @@ async function rejectMaterialOrderDelivery(orderId) {
   return updateMaterialOrderDelivery(orderId, { status: "Rejected" });
 }
 
+async function assertAssignedCourier(orderId, providerUserId) {
+  const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  if (!row) throw new AppError("Material order not found", 404);
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  if (String(payload.deliveryType || "").toUpperCase() !== "DELIVERY_PROVIDER") {
+    throw new AppError("Not a courier delivery order", 400);
+  }
+  const assigned = resolveAssignedCourierId(payload);
+  if (!assigned || assigned !== String(providerUserId || "")) {
+    throw new AppError("Forbidden", 403);
+  }
+  return { row, payload };
+}
+
+async function listDeliveryInboxForProvider(providerUserId) {
+  const pid = String(providerUserId || "").trim();
+  if (!pid) return [];
+  const rows = await prisma.materialOrder.findMany({
+    where: {
+      OR: [
+        { payload: { path: ["deliveryProviderId"], equals: pid } },
+        { payload: { path: ["materialBatch", "assignedDriverId"], equals: pid } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    include: {
+      supplier: { select: { id: true, name: true, businessName: true } },
+      branch: { select: { id: true, name: true, address: true, city: true, latitude: true, longitude: true } },
+      job: { select: { id: true, title: true, location: true } },
+    },
+  });
+  const filtered = rows.filter((row) => {
+    const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+    return (
+      String(payload.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER" &&
+      resolveAssignedCourierId(payload) === pid
+    );
+  });
+  return Promise.all(
+    filtered.map(async (row) => {
+      const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+      return enrichOrderFromDbRow(row, payload);
+    })
+  );
+}
+
+async function submitDeliveryQuote(orderId, providerUserId, { fee, note } = {}) {
+  const safeFee = safeMoney2(Number(fee || 0));
+  if (!Number.isFinite(safeFee)) {
+    throw new AppError("Valid delivery fee is required", 400);
+  }
+  const { row, payload } = await assertAssignedCourier(orderId, providerUserId);
+  const currentStatus = normalizeDeliveryStatus(payload.delivery?.status);
+  if (!["PendingApproval", "Quoted"].includes(currentStatus)) {
+    throw new AppError("Cannot quote in current delivery state", 400);
+  }
+  const nextPayload = {
+    ...payload,
+    deliveryFee: safeFee,
+    deliveryQuote: {
+      fee: safeFee,
+      note: note ? String(note).trim() : "",
+      submittedAt: new Date().toISOString(),
+      providerId: String(providerUserId),
+    },
+    delivery: {
+      ...(payload.delivery || {}),
+      fee: safeFee,
+      status: "Quoted",
+    },
+  };
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: { payload: nextPayload },
+  });
+  const enriched = enrichOrderFromDbRow(row, nextPayload);
+  try {
+    const notificationEvents = require("./notificationEvents.service");
+    await notificationEvents.notifyDeliveryQuoteSubmitted(row.userId, orderId, safeFee, row.jobId || undefined);
+  } catch (e) {
+    console.error("notifyDeliveryQuoteSubmitted", e);
+  }
+  return enriched;
+}
+
+async function rejectDeliveryRequestByProvider(orderId, providerUserId, reason) {
+  const { row, payload } = await assertAssignedCourier(orderId, providerUserId);
+  const currentStatus = normalizeDeliveryStatus(payload.delivery?.status);
+  if (!["PendingApproval", "Quoted"].includes(currentStatus)) {
+    throw new AppError("Cannot reject in current delivery state", 400);
+  }
+  const nextPayload = {
+    ...payload,
+    deliveryRejection: {
+      reason: reason ? String(reason).trim() : "",
+      rejectedAt: new Date().toISOString(),
+      providerId: String(providerUserId),
+    },
+    delivery: {
+      ...(payload.delivery || {}),
+      status: "Rejected",
+    },
+  };
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: { payload: nextPayload },
+  });
+  const enriched = enrichOrderFromDbRow(row, nextPayload);
+  try {
+    const notificationEvents = require("./notificationEvents.service");
+    await notificationEvents.notifyDeliveryUpdate(
+      row.userId,
+      row.jobId || orderId,
+      "Your delivery request",
+      "Courier declined — choose another provider"
+    );
+  } catch (e) {
+    console.error("notifyDeliveryRejected", e);
+  }
+  return enriched;
+}
+
+async function acceptDeliveryQuote(orderId, customerUserId) {
+  const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  if (!row) throw new AppError("Material order not found", 404);
+  if (String(row.userId) !== String(customerUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  const currentStatus = normalizeDeliveryStatus(payload.delivery?.status);
+  if (currentStatus !== "Quoted") {
+    throw new AppError("No quoted delivery fee to accept", 400);
+  }
+  const quotedFee = Number(payload.deliveryQuote?.fee ?? payload.deliveryFee ?? payload.delivery?.fee ?? 0);
+  const nextPayload = {
+    ...payload,
+    deliveryFee: quotedFee,
+    delivery: {
+      ...(payload.delivery || {}),
+      fee: quotedFee,
+      status: "Approved",
+    },
+  };
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: { payload: nextPayload },
+  });
+  return enrichOrderFromDbRow(row, nextPayload);
+}
+
+async function notifyAssignedCourier(orderId, courierUserId) {
+  if (!courierUserId) return;
+  try {
+    const notificationEvents = require("./notificationEvents.service");
+    await notificationEvents.notifyCourierDeliveryRequest(String(courierUserId), String(orderId));
+  } catch (e) {
+    console.error("notifyAssignedCourier", e);
+  }
+}
+
 async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
   return prisma.$transaction(
     async (tx) => {
@@ -619,6 +870,11 @@ async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
         })
       );
       const current = row.payload;
+      const deliveryType = String(current.deliveryType || "").toUpperCase();
+      const deliveryStatus = normalizeDeliveryStatus(current.delivery?.status);
+      if (deliveryType === "DELIVERY_PROVIDER" && !["Approved", "Processing"].includes(deliveryStatus)) {
+        throw new AppError("Delivery fee must be approved before payment", 400);
+      }
       const safeFee = Number(fee || current.deliveryFee || 0);
       const updated = {
         ...current,
@@ -789,6 +1045,21 @@ async function cancelMaterialOrderInTransaction(tx, { orderId, actor, actorUserI
     },
   });
 
+  try {
+    const escrowSettlement = require("./payments/escrowSettlement.service");
+    const partial = outcome.refundAmount > 0 && outcome.refundAmount < Number(row.materialsSubtotal || 0);
+    await escrowSettlement.markMaterialIntentRefunded(orderId, partial);
+    const intent = await tx.paymentIntent.findFirst({
+      where: { materialOrderId: orderId, state: "PAID" },
+    });
+    if (intent && outcome.refundAmount > 0) {
+      const refundService = require("./payments/refund.service");
+      await refundService.requestGatewayRefund(intent.id, outcome.refundAmount);
+    }
+  } catch (e) {
+    console.error("material refund gateway", e);
+  }
+
   if (outcome.refundAmount > 0) {
     await paymentService.createRefundInvoiceInTransaction(tx, {
       userId: row.userId,
@@ -946,7 +1217,8 @@ async function updateMaterialOrderFulfillmentByProvider(orderId, providerUserId,
       if (String(payloadPreview.deliveryType || "").toUpperCase() !== "DELIVERY_PROVIDER") {
         throw new AppError("Not a courier delivery order", 400);
       }
-      if (!row.jobId || !row.job || String(row.job.providerId || "") !== pid) {
+      const assignedCourierId = resolveAssignedCourierId(payloadPreview);
+      if (!assignedCourierId || assignedCourierId !== pid) {
         throw new AppError("Forbidden", 403);
       }
       const currentStatus = row.fulfillmentStatus || "PENDING";
@@ -1514,6 +1786,165 @@ async function emitSupplierMaterialOrderCreated(supplierIdStr, orderId, branchId
 }
 
 /**
+ * When customer picks a courier before paying job materials: ensure a MaterialOrder row exists
+ * (unpaid) so the courier inbox + notification fire immediately.
+ */
+async function syncJobStoreCourierDeliveryRequest(params) {
+  const {
+    jobId,
+    jobStoreOrderId,
+    supplierBranchId,
+    customerUserId,
+    jobProviderUserId,
+    courierUserId,
+    materialsLines = [],
+    jobSiteAddress = "",
+    jobSiteLocation = null,
+  } = params;
+  const sid = String(supplierBranchId || "").trim();
+  const storeOrderId = String(jobStoreOrderId || "").trim();
+  const courierId = String(courierUserId || "").trim();
+  if (!jobId || !sid || !customerUserId || !storeOrderId || !courierId) return null;
+
+  const patchCourierOntoPayload = (payload) => {
+    const next = payload && typeof payload === "object" ? { ...payload } : {};
+    next.deliveryType = "DELIVERY_PROVIDER";
+    next.deliveryProviderId = courierId;
+    next.delivery = {
+      ...(next.delivery || {}),
+      type: "PROVIDER",
+      status: "PendingApproval",
+      providerId: courierId,
+      fee: coerceNumber(next.delivery?.fee, 0),
+    };
+    if (next.materialBatch && typeof next.materialBatch === "object") {
+      next.materialBatch = {
+        ...next.materialBatch,
+        deliveryType: deliveryJobTypeToCanonical("PROVIDER"),
+        assignedDriverId: courierId,
+      };
+    }
+    return next;
+  };
+
+  const existing = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
+  if (existing) {
+    const payload = patchCourierOntoPayload(
+      existing.payload && typeof existing.payload === "object" ? existing.payload : {}
+    );
+    const prevCourier = resolveAssignedCourierId(payload);
+    await prisma.materialOrder.update({
+      where: { id: storeOrderId },
+      data: { payload },
+    });
+    if (prevCourier !== courierId) {
+      await notifyAssignedCourier(storeOrderId, courierId);
+    }
+    return storeOrderId;
+  }
+
+  const lines = Array.isArray(materialsLines) ? materialsLines : [];
+  if (lines.length === 0) {
+    try {
+      const notificationEvents = require("./notificationEvents.service");
+      await notificationEvents.notifyCourierDeliveryRequest(courierId, String(jobId));
+    } catch (e) {
+      console.error("notifyCourierDeliveryRequest", e);
+    }
+    return null;
+  }
+
+  const materialsTotal = lines.reduce((sum, m) => sum + coerceAmt(m.qty) * coerceAmt(m.unitPrice), 0);
+  const items = lines.map((m) => ({
+    supplierId: String(m.supplierId || sid),
+    productId: String(m.productId || ""),
+    name: String(m.name || ""),
+    qty: coerceAmt(m.qty, 0),
+    unitPrice: coerceAmt(m.unitPrice, 0),
+    quantity: coerceAmt(m.qty, 0),
+    price: coerceAmt(m.unitPrice, 0),
+    qualityTier: m.qualityTier,
+    imageUrl: m.imageUrl,
+    supplierName: m.supplierName,
+  }));
+
+  const branch = await prisma.branch.findUnique({
+    where: { id: sid },
+    include: { supplier: true },
+  });
+  if (!branch) return null;
+  const orgId = branch.supplierId;
+  const pickupAddr = branch.address ? String(branch.address) : "";
+
+  const { prismaRow, order } = normalizeOrder({
+    id: storeOrderId,
+    userId: String(customerUserId),
+    storeId: sid,
+    storeName: lines[0]?.supplierName || "Store",
+    items,
+    materialsTotal,
+    delivery: { type: "PROVIDER", fee: 0, providerId: courierId, status: "PendingApproval" },
+    jobId: String(jobId),
+    providerId: jobProviderUserId ? String(jobProviderUserId) : null,
+    paymentStatus: "unpaid",
+    source: "job_materials",
+  });
+
+  let finalPayload = patchCourierOntoPayload({
+    ...order,
+    storeName: branchService.branchPublicDisplay(branch, branch.supplier) || lines[0]?.supplierName || order.storeName,
+    jobStoreOrderId: storeOrderId,
+  });
+  finalPayload = mergeMaterialBatch(
+    finalPayload,
+    { id: prismaRow.id, branchId: sid, supplierId: orgId, fulfillmentStatus: "PENDING" },
+    { status: "pending" }
+  );
+  finalPayload.materialBatch.pickupAddress = pickupAddr;
+  finalPayload.materialBatch.deliveryAddress = String(jobSiteAddress || "");
+  finalPayload.collectionPoint = buildGeoPoint({
+    address: pickupAddr,
+    city: branch.city || branch.supplier?.city,
+    area: branch.area,
+    coordinates:
+      branch.latitude != null && branch.longitude != null
+        ? { lat: Number(branch.latitude), lng: Number(branch.longitude) }
+        : undefined,
+    label: branchService.branchPublicDisplay(branch, branch.supplier) || "Collection point",
+  });
+  finalPayload.destinationPoint = buildGeoPoint({
+    address: String(jobSiteLocation?.address || jobSiteAddress || ""),
+    city: jobSiteLocation?.city,
+    area: jobSiteLocation?.area,
+    suburb: jobSiteLocation?.suburb,
+    coordinates: jobSiteLocation?.coordinates,
+    label: "Delivery destination",
+  });
+  finalPayload.payment = { materialsPaid: false, deliveryPaid: false };
+
+  await prisma.materialOrder.create({
+    data: {
+      id: prismaRow.id,
+      userId: prismaRow.userId,
+      supplierId: orgId,
+      branchId: sid,
+      jobId: prismaRow.jobId,
+      providerId: prismaRow.providerId,
+      paymentStatus: "unpaid",
+      source: prismaRow.source,
+      fulfillmentStatus: prismaRow.fulfillmentStatus,
+      materialsSubtotal: prismaRow.materialsSubtotal,
+      platformCommission: prismaRow.platformCommission,
+      supplierEarning: prismaRow.supplierEarning,
+      payload: finalPayload,
+    },
+  });
+
+  await notifyAssignedCourier(prismaRow.id, courierId);
+  return prismaRow.id;
+}
+
+/**
  * After customer pays job materials for a store: persist MaterialOrder for supplier dashboard & fulfillment.
  * Always uses job meta `storeOrders[].orderId` as the MaterialOrder primary key (one independent row per batch).
  * Idempotent when the same store order id is paid again while the row is not yet completed.
@@ -1530,6 +1961,7 @@ async function ensureJobMaterialPurchaseOrder(params) {
     jobDeliveryType = "SELF",
     deliveryProviderId: paramDeliveryProviderId,
     jobSiteAddress = "",
+    jobSiteLocation = null,
   } = params;
   const sid = String(supplierId || "").trim();
   if (!jobId || !sid || !customerUserId) {
@@ -1561,6 +1993,41 @@ async function ensureJobMaterialPurchaseOrder(params) {
       throw new AppError("Material order supplier mismatch", 400);
     }
     const row = byId;
+    const existingPayload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+    const jd = String(jobDeliveryType || "SELF").toUpperCase();
+    const apiDel = jd === "STORE" ? "STORE" : jd === "PROVIDER" || jd === "DELIVERY_PROVIDER" ? "PROVIDER" : "SELF";
+    if (paramDeliveryProviderId && apiDel === "PROVIDER") {
+      existingPayload.deliveryType = "DELIVERY_PROVIDER";
+      existingPayload.deliveryProviderId = String(paramDeliveryProviderId);
+      existingPayload.delivery = {
+        ...(existingPayload.delivery || {}),
+        type: "PROVIDER",
+        status: "PendingApproval",
+        providerId: String(paramDeliveryProviderId),
+        fee: coerceNumber(existingPayload.delivery?.fee, 0),
+      };
+      if (existingPayload.materialBatch && typeof existingPayload.materialBatch === "object") {
+        existingPayload.materialBatch.assignedDriverId = String(paramDeliveryProviderId);
+        existingPayload.materialBatch.deliveryType = deliveryJobTypeToCanonical("PROVIDER");
+      }
+    }
+    const needsPaid = String(row.paymentStatus || "").toLowerCase() !== "paid";
+    if (needsPaid) {
+      existingPayload.payment = { ...(existingPayload.payment || {}), materialsPaid: true, deliveryPaid: false };
+      existingPayload.paymentStatus = "paid";
+      await prisma.materialOrder.update({
+        where: { id: storeOrderId },
+        data: { paymentStatus: "paid", payload: existingPayload },
+      });
+      if (apiDel === "PROVIDER" && paramDeliveryProviderId) {
+        await notifyAssignedCourier(storeOrderId, paramDeliveryProviderId);
+      }
+    } else if (paramDeliveryProviderId && apiDel === "PROVIDER") {
+      await prisma.materialOrder.update({
+        where: { id: storeOrderId },
+        data: { payload: existingPayload },
+      });
+    }
     console.log(
       JSON.stringify({
         ns: "material_order",
@@ -1568,12 +2035,14 @@ async function ensureJobMaterialPurchaseOrder(params) {
         materialOrderId: row.id,
         jobId: String(jobId),
         storeOrderId,
+        markedPaid: needsPaid,
         at: new Date().toISOString(),
       })
     );
+    const refreshed = await prisma.materialOrder.findUnique({ where: { id: storeOrderId } });
     return enrichOrderFromDbRow(
-      row,
-      row.payload && typeof row.payload === "object" ? row.payload : {}
+      refreshed || row,
+      refreshed?.payload && typeof refreshed.payload === "object" ? refreshed.payload : existingPayload
     );
   }
 
@@ -1638,6 +2107,33 @@ async function ensureJobMaterialPurchaseOrder(params) {
   if (paramDeliveryProviderId) {
     finalPayload.materialBatch.assignedDriverId = String(paramDeliveryProviderId);
   }
+  finalPayload.collectionPoint = buildGeoPoint({
+    address: pickupAddr,
+    city: branch.city || branch.supplier?.city,
+    area: branch.area,
+    coordinates:
+      branch.latitude != null && branch.longitude != null
+        ? { lat: Number(branch.latitude), lng: Number(branch.longitude) }
+        : undefined,
+    label: branchService.branchPublicDisplay(branch, branch.supplier) || "Collection point",
+  });
+  finalPayload.destinationPoint = buildGeoPoint({
+    address: String(jobSiteLocation?.address || jobSiteAddress || ""),
+    city: jobSiteLocation?.city,
+    area: jobSiteLocation?.area,
+    suburb: jobSiteLocation?.suburb,
+    coordinates: jobSiteLocation?.coordinates,
+    label: "Delivery destination",
+  });
+  if (apiDel === "PROVIDER" && paramDeliveryProviderId) {
+    finalPayload.delivery = {
+      ...(finalPayload.delivery || {}),
+      type: "PROVIDER",
+      status: "PendingApproval",
+      providerId: String(paramDeliveryProviderId),
+      fee: 0,
+    };
+  }
 
   await prisma.materialOrder.create({
     data: {
@@ -1671,6 +2167,9 @@ async function ensureJobMaterialPurchaseOrder(params) {
   );
 
   await emitSupplierMaterialOrderCreated(orgId, prismaRow.id, sid, prismaRow.jobId);
+  if (apiDel === "PROVIDER" && paramDeliveryProviderId) {
+    await notifyAssignedCourier(prismaRow.id, paramDeliveryProviderId);
+  }
   return finalPayload;
 }
 
@@ -1964,6 +2463,11 @@ module.exports = {
   updateMaterialOrderDelivery,
   approveMaterialOrderDelivery,
   rejectMaterialOrderDelivery,
+  submitDeliveryQuote,
+  rejectDeliveryRequestByProvider,
+  acceptDeliveryQuote,
+  listDeliveryInboxForProvider,
+  resolveAssignedCourierId,
   payMaterialOrderDelivery,
   updateMaterialOrderDeliveryStatus,
   updateMaterialOrderFulfillment,
@@ -1979,6 +2483,7 @@ module.exports = {
   ensureStoreDeliveryTrackingSession,
   normalizeOrder,
   ensureJobMaterialPurchaseOrder,
+  syncJobStoreCourierDeliveryRequest,
   getJobMaterialOrdersForJob,
   emitSupplierMaterialOrderCreated,
 };

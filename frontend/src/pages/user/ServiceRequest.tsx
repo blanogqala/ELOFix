@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   readServiceRequestDraft,
@@ -12,13 +12,27 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { getCategories } from '@/lib/api/categories';
 import { getProvidersByCategory, recommendProviders } from '@/lib/api/providers';
-import { createJob, uploadJobImage } from '@/lib/api/jobs';
+import { createJob, getJobById, uploadJobImage } from '@/lib/api/jobs';
+import { createDeliveryRequest } from '@/lib/api/deliveryRequests';
+import { getDeliveryProviders } from '@/lib/api/specials';
+import { isCourierCategory } from '@/lib/courierCategories';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
-import { Category, Provider, Measurements, JobLocation } from '@/types';
+import {
+  Category,
+  Provider,
+  Measurements,
+  JobLocation,
+  DeliveryGeoPoint,
+  DeliveryProvider,
+  DeliveryRequestItem,
+} from '@/types';
 import { areaSquareMetersFromAssist } from '@/lib/measurements';
 import { Step2Location } from '@/components/wizard/Step2Location';
 import { Step3DynamicInput } from '@/components/wizard/Step3DynamicInput';
 import { ProviderDiscoveryCard } from '@/components/providers/ProviderDiscoveryCard';
+import { SmartAddressStep } from '@/components/delivery/SmartAddressStep';
+import { DeliveryItemsStep } from '@/components/delivery/DeliveryItemsStep';
+import { CourierSelectionStep } from '@/components/delivery/CourierSelectionStep';
 import {
   ArrowLeft,
   ArrowRight,
@@ -28,11 +42,18 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const STEPS = [
+const SERVICE_STEPS = [
   { id: 1, title: 'Category' },
   { id: 2, title: 'Location' },
   { id: 3, title: 'Details & Requirements' },
   { id: 4, title: 'Provider' },
+];
+
+const COURIER_STEPS = [
+  { id: 1, title: 'Category' },
+  { id: 2, title: 'Route' },
+  { id: 3, title: 'Items' },
+  { id: 4, title: 'Courier' },
 ];
 
 function loadInitialWizardState(initialCategory: string) {
@@ -48,6 +69,11 @@ function loadInitialWizardState(initialCategory: string) {
       measurements: draft.measurements,
       useMeasurements: draft.useMeasurements,
       selectedProvider: draft.selectedProvider,
+      collection: draft.collection ?? ({ address: '' } as DeliveryGeoPoint),
+      destination: draft.destination ?? ({ address: '' } as DeliveryGeoPoint),
+      deliveryItems: draft.deliveryItems ?? [{ name: '', qty: 1, weightKg: undefined }],
+      selectedCourier: draft.selectedCourier ?? '',
+      lockDestination: draft.lockDestination ?? false,
     };
   }
   return {
@@ -59,12 +85,18 @@ function loadInitialWizardState(initialCategory: string) {
     measurements: { source: 'MANUAL', values: {} } as Measurements,
     useMeasurements: false,
     selectedProvider: '',
+    collection: { address: '' } as DeliveryGeoPoint,
+    destination: { address: '' } as DeliveryGeoPoint,
+    deliveryItems: [{ name: '', qty: 1, weightKg: undefined }] as DeliveryRequestItem[],
+    selectedCourier: '',
+    lockDestination: false,
   };
 }
 
 export default function ServiceRequest() {
   const [searchParams] = useSearchParams();
   const initialCategory = searchParams.get('category') || '';
+  const jobIdParam = searchParams.get('jobId') || '';
   const [initialWizard] = useState(() => loadInitialWizardState(initialCategory));
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -78,6 +110,14 @@ export default function ServiceRequest() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string>(initialWizard.selectedProvider);
+  const [collection, setCollection] = useState<DeliveryGeoPoint>(initialWizard.collection);
+  const [destination, setDestination] = useState<DeliveryGeoPoint>(initialWizard.destination);
+  const [deliveryItems, setDeliveryItems] = useState<DeliveryRequestItem[]>(initialWizard.deliveryItems);
+  const [selectedCourier, setSelectedCourier] = useState(initialWizard.selectedCourier);
+  const [lockDestination, setLockDestination] = useState(initialWizard.lockDestination);
+  const [couriers, setCouriers] = useState<DeliveryProvider[]>([]);
+  const [couriersError, setCouriersError] = useState<string | null>(null);
+  const [couriersLoading, setCouriersLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
@@ -87,15 +127,22 @@ export default function ServiceRequest() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  const courierFlow = isCourierCategory(selectedCategory);
+  const activeSteps = courierFlow ? COURIER_STEPS : SERVICE_STEPS;
+
   const currentCategory = categories.find((c) => c.id === selectedCategory) as Category | undefined;
   const cameraPrimary =
-    currentCategory?.step3Type === 'measurements' && measurements.cameraAssist?.source === 'camera';
+    !courierFlow &&
+    currentCategory?.step3Type === 'measurements' &&
+    measurements.cameraAssist?.source === 'camera';
 
   const loadCategories = useCallback(async () => {
     try {
       const data = await getCategories();
       setCategories(data);
-      if (!initialCategory && data.length > 0 && !selectedCategory) {
+      if (initialCategory && data.some((c) => c.id === initialCategory)) {
+        setSelectedCategory(initialCategory);
+      } else if (!initialCategory && data.length > 0 && !selectedCategory) {
         setSelectedCategory(data[0].id);
       }
     } catch (error) {
@@ -120,33 +167,155 @@ export default function ServiceRequest() {
     }
   }, [measurements.values, selectedCategory]);
 
+  const loadCouriers = useCallback(async () => {
+    setCouriersLoading(true);
+    setCouriersError(null);
+    try {
+      const list = await getDeliveryProviders({
+        category: selectedCategory,
+        city: destination.city?.trim() || undefined,
+        lat: destination.coordinates?.lat,
+        lng: destination.coordinates?.lng,
+      });
+      setCouriers(list);
+    } catch (error) {
+      setCouriers([]);
+      setCouriersError(error instanceof Error ? error.message : 'Failed to load couriers');
+    } finally {
+      setCouriersLoading(false);
+    }
+  }, [selectedCategory, destination.city, destination.coordinates?.lat, destination.coordinates?.lng]);
+
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
 
   useEffect(() => {
-    if (selectedCategory && currentStep >= 4) {
+    if (!courierFlow && selectedCategory && currentStep >= 4) {
       void loadProviders();
     }
-  }, [selectedCategory, currentStep, loadProviders]);
+  }, [courierFlow, selectedCategory, currentStep, loadProviders]);
 
-  const handleSubmit = async () => {
+  useEffect(() => {
+    if (courierFlow && currentStep >= 4) {
+      void loadCouriers();
+    }
+  }, [courierFlow, currentStep, loadCouriers]);
+
+  useEffect(() => {
+    if (!jobIdParam || !courierFlow) return;
+    void (async () => {
+      try {
+        const job = await getJobById(jobIdParam);
+        if (job?.location) {
+          setDestination({
+            address: job.location.address || '',
+            city: job.location.city,
+            area: job.location.area,
+            suburb: job.location.suburb,
+            coordinates: job.location.coordinates,
+            label: 'Job site',
+          });
+          setLockDestination(true);
+        }
+      } catch {
+        /* optional context */
+      }
+    })();
+  }, [jobIdParam, courierFlow]);
+
+  useEffect(() => {
+    if (!courierFlow && currentCategory?.requiresInspection === false) {
+      setUseMeasurements(true);
+    }
+  }, [courierFlow, currentCategory?.id, currentCategory?.requiresInspection]);
+
+  const persistDraft = useCallback(() => {
+    writeServiceRequestDraft({
+      currentStep,
+      selectedCategory,
+      location,
+      description,
+      images,
+      measurements,
+      useMeasurements,
+      selectedProvider,
+      collection,
+      destination,
+      deliveryItems,
+      selectedCourier,
+      lockDestination,
+    });
+  }, [
+    currentStep,
+    selectedCategory,
+    location,
+    description,
+    images,
+    measurements,
+    useMeasurements,
+    selectedProvider,
+    collection,
+    destination,
+    deliveryItems,
+    selectedCourier,
+    lockDestination,
+  ]);
+
+  const handleSubmitCourier = async () => {
+    if (!user || !selectedCourier) return;
+    setIsSubmitting(true);
+    try {
+      const request = await createDeliveryRequest({
+        category: selectedCategory,
+        description: description.trim() || undefined,
+        photos: images.length > 0 ? images : undefined,
+        items: deliveryItems
+          .filter((i) => i.name.trim())
+          .map((i) => ({
+            name: i.name.trim(),
+            qty: Math.max(1, Number(i.qty) || 1),
+            weightKg: i.weightKg != null && Number.isFinite(Number(i.weightKg)) ? Number(i.weightKg) : undefined,
+          })),
+        collectionPoint: collection,
+        destinationPoint: destination,
+        courierId: selectedCourier,
+        jobId: jobIdParam || undefined,
+      });
+      clearServiceRequestDraft();
+      toast({
+        title: 'Request sent',
+        description: 'Your courier will send a delivery quote shortly.',
+      });
+      navigate(`/user/delivery-requests/${request.id}`);
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Could not submit delivery request.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSubmitService = async () => {
     if (!user) return;
 
     setIsSubmitting(true);
     try {
       const measurementsPayload =
-        !useMeasurements
+        !useMeasurements && currentCategory?.requiresInspection !== false
           ? undefined
           : currentCategory?.step3Type === 'issue' && measurements.plumbingIssue
-          ? {
-              ...measurements,
-              plumbingIssue: {
-                type: measurements.plumbingIssue.type,
-                description: '',
-              },
-            }
-          : measurements;
+            ? {
+                ...measurements,
+                plumbingIssue: {
+                  type: measurements.plumbingIssue.type,
+                  description: '',
+                },
+              }
+            : measurements;
 
       await createJob(
         {
@@ -189,7 +358,27 @@ export default function ServiceRequest() {
     }
   };
 
+  const handleSubmit = () => {
+    if (courierFlow) void handleSubmitCourier();
+    else void handleSubmitService();
+  };
+
   const canProceed = () => {
+    if (courierFlow) {
+      switch (currentStep) {
+        case 1:
+          return !!selectedCategory;
+        case 2:
+          return Boolean(collection.address?.trim()) && Boolean(destination.address?.trim());
+        case 3:
+          return deliveryItems.some((i) => i.name.trim() && i.qty > 0);
+        case 4:
+          return Boolean(selectedCourier);
+        default:
+          return false;
+      }
+    }
+
     switch (currentStep) {
       case 1:
         return !!selectedCategory;
@@ -198,6 +387,8 @@ export default function ServiceRequest() {
       case 3: {
         if (description.length <= 10) return false;
         if (!currentCategory) return false;
+        const detailsRequired = currentCategory.requiresInspection === false;
+        if (detailsRequired && !useMeasurements) return false;
         if (!useMeasurements) return true;
         if (currentCategory.step3Type === 'measurements') {
           const vals = Object.keys(measurements.values).length > 0;
@@ -238,25 +429,21 @@ export default function ServiceRequest() {
   };
 
   const handleViewProviderProfile = (providerId: string) => {
-    writeServiceRequestDraft({
-      currentStep,
-      selectedCategory,
-      location,
-      description,
-      images,
-      measurements,
-      useMeasurements,
-      selectedProvider,
-    });
+    persistDraft();
     navigate(`/user/providers/${providerId}`, { state: { fromServiceRequest: true } });
   };
+
+  const submitLabel = useMemo(() => {
+    if (isSubmitting) return 'Submitting...';
+    return courierFlow ? 'Send request' : 'Submit Request';
+  }, [isSubmitting, courierFlow]);
 
   return (
     <DashboardLayout>
       <div className="mx-auto min-w-0 max-w-4xl animate-fade-in">
         <div className="mb-6 md:mb-8">
           <div className="-mx-1 mb-4 flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto px-1 pb-2 sm:mx-0 sm:item-center sm:justify-between sm:overflow-visible sm:px-0 sm:pb-0">
-            {STEPS.map((step, index) => {
+            {activeSteps.map((step, index) => {
               const isActive = step.id === currentStep;
               const isCompleted = step.id < currentStep;
 
@@ -275,7 +462,7 @@ export default function ServiceRequest() {
                       {step.title}
                     </span>
                   </div>
-                  {index < STEPS.length - 1 && (
+                  {index < activeSteps.length - 1 && (
                     <div className={cn('w-8 sm:w-16 h-0.5 mx-2', isCompleted ? 'bg-success' : 'bg-border')} />
                   )}
                 </div>
@@ -307,9 +494,37 @@ export default function ServiceRequest() {
             </div>
           )}
 
-          {currentStep === 2 && <Step2Location location={location} setLocation={setLocation} />}
+          {currentStep === 2 && courierFlow && (
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-xl font-semibold mb-2">Collection & destination</h2>
+                <p className="text-muted-foreground text-sm">Where should items be collected and delivered?</p>
+              </div>
+              <SmartAddressStep
+                collection={collection}
+                destination={destination}
+                onCollectionChange={setCollection}
+                onDestinationChange={setDestination}
+                lockDestination={lockDestination}
+                lockDestinationLabel="From your active job site"
+              />
+            </div>
+          )}
 
-          {currentStep === 3 && (
+          {currentStep === 2 && !courierFlow && <Step2Location location={location} setLocation={setLocation} />}
+
+          {currentStep === 3 && courierFlow && (
+            <DeliveryItemsStep
+              description={description}
+              onDescriptionChange={setDescription}
+              items={deliveryItems}
+              onItemsChange={setDeliveryItems}
+              images={images}
+              onImagesChange={setImages}
+            />
+          )}
+
+          {currentStep === 3 && !courierFlow && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold mb-2">Job Details & Requirements</h2>
@@ -390,11 +605,7 @@ export default function ServiceRequest() {
                     {images.map((img, idx) => (
                       <div key={`${img}-${idx}`} className="relative">
                         <div className="h-20 w-20 rounded-lg bg-muted overflow-hidden">
-                          <img
-                            src={resolveUploadUrl(img)}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
+                          <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
                         </div>
                         <button
                           type="button"
@@ -418,11 +629,14 @@ export default function ServiceRequest() {
                     type="checkbox"
                     checked={useMeasurements}
                     onChange={(e) => setUseMeasurements(e.target.checked)}
+                    disabled={currentCategory?.requiresInspection === false}
                   />
                   Add measurements or detailed requirements
                 </label>
                 <p className="mt-1 text-xs font-bold text-accent">
-                  Optional for request submission. You can submit now and your provider can add/update measurements after inspection (This can give better understanding of the task).
+                  {currentCategory?.requiresInspection === false
+                    ? 'Required for this category. Provide complete details now because the provider will price without inspection.'
+                    : 'Optional for request submission. You can submit now and your provider can add/update measurements after inspection (This can give better understanding of the task).'}
                 </p>
               </div>
 
@@ -450,7 +664,17 @@ export default function ServiceRequest() {
             </div>
           )}
 
-          {currentStep === 4 && (
+          {currentStep === 4 && courierFlow && (
+            <CourierSelectionStep
+              providers={couriers}
+              selectedCourierId={selectedCourier}
+              onSelectCourier={setSelectedCourier}
+              error={couriersError}
+              loading={couriersLoading}
+            />
+          )}
+
+          {currentStep === 4 && !courierFlow && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold mb-2">Choose a Provider</h2>
@@ -473,15 +697,17 @@ export default function ServiceRequest() {
                   <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
                     No providers are available for this category yet.
                   </div>
-                ) : providers.map((provider) => (
-                  <ProviderDiscoveryCard
-                    key={provider.id}
-                    provider={provider}
-                    selected={selectedProvider === provider.id}
-                    onSelect={setSelectedProvider}
-                    onViewProfile={handleViewProviderProfile}
-                  />
-                ))}
+                ) : (
+                  providers.map((provider) => (
+                    <ProviderDiscoveryCard
+                      key={provider.id}
+                      provider={provider}
+                      selected={selectedProvider === provider.id}
+                      onSelect={setSelectedProvider}
+                      onViewProfile={handleViewProviderProfile}
+                    />
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -498,15 +724,18 @@ export default function ServiceRequest() {
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
-              <Button className="btn-accent h-10 w-full whitespace-nowrap sm:w-auto" onClick={handleSubmit} disabled={isSubmitting || !canProceed()}>
-                {isSubmitting ? 'Submitting...' : 'Submit Request'}
+              <Button
+                className="btn-accent h-10 w-full whitespace-nowrap sm:w-auto"
+                onClick={handleSubmit}
+                disabled={isSubmitting || !canProceed()}
+              >
+                {submitLabel}
                 <Check className="ml-2 h-4 w-4" />
               </Button>
             )}
           </div>
         </div>
       </div>
-
     </DashboardLayout>
   );
 }

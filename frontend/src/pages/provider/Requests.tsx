@@ -79,6 +79,9 @@ export default function ProviderRequests() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <h3 className="font-semibold">{job.categoryName}</h3>
+            {job.courierFlow ? (
+              <Badge variant="outline" className="text-xs">Delivery</Badge>
+            ) : null}
             <Badge variant="secondary" className="text-xs">#{job.id.slice(-8)}</Badge>
           </div>
           <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{job.description}</p>
@@ -86,9 +89,15 @@ export default function ProviderRequests() {
             <span className="flex items-center gap-1">
               <User className="h-3 w-3" /> {job.userName}
             </span>
-            <span className="flex items-center gap-1">
-              <Package className="h-3 w-3" /> {job.materials?.length ?? 0} materials
-            </span>
+            {job.courierFlow ? (
+              <span className="flex items-center gap-1">
+                <Package className="h-3 w-3" /> Delivery / moving
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                <Package className="h-3 w-3" /> {job.materials?.length ?? 0} materials
+              </span>
+            )}
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3" /> {new Date(job.createdAt).toLocaleDateString()}
             </span>

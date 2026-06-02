@@ -144,6 +144,12 @@ async function payLabor(req, res) {
   if (!UUID_RE.test(id)) {
     throw new AppError("Invalid job id", 400);
   }
+  if (String(req.user?.role) === "CUSTOMER") {
+    throw new AppError(
+      "Direct card payment is disabled. Use POST /api/payments/intents with a payment provider.",
+      403
+    );
+  }
   const job = await jobService.payLabor(
     id,
     req.user.userId,
@@ -185,7 +191,12 @@ async function deleteRejectedFromProviderView(req, res) {
 }
 
 async function updateProviderRequirements(req, res) {
-  const job = await jobService.updateProviderRequirements(req.params.id, req.body || {});
+  const job = await jobService.updateProviderRequirements(
+    req.params.id,
+    req.body || {},
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, job });
 }
 
@@ -230,7 +241,13 @@ async function acceptProposedPrice(req, res) {
 }
 
 async function cancelJob(req, res) {
-  const result = await jobService.cancelJob(req.params.id, req.body?.reason, req.body?.details);
+  const result = await jobService.cancelJob(
+    req.params.id,
+    req.body?.reason,
+    req.body?.details,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, ...result });
 }
 
@@ -280,6 +297,12 @@ async function payStoreOrderDelivery(req, res) {
 }
 
 async function payForStoreMaterials(req, res) {
+  if (String(req.user?.role) === "CUSTOMER" && !req.body?.paymentIntentId) {
+    throw new AppError(
+      "Direct card payment is disabled. Complete checkout via POST /api/payments/intents first.",
+      403
+    );
+  }
   const job = await jobService.payForStoreMaterials(
     req.params.id,
     req.params.storeId,
