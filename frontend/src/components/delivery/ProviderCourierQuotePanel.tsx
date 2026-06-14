@@ -26,6 +26,9 @@ export function ProviderCourierQuotePanel({ deliveryRequest, onUpdated }: Provid
   const [busy, setBusy] = useState(false);
 
   const status = String(deliveryRequest.status || 'pending_quote');
+  const deliveryPaid =
+    ['paid', 'in_transit', 'completed'].includes(status) ||
+    deliveryRequest.payment?.deliveryPaid === true;
 
   const handleSubmitQuote = async () => {
     const fee = Number(feeInput);
@@ -70,11 +73,13 @@ export function ProviderCourierQuotePanel({ deliveryRequest, onUpdated }: Provid
     );
   }
 
-  if (['paid', 'in_transit', 'completed'].includes(status)) {
+  if (deliveryPaid) {
     return (
       <div className="rounded-lg border border-success/30 bg-success/5 p-4 text-sm space-y-1">
-        <Badge variant="secondary" className="capitalize">{status.replace(/_/g, ' ')}</Badge>
-        <p>Delivery fee paid — update progress from Active Jobs when you are ready to dispatch.</p>
+        <Badge variant="secondary" className="capitalize">
+          {status.replace(/_/g, ' ')}
+        </Badge>
+        <p>Delivery fee paid — use the collection and delivery actions below to start the trip.</p>
       </div>
     );
   }

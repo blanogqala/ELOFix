@@ -22,10 +22,6 @@ export const LEGAL_LABELS: Record<LegalDocumentId, string> = {
   'refund-policy': 'Refund and Cancellation Policy',
 };
 
-/** When true, users must scroll to the bottom of each linked document before accepting. */
-export const LEGAL_REQUIRE_SCROLL =
-  import.meta.env.VITE_LEGAL_REQUIRE_SCROLL !== 'false';
-
 export interface LegalAcceptancePayload {
   acceptedTerms: boolean;
   acceptedPrivacy: boolean;

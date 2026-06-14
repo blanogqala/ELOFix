@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { getCurrentSession, getFrontendRoleFromToken, logout } from '@/lib/api/auth';
 import { UserRole } from '@/types';
 
 interface AuthGuardProps {
@@ -29,6 +30,24 @@ export function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
 
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
     return <Navigate to="/unauthorized" replace />;
+  }
+
+  if (allowedRoles?.includes('admin')) {
+    const token = getCurrentSession()?.token;
+    const tokenRole = token ? getFrontendRoleFromToken(token) : null;
+    if (tokenRole !== 'admin') {
+      logout();
+      return (
+        <Navigate
+          to="/login"
+          state={{
+            from: location,
+            sessionError: 'Administrator login required. Sign in with your admin account.',
+          }}
+          replace
+        />
+      );
+    }
   }
 
   return <>{children}</>;

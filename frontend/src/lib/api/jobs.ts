@@ -68,6 +68,7 @@ interface BackendJob {
   userReview?: string;
   cancellationReason?: string;
   cancellationDetails?: string;
+  cancellationSource?: string | null;
   cancelledAt?: string;
   rejectionReason?: string;
   rejectionDetails?: string;
@@ -80,6 +81,9 @@ interface BackendJob {
   hasStarted?: boolean;
   deliveryRequestId?: string | null;
   courierFlow?: boolean;
+  parentJobId?: string | null;
+  categoryDisplayName?: string | null;
+  deliverySummary?: Job['deliverySummary'];
   totalPrice?: number | null;
   commissionAmount?: number | null;
   providerAmount?: number | null;
@@ -131,6 +135,7 @@ function toFrontendJob(job: BackendJob): Job {
   const requiresMaterials =
     typeof job.requiresMaterials === 'boolean' ? job.requiresMaterials : false;
   const category = String(job.category || job.title || '').trim();
+  const categoryDisplayName = String(job.categoryDisplayName || category).trim() || category;
   const measurements =
     job.measurements && typeof job.measurements === 'object'
       ? job.measurements
@@ -144,7 +149,7 @@ function toFrontendJob(job: BackendJob): Job {
   return {
     id: job.id,
     category,
-    categoryName: category,
+    categoryName: categoryDisplayName,
     userId: job.customerId,
     userName: job.customer?.name ?? '',
     providerId: job.providerId ?? undefined,
@@ -192,6 +197,7 @@ function toFrontendJob(job: BackendJob): Job {
     userReview: job.userReview,
     cancellationReason: job.cancellationReason,
     cancellationDetails: job.cancellationDetails,
+    cancellationSource: job.cancellationSource ?? undefined,
     cancelledAt: job.cancelledAt,
     rejectionReason: job.rejectionReason,
     rejectionDetails: job.rejectionDetails,
@@ -205,6 +211,8 @@ function toFrontendJob(job: BackendJob): Job {
     categoryStep3Type: job.categoryStep3Type,
     deliveryRequestId: job.deliveryRequestId ?? null,
     courierFlow: Boolean(job.courierFlow),
+    parentJobId: job.parentJobId ?? null,
+    deliverySummary: job.deliverySummary ?? null,
     totalPrice: numOrUndef(job.totalPrice),
     commissionAmount: numOrUndef(job.commissionAmount),
     providerAmount: numOrUndef(job.providerAmount),
@@ -527,10 +535,12 @@ export async function addProviderMaterialSuggestion(
 }
 
 export async function getPendingRequestsForProvider(providerId: string): Promise<Job[]> {
-  void providerId;
   const { data } = await apiClient.get<BackendJobsResponse>('/jobs/match');
   const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
-  return jobs.map(toFrontendJob).filter((job) => job.status === 'PENDING');
+  return jobs
+    .map(toFrontendJob)
+    .filter((job) => job.status === 'PENDING')
+    .filter((job) => !job.providerId || job.providerId === providerId);
 }
 
 export async function getRejectedRequestsByProvider(providerId: string): Promise<Job[]> {
@@ -538,13 +548,24 @@ export async function getRejectedRequestsByProvider(providerId: string): Promise
   return jobs.filter(
     (j) =>
       j.status === 'REJECTED' &&
-      (j.providerId === providerId || j.rejectedByProviderUserId === providerId)
+      j.rejectedByProviderUserId === providerId
   );
 }
 
 export async function deleteRejectedRequestFromProviderView(providerId: string, jobId: string): Promise<void> {
   void providerId;
   await apiClient.delete(`/jobs/${jobId}/provider-view/rejected`);
+}
+
+export async function getCancelledRequestsForProvider(_providerId: string): Promise<Job[]> {
+  const { data } = await apiClient.get<BackendJobsResponse>('/jobs/provider-view/cancelled');
+  const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
+  return jobs.map(toFrontendJob);
+}
+
+export async function deleteCancelledRequestFromProviderView(providerId: string, jobId: string): Promise<void> {
+  void providerId;
+  await apiClient.delete(`/jobs/${jobId}/provider-view/cancelled`);
 }
 
 export async function completeJob(jobId: string): Promise<Job> {

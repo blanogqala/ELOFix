@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
+import { groupJobsForList } from '@/lib/jobListGrouping';
+import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 
 export default function UserDashboard() {
@@ -38,12 +40,43 @@ export default function UserDashboard() {
 
   const recentJobs = [...jobs]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 3);
+    .slice(0, 5);
+  const groupedRecentJobs = groupJobsForList(recentJobs).slice(0, 3);
 
   const getStatusBadge = (job: Job) => (
     <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
       {getJobDisplayStatusLabel(job)}
     </span>
+  );
+
+  const renderJobRow = (job: Job, variant: JobListRowVariant) => (
+    <>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex items-center gap-2">
+          <p className={cn('truncate font-medium', variant === 'child' && 'text-sm')}>
+            {variant === 'child' ? 'Material delivery' : job.categoryName}
+          </p>
+          {getStatusBadge(job)}
+        </div>
+        <p className="truncate text-sm text-muted-foreground">{job.description}</p>
+      </div>
+      <div className="hidden shrink-0 text-right sm:block">
+        {(() => {
+          const { text, isPaid } = getJobPriceDisplay(job);
+          return (
+            <>
+              <p className="font-medium">
+                {text}
+                {isPaid && <span className="ml-1 text-xs text-success">(Paid)</span>}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(job.createdAt).toLocaleDateString()}
+              </p>
+            </>
+          );
+        })()}
+      </div>
+    </>
   );
 
   return (
@@ -131,43 +164,15 @@ export default function UserDashboard() {
                 </div>
               ))}
             </div>
-          ) : recentJobs.length > 0 ? (
+          ) : groupedRecentJobs.length > 0 ? (
             <div className="divide-y divide-border">
-              {recentJobs.map((job) => (
-                <div 
-                  key={job.id} 
-                  className="p-4 hover:bg-muted/50 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/user/jobs/${job.id}`)}
-                >
-                  <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
-                      <Briefcase className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="font-medium truncate">{job.categoryName}</p>
-                        {getStatusBadge(job)}
-                      </div>
-                      <p className="text-sm text-muted-foreground truncate">{job.description}</p>
-                    </div>
-                    <div className="hidden shrink-0 text-right sm:block">
-                      {(() => {
-                        const { text, isPaid } = getJobPriceDisplay(job);
-                        return (
-                          <>
-                            <p className="font-medium">
-                              {text}
-                              {isPaid && <span className="ml-1 text-xs text-success">(Paid)</span>}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(job.createdAt).toLocaleDateString()}
-                            </p>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                </div>
+              {groupedRecentJobs.map((entry) => (
+                <JobListGroup
+                  key={entry.kind === 'group' ? entry.parent.id : entry.job.id}
+                  entry={entry}
+                  onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
+                  renderRow={renderJobRow}
+                />
               ))}
             </div>
           ) : (

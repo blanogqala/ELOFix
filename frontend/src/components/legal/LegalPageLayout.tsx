@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ChevronRight, FileText } from 'lucide-react';
 import type { LegalDocument } from '@/lib/legal/content';
-import { markDocumentScrolled } from '@/lib/legal/scrollTracking';
 import { cn } from '@/lib/utils';
 
 interface LegalPageLayoutProps {
@@ -13,26 +12,9 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
   const location = useLocation();
   const contentRef = useRef<HTMLDivElement>(null);
   const [activeSection, setActiveSection] = useState(document.sections[0]?.id ?? '');
-  const [hasReachedBottom, setHasReachedBottom] = useState(false);
-
   const handleScroll = useCallback(() => {
     const el = contentRef.current;
     if (!el) return;
-
-    const isDesktopScrollContainer = window.matchMedia('(min-width: 1024px)').matches;
-    let nearBottom = false;
-
-    if (isDesktopScrollContainer) {
-      const { scrollTop, scrollHeight, clientHeight } = el;
-      nearBottom = scrollTop + clientHeight >= scrollHeight - 48;
-    } else {
-      nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 48;
-    }
-
-    if (nearBottom && !hasReachedBottom) {
-      setHasReachedBottom(true);
-      markDocumentScrolled(document.id);
-    }
 
     const headings = document.sections
       .map((section) => el.querySelector(`#${section.id}`))
@@ -48,7 +30,7 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
     if (current) {
       setActiveSection(current);
     }
-  }, [document.id, document.sections, hasReachedBottom]);
+  }, [document.sections]);
 
   useEffect(() => {
     const el = contentRef.current;
@@ -169,14 +151,7 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
           </article>
 
           <footer className="mt-12 border-t border-border pt-6">
-            <p className="text-sm text-muted-foreground">
-              {hasReachedBottom ? (
-                <span className="font-medium text-success">You have reached the end of this document.</span>
-              ) : (
-                <span>Scroll to the bottom to confirm you have reviewed this document.</span>
-              )}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+            <div className="flex flex-wrap gap-3 text-sm">
               <Link to="/terms" className="text-primary hover:underline">
                 Terms
               </Link>

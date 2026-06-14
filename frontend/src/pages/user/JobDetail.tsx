@@ -76,7 +76,7 @@ import {
   getCourierTimelineViewState,
   getCourierTimelineStepInsight,
 } from '@/lib/courierJobTimeline';
-import { getDeliveryRequestByJobId } from '@/lib/api/deliveryRequests';
+import { getDeliveryRequestByJobId, acceptDeliveryRequestQuote } from '@/lib/api/deliveryRequests';
 import { JobDeliverySection } from '@/components/delivery/JobDeliverySection';
 import {
   categoryUsesMeasurementFields,
@@ -144,6 +144,7 @@ export default function JobDetail() {
     initialTab === 'messages' || initialTab === 'notes' ? initialTab : 'details'
   );
   const [payLaborModalOpen, setPayLaborModalOpen] = useState(false);
+  const [payCourierDeliveryModalOpen, setPayCourierDeliveryModalOpen] = useState(false);
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
@@ -412,13 +413,13 @@ export default function JobDetail() {
         title: params.deliveryType === 'PROVIDER' ? 'Delivery request sent' : 'Delivery option selected',
         description:
           params.deliveryType === 'PROVIDER'
-            ? 'The delivery provider has been notified and can send you a quote.'
+            ? 'The delivery provider was notified. They will see the request in their Requests dashboard.'
             : 'Your delivery preference has been saved for this store.',
       });
     } catch (error) {
       toast({
-        title: 'Error',
-        description: 'Failed to save delivery option.',
+        title: 'Could not save delivery option',
+        description: error instanceof Error ? error.message : 'Failed to save delivery option.',
         variant: 'destructive',
       });
     } finally {
@@ -631,6 +632,24 @@ export default function JobDetail() {
   const isCourierJob = Boolean(job.courierFlow);
   const linkedJobDelivery =
     deliveryRequest && deliveryRequest.source === 'job_context' && !isCourierJob;
+  const drStatusLower = String(deliveryRequest?.status || '').toLowerCase();
+  const courierDeliveryPaid =
+    ['paid', 'in_transit', 'completed'].includes(drStatusLower) ||
+    deliveryRequest?.payment?.deliveryPaid === true ||
+    job.laborPaid;
+  const courierServiceAmount =
+    deliveryRequest?.quotedFee ?? job.servicePrice?.amount ?? job.laborEstimateRange.max;
+  const showCourierServiceCard =
+    isCourierJob &&
+    deliveryRequest &&
+    !job.proposedLaborPrice &&
+    !courierDeliveryPaid &&
+    (job.servicePrice != null || drStatusLower === 'quoted' || drStatusLower === 'approved');
+  const showRegularServiceCard =
+    !isCourierJob &&
+    !job.laborPaid &&
+    !job.proposedLaborPrice &&
+    (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED');
   const timelineView = isCourierJob
     ? getCourierTimelineViewState(job, deliveryRequest ?? null, materialRequests)
     : getUserTimelineViewState(job, materialRequests);
@@ -699,7 +718,12 @@ export default function JobDetail() {
         />
 
         {isCourierJob && deliveryRequest ? (
-          <JobDeliverySection job={job} deliveryRequest={deliveryRequest} variant="user" />
+          <JobDeliverySection
+            job={job}
+            deliveryRequest={deliveryRequest}
+            variant="user"
+            hideQuotePaymentActions
+          />
         ) : null}
 
         {/* Revised quote from provider */}
@@ -750,10 +774,65 @@ export default function JobDetail() {
           </Card>
         )}
 
-        {/* Service Price Section */}
-        {!job.laborPaid &&
-          !job.proposedLaborPrice &&
-          (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED') && (
+        {showCourierServiceCard && deliveryRequest ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Service price & quotation</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Your courier submitted a delivery quote. Accept it to proceed, then pay to start delivery.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <QuotationAttachmentCard
+                jobId={job.id}
+                serviceAmount={courierServiceAmount}
+                fileName={job.quotationFileName}
+                uploadedAt={job.quotationUploadedAt}
+                serviceNote={job.servicePrice?.note}
+              />
+              <div className="flex flex-wrap justify-end gap-2">
+                {drStatusLower === 'quoted' ? (
+                  <Button
+                    className="btn-accent"
+                    disabled={isActionPending}
+                    onClick={async () => {
+                      setIsActionPending(true);
+                      try {
+                        await acceptDeliveryRequestQuote(deliveryRequest.id);
+                        await queryClient.invalidateQueries({
+                          queryKey: ['delivery-request-by-job', jobId],
+                        });
+                        await syncJobsAfterMutation();
+                        toast({
+                          title: 'Quote accepted',
+                          description: 'You can pay for delivery below.',
+                        });
+                      } catch (error) {
+                        toast({
+                          title: 'Error',
+                          description:
+                            error instanceof Error ? error.message : 'Could not accept quote.',
+                          variant: 'destructive',
+                        });
+                      } finally {
+                        setIsActionPending(false);
+                      }
+                    }}
+                  >
+                    Accept delivery quote
+                  </Button>
+                ) : null}
+                {drStatusLower === 'approved' && !courierDeliveryPaid ? (
+                  <Button className="btn-accent" onClick={() => setPayCourierDeliveryModalOpen(true)}>
+                    Pay service
+                  </Button>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {showRegularServiceCard && (
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Service price & quotation</CardTitle>
@@ -1278,6 +1357,24 @@ export default function JobDetail() {
           },
         ]}
       />
+
+      {isCourierJob && deliveryRequest ? (
+        <PaymentModal
+          open={payCourierDeliveryModalOpen}
+          onOpenChange={setPayCourierDeliveryModalOpen}
+          title="Pay service"
+          description="Complete payment so your courier can collect and deliver your materials."
+          amount={courierServiceAmount}
+          kind="DELIVERY_FEE"
+          jobId={job.id}
+          materialOrderId={deliveryRequest.materialOrderId}
+          metadata={{ deliveryRequestId: deliveryRequest.id }}
+          breakdown={[
+            { label: 'Delivery fee', amount: courierServiceAmount },
+            { label: 'Total due', amount: courierServiceAmount, isBold: true },
+          ]}
+        />
+      ) : null}
 
       {/* Delete Job Dialog */}
       <DeleteJobDialog

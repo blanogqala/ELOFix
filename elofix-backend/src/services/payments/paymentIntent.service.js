@@ -49,7 +49,7 @@ function toPrismaDecimal(v) {
   return new Prisma.Decimal(String(Number(v).toFixed(2)));
 }
 
-async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId }) {
+async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, metadata }) {
   if (kind === "LABOR" && jobId) {
     const existing = await tx.paymentIntent.findFirst({
       where: { jobId, kind: "LABOR", state: "PAID" },
@@ -61,6 +61,27 @@ async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId })
     if (pendingPaid?.laborPaid) {
       throw new AppError("Labor already paid", 400);
     }
+  }
+  if (kind === "DELIVERY_FEE") {
+    const deliveryRequestId = metadata?.deliveryRequestId
+      ? String(metadata.deliveryRequestId).trim()
+      : "";
+    if (deliveryRequestId) {
+      const dr = await tx.deliveryRequest.findUnique({ where: { id: deliveryRequestId } });
+      if (!dr) throw new AppError("Delivery request not found", 404);
+      const drPayload = dr.payload && typeof dr.payload === "object" ? dr.payload : {};
+      if (String(dr.status) === "paid" || drPayload.payment?.deliveryPaid === true) {
+        throw new AppError("Delivery fee already paid", 400);
+      }
+    }
+    if (materialOrderId) {
+      const order = await tx.materialOrder.findUnique({ where: { id: materialOrderId } });
+      const p = order?.payload && typeof order.payload === "object" ? order.payload : {};
+      if (p.payment?.deliveryPaid === true) {
+        throw new AppError("Delivery fee already paid", 400);
+      }
+    }
+    return;
   }
   if (materialOrderId) {
     const order = await tx.materialOrder.findUnique({ where: { id: materialOrderId } });
@@ -76,7 +97,7 @@ async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId })
   }
 }
 
-async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount }) {
+async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, metadata }) {
   if (amount != null && Number(amount) > 0) {
     return toPrismaDecimal(amount);
   }
@@ -88,13 +109,25 @@ async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount }
     if (gross.lte(0)) throw new AppError("Invalid labor amount", 400);
     return gross;
   }
+  if (kind === "DELIVERY_FEE") {
+    const deliveryRequestId = metadata?.deliveryRequestId
+      ? String(metadata.deliveryRequestId).trim()
+      : "";
+    if (deliveryRequestId) {
+      const dr = await tx.deliveryRequest.findUnique({ where: { id: deliveryRequestId } });
+      if (!dr) throw new AppError("Delivery request not found", 404);
+      const fee = Number(dr.quotedFee || 0);
+      if (fee <= 0) throw new AppError("Invalid delivery fee amount", 400);
+      return toPrismaDecimal(fee);
+    }
+  }
   if ((kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER" || kind === "DELIVERY_FEE") && materialOrderId) {
     const order = await tx.materialOrder.findUnique({ where: { id: materialOrderId } });
     if (!order) throw new AppError("Material order not found", 404);
     const p = order.payload && typeof order.payload === "object" ? order.payload : {};
     const total =
       kind === "DELIVERY_FEE"
-        ? Number(p.deliveryFee || p.delivery?.fee || 0)
+        ? Number(p.deliveryFee || p.delivery?.fee || p.deliveryQuote?.fee || 0)
         : Number(p.totalAmount || p.total || order.materialsSubtotal || 0);
     if (total <= 0) throw new AppError("Invalid order amount", 400);
     return toPrismaDecimal(total);
@@ -184,14 +217,30 @@ async function createPaymentIntent({
           throw new AppError("Forbidden", 403);
         }
       }
+      if (kindNorm === "DELIVERY_FEE" && metadata?.deliveryRequestId) {
+        const dr = await tx.deliveryRequest.findUnique({
+          where: { id: String(metadata.deliveryRequestId) },
+        });
+        if (!dr) throw new AppError("Delivery request not found", 404);
+        if (String(dr.customerId) !== String(userId)) {
+          throw new AppError("Forbidden", 403);
+        }
+        if (String(dr.status) !== "approved") {
+          throw new AppError("Delivery must be approved before payment", 400);
+        }
+        if (jobId && dr.jobId && String(dr.jobId) !== String(jobId)) {
+          throw new AppError("Delivery request does not match this job", 400);
+        }
+      }
 
-      await assertNoDuplicatePaidIntent(tx, { kind: kindNorm, jobId, materialOrderId });
+      await assertNoDuplicatePaidIntent(tx, { kind: kindNorm, jobId, materialOrderId, metadata });
 
       const resolvedAmount = await resolveAmountForKind(tx, {
         kind: kindNorm,
         jobId,
         materialOrderId,
         amount,
+        metadata,
       });
 
       const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;

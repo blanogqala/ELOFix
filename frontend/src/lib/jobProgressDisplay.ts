@@ -6,7 +6,7 @@ import {
   getUserStatusBadgeClass,
   getProviderStatusBadgeVariant,
 } from '@/lib/jobStatusMapping';
-import { getCourierJobDisplayStatusLabel } from '@/lib/courierJobTimeline';
+import { getCourierJobDisplayStatusLabel, getCourierTimelineStepIndex } from '@/lib/courierJobTimeline';
 
 /** Re-export canonical six timeline labels (Provider & Customer). */
 export const JOB_TIMELINE_LABELS = UNIFIED_TIMELINE_STEPS;
@@ -26,7 +26,13 @@ export function getUserJobBadgeClassForJob(job: Job): string {
     return getUserStatusBadgeClass(job.status);
   }
   const idx = job.courierFlow
-    ? Math.min(5, Math.max(0, Number(job.progressStep) || 0))
+    ? Math.min(
+        5,
+        Math.max(
+          Number.isFinite(Number(job.progressStep)) ? Number(job.progressStep) : 0,
+          getCourierTimelineStepIndex(job, null)
+        )
+      )
     : getMonotonicTimelineStepIndex(job);
   const classes: Record<number, string> = {
     0: 'status-created',
@@ -44,7 +50,13 @@ export function getProviderJobBadgeVariantForJob(job: Job): ProviderBadgeVariant
     return getProviderStatusBadgeVariant(job.status);
   }
   const idx = job.courierFlow
-    ? Math.min(5, Math.max(0, Number(job.progressStep) || 0))
+    ? Math.min(
+        5,
+        Math.max(
+          Number.isFinite(Number(job.progressStep)) ? Number(job.progressStep) : 0,
+          getCourierTimelineStepIndex(job, null)
+        )
+      )
     : getMonotonicTimelineStepIndex(job);
   if (idx === 0) return 'secondary';
   if (idx === 1) return 'outline';

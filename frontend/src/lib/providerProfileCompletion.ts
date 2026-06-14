@@ -1,36 +1,50 @@
-import type { Provider } from '@/types';
+import type { Provider, ProviderSettings } from '@/types';
 import { skillLaborPricingPassesOnboarding } from '@/lib/providerLaborPricing';
 import { requiredDocumentsComplete } from '@/lib/providerDocuments';
 
-export type ProviderProfileSection = 'profileInfo' | 'skillsAndPrices' | 'documents';
+export type ProviderProfileSection =
+  | 'profileInfo'
+  | 'skillsAndPrices'
+  | 'documents'
+  | 'settings';
 
 export interface ProviderProfileSectionStatus {
   profileInfo: boolean;
   skillsAndPrices: boolean;
   documents: boolean;
-  /** 0–100 based on the three guided sections (user-facing workflow). */
+  settings: boolean;
+  /** 0–100 based on required onboarding sections (excludes optional work posts). */
   percentCore: number;
 }
 
+export function businessHoursComplete(settings?: ProviderSettings | null): boolean {
+  const hours = settings?.businessHours;
+  if (!hours || typeof hours !== 'object') return false;
+  return Object.values(hours).some((day) => {
+    if (!day?.enabled) return false;
+    const open = String(day.open || '').trim();
+    const close = String(day.close || '').trim();
+    if (!open || !close) return false;
+    return open < close;
+  });
+}
+
 /**
- * Core onboarding sections (Profile / Skills / Documents) used for guided UX.
- * Backend `profileCompleted` may also require work posts — see provider service.
+ * Core onboarding sections used for guided UX and progress bar.
+ * Work posts are optional. Backend `profileCompleted` follows the same rules.
  */
 export function evaluateProviderCoreSections(
   provider: Provider | null | undefined,
   local?: {
     phone: string;
-    businessName: string;
     bio: string;
     serviceAreas: string[];
     selectedSkills: string[];
     pricing: Provider['laborPricing'];
+    settings?: ProviderSettings | null;
   }
 ): ProviderProfileSectionStatus {
   const phone = local ? local.phone.trim() : String(provider?.phone || '').trim();
-  const businessName = local
-    ? local.businessName.trim()
-    : String(provider?.businessName || '').trim();
   const bio = local ? local.bio.trim() : String(provider?.bio || '').trim();
   const serviceAreas = local
     ? local.serviceAreas
@@ -47,12 +61,10 @@ export function evaluateProviderCoreSections(
     : provider?.laborPricing && typeof provider.laborPricing === 'object'
       ? provider.laborPricing
       : {};
+  const settings = local?.settings ?? provider?.settings;
 
   const profileInfo =
-    phone.length > 0 &&
-    businessName.length > 0 &&
-    bio.length >= 20 &&
-    serviceAreas.length >= 1;
+    phone.length > 0 && bio.length >= 20 && serviceAreas.length >= 1;
 
   const skillsAndPrices =
     selectedSkills.length > 0 &&
@@ -60,12 +72,15 @@ export function evaluateProviderCoreSections(
 
   const documents = requiredDocumentsComplete(provider?.documents);
 
-  const done = [profileInfo, skillsAndPrices, documents].filter(Boolean).length;
+  const settingsOk = businessHoursComplete(settings);
+
+  const done = [profileInfo, skillsAndPrices, documents, settingsOk].filter(Boolean).length;
 
   return {
     profileInfo,
     skillsAndPrices,
     documents,
-    percentCore: Math.round((done / 3) * 100),
+    settings: settingsOk,
+    percentCore: Math.round((done / 4) * 100),
   };
 }

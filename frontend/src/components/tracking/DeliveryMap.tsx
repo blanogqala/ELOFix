@@ -38,6 +38,8 @@ export interface DeliveryMapProps {
   showWaitingBanner?: boolean;
   /** Session no longer valid (customer view) */
   trackingEnded?: boolean;
+  /** Completed delivery — show static destination map, not live GPS placeholder */
+  completedMode?: boolean;
   onProximityChange?: (v: DriverProximityPayload) => void;
   onEtaChange?: (etaText: string | null) => void;
 }
@@ -52,6 +54,7 @@ function MapBody({
   mapContainerClassName = 'h-64 w-full min-h-[220px]',
   showWaitingBanner,
   trackingEnded,
+  completedMode,
   onProximityChange,
   onEtaChange,
 }: Omit<DeliveryMapProps, 'className'> & { className?: string }) {
@@ -261,9 +264,11 @@ function MapBody({
         <div className="p-6 text-sm text-muted-foreground space-y-2">
           <p className="font-medium text-foreground">Delivery map</p>
           <p>
-            {destination
-              ? 'Destination address is loaded; once the driver shares GPS, the route will appear here.'
-              : 'Add a delivery address or enable maps API to preview the route.'}
+            {completedMode && destination
+              ? 'Delivery completed — showing the destination address.'
+              : destination
+                ? 'Destination address is loaded; once the driver shares GPS, the route will appear here.'
+                : 'Add a delivery address or enable maps API to preview the route.'}
           </p>
           {destination ? (
             <p className="text-xs border-t border-border pt-2">

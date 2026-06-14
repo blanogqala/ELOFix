@@ -354,29 +354,39 @@ async function runSettleLaborInTransaction(
     },
   });
 
-  const meta = await mutateJobMetaInTransaction(tx, jobId, (m) => ({
-    ...m,
-    hasStarted: true,
-    laborPaid: true,
-    servicePayment: {
-      status: "paid",
-      amount: Number(t),
-      paidAt,
-      paymentRef,
-      paidBy: customerUserId,
-      channel: String(channel),
-      maskedPaymentMethod: `**** **** **** ${cardLast4 || "****"}`,
-    },
-    escrow: {
-      heldAmount: Number(secondTranche),
-      releasedAmount: Number(firstTranche),
-    },
-    statusOverride: "SERVICE_PAID",
-  }));
-
   const jobStatus = job.status;
   const statusPatch =
     jobStatus === "ACCEPTED" ? { status: "IN_PROGRESS", laborPaid: true } : { laborPaid: true };
+  const jobForProgress = {
+    ...job,
+    laborPaid: true,
+    status: statusPatch.status || job.status,
+  };
+
+  const jobProgressUtil = require("../utils/jobProgress.util");
+  const meta = await mutateJobMetaInTransaction(tx, jobId, (m) => {
+    const next = {
+      ...m,
+      hasStarted: true,
+      laborPaid: true,
+      servicePayment: {
+        status: "paid",
+        amount: Number(t),
+        paidAt,
+        paymentRef,
+        paidBy: customerUserId,
+        channel: String(channel),
+        maskedPaymentMethod: `**** **** **** ${cardLast4 || "****"}`,
+      },
+      escrow: {
+        heldAmount: Number(secondTranche),
+        releasedAmount: Number(firstTranche),
+      },
+      statusOverride: "SERVICE_PAID",
+    };
+    next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, jobForProgress);
+    return next;
+  });
 
   const jobRow = await tx.job.update({
     where: { id: jobId },

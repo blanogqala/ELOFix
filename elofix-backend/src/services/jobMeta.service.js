@@ -201,6 +201,7 @@ function enrichJob(job, meta) {
     userReview: safeMeta.userReview,
     cancellationReason: safeMeta.cancellationReason,
     cancellationDetails: safeMeta.cancellationDetails,
+    cancellationSource: safeMeta.cancellationSource || null,
     cancelledAt: safeMeta.cancelledAt,
     rejectionReason: safeMeta.rejectionReason,
     rejectionDetails: safeMeta.rejectionDetails,

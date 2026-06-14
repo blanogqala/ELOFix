@@ -36,6 +36,7 @@ import {
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
+import { getStoreOrderDeliveryLine } from '@/lib/jobQuoteDisplay';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 
 interface MaterialPaymentSectionProps {
@@ -491,6 +492,11 @@ export function MaterialPaymentSection({
       fee = provider?.baseRate || 0;
     }
 
+    const linkedStoreOrder =
+      displayStoreOrders.find((o) => o.storeId === deliveryStoreId) ||
+      paidCards.find((o) => o.storeId === deliveryStoreId) ||
+      pendingCards.find((o) => o.storeId === deliveryStoreId);
+
     setIsProcessing(true);
     setError(null);
     try {
@@ -498,6 +504,7 @@ export function MaterialPaymentSection({
         deliveryType: selectedDeliveryType,
         deliveryFee: fee,
         deliveryProviderId: selectedDeliveryType === 'PROVIDER' ? selectedProviderId : undefined,
+        orderId: linkedStoreOrder?.orderId,
       });
       setDeliveryDialogOpen(false);
     } catch {
@@ -623,6 +630,8 @@ export function MaterialPaymentSection({
                   const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
                   const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
                   const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
+                  const deliveryLine = getStoreOrderDeliveryLine(storeOrder, mo);
+                  const cardSubtotal = itemsTotal + (deliveryLine?.includeInSubtotal ? deliveryLine.amount : 0);
                   const materialOrderKey = mo?.id ? String(mo.id) : storeOrder.orderId;
                   const batch = resolveMaterialBatchFromSnapshot(mo);
                   const summaryIsPickup =
@@ -678,7 +687,8 @@ export function MaterialPaymentSection({
                       collapsible
                       deliveryLocation={deliveryLocation}
                       supplierName={storeName}
-                      subtotal={itemsTotal}
+                      subtotal={cardSubtotal}
+                      extraLines={deliveryLine ? [deliveryLine] : undefined}
                       items={storeOrder.items.map((item) => ({
                         rowKey: `${storeOrder.orderId}-${item.productId}`,
                         name: item.name,
@@ -785,6 +795,10 @@ export function MaterialPaymentSection({
                         : job.materialPayments?.find(payment => payment.orderId === storeOrder.orderId);
                       const isPaid = !!storeOrder.payment?.materialsPaid || paymentRecord?.status === 'paid';
                       const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+                      const moPending = resolveMaterialOrderForStoreOrder(job, storeOrder);
+                      const pendingDeliveryLine = getStoreOrderDeliveryLine(storeOrder, moPending);
+                      const pendingSubtotal =
+                        itemsTotal + (pendingDeliveryLine?.includeInSubtotal ? pendingDeliveryLine.amount : 0);
                       const canPay =
                         !isPaid &&
                         !batchResolution &&
@@ -825,7 +839,8 @@ export function MaterialPaymentSection({
                           key={storeOrder.orderId}
                           status="pending"
                           supplierName={storeName}
-                          subtotal={itemsTotal}
+                          subtotal={pendingSubtotal}
+                          extraLines={pendingDeliveryLine ? [pendingDeliveryLine] : undefined}
                           items={storeOrder.items.map((item) => ({
                             rowKey: `${storeOrder.orderId}-${item.productId}`,
                             name: item.name,
@@ -850,11 +865,6 @@ export function MaterialPaymentSection({
                                   {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
                                   {storeOrder.deliveryType === 'PROVIDER' && 'Delivery provider'}
                                 </Badge>
-                                {storeOrder.deliveryFee > 0 ? (
-                                  <span className="text-xs text-muted-foreground">
-                                    + {formatCurrency(storeOrder.deliveryFee)} delivery (pay later)
-                                  </span>
-                                ) : null}
                                 {storeOrder.deliveryStatus === 'PendingApproval' ? (
                                   <Badge variant="outline" className="text-xs">
                                     Awaiting delivery provider approval

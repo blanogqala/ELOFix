@@ -1,4 +1,4 @@
-import type { DeliveryRequestRecord, Job } from '@/types';
+import type { DeliveryRequestRecord, Job, JobMaterialOrderSnapshot, JobStoreOrder } from '@/types';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getQuoteMaterialsTotal, getUserLaborGross } from '@/lib/jobUtils';
 
@@ -13,7 +13,9 @@ export interface QuoteLaborLine {
 function deliveryFeePaid(dr?: DeliveryRequestRecord | null): boolean {
   if (!dr) return false;
   const status = String(dr.status || '').toLowerCase();
-  return status === 'paid' || dr.payment?.deliveryPaid === true;
+  return (
+    ['paid', 'in_transit', 'completed'].includes(status) || dr.payment?.deliveryPaid === true
+  );
 }
 
 export function getQuoteLaborLine(
@@ -86,7 +88,8 @@ export function getQuoteDeliveryLine(
   const dr = deliveryRequest;
   if (!dr) return null;
   const status = String(dr.status || '').toLowerCase();
-  const paid = status === 'paid' || dr.payment?.deliveryPaid === true;
+  const paid =
+    ['paid', 'in_transit', 'completed'].includes(status) || dr.payment?.deliveryPaid === true;
   if (dr.quotedFee == null && status === 'pending_quote') {
     return {
       label: 'Delivery fee',
@@ -130,4 +133,89 @@ export function getCustomerQuoteTotal(
   }
 
   return materials + service;
+}
+
+export interface StoreOrderDeliveryLine {
+  label: string;
+  amount: number;
+  hint?: string;
+  muted?: boolean;
+  struck?: boolean;
+  includeInSubtotal: boolean;
+}
+
+/** Delivery row for job material store-order cards (paid / pending). */
+export function getStoreOrderDeliveryLine(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): StoreOrderDeliveryLine | null {
+  if (storeOrder.deliveryType === 'SELF') return null;
+
+  const statusRaw =
+    storeOrder.deliveryStatus ||
+    storeOrder.delivery?.status ||
+    '';
+  const status = String(statusRaw);
+  const isCancelled =
+    status === 'Cancelled' ||
+    status === 'Rejected' ||
+    status.toLowerCase() === 'cancelled';
+
+  const moQuoteFee = (mo as { deliveryQuote?: { fee?: number } } | null | undefined)?.deliveryQuote?.fee;
+  const amount =
+    typeof storeOrder.deliveryFee === 'number' && Number.isFinite(storeOrder.deliveryFee) && storeOrder.deliveryFee > 0
+      ? storeOrder.deliveryFee
+      : typeof moQuoteFee === 'number' && Number.isFinite(moQuoteFee)
+        ? moQuoteFee
+        : typeof storeOrder.delivery?.fee === 'number' && Number.isFinite(storeOrder.delivery.fee)
+          ? storeOrder.delivery.fee
+          : 0;
+
+  if (amount <= 0 && !isCancelled) return null;
+
+  const deliveryPaid = storeOrder.payment?.deliveryPaid === true;
+
+  if (isCancelled) {
+    return {
+      label: 'Delivery',
+      amount,
+      hint: 'Cancelled',
+      muted: true,
+      struck: true,
+      includeInSubtotal: false,
+    };
+  }
+
+  if (deliveryPaid) {
+    return {
+      label: 'Delivery',
+      amount,
+      hint: 'Paid',
+      includeInSubtotal: true,
+    };
+  }
+
+  if (status === 'Approved') {
+    return {
+      label: 'Delivery',
+      amount,
+      hint: 'Pay later',
+      includeInSubtotal: false,
+    };
+  }
+
+  if (status === 'Quoted' || status === 'PendingApproval') {
+    return {
+      label: 'Delivery',
+      amount,
+      hint: status === 'Quoted' ? 'Quoted' : 'Awaiting approval',
+      includeInSubtotal: false,
+    };
+  }
+
+  return {
+    label: 'Delivery',
+    amount,
+    includeInSubtotal: false,
+  };
 }

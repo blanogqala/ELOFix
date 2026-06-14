@@ -36,11 +36,18 @@ const apiClient = axios.create({
   },
 });
 
+function isAuthAttemptUrl(url) {
+  const path = String(url || '');
+  return path.includes('/auth/login') || path.includes('/auth/register');
+}
+
 apiClient.interceptors.request.use(
   (config) => {
-    const token = getStoredToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    if (!isAuthAttemptUrl(config.url)) {
+      const token = getStoredToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     }
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type'];
@@ -56,9 +63,13 @@ apiClient.interceptors.response.use(
     const status = Number(error?.response?.status || 0);
     const responseData = error?.response?.data;
     const serverMsg = error?.response?.data?.message;
+    const reqUrl = String(error?.config?.url || '');
+    const authAttempt = isAuthAttemptUrl(reqUrl);
     const message =
       status === 401
-        ? 'Session expired. Please log in again.'
+        ? authAttempt
+          ? serverMsg || 'Invalid email or password'
+          : 'Session expired. Please log in again.'
         : status === 403
           ? serverMsg || 'Not authorized'
           : status >= 500
@@ -69,11 +80,25 @@ apiClient.interceptors.response.use(
               error?.message ||
               'Request failed';
 
-    if (status === 401 && typeof window !== 'undefined') {
+    if (status === 403 && typeof window !== 'undefined') {
+      const path = window.location.pathname || '/';
+      const forbiddenAdmin =
+        reqUrl.includes('/admin/') &&
+        path.startsWith('/admin') &&
+        (serverMsg === 'Forbidden' || serverMsg === 'Not authorized');
+      if (forbiddenAdmin) {
+        localStorage.removeItem(STORAGE_KEYS.AUTH);
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+        const next = path + (window.location.search || '');
+        window.location.assign(`/login?next=${encodeURIComponent(next)}&reason=admin_required`);
+      }
+    }
+
+    if (status === 401 && typeof window !== 'undefined' && !authAttempt) {
       const path = window.location.pathname || '/';
       const isOAuthFlow =
         path.startsWith('/auth/google/callback') ||
-        String(error?.config?.url || '').includes('/auth/google/exchange');
+        reqUrl.includes('/auth/google/exchange');
       if (!isOAuthFlow) {
         localStorage.removeItem(STORAGE_KEYS.AUTH);
         localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);

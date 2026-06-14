@@ -28,7 +28,6 @@ import {
   DollarSign,
   ClipboardList,
   ShoppingCart,
-  Truck,
   AlertCircle,
   Bell,
   Activity,
@@ -477,7 +476,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
         {/* Main Content */}
         <main className="min-h-screen min-w-0 flex-1 overflow-x-hidden lg:min-h-[calc(100vh-4rem)]">
-          <div className="relative space-y-6 p-4 md:space-y-8 lg:p-8">
+          <div className="relative space-y-6 p-4 mb-20 sm:mb-24 md:mb-24 lg:mb-24 md:space-y-8 lg:p-8">
             {showInactiveProviderOverlay ? (
               <div className="relative min-h-[50vh]">
                 <div className="pointer-events-none select-none opacity-[0.38]">{children}</div>
@@ -502,8 +501,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               children
             )}
           </div>
-          <div className="border-t border-border px-4 py-4 lg:px-8">
-            <LegalFooterLinks className="justify-start lg:justify-center" />
+          <div className="fixed left-0 right-0 bottom-0 border-t border-border px-4 py-4 lg:px-8 bg-background">
+            <LegalFooterLinks className="justify-center lg:justify-center" />
           </div>
         </main>
       </div>

@@ -169,17 +169,31 @@ async function normalizeProviderFileFields(profile) {
  * @param {{ phone?: string|null }} user
  * @param {number} workPostCount
  */
-function checkProviderProfileCompletion(profile, user, workPostCount) {
+function businessHoursComplete(settings) {
+  const hours = settings && typeof settings === "object" ? settings.businessHours : null;
+  if (!hours || typeof hours !== "object") return false;
+  return Object.values(hours).some((day) => {
+    if (!day || typeof day !== "object" || !day.enabled) return false;
+    const open = String(day.open || "").trim();
+    const close = String(day.close || "").trim();
+    if (!open || !close) return false;
+    return open < close;
+  });
+}
+
+function checkProviderProfileCompletion(profile, user) {
   const phone = String(user?.phone || "").trim();
-  const businessName = String(profile.businessName || "").trim();
   const bio = String(profile.bio || "").trim();
   const serviceAreas = Array.isArray(profile.serviceAreas) ? profile.serviceAreas : [];
   const skills = Array.isArray(profile.skills) ? profile.skills : [];
   const laborPricing = profile.laborPricing && typeof profile.laborPricing === "object" ? profile.laborPricing : {};
   const documents = normalizeDocuments(profile.documents);
+  const settings =
+    profile.settings && typeof profile.settings === "object" && !Array.isArray(profile.settings)
+      ? profile.settings
+      : null;
 
   if (!phone) return false;
-  if (!businessName) return false;
   if (bio.length < 20) return false;
   if (serviceAreas.length < 1) return false;
   if (skills.length < 1) return false;
@@ -216,7 +230,7 @@ function checkProviderProfileCompletion(profile, user, workPostCount) {
     if (!hasDocUrl(documents[docType])) return false;
   }
 
-  if (workPostCount < 1) return false;
+  if (!businessHoursComplete(settings)) return false;
 
   return true;
 }
@@ -414,11 +428,7 @@ async function persistProfileCompleted(profileId) {
   });
   if (!profile) return false;
 
-  const complete = checkProviderProfileCompletion(
-    profile,
-    profile.user,
-    profile.workPosts.length
-  );
+  const complete = checkProviderProfileCompletion(profile, profile.user);
 
   if (complete !== profile.profileCompleted) {
     await prisma.provider.update({

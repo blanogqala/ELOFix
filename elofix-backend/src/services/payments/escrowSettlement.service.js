@@ -233,10 +233,49 @@ async function markIntentDisputed(intentId) {
   });
 }
 
+/**
+ * Settle delivery fee after gateway confirmation (courier / material delivery).
+ */
+async function settleDeliveryFeeFromIntent(intent) {
+  const meta =
+    intent.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
+      ? intent.gatewayPayload
+      : {};
+  const deliveryRequestId = meta.deliveryRequestId ? String(meta.deliveryRequestId).trim() : "";
+
+  if (deliveryRequestId) {
+    const deliveryRequestService = require("../deliveryRequest.service");
+    await deliveryRequestService.settleDeliveryRequestPayment(deliveryRequestId, intent);
+  } else if (intent.materialOrderId) {
+    const materialOrderService = require("../materialOrder.service");
+    await materialOrderService.markMaterialOrderDeliveryPaid(String(intent.materialOrderId), {
+      fee: Number(intent.amount),
+      merchantReference: intent.merchantReference,
+      provider: intent.provider,
+      gatewayTransactionId: intent.gatewayTransactionId,
+      paidAt: intent.paidAt ? new Date(intent.paidAt).toISOString() : new Date().toISOString(),
+      invoiceId: `INV-DEL-${intent.merchantReference || intent.id}`,
+    });
+  } else {
+    throw new AppError("Delivery fee payment requires deliveryRequestId or materialOrderId", 400);
+  }
+
+  await prisma.paymentIntent.update({
+    where: { id: intent.id },
+    data: {
+      escrowStatus: "NOT_APPLICABLE",
+      providerPayoutStatus: "COMPLETE",
+    },
+  });
+
+  return { deliveryRequestId: deliveryRequestId || undefined, materialOrderId: intent.materialOrderId || undefined };
+}
+
 module.exports = {
   settleLaborFromIntent,
   settleMaterialOrderFromIntent,
   settleJobStoreOrderFromIntent,
+  settleDeliveryFeeFromIntent,
   markLaborEscrowFullyReleased,
   markLaborIntentRefunded,
   markMaterialIntentRefunded,

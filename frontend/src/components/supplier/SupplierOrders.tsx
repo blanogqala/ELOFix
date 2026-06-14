@@ -104,14 +104,13 @@ function SupplierPortalOrderKpis({
 function displayStatus(st: string | undefined): string {
   const u = String(st || 'PENDING').toUpperCase();
   if (u === 'PREPARING') return 'In progress';
+  if (u === 'OUT_FOR_DELIVERY') return 'Out for delivery';
+  if (u === 'COMPLETED') return 'Delivered';
+  if (u === 'AT_DESTINATION') return 'At destination';
   return u.toLowerCase().replace(/_/g, ' ');
 }
 
-function nextFulfillmentStatus(
-  s: string | undefined,
-  deliveryType?: string
-): MaterialFulfillmentStatus | null {
-  const dt = String(deliveryType || '').toUpperCase();
+function nextFulfillmentStatus(s: string | undefined): MaterialFulfillmentStatus | null {
   switch (String(s || 'PENDING').toUpperCase()) {
     case 'PENDING':
       return 'ACCEPTED';
@@ -120,7 +119,6 @@ function nextFulfillmentStatus(
     case 'PREPARING':
       return 'READY';
     case 'READY':
-      if (dt === 'DELIVERY_PROVIDER') return null;
       return 'OUT_FOR_DELIVERY';
     case 'OUT_FOR_DELIVERY':
       return 'COMPLETED';
@@ -129,8 +127,7 @@ function nextFulfillmentStatus(
   }
 }
 
-function actionButtonLabel(s: string | undefined, deliveryType?: string): string {
-  const dt = String(deliveryType || '').toUpperCase();
+function actionButtonLabel(s: string | undefined): string {
   switch (String(s || 'PENDING').toUpperCase()) {
     case 'PENDING':
       return 'Accept order';
@@ -139,8 +136,7 @@ function actionButtonLabel(s: string | undefined, deliveryType?: string): string
     case 'PREPARING':
       return 'Mark ready';
     case 'READY':
-      if (dt === 'DELIVERY_PROVIDER') return 'Waiting for courier';
-      return 'Start delivery';
+      return 'Out for delivery';
     case 'OUT_FOR_DELIVERY':
       return 'Mark delivered';
     default:
@@ -211,9 +207,10 @@ function buildTimeline(order: SupplierMaterialOrderLine): { key: string; label: 
       continue;
     }
     if (e.type === 'status' && e.status) {
+      const actorSuffix = String((e as { actor?: string }).actor || '') === 'provider' ? ' (courier)' : '';
       rows.push({
         key: `s-${e.createdAt}-${e.status}`,
-        label: `Status → ${displayStatus(e.status)}`,
+        label: `Status → ${displayStatus(e.status)}${actorSuffix}`,
         at: e.createdAt,
       });
     } else if (e.type === 'note' && e.message) {
@@ -762,7 +759,7 @@ function DetailPanel({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const st = String(order.fulfillmentStatus || 'PENDING').toUpperCase();
-  const next = nextFulfillmentStatus(st, order.deliveryType);
+  const next = nextFulfillmentStatus(st);
   const items = Array.isArray(order.items) ? order.items : [];
   const total = Number(order.total ?? order.materialsSubtotal ?? 0);
   const src = String((order as { source?: string }).source || '');
@@ -853,7 +850,7 @@ function DetailPanel({
               disabled={patching || !next}
               onClick={() => next && onPatch(next)}
             >
-              {actionButtonLabel(st, order.deliveryType)}
+              {actionButtonLabel(st)}
             </Button>
           </div>
         )}
@@ -1099,10 +1096,28 @@ function DetailPanel({
         <div className="rounded-lg border border-primary p-4">
           <p className="text-xs font-medium uppercase text-muted-foreground">Delivery / pickup</p>
           <p className="mt-2 text-sm">{formatDeliverySummary(order)}</p>
-          {(order as { deliveryFee?: number }).deliveryFee != null && Number((order as { deliveryFee?: number }).deliveryFee) > 0 && (
-            <p className="text-xs text-muted-foreground">
-              Delivery fee: {formatCurrency(Number((order as { deliveryFee?: number }).deliveryFee))}
-            </p>
+          {String(order.deliveryType || '').toUpperCase() === 'DELIVERY_PROVIDER' && (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              {order.deliveryProviderName ? (
+                <>
+                  <p>
+                    Courier: <span className="text-foreground">{order.deliveryProviderName}</span>
+                  </p>
+                  {order.deliveryProviderPhone && (
+                    <p>
+                      Phone: <span className="text-foreground">{order.deliveryProviderPhone}</span>
+                    </p>
+                  )}
+                  {order.deliveryProviderEmail && (
+                    <p>
+                      Email: <span className="text-foreground">{order.deliveryProviderEmail}</span>
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p>Courier not assigned yet</p>
+              )}
+            </div>
           )}
         </div>
 

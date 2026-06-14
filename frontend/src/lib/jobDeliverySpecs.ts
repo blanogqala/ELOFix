@@ -21,21 +21,20 @@ export function formatGeoPointLabel(point?: DeliveryGeoPoint | null): string {
 }
 
 function resolveCollectionPoint(job: Job, dr?: DeliveryRequestRecord | null): DeliveryGeoPoint {
-  return (
-    dr?.collectionPoint ||
-    job.measurements?.collectionPoint ||
-    (job.location as { collection?: DeliveryGeoPoint })?.collection ||
-    { address: '—' }
-  );
+  if (dr?.collectionPoint?.address?.trim()) return dr.collectionPoint;
+  if (job.measurements?.collectionPoint?.address?.trim()) return job.measurements.collectionPoint;
+  const fromLocation = (job.location as { collection?: DeliveryGeoPoint })?.collection;
+  if (fromLocation?.address?.trim()) return fromLocation;
+  return { address: 'Collection address pending — contact support' };
 }
 
 function resolveDestinationPoint(job: Job, dr?: DeliveryRequestRecord | null): DeliveryGeoPoint {
-  return (
-    dr?.destinationPoint ||
-    job.measurements?.destinationPoint ||
-    (job.location as DeliveryGeoPoint) ||
-    { address: job.location?.address || '—' }
-  );
+  if (dr?.destinationPoint?.address?.trim()) return dr.destinationPoint;
+  if (job.measurements?.destinationPoint?.address?.trim()) return job.measurements.destinationPoint;
+  if (job.location?.address?.trim()) {
+    return { address: job.location.address, city: job.location.city };
+  }
+  return { address: '—' };
 }
 
 function resolveItems(job: Job, dr?: DeliveryRequestRecord | null): JobDeliverySpecItem[] {

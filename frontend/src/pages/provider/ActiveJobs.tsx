@@ -13,10 +13,14 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { getJobDisplayStatusLabel, getProviderJobBadgeVariantForJob } from '@/lib/jobProgressDisplay';
+import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
+import { formatCurrency } from '@/lib/formatCurrency';
 import { ACTIVE_WORKFLOW_JOB_STATUSES, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
+import { groupJobsForList } from '@/lib/jobListGrouping';
+import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 
 export default function ProviderActiveJobs() {
   const { user } = useAuth();
@@ -77,6 +81,56 @@ export default function ProviderActiveJobs() {
     });
   })();
 
+  const groupedEntries = groupJobsForList(filtered);
+
+  const renderJobRow = (job: Job, variant: JobListRowVariant) => (
+    <>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <p className={cn('font-medium', variant === 'child' && 'text-sm')}>
+            {variant === 'child' ? 'Material delivery' : job.categoryName}
+          </p>
+          {getStatusBadge(job)}
+          {jobHasActivity(job.id) && (
+            <ActivityDot aria-label="This job needs your attention" />
+          )}
+        </div>
+        <p className="truncate text-sm text-muted-foreground">{job.description}</p>
+        {variant === 'parent' && (
+          <p className="mt-1 text-xs text-muted-foreground">Client: {job.userName}</p>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-col items-stretch gap-1 sm:items-end sm:text-right">
+        {job.status === 'CANCELLED' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2 h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:mt-0 sm:w-auto"
+            onClick={(e) => {
+              e.stopPropagation();
+              setJobToDelete(job);
+              setDeleteDialogOpen(true);
+            }}
+          >
+            <Trash2 className="mr-1 h-4 w-4" /> Delete
+          </Button>
+        )}
+        {(() => {
+          const { text, isPaid } = getProviderJobPriceDisplay(job);
+          return (
+            <p className="font-semibold tabular-nums">
+              {text}
+              {isPaid ? <span className="ml-1 text-xs text-success">(Paid)</span> : null}
+            </p>
+          );
+        })()}
+        <p className="text-xs text-muted-foreground">
+          {new Date(job.createdAt).toLocaleDateString()}
+        </p>
+      </div>
+    </>
+  );
+
   const filters = [
     { value: 'all', label: 'All Jobs' },
     { value: 'pending', label: 'Pending' },
@@ -123,44 +177,16 @@ export default function ProviderActiveJobs() {
           </div>
         ) : filtered.length > 0 ? (
           <div className="space-y-4">
-            {filtered.map(job => (
+            {groupedEntries.map((entry) => (
               <div
-                key={job.id}
-                className="card-elevated cursor-pointer p-4 transition-shadow hover:shadow-lg sm:p-6"
-                onClick={() => navigate(`/provider/jobs/${job.id}`)}
+                key={entry.kind === 'group' ? entry.parent.id : entry.job.id}
+                className="card-elevated overflow-hidden transition-shadow hover:shadow-lg"
               >
-                <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <Briefcase className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{job.categoryName}</p>
-                      {getStatusBadge(job)}
-                      {jobHasActivity(job.id) && (
-                        <ActivityDot aria-label="This job needs your attention" />
-                      )}
-                    </div>
-                    <p className="truncate text-sm text-muted-foreground">{job.description}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Client: {job.userName}</p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-stretch gap-1 sm:items-end sm:text-right">
-                    {job.status === 'CANCELLED' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-2 h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:mt-0 sm:w-auto"
-                        onClick={e => { e.stopPropagation(); setJobToDelete(job); setDeleteDialogOpen(true); }}
-                      >
-                        <Trash2 className="mr-1 h-4 w-4" /> Delete
-                      </Button>
-                    )}
-                    <p className="font-semibold">R{job.servicePrice?.amount ?? job.laborEstimateRange?.min ?? 0}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(job.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
+                <JobListGroup
+                  entry={entry}
+                  onJobClick={(job) => navigate(`/provider/jobs/${job.id}`)}
+                  renderRow={renderJobRow}
+                />
               </div>
             ))}
           </div>

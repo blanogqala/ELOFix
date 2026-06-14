@@ -22,7 +22,8 @@ function normalizeMaterialLines(raw) {
 function groupMaterialsBySupplier(materials) {
   const map = new Map();
   for (const m of materials) {
-    const sid = String(m.supplierId);
+    const sid = String(m.branchId || m.supplierId || "").trim();
+    if (!sid) continue;
     if (!map.has(sid)) map.set(sid, []);
     map.get(sid).push(m);
   }
@@ -54,8 +55,10 @@ function appendStoreOrdersForMaterialRequest(currentStoreOrders, materials, mate
   for (const [storeId, lines] of byStore.entries()) {
     const items = lines.map(lineToOrderItem);
     const storeName = lines[0]?.supplierName || "Store";
+    const branchId = lines[0]?.branchId ? String(lines[0].branchId).trim() : undefined;
     next.push({
       storeId,
+      ...(branchId ? { branchId } : {}),
       orderId: randomUUID(),
       ...(mrId ? { materialRequestId: mrId } : {}),
       submissionBatchId: batchId,

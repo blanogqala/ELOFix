@@ -86,6 +86,7 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
+import { getJobPriceDisplay } from '@/lib/jobUtils';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
@@ -282,7 +283,7 @@ export default function ProviderJobDetail() {
       return;
     }
     const check = validateQuotationFileClient(file);
-    if (!check.ok) {
+    if (check.ok === false) {
       toast({ title: 'Invalid file', description: check.message, variant: 'destructive' });
       return;
     }
@@ -1163,6 +1164,36 @@ export default function ProviderJobDetail() {
             </div>
           )}
           </>
+          ) : isCourierJob ? (
+            <div
+              className={cn(
+                'p-4 rounded-lg relative',
+                job.laborPaid || job.deliverySummary?.deliveryPaid
+                  ? 'bg-green-500/30 border border-green-500/90'
+                  : 'bg-primary/5'
+              )}
+            >
+              {(job.laborPaid || job.deliverySummary?.deliveryPaid) && (
+                <Badge className="absolute top-2 right-2 bg-green-900 text-white">Paid</Badge>
+              )}
+              {!job.laborPaid &&
+                !job.deliverySummary?.deliveryPaid &&
+                (deliveryRequest?.quotedFee != null || job.deliverySummary?.quotedFee != null) && (
+                  <Badge variant="secondary" className="absolute top-2 right-2">
+                    Unpaid
+                  </Badge>
+                )}
+              <p className="text-sm text-muted-foreground mb-1">Delivery fee</p>
+              <p className="text-xl font-bold text-primary tabular-nums">
+                {getJobPriceDisplay(job).text}
+              </p>
+              {deliveryRequest?.quoteNote ? (
+                <p className="text-xs text-muted-foreground mt-1">{deliveryRequest.quoteNote}</p>
+              ) : null}
+              <p className="text-xs text-muted-foreground mt-1">
+                {job.laborPaid || job.deliverySummary?.deliveryPaid ? 'Paid' : 'Unpaid'}
+              </p>
+            </div>
           ) : null}
           
         </div>
@@ -1331,8 +1362,27 @@ export default function ProviderJobDetail() {
         {job.status === 'AWAITING_CONFIRMATION' && (
           <div className="card-elevated p-6 text-center">
             <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-            <h3 className="font-semibold mb-1">Awaiting User Confirmation</h3>
-            <p className="text-sm text-muted-foreground">The client needs to confirm the job is completed and provide a review.</p>
+            {isCourierJob && deliveryRequest ? (
+              <>
+                <h3 className="font-semibold mb-1">
+                  {deliveryRequest.deliveryConfirmed
+                    ? 'Awaiting delivery feedback'
+                    : 'Awaiting customer confirmation'}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {deliveryRequest.deliveryConfirmed
+                    ? 'The customer confirmed receipt. They can still submit a delivery rating from their order details.'
+                    : 'The customer needs to confirm receipt of the delivery from their order details.'}
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="font-semibold mb-1">Awaiting User Confirmation</h3>
+                <p className="text-sm text-muted-foreground">
+                  The client needs to confirm the job is completed and provide a review.
+                </p>
+              </>
+            )}
           </div>
         )}
 

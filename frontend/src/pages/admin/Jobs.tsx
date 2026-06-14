@@ -21,6 +21,8 @@ import {
   jobMatchesCategoryFilter,
   jobMatchesCityFilter,
 } from '@/lib/adminJobFilters';
+import { groupJobsForList } from '@/lib/jobListGrouping';
+import { JobListRowVariant } from '@/components/jobs/JobListGroup';
 
 type SortKey = 'newest' | 'oldest' | 'status' | 'category';
 
@@ -109,6 +111,38 @@ export default function AdminJobs() {
       {getJobDisplayStatusLabel(job)}
     </span>
   );
+
+  const groupedEntries = groupJobsForList(filteredJobs);
+
+  const renderAdminJobCells = (job: Job, variant: JobListRowVariant) => {
+    const cat = categories.find((c) => c.id === job.category);
+    const isChild = variant === 'child';
+    return (
+      <>
+        <td className={cn('px-6 py-4', isChild && 'pl-10')}>
+          <p className="text-xs text-muted-foreground font-mono">#{job.id.slice(-8)}</p>
+        </td>
+        <td className="px-6 py-4">
+          <div className="flex items-center gap-2">
+            {!isChild && <span className="text-lg">{cat?.icon}</span>}
+            <span className={cn('text-sm font-medium', isChild && 'text-muted-foreground')}>
+              {isChild ? 'Material delivery' : job.categoryName}
+            </span>
+          </div>
+        </td>
+        <td className="px-6 py-4 text-sm">{job.userName}</td>
+        <td className="px-6 py-4 text-sm">{job.providerName || '—'}</td>
+        <td className="px-6 py-4">{getStatusBadge(job)}</td>
+        <td className="px-6 py-4 text-sm font-medium">{formatCurrency(job.totalEstimateRange.min)}</td>
+        <td className="px-6 py-4 text-sm text-muted-foreground">
+          {new Date(job.createdAt).toLocaleDateString()}
+        </td>
+        <td className="px-6 py-4">
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        </td>
+      </>
+    );
+  };
 
   return (
     <DashboardLayout>
@@ -285,35 +319,36 @@ export default function AdminJobs() {
                     </tr>
                   ))
                 ) : filteredJobs.length > 0 ? (
-                  filteredJobs.map((job) => {
-                    const cat = categories.find(c => c.id === job.category);
-                    return (
-                      <tr 
-                        key={job.id} 
-                        className="hover:bg-muted/50 cursor-pointer transition-colors"
-                        onClick={() => navigate(`/admin/jobs/${job.id}`)}
+                  groupedEntries.flatMap((entry) => {
+                    if (entry.kind === 'standalone') {
+                      return (
+                        <tr
+                          key={entry.job.id}
+                          className="cursor-pointer transition-colors hover:bg-muted/50"
+                          onClick={() => navigate(`/admin/jobs/${entry.job.id}`)}
+                        >
+                          {renderAdminJobCells(entry.job, 'parent')}
+                        </tr>
+                      );
+                    }
+                    return [
+                      <tr
+                        key={entry.parent.id}
+                        className="cursor-pointer transition-colors hover:bg-muted/50"
+                        onClick={() => navigate(`/admin/jobs/${entry.parent.id}`)}
                       >
-                        <td className="px-6 py-4">
-                          <p className="text-xs text-muted-foreground font-mono">#{job.id.slice(-8)}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">{cat?.icon}</span>
-                            <span className="text-sm font-medium">{job.categoryName}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm">{job.userName}</td>
-                        <td className="px-6 py-4 text-sm">{job.providerName || '—'}</td>
-                        <td className="px-6 py-4">{getStatusBadge(job)}</td>
-                        <td className="px-6 py-4 text-sm font-medium">{formatCurrency(job.totalEstimateRange.min)}</td>
-                        <td className="px-6 py-4 text-sm text-muted-foreground">
-                          {new Date(job.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4">
-                          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                        </td>
-                      </tr>
-                    );
+                        {renderAdminJobCells(entry.parent, 'parent')}
+                      </tr>,
+                      ...entry.children.map((child) => (
+                        <tr
+                          key={child.id}
+                          className="cursor-pointer border-l-2 border-primary/30 bg-muted/20 transition-colors hover:bg-muted/50"
+                          onClick={() => navigate(`/admin/jobs/${child.id}`)}
+                        >
+                          {renderAdminJobCells(child, 'child')}
+                        </tr>
+                      )),
+                    ];
                   })
                 ) : (
                   <tr>

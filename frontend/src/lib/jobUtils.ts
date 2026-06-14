@@ -68,6 +68,11 @@ export function getUserLaborGross(job: Job): number {
   return Number.isFinite(max) ? max : 0;
 }
 
+/** Provider job list / cards — full customer-facing gross price (not net after commission). */
+export function getProviderJobPriceDisplay(job: Job): { text: string; isPaid?: boolean } {
+  return getJobPriceDisplay(job);
+}
+
 export function getJobPriceDisplay(job: Job): { text: string; isPaid?: boolean } {
   const settled = job.totalPrice != null && Number.isFinite(Number(job.totalPrice)) ? Number(job.totalPrice) : null;
   if (settled != null && settled > 0) {
@@ -81,6 +86,15 @@ export function getJobPriceDisplay(job: Job): { text: string; isPaid?: boolean }
       text: formatCurrency(job.servicePrice.amount, { decimals: 2 }),
       isPaid: job.laborPaid ?? false,
     };
+  }
+  if (job.courierFlow && job.deliverySummary?.quotedFee != null) {
+    const fee = Number(job.deliverySummary.quotedFee);
+    if (Number.isFinite(fee) && fee >= 0) {
+      return {
+        text: formatCurrency(fee, { decimals: 2 }),
+        isPaid: Boolean(job.deliverySummary.deliveryPaid),
+      };
+    }
   }
   return { text: 'Price pending inspection' };
 }

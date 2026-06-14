@@ -78,6 +78,14 @@ function computeProgressStepFromMeta(meta, jobRow) {
   if (frontendStatus === "INSPECTED" || frontendStatus === "ASSIGNED") {
     return 1;
   }
+  if (
+    frontendStatus === "SERVICE_PRICE_SUBMITTED" ||
+    frontendStatus === "SERVICE_PAID" ||
+    frontendStatus === "MATERIALS_SUBMITTED" ||
+    frontendStatus === "MATERIALS_PAID"
+  ) {
+    return 2;
+  }
   return 2;
 }
 

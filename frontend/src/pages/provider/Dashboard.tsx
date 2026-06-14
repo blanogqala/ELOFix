@@ -15,8 +15,11 @@ import { cn } from '@/lib/utils';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
 import { sumReleasedAmountJobs } from '@/lib/jobMoney';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { groupJobsForList } from '@/lib/jobListGrouping';
+import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 
 export default function ProviderDashboard() {
   const { user } = useAuth();
@@ -72,6 +75,31 @@ export default function ProviderDashboard() {
     .filter(j => isActiveWorkflowStatus(j.status) || j.status === 'COMPLETED')
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
+  const groupedRecentJobs = groupJobsForList(recentJobs).slice(0, 3);
+
+  const renderJobRow = (job: Job, variant: JobListRowVariant) => (
+    <>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <p className={cn('text-sm font-medium', variant === 'child' && 'text-muted-foreground')}>
+            {variant === 'child' ? 'Material delivery' : job.categoryName}
+          </p>
+          {getStatusBadge(job)}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {variant === 'child' ? job.description : job.userName}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="text-sm font-medium tabular-nums">
+          {getProviderJobPriceDisplay(job).text}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {new Date(job.createdAt).toLocaleDateString()}
+        </p>
+      </div>
+    </>
+  );
 
   return (
     <DashboardLayout>
@@ -112,7 +140,7 @@ export default function ProviderDashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
@@ -252,7 +280,7 @@ export default function ProviderDashboard() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-semibold text-primary tabular-nums">
-                          {formatCurrency(job.totalEstimateRange.min)}
+                          {getProviderJobPriceDisplay(job).text}
                         </p>
                       </div>
                     </div>
@@ -292,35 +320,15 @@ export default function ProviderDashboard() {
                   </div>
                 ))}
               </div>
-            ) : recentJobs.length > 0 ? (
+            ) : groupedRecentJobs.length > 0 ? (
               <div className="divide-y divide-border">
-                {recentJobs.map(job => (
-                  <div
-                    key={job.id}
-                    className="p-4 hover:bg-muted/50 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/provider/jobs/${job.id}`)}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Briefcase className="h-6 w-6 text-primary" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <p className="font-medium text-sm">{job.categoryName}</p>
-                          {getStatusBadge(job)}
-                        </div>
-                        <p className="text-xs text-muted-foreground">{job.userName}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-medium text-sm tabular-nums">
-                          {formatCurrency(job.laborEstimateRange.min)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(job.createdAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                {groupedRecentJobs.map((entry) => (
+                  <JobListGroup
+                    key={entry.kind === 'group' ? entry.parent.id : entry.job.id}
+                    entry={entry}
+                    onJobClick={(job) => navigate(`/provider/jobs/${job.id}`)}
+                    renderRow={renderJobRow}
+                  />
                 ))}
               </div>
             ) : (

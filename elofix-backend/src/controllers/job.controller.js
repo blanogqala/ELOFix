@@ -106,7 +106,10 @@ async function submitServicePrice(req, res) {
   if (note != null && String(note).length > 5000) {
     throw new AppError("note is too long", 400);
   }
-  const job = await jobService.submitServicePrice(id, amount, note);
+  if (String(req.user?.role) !== "PROVIDER") {
+    throw new AppError("Only providers can submit a service price", 403);
+  }
+  const job = await jobService.submitServicePrice(id, amount, note, req.user.userId);
   res.json({ success: true, job });
 }
 
@@ -171,7 +174,15 @@ async function submitMaterials(req, res) {
 }
 
 async function rejectJob(req, res) {
-  const job = await jobService.rejectJob(req.params.id, req.body?.reason, req.body?.details);
+  if (String(req.user?.role) !== "PROVIDER") {
+    throw new AppError("Only providers can reject job requests", 403);
+  }
+  const job = await jobService.rejectJobByProvider(
+    req.params.id,
+    req.body?.reason,
+    req.body?.details,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
@@ -187,6 +198,16 @@ async function rejectJobByProvider(req, res) {
 
 async function deleteRejectedFromProviderView(req, res) {
   const result = await jobService.deleteRejectedRequestFromProviderView(req.params.id, req.user.userId);
+  res.json({ success: true, ...result });
+}
+
+async function getCancelledRequestsForProvider(req, res) {
+  const jobs = await jobService.getCancelledRequestsForProvider(req.user.userId);
+  res.json({ success: true, jobs });
+}
+
+async function deleteCancelledFromProviderView(req, res) {
+  const result = await jobService.deleteCancelledRequestFromProviderView(req.params.id, req.user.userId);
   res.json({ success: true, ...result });
 }
 
@@ -252,12 +273,22 @@ async function cancelJob(req, res) {
 }
 
 async function confirmJobCompletion(req, res) {
-  const job = await jobService.confirmJobCompletion(req.params.id, req.body?.rating, req.body?.review);
+  const job = await jobService.confirmJobCompletion(
+    req.params.id,
+    req.body?.rating,
+    req.body?.review,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function setStoreDeliveryOption(req, res) {
-  const job = await jobService.setStoreDeliveryOption(req.params.id, req.params.storeId, req.body || {});
+  const job = await jobService.setStoreDeliveryOption(
+    req.params.id,
+    req.params.storeId,
+    req.body || {},
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
@@ -377,7 +408,7 @@ async function updateJobStatus(req, res) {
   if (status.length > 128) {
     throw new AppError("status is too long", 400);
   }
-  const job = await jobService.updateJobStatus(id, status);
+  const job = await jobService.updateJobStatus(id, status, req.user.userId, req.user.role);
   res.json({ success: true, job });
 }
 
@@ -428,6 +459,8 @@ module.exports = {
   rejectJob,
   rejectJobByProvider,
   deleteRejectedFromProviderView,
+  getCancelledRequestsForProvider,
+  deleteCancelledFromProviderView,
   updateProviderRequirements,
   addUserMaterialSuggestion,
   acceptUserSuggestion,

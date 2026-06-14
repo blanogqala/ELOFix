@@ -10,6 +10,11 @@ const router = express.Router();
 router.get("/", authenticate, asyncHandler(jobController.getJobs));
 router.post("/", authenticate, asyncHandler(jobController.createJob));
 router.get("/match", authenticate, asyncHandler(jobController.getMatchedJobs));
+router.get(
+  "/provider-view/cancelled",
+  authenticate,
+  asyncHandler(jobController.getCancelledRequestsForProvider)
+);
 router.post(
   "/upload-image",
   authenticate,
@@ -30,6 +35,11 @@ router.delete(
   "/:id/provider-view/rejected",
   authenticate,
   asyncHandler(jobController.deleteRejectedFromProviderView)
+);
+router.delete(
+  "/:id/provider-view/cancelled",
+  authenticate,
+  asyncHandler(jobController.deleteCancelledFromProviderView)
 );
 router.patch(
   "/:id/provider-requirements",

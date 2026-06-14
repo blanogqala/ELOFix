@@ -11,6 +11,8 @@ import { getJobPriceDisplay } from '@/lib/jobUtils';
 import { Job } from '@/types';
 import { Search, Briefcase, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { groupJobsForList } from '@/lib/jobListGrouping';
+import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { useToast } from '@/hooks/use-toast';
@@ -67,6 +69,45 @@ export default function UserJobs() {
     <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
       {getJobDisplayStatusLabel(job)}
     </span>
+  );
+
+  const groupedEntries = groupJobsForList(filteredJobs);
+
+  const renderJobRow = (job: Job, variant: JobListRowVariant) => (
+    <>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <p className={cn('font-medium', variant === 'child' && 'text-sm')}>
+            {variant === 'child' ? 'Material delivery' : job.categoryName}
+          </p>
+          {getStatusBadge(job)}
+        </div>
+        <p className="text-sm text-muted-foreground truncate">{job.description}</p>
+        {variant === 'parent' && job.providerName && (
+          <p className="text-xs text-muted-foreground mt-1">Provider: {job.providerName}</p>
+        )}
+      </div>
+      <div className="text-right shrink-0 hidden sm:block">
+        {(() => {
+          const { text, isPaid } = getJobPriceDisplay(job);
+          return (
+            <>
+              <p className="font-medium">
+                {text}
+                {isPaid && <span className="ml-1 text-xs text-success">(Paid)</span>}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(job.createdAt).toLocaleDateString()}
+              </p>
+            </>
+          );
+        })()}
+      </div>
+      {jobHasActivity(job.id) && (
+        <ActivityDot className="shrink-0" aria-label="This job needs your attention" />
+      )}
+      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </>
   );
 
   return (
@@ -138,50 +179,13 @@ export default function UserJobs() {
             </div>
           ) : filteredJobs.length > 0 ? (
             <div className="divide-y divide-border">
-              {filteredJobs.map((job) => (
-                <div 
-                  key={job.id} 
-                  className="p-4 hover:bg-muted/50 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/user/jobs/${job.id}`)}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <Briefcase className="h-6 w-6 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <p className="font-medium">{job.categoryName}</p>
-                        {getStatusBadge(job)}
-                      </div>
-                      <p className="text-sm text-muted-foreground truncate">{job.description}</p>
-                      {job.providerName && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Provider: {job.providerName}
-                        </p>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0 hidden sm:block">
-                      {(() => {
-                        const { text, isPaid } = getJobPriceDisplay(job);
-                        return (
-                          <>
-                            <p className="font-medium">
-                              {text}
-                              {isPaid && <span className="ml-1 text-xs text-success">(Paid)</span>}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(job.createdAt).toLocaleDateString()}
-                            </p>
-                          </>
-                        );
-                      })()}
-                    </div>
-                    {jobHasActivity(job.id) && (
-                      <ActivityDot className="shrink-0" aria-label="This job needs your attention" />
-                    )}
-                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </div>
-                </div>
+              {groupedEntries.map((entry) => (
+                <JobListGroup
+                  key={entry.kind === 'group' ? entry.parent.id : entry.job.id}
+                  entry={entry}
+                  onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
+                  renderRow={renderJobRow}
+                />
               ))}
             </div>
           ) : (

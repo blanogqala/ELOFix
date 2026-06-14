@@ -1,6 +1,14 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+
+function isCourierDeliveryOrder(pload) {
+  return (
+    String(pload.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER" ||
+    String(pload.delivery?.type || "").toUpperCase() === "PROVIDER"
+  );
+}
+
 async function createMaterialOrderRating({ orderId, customerUserId, rating, comment }) {
   const oid = String(orderId || "").trim();
   if (!oid) {
@@ -25,25 +33,40 @@ async function createMaterialOrderRating({ orderId, customerUserId, rating, comm
   if (!pload.deliveryConfirmed) {
     throw new AppError("Confirm delivery receipt before submitting a rating", 400);
   }
-  if (!order.jobId) {
-    throw new AppError(
-      "This order does not include an assigned provider. Ratings apply to provider-delivered shop orders tied to a job.",
-      400
-    );
+
+  const courierDelivery = isCourierDeliveryOrder(pload);
+  let providerRow = null;
+
+  if (courierDelivery) {
+    const materialOrderService = require("./materialOrder.service");
+    const courierUserId = materialOrderService.resolveAssignedCourierId(pload);
+    if (!courierUserId) {
+      throw new AppError("No delivery provider found for this order", 400);
+    }
+    providerRow = await prisma.provider.findUnique({
+      where: { userId: courierUserId },
+      select: { id: true },
+    });
+  } else {
+    if (!order.jobId) {
+      throw new AppError(
+        "This order does not include an assigned provider. Ratings apply to provider-delivered shop orders tied to a job.",
+        400
+      );
+    }
+    const job = await prisma.job.findUnique({
+      where: { id: order.jobId },
+      select: { providerId: true },
+    });
+    if (!job || !job.providerId) {
+      throw new AppError("No provider found for this order", 400);
+    }
+    providerRow = await prisma.provider.findUnique({
+      where: { userId: job.providerId },
+      select: { id: true },
+    });
   }
 
-  const job = await prisma.job.findUnique({
-    where: { id: order.jobId },
-    select: { providerId: true },
-  });
-  if (!job || !job.providerId) {
-    throw new AppError("No provider found for this order", 400);
-  }
-
-  const providerRow = await prisma.provider.findUnique({
-    where: { userId: job.providerId },
-    select: { id: true },
-  });
   if (!providerRow) {
     throw new AppError("Provider not found", 404);
   }
@@ -65,7 +88,17 @@ async function createMaterialOrderRating({ orderId, customerUserId, rating, comm
     },
   });
 
-  return { orderId: oid, rating: r };
+  let completion = null;
+  if (courierDelivery) {
+    try {
+      const deliveryRequestService = require("./deliveryRequest.service");
+      completion = await deliveryRequestService.syncCourierDeliveryCustomerCompletion(oid);
+    } catch (e) {
+      console.error("createMaterialOrderRating sync courier completion", e);
+    }
+  }
+
+  return { orderId: oid, rating: r, completion };
 }
 
 module.exports = { createMaterialOrderRating };

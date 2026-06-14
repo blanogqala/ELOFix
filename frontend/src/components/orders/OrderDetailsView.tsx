@@ -89,6 +89,7 @@ export interface NormalizedOrder {
   destinationAddress?: string;
   driverLocation?: { lat: number; lng: number; updatedAt?: string } | null;
   deliveryConfirmed?: boolean;
+  courierJobId?: string | null;
 }
 
 interface OrderDetailsViewProps {
@@ -106,6 +107,9 @@ interface OrderDetailsViewProps {
   onCancelOrder?: () => void;
   onPayDelivery?: () => void;
   onAcceptQuote?: () => void;
+  /** Courier-linked MO: navigate to delivery job instead of accept/pay on this page */
+  onGoToDeliveryJob?: () => void;
+  onViewDeliveryJob?: () => void;
   onViewMaterialInvoice?: (invoiceId: string) => void;
   onViewDeliveryInvoice?: (invoiceId: string) => void;
   onConfirmReceipt?: () => void;
@@ -246,6 +250,8 @@ export function OrderDetailsView({
   onCancelOrder,
   onPayDelivery,
   onAcceptQuote,
+  onGoToDeliveryJob,
+  onViewDeliveryJob,
   onViewMaterialInvoice,
   onViewDeliveryInvoice,
   onConfirmReceipt,
@@ -288,9 +294,19 @@ export function OrderDetailsView({
   const unifiedMode: UnifiedDeliveryMode =
     canonical === 'pickup' ? 'self_pickup' : canonical === 'supplier_delivery' ? 'store_delivery' : 'provider_delivery';
 
+  const deliveryEffectivelyComplete =
+    fulfillmentU === 'COMPLETED' || deliveryState === 'Delivered';
+  const deliveryEffectivelyPaid = Boolean(order.deliveryPaid) || deliveryEffectivelyComplete;
+
   const isPendingApproval = deliveryState === 'PendingApproval';
-  const isQuoted = deliveryState === 'Quoted';
-  const isApproved = deliveryState === 'Approved' && !order.deliveryPaid;
+  const isQuoted =
+    deliveryState === 'Quoted' && !deliveryEffectivelyPaid && !deliveryEffectivelyComplete;
+  const isDeliveryPaidProvider =
+    order.deliveryType === 'PROVIDER' &&
+    deliveryEffectivelyPaid &&
+    (Boolean(order.courierJobId) || deliveryEffectivelyComplete);
+  const isApproved =
+    deliveryState === 'Approved' && !deliveryEffectivelyPaid && !deliveryEffectivelyComplete;
   const isRejected = deliveryState === 'Rejected';
   const isCancelled = deliveryState === 'Cancelled';
   const noDeliverySelected = isCancelled || !order.deliveryType;
@@ -523,7 +539,11 @@ export function OrderDetailsView({
                 <span className="text-primary">{formatCurrency(order.deliveryFee, { decimals: 2 })}</span>
               </p>
               <div className="flex flex-wrap gap-2">
-                {onAcceptQuote ? (
+                {onGoToDeliveryJob ? (
+                  <Button size="sm" className="btn-accent" onClick={onGoToDeliveryJob}>
+                    Start accepting quotes and payments
+                  </Button>
+                ) : onAcceptQuote ? (
                   <Button size="sm" className="btn-accent" onClick={onAcceptQuote}>
                     Accept quote & pay
                   </Button>
@@ -537,17 +557,43 @@ export function OrderDetailsView({
             </div>
           ) : null}
 
+          {!noDeliverySelected && isDeliveryPaidProvider ? (
+            <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-3">
+              <p className="text-sm">
+                Delivery paid — track progress in your delivery job.
+              </p>
+              {onViewDeliveryJob ? (
+                <Button size="sm" variant="outline" onClick={onViewDeliveryJob}>
+                  <Truck className="h-3.5 w-3.5 mr-1" />
+                  View delivery job
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
           {!noDeliverySelected && isApproved && order.deliveryFee > 0 ? (
             <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
               <p className="text-sm">
-                Delivery approved — pay{' '}
-                <strong>{formatCurrency(order.deliveryFee, { decimals: 2 })}</strong> to start.
+                {onGoToDeliveryJob
+                  ? 'Delivery approved — complete payment on your delivery job.'
+                  : (
+                    <>
+                      Delivery approved — pay{' '}
+                      <strong>{formatCurrency(order.deliveryFee, { decimals: 2 })}</strong> to start.
+                    </>
+                  )}
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" className="btn-accent" onClick={onPayDelivery}>
-                  <CreditCard className="h-3.5 w-3.5 mr-1" />
-                  Pay delivery
-                </Button>
+                {onGoToDeliveryJob ? (
+                  <Button size="sm" className="btn-accent" onClick={onGoToDeliveryJob}>
+                    Start accepting quotes and payments
+                  </Button>
+                ) : onPayDelivery ? (
+                  <Button size="sm" className="btn-accent" onClick={onPayDelivery}>
+                    <CreditCard className="h-3.5 w-3.5 mr-1" />
+                    Pay delivery
+                  </Button>
+                ) : null}
                 {onChangeDelivery ? (
                   <Button size="sm" variant="outline" onClick={onChangeDelivery}>
                     Change option

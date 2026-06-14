@@ -50,12 +50,47 @@ interface MeResponse {
   user: BackendUser;
 }
 
-function mapBackendRole(role: BackendUser['role']): UserRole {
-  if (role === 'ADMIN') return 'admin';
-  if (role === 'PROVIDER') return 'provider';
-  if (role === 'SUPPLIER') return 'supplier';
-  if (role === 'BRANCH_STAFF') return 'branch_staff';
+function mapBackendRole(role: BackendUser['role'] | string): UserRole {
+  const normalized = String(role).toUpperCase();
+  if (normalized === 'ADMIN') return 'admin';
+  if (normalized === 'PROVIDER') return 'provider';
+  if (normalized === 'SUPPLIER') return 'supplier';
+  if (normalized === 'BRANCH_STAFF') return 'branch_staff';
   return 'user';
+}
+
+export function getBackendRoleFromToken(token: string): BackendUser['role'] | null {
+  try {
+    const base64 = token.split('.')[1];
+    if (!base64) return null;
+    const normalized = base64.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(normalized)) as { role?: BackendUser['role'] };
+    const role = payload?.role;
+    if (
+      role === 'ADMIN' ||
+      role === 'PROVIDER' ||
+      role === 'CUSTOMER' ||
+      role === 'SUPPLIER' ||
+      role === 'BRANCH_STAFF'
+    ) {
+      return role;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function getFrontendRoleFromToken(token: string): UserRole | null {
+  const backendRole = getBackendRoleFromToken(token);
+  if (!backendRole) return null;
+  return mapBackendRole(backendRole);
+}
+
+export function isTokenRoleConsistentWithUser(token: string, user: AuthUser): boolean {
+  const tokenRole = getFrontendRoleFromToken(token);
+  if (!tokenRole) return true;
+  return tokenRole === user.role;
 }
 
 function mapFrontendRole(role: 'user' | 'provider'): BackendUser['role'] {
@@ -169,8 +204,13 @@ export async function login(email: string, password: string): Promise<AuthSessio
     token: data.token,
   });
 
-  if (session.token) {
-    return refreshSessionUser();
+  try {
+    if (session.token) {
+      return await refreshSessionUser();
+    }
+  } catch {
+    logout();
+    throw new Error('Signed in, but failed to load your profile. Please try again.');
   }
 
   return session;
@@ -232,8 +272,13 @@ export async function fetchAuthMe(): Promise<AuthSession | null> {
   const { data } = await apiClient.get<MeResponse>('/auth/me');
   if (!data?.user) return null;
 
+  const user = toAuthUser(data.user);
+  if (!isTokenRoleConsistentWithUser(session.token, user)) {
+    return null;
+  }
+
   return saveSession({
-    user: toAuthUser(data.user),
+    user,
     token: session.token,
   });
 }

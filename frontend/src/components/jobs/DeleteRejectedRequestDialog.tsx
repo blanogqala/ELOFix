@@ -14,12 +14,16 @@ interface DeleteRejectedRequestDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
+  title?: string;
+  description?: string;
 }
 
 export function DeleteRejectedRequestDialog({
   open,
   onOpenChange,
   onConfirm,
+  title = 'Delete Rejected Request?',
+  description = 'Delete this rejected request from your list?',
 }: DeleteRejectedRequestDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -27,10 +31,10 @@ export function DeleteRejectedRequestDialog({
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <Trash2 className="h-5 w-5 text-destructive" />
-            Delete Rejected Request?
+            {title}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Delete this rejected request from your list?
+            {description}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

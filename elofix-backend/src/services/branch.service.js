@@ -19,8 +19,14 @@ function branchPublicDisplay(branch, supplierRow) {
   const brand = String(supplierRow.brandName || "").trim();
   const bname = String(branch.name || "").trim();
   const legal = String(supplierRow.name || "").trim();
-  if (brand && bname) return `${brand} - ${bname}`;
-  if (bname && legal) return `${legal} - ${bname}`;
+  if (brand && bname) {
+    if (brand.toLowerCase() === bname.toLowerCase()) return brand;
+    return `${brand} - ${bname}`;
+  }
+  if (bname && legal) {
+    if (legal.toLowerCase() === bname.toLowerCase()) return legal;
+    return `${legal} - ${bname}`;
+  }
   return legal || brand || bname || "Store";
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -9,18 +10,18 @@ import { getSuppliers } from '@/lib/api/suppliers';
 import {
   getMaterialOrderById,
   updateMaterialOrderDelivery,
-  payMaterialOrderDelivery,
   confirmMaterialOrderCollection,
   cancelMaterialOrder,
 } from '@/lib/api/materialOrders';
 import {
   getJobsByUser,
   updateStoreOrderDelivery,
-  payStoreOrderDelivery,
+  setStoreDeliveryOption,
 } from '@/lib/api/jobs';
-import { getSavedCards, getInvoiceById } from '@/lib/api/payments';
+import { getInvoiceById } from '@/lib/api/payments';
+import { PaymentModal } from '@/components/payments/PaymentModal';
 import { getDeliveryProviders } from '@/lib/api/specials';
-import { DeliveryProvider, SavedCard, MaterialOrder, Supplier } from '@/types';
+import { DeliveryProvider, MaterialOrder, Supplier } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
@@ -33,6 +34,7 @@ import type { JobMaterialOrderSnapshot } from '@/types';
 import { resolveMaterialBatchFromSnapshot } from '@/lib/materialBatchTracking';
 import { toCanonicalDeliveryType } from '@/lib/deliveryTypes';
 import { DeliveryExperienceFeedbackDialog } from '@/components/tracking/DeliveryExperienceFeedbackDialog';
+import { queryKeys } from '@/lib/queryKeys';
 
 type RouteParams = {
   orderId?: string;
@@ -146,10 +148,11 @@ export default function OrderDetails() {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const [order, setOrder] = useState<NormalizedOrder | null>(null);
   const [jobContext, setJobContext] = useState<{ jobId: string; storeId: string } | null>(null);
-  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
+  const [payDeliveryModalOpen, setPayDeliveryModalOpen] = useState(false);
   const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
   const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
   const [deliveryChooserOpen, setDeliveryChooserOpen] = useState(false);
@@ -201,7 +204,6 @@ export default function OrderDetails() {
     if (!user) return;
     loadOrder();
     if (user) {
-      getSavedCards(user.id).then(cards => setSavedCards(cards));
       getDeliveryProviders()
         .then((providers) => {
           setDeliveryProviders(providers);
@@ -224,6 +226,31 @@ export default function OrderDetails() {
     (['SelfCollect', 'PendingApproval', 'Quoted', 'Approved', 'Rejected', 'Cancelled', 'InProgress', 'Processing', 'OnTheWay', 'Delivered'].includes(s)
       ? (s as NormalizedDeliveryState)
       : 'Processing');
+
+  const resolveOrderDeliveryFields = (
+    deliveryState: NormalizedDeliveryState,
+    deliveryPaid: boolean,
+    fulfillmentStatus?: string,
+    courierJobId?: string | null
+  ): { deliveryState: NormalizedDeliveryState; deliveryPaid: boolean } => {
+    const fs = String(fulfillmentStatus || '').toUpperCase();
+    let state = deliveryState;
+    let paid = deliveryPaid;
+
+    if (fs === 'COMPLETED') {
+      state = 'Delivered';
+      if (courierJobId) paid = true;
+    } else if (
+      courierJobId &&
+      paid &&
+      (fs === 'OUT_FOR_DELIVERY' || fs === 'READY') &&
+      (state === 'Quoted' || state === 'Approved')
+    ) {
+      state = 'InProgress';
+    }
+
+    return { deliveryState: state, deliveryPaid: paid };
+  };
 
   const addressFromMaterialOrder = (mo: MaterialOrder | null | undefined) => ({
     collectionAddress:
@@ -252,7 +279,15 @@ export default function OrderDetails() {
       if (found && customerOwnsOrder) {
         const d = found.delivery;
         const p = found.payment;
-        const deliveryState = mapDeliveryState(d?.status ?? (found.deliveryType === 'SELF' ? 'SelfCollect' : 'PendingApproval'));
+        const rawDeliveryState = mapDeliveryState(d?.status ?? (found.deliveryType === 'SELF' ? 'SelfCollect' : 'PendingApproval'));
+        const fulfillmentStatus = String(found.fulfillmentStatus || '');
+        const courierJobId = found.courierJobId ?? null;
+        const { deliveryState, deliveryPaid } = resolveOrderDeliveryFields(
+          rawDeliveryState,
+          p?.deliveryPaid ?? false,
+          fulfillmentStatus,
+          courierJobId
+        );
         const quotedFee = (found as MaterialOrder).deliveryQuote?.fee;
         const deliveryFee =
           deliveryState === 'Quoted' && quotedFee != null
@@ -278,7 +313,8 @@ export default function OrderDetails() {
           createdAt: found.createdAt,
           deliveryStatus: mapDeliveryStatus(found.deliveryStatus),
           deliveryState,
-          deliveryPaid: p?.deliveryPaid ?? false,
+          deliveryPaid,
+          fulfillmentStatus,
           materialsPaid: p?.materialsPaid ?? true,
           invoiceId: found.invoiceId || `INV-${found.id.slice(-8)}`,
           deliveryInvoiceId: found.deliveryInvoiceId,
@@ -287,6 +323,7 @@ export default function OrderDetails() {
           providerEmail: provider?.email,
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: found.jobId,
+          courierJobId,
           collectionAddress: addr.collectionAddress,
           destinationAddress: addr.destinationAddress,
         };
@@ -325,15 +362,23 @@ export default function OrderDetails() {
         const d = storeOrder.delivery;
         const p = storeOrder.payment;
         const moRow = await getMaterialOrderById(effectiveOrderId);
-        const moDeliveryState = moRow?.delivery?.status
+        const rawMoDeliveryState = moRow?.delivery?.status
           ? mapDeliveryState(moRow.delivery.status)
           : mapDeliveryState(d?.status ?? storeOrder.deliveryStatus);
+        const moFulfillment = String(moRow?.fulfillmentStatus || '');
+        const courierJobId = moRow?.courierJobId ?? storeOrder.courierJobId ?? null;
+        const moDeliveryPaid = moRow?.payment?.deliveryPaid ?? p?.deliveryPaid ?? false;
+        const { deliveryState, deliveryPaid } = resolveOrderDeliveryFields(
+          rawMoDeliveryState,
+          moDeliveryPaid,
+          moFulfillment,
+          courierJobId
+        );
         const quotedFee = moRow?.deliveryQuote?.fee;
         const deliveryFee =
-          moDeliveryState === 'Quoted' && quotedFee != null
+          deliveryState === 'Quoted' && quotedFee != null
             ? Number(quotedFee)
             : storeOrder.deliveryFee;
-        const deliveryState = moDeliveryState;
         const addr = addressFromMaterialOrder(moRow);
         const materialsTotal = storeOrder.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
         const provider = storeOrder.deliveryProviderId
@@ -352,7 +397,7 @@ export default function OrderDetails() {
             : storeOrder.deliveryStatus === 'OnTheWay' || storeOrder.deliveryStatus === 'InProgress' ? 'out_for_delivery'
             : 'processing',
           deliveryState,
-          deliveryPaid: p?.deliveryPaid ?? false,
+          deliveryPaid,
           materialsPaid: p?.materialsPaid ?? true,
           invoiceId: storeOrder.invoiceId,
           deliveryInvoiceId: storeOrder.deliveryInvoiceId,
@@ -362,6 +407,8 @@ export default function OrderDetails() {
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: job.id,
           storeId: storeOrder.storeId,
+          fulfillmentStatus: moFulfillment,
+          courierJobId,
           collectionAddress: addr.collectionAddress,
           destinationAddress: addr.destinationAddress || job.location?.address,
         };
@@ -541,23 +588,9 @@ export default function OrderDetails() {
     printWindow.document.close();
   };
 
-  const handlePayDelivery = async () => {
-    if (!order || !effectiveOrderId || !user) return;
-    const card = savedCards[0];
-    const last4 = card?.last4 || '****';
-    const fee = order.deliveryFee || 0;
-    if (fee <= 0) return;
-    try {
-      if (jobContext) {
-        await payStoreOrderDelivery(jobContext.jobId, jobContext.storeId, last4, fee);
-      } else {
-        await payMaterialOrderDelivery(effectiveOrderId, last4, fee);
-      }
-      toast({ title: 'Delivery paid', description: 'Delivery has been paid. Tracking will start soon.' });
-      loadOrder();
-    } catch {
-      toast({ title: 'Error', description: 'Payment failed.', variant: 'destructive' });
-    }
+  const handlePayDelivery = () => {
+    if (!order || !effectiveOrderId || order.deliveryFee <= 0) return;
+    setPayDeliveryModalOpen(true);
   };
 
   const handleChangeDelivery = () => {
@@ -571,15 +604,20 @@ export default function OrderDetails() {
   const handleDeliveryOptionSelected = async (delivery: DeliveryOptionSelection) => {
     if (!order || !effectiveOrderId) return;
     try {
-      const updates = {
-        type: delivery.type,
-        status: delivery.status as 'SelfCollect' | 'PendingApproval',
-        fee: delivery.fee,
-        providerId: delivery.providerId,
-      };
       if (jobContext) {
-        await updateStoreOrderDelivery(jobContext.jobId, jobContext.storeId, updates);
+        await setStoreDeliveryOption(jobContext.jobId, jobContext.storeId, {
+          deliveryType: delivery.type,
+          deliveryFee: delivery.fee,
+          deliveryProviderId: delivery.providerId,
+          orderId: effectiveOrderId,
+        });
       } else {
+        const updates = {
+          type: delivery.type,
+          status: delivery.status as 'SelfCollect' | 'PendingApproval',
+          fee: delivery.fee,
+          providerId: delivery.providerId,
+        };
         await updateMaterialOrderDelivery(effectiveOrderId, updates);
       }
       toast({ title: 'Delivery option updated', description: 'Your delivery preference has been saved.' });
@@ -620,6 +658,11 @@ export default function OrderDetails() {
       navigate('/user/dashboard');
     }
   };
+
+  const isCourierLinked =
+    order?.deliveryType === 'PROVIDER' &&
+    Boolean(order?.courierJobId) &&
+    !order?.deliveryPaid;
 
   return (
     <DashboardLayout>
@@ -674,11 +717,35 @@ export default function OrderDetails() {
               onChooseDelivery={handleChooseDelivery}
               onCancelOrder={canCustomerCancelOrder ? handleCancelOrder : undefined}
               onPayDelivery={
-                order.deliveryState === 'Approved' && !order.deliveryPaid && order.deliveryFee > 0
+                !isCourierLinked &&
+                order.deliveryState === 'Approved' &&
+                !order.deliveryPaid &&
+                order.deliveryFee > 0
                   ? handlePayDelivery
                   : undefined
               }
-              onAcceptQuote={order.deliveryState === 'Quoted' ? handleAcceptQuote : undefined}
+              onAcceptQuote={
+                !isCourierLinked &&
+                order.deliveryState === 'Quoted' &&
+                !order.deliveryPaid &&
+                String(order.fulfillmentStatus || '').toUpperCase() !== 'COMPLETED'
+                  ? handleAcceptQuote
+                  : undefined
+              }
+              onGoToDeliveryJob={
+                isCourierLinked && order.courierJobId
+                  ? () => navigate(`/user/jobs/${order.courierJobId}`)
+                  : undefined
+              }
+              onViewDeliveryJob={
+                order.deliveryType === 'PROVIDER' &&
+                order.courierJobId &&
+                (order.deliveryPaid ||
+                  String(order.fulfillmentStatus || '').toUpperCase() === 'COMPLETED' ||
+                  order.deliveryState === 'Delivered')
+                  ? () => navigate(`/user/jobs/${order.courierJobId}`)
+                  : undefined
+              }
               onViewMaterialInvoice={user ? handleViewInvoice : undefined}
               onViewDeliveryInvoice={user ? handleViewInvoice : undefined}
               onConfirmReceipt={handleConfirmReceipt}
@@ -695,6 +762,30 @@ export default function OrderDetails() {
               deliveryProvidersError={deliveryProvidersError}
               onSelect={handleDeliveryOptionSelected}
             />
+            {!isCourierLinked && (
+            <PaymentModal
+              open={payDeliveryModalOpen}
+              onOpenChange={setPayDeliveryModalOpen}
+              title="Pay delivery fee"
+              description="Complete payment so your courier can collect and deliver your materials."
+              amount={order.deliveryFee}
+              kind="DELIVERY_FEE"
+              jobId={jobContext?.jobId || order.jobId}
+              materialOrderId={order.materialOrderId || effectiveOrderId}
+              metadata={
+                jobContext
+                  ? {
+                      storeId: jobContext.storeId,
+                      orderId: effectiveOrderId,
+                    }
+                  : undefined
+              }
+              breakdown={[
+                { label: 'Delivery fee', amount: order.deliveryFee },
+                { label: 'Total due', amount: order.deliveryFee, isBold: true },
+              ]}
+            />
+            )}
             <DeliveryExperienceFeedbackDialog
               open={deliveryFeedbackOpen}
               onOpenChange={setDeliveryFeedbackOpen}
@@ -709,6 +800,14 @@ export default function OrderDetails() {
                 String(order.fulfillmentStatus || '').toUpperCase() === 'COMPLETED' &&
                 order.deliveryConfirmed === true
               }
+              onRated={() => {
+                void loadOrder();
+                void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+                void queryClient.invalidateQueries({ queryKey: ['delivery-request-by-job'] });
+                if (jobContext?.jobId) {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(jobContext.jobId) });
+                }
+              }}
             />
           </>
         ) : (

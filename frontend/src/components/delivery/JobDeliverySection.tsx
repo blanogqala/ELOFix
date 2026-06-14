@@ -6,12 +6,10 @@ import { DeliveryMap } from '@/components/tracking/DeliveryMap';
 import { ProviderCourierQuotePanel } from '@/components/delivery/ProviderCourierQuotePanel';
 import { CourierDeliveryFulfillment } from '@/components/delivery/CourierDeliveryFulfillment';
 import { formatCurrency } from '@/lib/formatCurrency';
-import {
-  acceptDeliveryRequestQuote,
-  payDeliveryRequest,
-} from '@/lib/api/deliveryRequests';
+import { acceptDeliveryRequestQuote } from '@/lib/api/deliveryRequests';
+import { PaymentModal } from '@/components/payments/PaymentModal';
 import type { DeliveryGeoPoint, DeliveryRequestRecord, Job } from '@/types';
-import { Package, Truck, Loader2 } from 'lucide-react';
+import { Package, Truck } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useToast } from '@/hooks/use-toast';
@@ -20,26 +18,50 @@ import { cn } from '@/lib/utils';
 import { getCourierJobDisplayStatusLabel } from '@/lib/courierJobTimeline';
 
 function resolveCollectionPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
-  return (
-    dr.collectionPoint ||
-    (job.measurements as { collectionPoint?: DeliveryGeoPoint })?.collectionPoint ||
-    (job.location as { collection?: DeliveryGeoPoint })?.collection ||
-    { address: '—' }
-  );
+  if (dr.collectionPoint?.address?.trim()) return dr.collectionPoint;
+  const fromMeasurements = (job.measurements as { collectionPoint?: DeliveryGeoPoint })?.collectionPoint;
+  if (fromMeasurements?.address?.trim()) return fromMeasurements;
+  const fromLocation = (job.location as { collection?: DeliveryGeoPoint })?.collection;
+  if (fromLocation?.address?.trim()) return fromLocation;
+  return { address: 'Collection address pending — contact support' };
 }
 
 function resolveDestinationPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
-  return (
-    dr.destinationPoint ||
-    (job.measurements as { destinationPoint?: DeliveryGeoPoint })?.destinationPoint ||
-    (job.location as DeliveryGeoPoint) ||
-    { address: job.location?.address || '—' }
-  );
+  if (dr.destinationPoint?.address?.trim()) return dr.destinationPoint;
+  const fromMeasurements = (job.measurements as { destinationPoint?: DeliveryGeoPoint })?.destinationPoint;
+  if (fromMeasurements?.address?.trim()) return fromMeasurements;
+  if (job.location?.address?.trim()) {
+    return { address: job.location.address, city: job.location.city };
+  }
+  return { address: '—' };
 }
 
 const LIVE_TRACKING_FS = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
 
-function customerTrackingHeadline(fs: string): { title: string; description: string; tone: string } {
+function customerTrackingHeadline(
+  fs: string,
+  job: Job,
+  dr: DeliveryRequestRecord
+): { title: string; description: string; tone: string } {
+  const fullyComplete =
+    job.status === 'COMPLETED' ||
+    job.completionConfirmedByUser === true ||
+    (dr.deliveryConfirmed === true && dr.customerRating != null);
+
+  if (fullyComplete) {
+    return {
+      title: 'Delivery completed',
+      description: 'Thank you — your delivery has been confirmed and closed.',
+      tone: 'border-emerald-500/30 bg-emerald-500/10',
+    };
+  }
+  if (dr.deliveryConfirmed === true && !dr.customerRating) {
+    return {
+      title: 'Receipt confirmed — share feedback',
+      description: 'Open your order details to rate the delivery when you have a moment.',
+      tone: 'border-amber-500/30 bg-amber-500/10',
+    };
+  }
   if (fs === 'COLLECTING' || fs === 'COLLECTED') {
     return {
       title: 'Courier is collecting your items',
@@ -76,6 +98,8 @@ interface JobDeliverySectionProps {
   deliveryRequest: DeliveryRequestRecord;
   variant: 'provider' | 'user';
   embedded?: boolean;
+  /** Hide accept/pay on user view — use Service price card on job detail instead */
+  hideQuotePaymentActions?: boolean;
   onDeliveryUpdated?: (request: DeliveryRequestRecord | null) => void;
   className?: string;
 }
@@ -85,19 +109,22 @@ export function JobDeliverySection({
   deliveryRequest,
   variant,
   embedded = false,
+  hideQuotePaymentActions = false,
   onDeliveryUpdated,
   className,
 }: JobDeliverySectionProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [paying, setPaying] = useState(false);
+  const [payModalOpen, setPayModalOpen] = useState(false);
 
   const collection = resolveCollectionPoint(job, deliveryRequest);
   const destination = resolveDestinationPoint(job, deliveryRequest);
 
   const drStatus = String(deliveryRequest.status || 'pending_quote');
   const fs = String(deliveryRequest.fulfillmentStatus || 'READY').toUpperCase();
-  const paid = drStatus === 'paid' || deliveryRequest.payment?.deliveryPaid === true;
+  const paid =
+    ['paid', 'in_transit', 'completed'].includes(drStatus) ||
+    deliveryRequest.payment?.deliveryPaid === true;
 
   const liveTrackingEnabled =
     variant === 'user' && paid && LIVE_TRACKING_FS.has(fs);
@@ -114,23 +141,39 @@ export function JobDeliverySection({
     liveLng ??
     (deliveryRequest.driverLocation?.lng != null ? Number(deliveryRequest.driverLocation.lng) : null);
 
+  const fullyComplete =
+    job.status === 'COMPLETED' ||
+    job.completionConfirmedByUser === true ||
+    (deliveryRequest.deliveryConfirmed === true && deliveryRequest.customerRating != null);
+
+  const headingToCustomer = fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION';
+  const mapCompletedMode = fullyComplete || (fs === 'COMPLETED' && deliveryRequest.deliveryConfirmed === true);
+
   const mapDestCoords = useMemo(() => {
-    const headingToCustomer = fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION';
-    const point = headingToCustomer ? destination : collection;
+    const point = mapCompletedMode || headingToCustomer ? destination : collection;
     if (point.coordinates?.lat != null && point.coordinates?.lng != null) {
       return { lat: point.coordinates.lat, lng: point.coordinates.lng };
     }
     return null;
-  }, [fs, collection.coordinates?.lat, collection.coordinates?.lng, destination.coordinates?.lat, destination.coordinates?.lng]);
+  }, [
+    mapCompletedMode,
+    headingToCustomer,
+    collection.coordinates?.lat,
+    collection.coordinates?.lng,
+    destination.coordinates?.lat,
+    destination.coordinates?.lng,
+  ]);
 
-  const headingToCustomer = fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION';
-  const mapDestinationLabel = headingToCustomer ? destination.address : collection.address;
-  const mapRoutePhase = headingToCustomer ? ('to_destination' as const) : ('to_collection' as const);
+  const mapDestinationLabel =
+    mapCompletedMode || headingToCustomer ? destination.address : collection.address;
+  const mapRoutePhase =
+    mapCompletedMode || headingToCustomer ? ('to_destination' as const) : ('to_collection' as const);
 
   const showQuotePanel =
     variant === 'provider' &&
     job.status !== 'PENDING' &&
     job.status !== 'REJECTED' &&
+    !paid &&
     ['pending_quote', 'quoted', 'approved'].includes(drStatus);
 
   const items =
@@ -145,7 +188,7 @@ export function JobDeliverySection({
         [];
 
   const statusLabel = getCourierJobDisplayStatusLabel(job, deliveryRequest);
-  const customerBanner = customerTrackingHeadline(fs);
+  const customerBanner = customerTrackingHeadline(fs, job, deliveryRequest);
 
   const wrapperClass = embedded
     ? cn('card-elevated border border-primary/25 p-4 sm:p-6 space-y-4', className)
@@ -179,15 +222,20 @@ export function JobDeliverySection({
           <DeliveryMap
             className="w-full border-0 shadow-sm"
             mapContainerClassName="h-56 w-full sm:h-72"
-            lat={liveTrackingEnabled ? driverLat : null}
-            lng={liveTrackingEnabled ? driverLng : null}
+            lat={liveTrackingEnabled && !mapCompletedMode ? driverLat : null}
+            lng={liveTrackingEnabled && !mapCompletedMode ? driverLng : null}
             destination={mapDestinationLabel}
             destinationCoords={mapDestCoords}
             routePhase={mapRoutePhase}
+            completedMode={mapCompletedMode}
             showWaitingBanner={
-              liveTrackingEnabled && driverLat == null && !pollFailed && !isSocketReconnecting
+              !mapCompletedMode &&
+              liveTrackingEnabled &&
+              driverLat == null &&
+              !pollFailed &&
+              !isSocketReconnecting
             }
-            trackingEnded={pollFailed && driverLat == null}
+            trackingEnded={!mapCompletedMode && pollFailed && driverLat == null}
           />
           {variant === 'user' && liveTrackingEnabled && isSocketReconnecting ? (
             <p className="text-xs text-muted-foreground px-3 py-2 border-t border-border">
@@ -227,7 +275,7 @@ export function JobDeliverySection({
         </p>
       ) : null}
 
-      {variant === 'user' && drStatus === 'quoted' ? (
+      {variant === 'user' && drStatus === 'quoted' && !hideQuotePaymentActions ? (
         <Button
           type="button"
           className="btn-accent w-full sm:w-auto"
@@ -245,32 +293,13 @@ export function JobDeliverySection({
         </Button>
       ) : null}
 
-      {variant === 'user' && drStatus === 'approved' && deliveryRequest.quotedFee != null ? (
+      {variant === 'user' && drStatus === 'approved' && !paid && deliveryRequest.quotedFee != null && !hideQuotePaymentActions ? (
         <Button
           type="button"
           className="btn-accent w-full sm:w-auto"
-          disabled={paying}
-          onClick={async () => {
-            setPaying(true);
-            try {
-              const updated = await payDeliveryRequest(deliveryRequest.id, deliveryRequest.quotedFee!);
-              refresh(updated);
-              toast({ title: 'Payment recorded', description: 'Your courier can collect and deliver.' });
-            } catch {
-              toast({ title: 'Error', description: 'Payment failed.', variant: 'destructive' });
-            } finally {
-              setPaying(false);
-            }
-          }}
+          onClick={() => setPayModalOpen(true)}
         >
-          {paying ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Processing…
-            </>
-          ) : (
-            'Pay delivery fee'
-          )}
+          Pay delivery fee
         </Button>
       ) : null}
 
@@ -287,9 +316,28 @@ export function JobDeliverySection({
           fulfillmentStatus={fs}
           collection={collection}
           destination={destination}
+          deliveryConfirmed={deliveryRequest.deliveryConfirmed}
+          deliveryConfirmedAt={deliveryRequest.deliveryConfirmedAt}
+          customerRating={deliveryRequest.customerRating}
           onUpdated={(updated) => refresh(updated)}
         />
       ) : null}
+
+      <PaymentModal
+        open={payModalOpen}
+        onOpenChange={setPayModalOpen}
+        title="Pay delivery fee"
+        description="Complete payment so your courier can collect materials and deliver to your job site."
+        amount={deliveryRequest.quotedFee ?? 0}
+        kind="DELIVERY_FEE"
+        jobId={deliveryRequest.jobId || job.id}
+        materialOrderId={deliveryRequest.materialOrderId}
+        metadata={{ deliveryRequestId: deliveryRequest.id }}
+        breakdown={[
+          { label: 'Delivery fee', amount: deliveryRequest.quotedFee ?? 0 },
+          { label: 'Total due', amount: deliveryRequest.quotedFee ?? 0, isBold: true },
+        ]}
+      />
     </div>
   );
 }

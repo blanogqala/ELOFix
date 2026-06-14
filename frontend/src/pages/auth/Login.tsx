@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { redirectToGoogleAuth } from '@/lib/api/auth';
@@ -25,6 +25,20 @@ export default function Login() {
   const fromStatePath = location.state?.from?.pathname || '/';
   const nextPath = searchParams.get('next') || '';
   const from = nextPath || fromStatePath;
+  const sessionError =
+    (typeof location.state?.sessionError === 'string' ? location.state.sessionError : null) ||
+    (searchParams.get('reason') === 'admin_required'
+      ? 'Administrator login required. Use your admin account (e.g. admin@elofix.com).'
+      : null);
+
+  useEffect(() => {
+    if (!sessionError) return;
+    toast({
+      title: 'Sign in required',
+      description: sessionError,
+      variant: 'destructive',
+    });
+  }, [sessionError, toast]);
 
   const getRedirectPath = (role: string) => {
     switch (role) {

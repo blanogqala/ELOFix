@@ -15,6 +15,14 @@ export interface MaterialCardItemRow {
   lineTotal: number;
 }
 
+export interface MaterialCardExtraLine {
+  label: string;
+  amount: number;
+  hint?: string;
+  muted?: boolean;
+  struck?: boolean;
+}
+
 const STATUS_LABEL: Record<MaterialCardStatus, string> = {
   draft: 'Draft',
   pending: 'Pending',
@@ -43,6 +51,8 @@ function statusBadgeClass(status: MaterialCardStatus): string {
 export interface MaterialCardProps {
   supplierName: string;
   items: MaterialCardItemRow[];
+  /** Optional lines after items (e.g. delivery fee). Subtotal should already include lines marked includeInSubtotal. */
+  extraLines?: MaterialCardExtraLine[];
   subtotal: number;
   status: MaterialCardStatus;
   meta?: ReactNode;
@@ -63,6 +73,7 @@ export interface MaterialCardProps {
 export function MaterialCard({
   supplierName,
   items,
+  extraLines,
   subtotal,
   status,
   meta,
@@ -117,6 +128,25 @@ export function MaterialCard({
                 {item.name} × {item.qty}
               </span>
               <span className="tabular-nums shrink-0 font-medium">{formatCurrency(item.lineTotal, { decimals: 2 })}</span>
+            </div>
+          ))}
+          {extraLines?.map((line) => (
+            <div
+              key={line.label}
+              className={cn(
+                'flex justify-between gap-3 min-w-0 text-[13px] sm:text-sm',
+                line.muted && 'text-muted-foreground'
+              )}
+            >
+              <span className={cn('min-w-0 break-words', line.struck && 'line-through')}>
+                {line.label}
+                {line.hint ? (
+                  <span className="text-muted-foreground font-normal text-xs ml-1">({line.hint})</span>
+                ) : null}
+              </span>
+              <span className={cn('tabular-nums shrink-0 font-medium', line.struck && 'line-through')}>
+                {formatCurrency(line.amount, { decimals: 2 })}
+              </span>
             </div>
           ))}
         </div>

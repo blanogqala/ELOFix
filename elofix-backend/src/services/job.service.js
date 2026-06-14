@@ -12,6 +12,7 @@ const {
   createChat,
   createDefaultJobMeta,
   normalizeMeta,
+  toFrontendStatus,
 } = require("./jobMeta.service");
 const earningService = require("./earning.service");
 const paymentService = require("./payment.service");
@@ -306,6 +307,91 @@ function computeJobMatchScore(job, providerSkillsSet, providerLocation, provider
   return score;
 }
 
+/**
+ * Pending jobs visible in a provider's request inbox:
+ * - Directed: customer chose this provider (job.providerId === userId)
+ * - Open pool: no provider yet and category matches provider skills
+ */
+function isPendingJobVisibleToProvider(job, userId, providerSkillsSet, meta) {
+  if (isDismissedFromProviderInbox(meta, userId)) {
+    return false;
+  }
+  const frontendStatus = toFrontendStatus(job.status, meta);
+  if (frontendStatus !== "PENDING") {
+    return false;
+  }
+
+  const assignedTo = job.providerId ? String(job.providerId).trim() : "";
+  if (assignedTo) {
+    return assignedTo === String(userId);
+  }
+
+  const category = normalizeValue(job.category);
+  if (!category || providerSkillsSet.size === 0) {
+    return false;
+  }
+  return providerSkillsSet.has(category);
+}
+
+function isDismissedFromProviderInbox(meta, userId) {
+  const list = meta?.dismissedFromProviderInbox;
+  if (!Array.isArray(list)) return false;
+  return list.map((id) => String(id)).includes(String(userId));
+}
+
+async function loadProviderSkillsSet(userId) {
+  const provider = await prisma.provider.findUnique({
+    where: { userId },
+    select: { skills: true },
+  });
+  if (!provider) {
+    throw new AppError("Provider profile not found", 404);
+  }
+  const skills = Array.isArray(provider.skills)
+    ? provider.skills.map(normalizeValue).filter(Boolean)
+    : [];
+  return new Set(skills);
+}
+
+/** Ensures provider may accept/reject a pending inbox request (directed or open-pool match). */
+async function assertProviderCanActOnPendingJob(jobId, userId) {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { id: true, status: true, providerId: true, category: true },
+  });
+  if (!job) {
+    throw new AppError("Job not found", 404);
+  }
+  if (job.status !== "PENDING") {
+    throw new AppError("Only pending jobs can be handled as requests", 409);
+  }
+  const meta = await getJobMeta(job.id);
+  const providerSkillsSet = await loadProviderSkillsSet(userId);
+  if (!isPendingJobVisibleToProvider(job, userId, providerSkillsSet, meta)) {
+    throw new AppError("This job request is not assigned to you", 403);
+  }
+  return { job, meta };
+}
+
+function assertActorCanAccessJob(job, actorUserId, actorRole) {
+  if (!job) throw new AppError("Job not found", 404);
+  const role = String(actorRole || "").toUpperCase();
+  if (role === "ADMIN") return;
+  if (role === "CUSTOMER") {
+    if (String(job.customerId) !== String(actorUserId)) {
+      throw new AppError("Forbidden", 403);
+    }
+    return;
+  }
+  if (role === "PROVIDER") {
+    if (String(job.providerId || "") !== String(actorUserId)) {
+      throw new AppError("Forbidden", 403);
+    }
+    return;
+  }
+  throw new AppError("Forbidden", 403);
+}
+
 async function createJob(userId, body) {
   const { title, description, price, category, location, width, height, length, area, images, measurements, materials, selectedProviderId } = body;
 
@@ -516,7 +602,15 @@ async function getMatchedJobsForProvider(userId) {
     include: jobInclude,
   });
 
-  const scored = pendingJobs
+  const visibleJobs = [];
+  for (const job of pendingJobs) {
+    const meta = await getJobMeta(job.id);
+    if (isPendingJobVisibleToProvider(job, userId, providerSkillsSet, meta)) {
+      visibleJobs.push(job);
+    }
+  }
+
+  const scored = visibleJobs
     .map((job) => ({
       ...job,
       score: computeJobMatchScore(
@@ -568,18 +662,7 @@ async function acceptJob(jobId, userId) {
     );
   }
 
-  const job = await prisma.job.findUnique({
-    where: { id: jobId },
-    select: { id: true, status: true, providerId: true },
-  });
-
-  if (!job) {
-    throw new AppError("Job not found", 404);
-  }
-
-  if (job.status !== "PENDING") {
-    throw new AppError("Only pending jobs can be accepted", 409);
-  }
+  await assertProviderCanActOnPendingJob(jobId, userId);
 
   const updated = await prisma.job.update({
     where: { id: jobId },
@@ -589,13 +672,19 @@ async function acceptJob(jobId, userId) {
     },
     include: jobInclude,
   });
-  let meta = await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    statusOverride: "ASSIGNED",
-    rejectionReason: null,
-    rejectionDetails: null,
-    rejectedAt: null,
-  }));
+  let meta = await mutateJobMeta(jobId, (m) =>
+    withStatusAndProgress(
+      {
+        ...m,
+        rejectionReason: null,
+        rejectionDetails: null,
+        rejectedAt: null,
+        rejectedByProviderUserId: null,
+      },
+      "ASSIGNED",
+      updated
+    )
+  );
 
   const categorySlug = String(updated.category || "").trim();
   if (categorySlug) {
@@ -604,7 +693,7 @@ async function acceptJob(jobId, userId) {
       select: { requiresInspection: true },
     });
     if (cat && cat.requiresInspection === false) {
-      meta = await mutateJobMeta(jobId, (m) => ({ ...m, statusOverride: "INSPECTED" }));
+      meta = await mutateJobMeta(jobId, (m) => withStatusAndProgress(m, "INSPECTED", updated));
     }
   }
 
@@ -653,6 +742,9 @@ async function getJobsForActor(userId, role) {
   const out = [];
   for (const job of jobs) {
     const meta = await getJobMeta(job.id);
+    if (role === "PROVIDER" && isDismissedFromProviderInbox(meta, userId)) {
+      continue;
+    }
     out.push(await finalizeJob(job, meta));
   }
   return out;
@@ -733,6 +825,24 @@ function mapFrontendStatusToDb(status) {
   }
 }
 
+/** Apply statusOverride and bump monotonic progressStep from job row state. */
+function withStatusAndProgress(meta, statusOverride, jobRow) {
+  const next = { ...meta, statusOverride };
+  next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, jobRow);
+  return next;
+}
+
+function resolveMaterialPaymentStatusOverride(meta, jobRow, allPaid) {
+  const laborPaid = Boolean(jobRow.laborPaid) || Boolean(meta.laborPaid);
+  if (allPaid && laborPaid) {
+    return "IN_PROGRESS";
+  }
+  if (allPaid) {
+    return "MATERIALS_PAID";
+  }
+  return "MATERIALS_SUBMITTED";
+}
+
 function coerceNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isNaN(n) ? fallback : n;
@@ -767,15 +877,19 @@ async function resolveCategorySettings(slug) {
   let requiresInspection = true;
   let requiresMaterials = false;
   let step3Type = "measurements";
+  let categoryDisplayName = null;
   const key = String(slug || "").trim();
   if (!key) {
-    return { requiresInspection, requiresMaterials, step3Type };
+    return { requiresInspection, requiresMaterials, step3Type, categoryDisplayName };
   }
   try {
     const cat = await prisma.category.findUnique({
       where: { id: key },
-      select: { requiresInspection: true, requiresMaterials: true, step3Type: true },
+      select: { name: true, requiresInspection: true, requiresMaterials: true, step3Type: true },
     });
+    if (cat?.name) {
+      categoryDisplayName = String(cat.name).trim() || null;
+    }
     if (cat && typeof cat.requiresInspection === "boolean") {
       requiresInspection = cat.requiresInspection;
     }
@@ -788,7 +902,10 @@ async function resolveCategorySettings(slug) {
   } catch {
     // keep defaults
   }
-  return { requiresInspection, requiresMaterials, step3Type };
+  if (!categoryDisplayName) {
+    categoryDisplayName = key;
+  }
+  return { requiresInspection, requiresMaterials, step3Type, categoryDisplayName };
 }
 
 async function assertJobCategoryAllowsMaterials(job) {
@@ -828,40 +945,128 @@ async function assertSpecificationsReadyForPricing(job, meta) {
   );
 }
 
-async function finalizeJob(job, meta) {
-  const base = enrichJob(job, meta);
-  const slug = String(base.category || "").trim();
-  const { requiresInspection, requiresMaterials, step3Type: categoryStep3Type } =
-    await resolveCategorySettings(slug);
-  let jobMaterialOrders = [];
-  if (job?.id) {
-    try {
-      const materialOrderService = require("./materialOrder.service");
-      jobMaterialOrders = await materialOrderService.getJobMaterialOrdersForJob(job.id);
-    } catch (e) {
-      console.error("getJobMaterialOrdersForJob", e);
+async function buildDeliverySummaryForJob(deliveryRequestId) {
+  if (!deliveryRequestId) return null;
+  try {
+    const row = await prisma.deliveryRequest.findUnique({
+      where: { id: String(deliveryRequestId) },
+      select: {
+        status: true,
+        quotedFee: true,
+        fulfillmentStatus: true,
+        payload: true,
+      },
+    });
+    if (!row) return null;
+    const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+    const payment = payload.payment && typeof payload.payment === "object" ? payload.payment : {};
+    const drStatus = String(row.status || "").toLowerCase();
+    const deliveryPaid =
+      ["paid", "in_transit", "completed"].includes(drStatus) || payment.deliveryPaid === true;
+    let quotedFee = row.quotedFee != null ? Number(row.quotedFee) : null;
+    if (quotedFee == null || !Number.isFinite(quotedFee)) {
+      const fromQuote = Number(payload.deliveryQuote?.fee);
+      const fromDelivery = Number(payload.delivery?.fee);
+      if (Number.isFinite(fromQuote) && fromQuote >= 0) quotedFee = fromQuote;
+      else if (Number.isFinite(fromDelivery) && fromDelivery >= 0) quotedFee = fromDelivery;
+      else quotedFee = null;
     }
+    return {
+      status: row.status,
+      quotedFee,
+      fulfillmentStatus: row.fulfillmentStatus ? String(row.fulfillmentStatus) : null,
+      deliveryPaid,
+    };
+  } catch (e) {
+    console.error("buildDeliverySummaryForJob", e);
+    return null;
   }
+}
+
+async function finalizeJob(job, meta) {
+  let workingJob = job;
+  let workingMeta = meta;
   const deliveryRequestId =
     meta && typeof meta === "object" && meta.deliveryRequestId
       ? String(meta.deliveryRequestId)
       : null;
   const courierFlow = Boolean(meta && typeof meta === "object" && meta.courierFlow);
+  const parentJobId =
+    meta && typeof meta === "object" && meta.parentJobId ? String(meta.parentJobId).trim() : null;
+  let deliverySummary =
+    courierFlow && deliveryRequestId
+      ? await buildDeliverySummaryForJob(deliveryRequestId)
+      : null;
+
+  if (
+    courierFlow &&
+    deliveryRequestId &&
+    deliverySummary?.quotedFee != null &&
+    Number(deliverySummary.quotedFee) > 0 &&
+    Number(workingJob?.price) === 0
+  ) {
+    try {
+      const drRow = await prisma.deliveryRequest.findUnique({
+        where: { id: deliveryRequestId },
+      });
+      if (drRow) {
+        const deliveryRequestService = require("./deliveryRequest.service");
+        await deliveryRequestService.syncCourierJobPricingFromDeliveryRow(drRow, {
+          paid: Boolean(deliverySummary.deliveryPaid),
+        });
+        const refreshed = await prisma.job.findUnique({
+          where: { id: workingJob.id },
+          include: jobInclude,
+        });
+        if (refreshed) {
+          workingJob = refreshed;
+          workingMeta = await getJobMeta(workingJob.id);
+          deliverySummary = await buildDeliverySummaryForJob(deliveryRequestId);
+        }
+      }
+    } catch (e) {
+      console.error("courier pricing backfill", e);
+    }
+  }
+
+  const base = enrichJob(workingJob, workingMeta);
+  const slug = String(base.category || "").trim();
+  const {
+    requiresInspection,
+    requiresMaterials,
+    step3Type: categoryStep3Type,
+    categoryDisplayName,
+  } = await resolveCategorySettings(slug);
+  let jobMaterialOrders = [];
+  if (workingJob?.id) {
+    try {
+      const materialOrderService = require("./materialOrder.service");
+      jobMaterialOrders = await materialOrderService.getJobMaterialOrdersForJob(workingJob.id);
+    } catch (e) {
+      console.error("getJobMaterialOrdersForJob", e);
+    }
+  }
 
   return {
     ...base,
     requiresInspection,
     requiresMaterials,
     categoryStep3Type,
+    categoryDisplayName,
     jobMaterialOrders,
     deliveryRequestId,
     courierFlow,
+    parentJobId: parentJobId || null,
+    deliverySummary,
   };
 }
 
-async function updateJobStatus(jobId, status) {
+async function updateJobStatus(jobId, status, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (actorUserId != null && actorRole != null) {
+    assertActorCanAccessJob(job, actorUserId, actorRole);
+  }
   if (String(status) === "INSPECTED") {
     const metaBefore = await getJobMeta(jobId);
     await assertSpecificationsReadyForPricing(job, metaBefore);
@@ -875,7 +1080,7 @@ async function updateJobStatus(jobId, status) {
       include: jobInclude,
     });
   }
-  const meta = await mutateJobMeta(jobId, (m) => ({ ...m, statusOverride: status }));
+  const meta = await mutateJobMeta(jobId, (m) => withStatusAndProgress(m, status, updatedJob));
   const result = await finalizeJob(updatedJob, meta);
   if (String(status) === "INSPECTED" && job.customerId) {
     await notificationEvents.notifyInspectionCompleted(job.customerId, jobId, job.title);
@@ -1060,22 +1265,34 @@ async function getJobQuotationDownload(jobId, actorUserId, actorRole, dispositio
   };
 }
 
-async function submitServicePrice(jobId, amount, note) {
+async function submitServicePrice(jobId, amount, note, providerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (String(job.providerId || "") !== String(providerUserId)) {
+    throw new AppError("Only the assigned provider can submit a service price", 403);
+  }
   const metaBefore = await getJobMeta(jobId);
   await assertSpecificationsReadyForPricing(job, metaBefore);
   const safeAmount = coerceNumber(amount);
-  const meta = await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    servicePrice: { amount: safeAmount, note: note ? String(note) : "", submittedAt: new Date().toISOString() },
-    statusOverride: "SERVICE_PRICE_SUBMITTED",
-  }));
   const updated = await prisma.job.update({
     where: { id: jobId },
     data: { price: safeAmount },
     include: jobInclude,
   });
+  const meta = await mutateJobMeta(jobId, (m) =>
+    withStatusAndProgress(
+      {
+        ...m,
+        servicePrice: {
+          amount: safeAmount,
+          note: note ? String(note) : "",
+          submittedAt: new Date().toISOString(),
+        },
+      },
+      "SERVICE_PRICE_SUBMITTED",
+      updated
+    )
+  );
   const enriched = await finalizeJob(updated, meta);
   if (job.customerId) {
     await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
@@ -1227,18 +1444,36 @@ async function submitMaterials(jobId, materials, providerUserId) {
 }
 
 async function rejectJobByProvider(jobId, reason, details, rejectingProviderUserId) {
+  if (!rejectingProviderUserId) {
+    throw new AppError("Provider context is required", 400);
+  }
+  await assertProviderCanActOnPendingJob(jobId, rejectingProviderUserId);
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  const meta = await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    statusOverride: "REJECTED",
-    rejectionReason: reason || null,
-    rejectionDetails: details || null,
-    rejectedAt: new Date().toISOString(),
-    ...(rejectingProviderUserId
-      ? { rejectedByProviderUserId: String(rejectingProviderUserId) }
-      : {}),
-  }));
+  const isOpenPool = !job.providerId;
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const rejectionFields = {
+      rejectionReason: reason || null,
+      rejectionDetails: details || null,
+      rejectedAt: new Date().toISOString(),
+      rejectedByProviderUserId: String(rejectingProviderUserId),
+    };
+    if (isOpenPool) {
+      return {
+        ...m,
+        ...rejectionFields,
+        dismissedFromProviderInbox: [
+          ...new Set([
+            ...(Array.isArray(m.dismissedFromProviderInbox)
+              ? m.dismissedFromProviderInbox.map((id) => String(id))
+              : []),
+            String(rejectingProviderUserId),
+          ]),
+        ],
+      };
+    }
+    return withStatusAndProgress({ ...m, ...rejectionFields }, "REJECTED", job);
+  });
   try {
     const deliveryRequestService = require("./deliveryRequest.service");
     await deliveryRequestService.rejectDeliveryRequestsForJob(
@@ -1260,16 +1495,82 @@ async function deleteRejectedRequestFromProviderView(jobId, actorUserId) {
   if (meta.statusOverride !== "REJECTED") {
     throw new AppError("Only rejected requests can be removed", 400);
   }
-  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { providerId: true } });
-  if (!job) throw new AppError("Job not found", 404);
-  const ok =
-    String(job.providerId || "") === String(actorUserId) ||
-    String(meta.rejectedByProviderUserId || "") === String(actorUserId);
-  if (!ok) {
+  if (String(meta.rejectedByProviderUserId || "") !== String(actorUserId)) {
     throw new AppError("Forbidden", 403);
   }
-  await prisma.job.delete({ where: { id: jobId } });
-  return { id: jobId };
+  await mutateJobMeta(jobId, (m) => ({
+    ...m,
+    dismissedFromProviderInbox: [
+      ...new Set([
+        ...(Array.isArray(m.dismissedFromProviderInbox)
+          ? m.dismissedFromProviderInbox.map((id) => String(id))
+          : []),
+        String(actorUserId),
+      ]),
+    ],
+  }));
+  return { id: jobId, dismissed: true };
+}
+
+async function getCancelledRequestsForProvider(providerUserId) {
+  const pid = String(providerUserId || "").trim();
+  if (!pid) return [];
+  const jobs = await prisma.job.findMany({
+    where: {
+      providerId: pid,
+      status: "CANCELLED",
+    },
+    include: jobInclude,
+    orderBy: { createdAt: "desc" },
+  });
+  const results = [];
+  for (const job of jobs) {
+    const meta = await getJobMeta(job.id);
+    if (!meta?.courierFlow) continue;
+    if (isDismissedFromProviderInbox(meta, pid)) continue;
+    const frontendStatus = toFrontendStatus(job.status, meta);
+    if (frontendStatus !== "CANCELLED") continue;
+    const source = String(meta.cancellationSource || "");
+    if (!["customer_cancel", "customer_changed_provider"].includes(source)) continue;
+    results.push(await finalizeJob(job, meta));
+  }
+  results.sort((a, b) => {
+    const ta = a.cancelledAt ? new Date(a.cancelledAt).getTime() : new Date(a.createdAt).getTime();
+    const tb = b.cancelledAt ? new Date(b.cancelledAt).getTime() : new Date(b.createdAt).getTime();
+    return tb - ta;
+  });
+  return results;
+}
+
+async function deleteCancelledRequestFromProviderView(jobId, actorUserId) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  const meta = await getJobMeta(jobId);
+  if (!meta?.courierFlow) {
+    throw new AppError("Only cancelled delivery requests can be removed", 400);
+  }
+  if (toFrontendStatus(job.status, meta) !== "CANCELLED") {
+    throw new AppError("Only cancelled requests can be removed", 400);
+  }
+  const source = String(meta.cancellationSource || "");
+  if (!["customer_cancel", "customer_changed_provider"].includes(source)) {
+    throw new AppError("Only customer-cancelled delivery requests can be removed", 400);
+  }
+  if (String(job.providerId || "") !== String(actorUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
+  await mutateJobMeta(jobId, (m) => ({
+    ...m,
+    dismissedFromProviderInbox: [
+      ...new Set([
+        ...(Array.isArray(m.dismissedFromProviderInbox)
+          ? m.dismissedFromProviderInbox.map((id) => String(id))
+          : []),
+        String(actorUserId),
+      ]),
+    ],
+  }));
+  return { id: jobId, dismissed: true };
 }
 
 async function updateProviderRequirements(jobId, updates, actorUserId, actorRole) {
@@ -1566,9 +1867,12 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   };
 }
 
-async function confirmJobCompletion(jobId, rating, review) {
+async function confirmJobCompletion(jobId, rating, review, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (String(job.customerId) !== String(customerUserId)) {
+    throw new AppError("Only the customer can confirm job completion", 403);
+  }
   const r = Number(rating);
   if (!Number.isFinite(r) || r < 1 || r > 5) {
     throw new AppError("rating must be between 1 and 5", 400);
@@ -1599,13 +1903,18 @@ async function confirmJobCompletion(jobId, rating, review) {
       if (!j0) {
         throw new AppError("Job not found", 404);
       }
-      const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) => ({
-        ...m,
-        statusOverride: "COMPLETED",
-        completionConfirmedByUser: true,
-        userRating: roundedRating,
-        userReview: review,
-      }));
+      const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) =>
+        withStatusAndProgress(
+          {
+            ...m,
+            completionConfirmedByUser: true,
+            userRating: roundedRating,
+            userReview: review,
+          },
+          "COMPLETED",
+          updated0
+        )
+      );
       if (providerRow) {
         const trimmedComment =
           review != null && String(review).trim() !== "" ? String(review).trim() : null;
@@ -1680,9 +1989,11 @@ async function confirmJobCompletion(jobId, rating, review) {
 function ensureStoreOrder(meta, storeId, fallback) {
   const idx = meta.storeOrders.findIndex((order) => String(order.storeId) === String(storeId));
   if (idx >= 0) return { index: idx, order: meta.storeOrders[idx] };
+  const reuseOrderId =
+    fallback && fallback.orderId ? String(fallback.orderId).trim() : "";
   const created = {
     storeId: String(storeId),
-    orderId: randomUUID(),
+    orderId: reuseOrderId || randomUUID(),
     items: fallback.items || [],
     storeName: fallback.storeName || "Store",
     deliveryType: "SELF",
@@ -1697,18 +2008,51 @@ function ensureStoreOrder(meta, storeId, fallback) {
   return { index: meta.storeOrders.length - 1, order: created };
 }
 
-async function setStoreDeliveryOption(jobId, storeId, params) {
+async function setStoreDeliveryOption(jobId, storeId, params, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (customerUserId && String(job.customerId) !== String(customerUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
   await assertJobCategoryAllowsMaterials(job);
   const wantOrderId = params.orderId ? String(params.orderId).trim() : "";
   let resolvedStoreOrderId = wantOrderId || "";
   let courierUserId = null;
+  let resolvedStoreOrderBranchId = null;
+  const storeIdIsBranch = Boolean(
+    await prisma.branch.findUnique({ where: { id: String(storeId) }, select: { id: true } })
+  );
+  let resolvedCourierUserId = null;
+  if (params.deliveryType === "PROVIDER" && params.deliveryProviderId) {
+    const materialOrderService = require("./materialOrder.service");
+    resolvedCourierUserId = await materialOrderService.resolveCourierUserId(params.deliveryProviderId);
+    if (!resolvedCourierUserId) {
+      throw new AppError("Delivery provider not found", 400);
+    }
+  }
+
+  let existingMaterialOrderId = wantOrderId || "";
+  if (!existingMaterialOrderId) {
+    const openMo = await prisma.materialOrder.findFirst({
+      where: {
+        jobId: String(jobId),
+        branchId: String(storeId),
+        source: "job_materials",
+        fulfillmentStatus: { notIn: ["COMPLETED", "CANCELLED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (openMo) existingMaterialOrderId = String(openMo.id);
+  }
 
   const meta = await mutateJobMeta(jobId, (m) => {
-    const fallbackStoreName =
-      (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
-      "Store";
+    const materialForStore = Array.isArray(job.materials)
+      ? job.materials.find(
+          (x) => String(x.supplierId) === String(storeId) || String(x.branchId) === String(storeId)
+        )
+      : null;
+    const fallbackStoreName = materialForStore?.supplierName || "Store";
     let order;
     if (wantOrderId && Array.isArray(m.storeOrders)) {
       const idx = m.storeOrders.findIndex(
@@ -1716,24 +2060,52 @@ async function setStoreDeliveryOption(jobId, storeId, params) {
       );
       if (idx >= 0) order = m.storeOrders[idx];
     }
+    if (!order && Array.isArray(m.storeOrders)) {
+      const forStore = m.storeOrders.filter((o) => String(o.storeId) === String(storeId));
+      order =
+        forStore.find((o) => o.payment?.materialsPaid === true) ||
+        forStore.filter((o) => !o.payment?.materialsPaid).pop() ||
+        forStore[forStore.length - 1];
+    }
     if (!order) {
-      const found = ensureStoreOrder(m, storeId, { storeName: fallbackStoreName });
+      const found = ensureStoreOrder(m, storeId, {
+        storeName: fallbackStoreName,
+        orderId: existingMaterialOrderId || undefined,
+        items: materialForStore
+          ? [
+              {
+                productId: materialForStore.productId,
+                name: materialForStore.name,
+                qty: materialForStore.qty,
+                unitPrice: materialForStore.unitPrice,
+                qualityTier: materialForStore.qualityTier,
+                imageUrl: materialForStore.imageUrl,
+              },
+            ]
+          : undefined,
+      });
       order = found.order;
+    }
+    if (!order.branchId && materialForStore?.branchId) {
+      order.branchId = String(materialForStore.branchId);
+    } else if (!order.branchId && storeIdIsBranch) {
+      order.branchId = String(storeId);
     }
     order.deliveryType = params.deliveryType;
     order.deliveryFee = coerceNumber(params.deliveryFee);
-    order.deliveryProviderId = params.deliveryProviderId || undefined;
+    order.deliveryProviderId = resolvedCourierUserId || params.deliveryProviderId || undefined;
     order.deliveryStatus = params.deliveryType === "SELF" ? "SelfCollect" : "PendingApproval";
     order.delivery = {
       type: params.deliveryType,
       status: order.deliveryStatus,
-      providerId: params.deliveryProviderId || undefined,
+      providerId: resolvedCourierUserId || params.deliveryProviderId || undefined,
       fee: order.deliveryFee,
     };
     order.payment = order.payment || { materialsPaid: false, deliveryPaid: false };
     resolvedStoreOrderId = String(order.orderId || resolvedStoreOrderId || "");
-    if (params.deliveryType === "PROVIDER" && params.deliveryProviderId) {
-      courierUserId = String(params.deliveryProviderId);
+    resolvedStoreOrderBranchId = order.branchId ? String(order.branchId).trim() : null;
+    if (params.deliveryType === "PROVIDER" && resolvedCourierUserId) {
+      courierUserId = resolvedCourierUserId;
     }
     return m;
   });
@@ -1742,40 +2114,112 @@ async function setStoreDeliveryOption(jobId, storeId, params) {
     await notificationEvents.notifyDeliveryUpdate(job.customerId, jobId, job.title, "Delivery option updated");
   }
   if (courierUserId && resolvedStoreOrderId) {
-    try {
-      const materialOrderService = require("./materialOrder.service");
-      const materialsLines = Array.isArray(job.materials)
-        ? job.materials.filter((m) => String(m.supplierId) === String(storeId) || String(m.branchId) === String(storeId))
-        : [];
-      const storeOrder =
-        Array.isArray(meta.storeOrders) &&
-        meta.storeOrders.find((o) => String(o.orderId) === String(resolvedStoreOrderId));
-      const linesFromOrder =
-        storeOrder && Array.isArray(storeOrder.items)
-          ? storeOrder.items.map((item) => ({
-              supplierId: String(storeId),
-              supplierName: storeOrder.storeName || fallbackStoreNameFromJob(job, storeId),
-              productId: item.productId,
-              name: item.name,
-              qty: item.qty,
-              unitPrice: item.unitPrice,
-              qualityTier: item.qualityTier,
-              imageUrl: item.imageUrl,
-            }))
-          : materialsLines;
-      await materialOrderService.syncJobStoreCourierDeliveryRequest({
-        jobId,
-        jobStoreOrderId: resolvedStoreOrderId,
+    const materialOrderService = require("./materialOrder.service");
+    const materialsLines = Array.isArray(job.materials)
+      ? job.materials.filter(
+          (m) =>
+            String(m.supplierId) === String(storeId) ||
+            String(m.branchId) === String(storeId) ||
+            (resolvedStoreOrderBranchId && String(m.branchId) === resolvedStoreOrderBranchId)
+        )
+      : [];
+    const storeOrder =
+      Array.isArray(meta.storeOrders) &&
+      meta.storeOrders.find((o) => String(o.orderId) === String(resolvedStoreOrderId));
+    const linesFromOrder =
+      storeOrder && Array.isArray(storeOrder.items) && storeOrder.items.length > 0
+        ? storeOrder.items.map((item) => ({
+            supplierId: String(storeId),
+            branchId: resolvedStoreOrderBranchId || storeOrder.branchId,
+            supplierName: storeOrder.storeName || fallbackStoreNameFromJob(job, storeId),
+            productId: item.productId,
+            name: item.name,
+            qty: item.qty,
+            unitPrice: item.unitPrice,
+            qualityTier: item.qualityTier,
+            imageUrl: item.imageUrl,
+          }))
+        : materialsLines;
+    await materialOrderService.syncJobStoreCourierDeliveryRequest({
+      jobId,
+      jobStoreOrderId: resolvedStoreOrderId,
+      supplierBranchId: storeId,
+      storeOrderBranchId: resolvedStoreOrderBranchId,
+      customerUserId: job.customerId,
+      jobProviderUserId: job.providerId,
+      courierUserId,
+      materialsLines: linesFromOrder,
+      jobSiteAddress: jobSiteAddressFromRow(job),
+      jobSiteLocation: jobSiteLocationFromRow(job),
+    });
+
+    const moRow = await prisma.materialOrder.findUnique({
+      where: { id: resolvedStoreOrderId },
+      select: { payload: true },
+    });
+    const moPayload = moRow?.payload && typeof moRow.payload === "object" ? moRow.payload : {};
+    let collectionPoint =
+      moPayload.collectionPoint ||
+      (moPayload.materialBatch?.pickupAddress
+        ? { address: String(moPayload.materialBatch.pickupAddress), label: "Collection point" }
+        : null);
+    let destinationPoint =
+      moPayload.destinationPoint ||
+      (moPayload.materialBatch?.deliveryAddress
+        ? { address: String(moPayload.materialBatch.deliveryAddress), label: "Delivery destination" }
+        : null);
+    if (!collectionPoint?.address || !destinationPoint?.address) {
+      const geo = await materialOrderService.resolveCourierDeliveryGeoPoints({
+        storeOrderBranchId: resolvedStoreOrderBranchId || storeId,
         supplierBranchId: storeId,
-        customerUserId: job.customerId,
-        jobProviderUserId: job.providerId,
-        courierUserId,
         materialsLines: linesFromOrder,
+        jobProviderUserId: job.providerId,
         jobSiteAddress: jobSiteAddressFromRow(job),
         jobSiteLocation: jobSiteLocationFromRow(job),
       });
-    } catch (e) {
-      console.error("syncJobStoreCourierDeliveryRequest", e);
+      if (geo) {
+        if (!collectionPoint?.address) collectionPoint = geo.collectionPoint;
+        if (!destinationPoint?.address) destinationPoint = geo.destinationPoint;
+      }
+    }
+    const moItems = Array.isArray(moPayload.items) ? moPayload.items : linesFromOrder;
+    const jobSite = jobSiteLocationFromRow(job);
+    const jobSiteAddr = jobSiteAddressFromRow(job);
+
+    if (!collectionPoint?.address) {
+      throw new AppError(
+        "Store pickup address is required before courier delivery can be arranged. Please ask the supplier to update their branch address.",
+        400
+      );
+    }
+    const deliveryRequestService = require("./deliveryRequest.service");
+    const { courierJobId } = await deliveryRequestService.ensureMaterialCourierJobRequest({
+      parentJobId: jobId,
+      materialOrderId: resolvedStoreOrderId,
+      courierUserId,
+      customerUserId: job.customerId,
+      collectionPoint,
+      destinationPoint: destinationPoint?.address
+        ? destinationPoint
+        : {
+            address: jobSiteAddr,
+            ...(jobSite || {}),
+          },
+      items: moItems,
+      storeName: storeOrder?.storeName || fallbackStoreNameFromJob(job, storeId),
+      parentJobTitle: job.title,
+    });
+
+    if (courierJobId) {
+      await mutateJobMeta(jobId, (m) => {
+        const list = Array.isArray(m.storeOrders) ? m.storeOrders : [];
+        const idx = list.findIndex((o) => String(o.orderId) === String(resolvedStoreOrderId));
+        if (idx >= 0) {
+          list[idx] = { ...list[idx], courierJobId: String(courierJobId) };
+          m.storeOrders = list;
+        }
+        return m;
+      });
     }
   }
   return enriched;
@@ -1800,6 +2244,10 @@ async function updateStoreOrderDelivery(jobId, storeId, updates) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   await assertJobCategoryAllowsMaterials(job);
+  const metaBefore = await getJobMeta(jobId);
+  const storeOrderBefore = Array.isArray(metaBefore.storeOrders)
+    ? metaBefore.storeOrders.find((o) => String(o.storeId) === String(storeId))
+    : null;
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
       (Array.isArray(job.materials) ? job.materials.find((x) => String(x.supplierId) === String(storeId))?.supplierName : null) ||
@@ -1826,6 +2274,40 @@ async function updateStoreOrderDelivery(jobId, storeId, updates) {
       String(updates.status || updates.type || "Updated")
     );
   }
+
+  const materialOrderId = storeOrderBefore?.orderId ? String(storeOrderBefore.orderId) : "";
+  const courierJobId = storeOrderBefore?.courierJobId ? String(storeOrderBefore.courierJobId) : "";
+  const prevProviderId = storeOrderBefore?.deliveryProviderId;
+  const isCancelled = updates.status === "Cancelled";
+  const providerChanged =
+    updates.providerId !== undefined &&
+    prevProviderId &&
+    String(updates.providerId) !== String(prevProviderId);
+  const isProviderDelivery =
+    storeOrderBefore?.deliveryType === "PROVIDER" || updates.type === "PROVIDER";
+
+  if (materialOrderId && (isCancelled || (providerChanged && isProviderDelivery))) {
+    try {
+      const deliveryRequestService = require("./deliveryRequest.service");
+      if (isCancelled) {
+        await deliveryRequestService.cancelCourierDeliveryForCustomer({
+          materialOrderId,
+          courierJobId: courierJobId || undefined,
+          source: "customer_cancel",
+        });
+      } else {
+        await deliveryRequestService.cancelCourierDeliveryForCustomer({
+          materialOrderId,
+          courierJobId: courierJobId || undefined,
+          source: "customer_changed_provider",
+          resetDeliveryRequest: true,
+        });
+      }
+    } catch (e) {
+      console.error("updateStoreOrderDelivery cancelCourier", jobId, storeId, e);
+    }
+  }
+
   return enriched;
 }
 
@@ -1974,8 +2456,11 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
       };
       leg.invoiceId = leg.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
       const allPaidLegacy = jobProgressUtil.allStoreMaterialOrdersPaid(m);
-      m.hasStarted = true;
-      m.statusOverride = allPaidLegacy ? "IN_PROGRESS" : "MATERIALS_SUBMITTED";
+      const nextOverride = resolveMaterialPaymentStatusOverride(m, job, allPaidLegacy);
+      m.statusOverride = nextOverride;
+      if (nextOverride === "IN_PROGRESS") {
+        m.hasStarted = true;
+      }
       m.progressStep = jobProgressUtil.nextMonotonicProgressStep(m, job);
       return m;
     });
@@ -2085,8 +2570,11 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
     list[oIdx] = nextOrder;
     m.storeOrders = list;
     const allPaid = jobProgressUtil.allStoreMaterialOrdersPaid(m);
-    m.hasStarted = true;
-    m.statusOverride = allPaid ? "IN_PROGRESS" : "MATERIALS_SUBMITTED";
+    const nextOverride = resolveMaterialPaymentStatusOverride(m, job, allPaid);
+    m.statusOverride = nextOverride;
+    if (nextOverride === "IN_PROGRESS") {
+      m.hasStarted = true;
+    }
     m.progressStep = jobProgressUtil.nextMonotonicProgressStep(m, job);
     return m;
   });
@@ -2618,6 +3106,8 @@ module.exports = {
   rejectJob,
   rejectJobByProvider,
   deleteRejectedRequestFromProviderView,
+  getCancelledRequestsForProvider,
+  deleteCancelledRequestFromProviderView,
   updateProviderRequirements,
   addUserMaterialSuggestion,
   acceptUserSuggestion,

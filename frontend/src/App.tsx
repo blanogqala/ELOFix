@@ -48,10 +48,6 @@ import ProviderJobBrowseMaterials from "./pages/provider/ProviderJobBrowseMateri
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderProfile from "./pages/provider/Profile";
 import ProviderDocuments from "./pages/provider/Documents";
-import ProviderDeliveryInbox from "./pages/provider/DeliveryInbox";
-import ProviderDeliveryDetail from "./pages/provider/DeliveryDetail";
-import ProviderDirectDeliveryDetail from "./pages/provider/DirectDeliveryDetail";
-
 // Admin pages
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminProviders from "./pages/admin/Providers";
@@ -155,27 +151,15 @@ const App = () => (
             <Route path="/provider/documents" element={<AuthGuard allowedRoles={['provider']}><ProviderDocuments /></AuthGuard>} />
             <Route
               path="/provider/deliveries"
-              element={
-                <AuthGuard allowedRoles={['provider']}>
-                  <Navigate to="/provider/requests" replace />
-                </AuthGuard>
-              }
+              element={<Navigate to="/provider/requests" replace />}
             />
             <Route
               path="/provider/deliveries/:orderId"
-              element={
-                <AuthGuard allowedRoles={['provider']}>
-                  <Navigate to="/provider/requests" replace />
-                </AuthGuard>
-              }
+              element={<Navigate to="/provider/requests" replace />}
             />
             <Route
               path="/provider/direct-deliveries/:id"
-              element={
-                <AuthGuard allowedRoles={['provider']}>
-                  <Navigate to="/provider/requests" replace />
-                </AuthGuard>
-              }
+              element={<Navigate to="/provider/requests" replace />}
             />
 
             {/* Supplier Routes */}

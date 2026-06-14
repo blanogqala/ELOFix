@@ -579,6 +579,8 @@ export interface JobStoreOrder {
   /** Provider list rejected by customer, or cancelled by provider — removable after dismiss. */
   materialBatchResolution?: 'rejected_by_customer' | 'cancelled_by_provider';
   materialBatchRejectedAt?: string;
+  /** Courier job created for provider delivery of this material batch */
+  courierJobId?: string;
 }
 
 /** DB-backed material purchase order linked to a job (customer paid → supplier fulfills) */
@@ -639,6 +641,7 @@ export interface Job {
   userReview?: string;
   cancellationReason?: string;
   cancellationDetails?: string;
+  cancellationSource?: 'customer_cancel' | 'customer_changed_provider' | string | null;
   cancelledAt?: string;
   cancelledAtStatus?: JobStatus;
   refundAmount?: number;
@@ -681,6 +684,15 @@ export interface Job {
   /** Linked standalone delivery request (courier quote flow). */
   deliveryRequestId?: string | null;
   courierFlow?: boolean;
+  /** Parent service job when this is a material courier child job */
+  parentJobId?: string | null;
+  /** Courier delivery pricing/fulfillment snapshot for list views (from API). */
+  deliverySummary?: {
+    status?: string;
+    quotedFee?: number | null;
+    fulfillmentStatus?: string | null;
+    deliveryPaid?: boolean;
+  } | null;
   /** Customer gross (labor) after settlement; source of truth from API */
   totalPrice?: number;
   commissionAmount?: number;
@@ -878,6 +890,8 @@ export interface MaterialOrder {
   destinationPoint?: DeliveryGeoPoint;
   deliveryQuote?: { fee: number; note?: string; submittedAt?: string; providerId?: string };
   source?: string;
+  /** Courier job linked to provider delivery for this material order */
+  courierJobId?: string | null;
 }
 
 export interface DeliveryGeoPoint {
@@ -901,6 +915,7 @@ export interface DeliveryRequestRecord {
   courierId?: string;
   source?: string;
   jobId?: string;
+  materialOrderId?: string;
   category: string;
   description?: string;
   photos: string[];
@@ -916,6 +931,19 @@ export interface DeliveryRequestRecord {
   activeTrackingToken?: string;
   driverLocation?: { lat: number; lng: number; updatedAt?: string };
   courierPhase?: string;
+  deliveryConfirmed?: boolean;
+  deliveryConfirmedAt?: string;
+  customerRating?: {
+    rating: number;
+    comment?: string;
+    createdAt?: string;
+  };
+  customerCompletion?: {
+    confirmedAt?: string;
+    ratedAt?: string;
+    rating?: number;
+    comment?: string;
+  };
   createdAt: string;
   updatedAt?: string;
 }

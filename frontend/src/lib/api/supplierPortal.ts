@@ -37,6 +37,10 @@ export interface SupplierMaterialOrderLine {
   jobId?: string;
   source?: string;
   deliveryType?: string;
+  deliveryProviderId?: string;
+  deliveryProviderName?: string;
+  deliveryProviderPhone?: string;
+  deliveryProviderEmail?: string;
   activeTrackingId?: string;
   activeTrackingToken?: string;
   delivery?: Record<string, unknown>;

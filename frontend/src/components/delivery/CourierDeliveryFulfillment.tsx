@@ -6,7 +6,7 @@ import {
   type CourierFulfillmentStatus,
 } from '@/lib/api/deliveryRequests';
 import type { DeliveryGeoPoint, DeliveryRequestRecord } from '@/types';
-import { Navigation, Package, MapPin } from 'lucide-react';
+import { Navigation, Package, MapPin, Star, CheckCircle2 } from 'lucide-react';
 import { socket } from '@/lib/socket';
 import { getCurrentSession } from '@/lib/api/auth';
 import { createLocationSendState, markLocationSent, shouldSendLocation } from '@/lib/geolocationSendGate';
@@ -27,7 +27,20 @@ interface CourierDeliveryFulfillmentProps {
   fulfillmentStatus: string;
   collection: DeliveryGeoPoint;
   destination: DeliveryGeoPoint;
+  deliveryConfirmed?: boolean;
+  deliveryConfirmedAt?: string;
+  customerRating?: DeliveryRequestRecord['customerRating'];
   onUpdated: (request: DeliveryRequestRecord | null) => void;
+}
+
+function formatCompletionDate(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 export function CourierDeliveryFulfillment({
@@ -35,6 +48,9 @@ export function CourierDeliveryFulfillment({
   fulfillmentStatus,
   collection,
   destination,
+  deliveryConfirmed = false,
+  deliveryConfirmedAt,
+  customerRating,
   onUpdated,
 }: CourierDeliveryFulfillmentProps) {
   const { toast } = useToast();
@@ -102,14 +118,20 @@ export function CourierDeliveryFulfillment({
     destination.address
   );
 
+  const collectionLabel = collection.label?.trim();
+  const fullyComplete = deliveryConfirmed && customerRating != null;
+
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       {(fs === 'READY' || fs === 'COLLECTING' || fs === 'COLLECTED') && (
-        <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
+        <div className=" rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-primary flex items-center gap-1.5">
             <Package className="h-3.5 w-3.5" />
             Collection
           </p>
+          {collectionLabel ? (
+            <p className="text-xs font-medium text-foreground">{collectionLabel}</p>
+          ) : null}
           <p className="text-sm flex items-start gap-2">
             <MapPin className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
             <span>{collection.address || '—'}</span>
@@ -220,9 +242,49 @@ export function CourierDeliveryFulfillment({
         </div>
       )}
 
-      {fs === 'COMPLETED' ? (
-        <p className="text-sm text-muted-foreground rounded-lg border border-border bg-muted/30 p-3">
-          Delivery completed — waiting for the customer to confirm.
+      {fs === 'COMPLETED' && fullyComplete ? (
+        <div className="sm:col-span-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-200">
+            <CheckCircle2 className="h-5 w-5 shrink-0" />
+            <p className="font-semibold text-sm">Delivery completed</p>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Customer confirmed receipt on {formatCompletionDate(deliveryConfirmedAt)}.
+          </p>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5" aria-label={`${customerRating.rating} out of 5 stars`}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Star
+                  key={i}
+                  className={cn(
+                    'h-4 w-4',
+                    i < customerRating.rating ? 'fill-accent text-accent' : 'text-muted-foreground/40'
+                  )}
+                />
+              ))}
+            </div>
+            <span className="text-sm font-medium">{customerRating.rating}/5</span>
+          </div>
+          {customerRating.comment ? (
+            <p className="text-sm text-muted-foreground italic">&ldquo;{customerRating.comment}&rdquo;</p>
+          ) : null}
+          {customerRating.createdAt ? (
+            <p className="text-xs text-muted-foreground">
+              Rated {formatCompletionDate(customerRating.createdAt)}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {fs === 'COMPLETED' && deliveryConfirmed && !customerRating ? (
+        <p className="sm:col-span-2 text-sm text-muted-foreground rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          Customer confirmed receipt — waiting for delivery feedback.
+        </p>
+      ) : null}
+
+      {fs === 'COMPLETED' && !deliveryConfirmed ? (
+        <p className="sm:col-span-2 text-sm text-muted-foreground rounded-lg border border-border bg-muted/30 p-3">
+          Delivery completed — waiting for the customer to confirm receipt.
         </p>
       ) : null}
     </div>

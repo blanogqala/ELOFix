@@ -6,14 +6,21 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { getPendingRequestsForProvider, getRejectedRequestsByProvider, deleteRejectedRequestFromProviderView } from '@/lib/api/jobs';
+import {
+  getPendingRequestsForProvider,
+  getRejectedRequestsByProvider,
+  getCancelledRequestsForProvider,
+  deleteRejectedRequestFromProviderView,
+  deleteCancelledRequestFromProviderView,
+} from '@/lib/api/jobs';
 import { Job } from '@/types';
-import { 
-  ClipboardList, Package, Calendar, User, XCircle, Trash2
+import {
+  ClipboardList, Package, Calendar, User, XCircle, Trash2, Ban,
 } from 'lucide-react';
 import { DeleteRejectedRequestDialog } from '@/components/jobs/DeleteRejectedRequestDialog';
 import { cn } from '@/lib/utils';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
 
 export default function ProviderRequests() {
   const { user } = useAuth();
@@ -21,25 +28,34 @@ export default function ProviderRequests() {
   const { toast } = useToast();
   const [pendingJobs, setPendingJobs] = useState<Job[]>([]);
   const [rejectedJobs, setRejectedJobs] = useState<Job[]>([]);
+  const [cancelledJobs, setCancelledJobs] = useState<Job[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteCancelledDialogOpen, setDeleteCancelledDialogOpen] = useState(false);
   const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
 
   const loadJobs = useCallback(async () => {
     if (!user) return;
     try {
-      const [pending, rejected] = await Promise.all([
+      const [pending, rejected, cancelled] = await Promise.all([
         getPendingRequestsForProvider(user.id),
         getRejectedRequestsByProvider(user.id),
+        getCancelledRequestsForProvider(user.id),
       ]);
       setPendingJobs(pending);
       setRejectedJobs(rejected);
+      setCancelledJobs(cancelled);
     } catch (error) {
       console.error('Failed to load requests:', error);
+      toast({
+        title: 'Could not load requests',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'destructive',
+      });
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, toast]);
 
   useEffect(() => {
     if (user) {
@@ -60,7 +76,35 @@ export default function ProviderRequests() {
     }
   };
 
-  const RequestCard = ({ job, showRejection = false }: { job: Job; showRejection?: boolean }) => (
+  const handleDeleteCancelled = async () => {
+    if (!user || !jobToDelete) return;
+    try {
+      await deleteCancelledRequestFromProviderView(user.id, jobToDelete.id);
+      setCancelledJobs(prev => prev.filter(j => j.id !== jobToDelete.id));
+      setDeleteCancelledDialogOpen(false);
+      setJobToDelete(null);
+      toast({ title: 'Deleted', description: 'Cancelled request removed from your list.' });
+    } catch (e) {
+      toast({ title: 'Error', description: 'Failed to delete.', variant: 'destructive' });
+    }
+  };
+
+  const cancellationLabel = (job: Job) => {
+    if (job.cancellationSource === 'customer_changed_provider') {
+      return 'Customer chose another courier';
+    }
+    return job.cancellationReason || 'Customer cancelled delivery';
+  };
+
+  const RequestCard = ({
+    job,
+    showRejection = false,
+    showCancellation = false,
+  }: {
+    job: Job;
+    showRejection?: boolean;
+    showCancellation?: boolean;
+  }) => (
     <div
       className="card-elevated cursor-pointer p-4 transition-shadow hover:shadow-lg sm:p-6"
       onClick={() => navigate(`/provider/requests/${job.id}`)}
@@ -112,15 +156,18 @@ export default function ProviderRequests() {
               )}
             </div>
           )}
+          {showCancellation && (
+            <div className="mt-3 p-2 bg-muted rounded text-sm">
+              <span className="font-medium text-muted-foreground">Cancelled: </span>
+              <span>{cancellationLabel(job)}</span>
+            </div>
+          )}
         </div>
 
         {/* Estimate & Actions */}
         <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
-          <p className="text-lg font-bold text-primary">
-            R{job.totalEstimateRange.min}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            R{job.totalEstimateRange.min} - R{job.totalEstimateRange.max}
+          <p className="text-lg font-bold text-primary tabular-nums">
+            {getProviderJobPriceDisplay(job).text}
           </p>
           {showRejection ? (
             <Button
@@ -131,6 +178,25 @@ export default function ProviderRequests() {
             >
               <Trash2 className="mr-1 h-4 w-4" /> Delete
             </Button>
+          ) : showCancellation ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-full whitespace-nowrap sm:w-auto"
+                onClick={e => { e.stopPropagation(); navigate(`/provider/requests/${job.id}`); }}
+              >
+                View
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
+                onClick={e => { e.stopPropagation(); setJobToDelete(job); setDeleteCancelledDialogOpen(true); }}
+              >
+                <Trash2 className="mr-1 h-4 w-4" /> Delete
+              </Button>
+            </>
           ) : (
             <Button variant="outline" size="sm" className="h-9 w-full whitespace-nowrap sm:w-auto" onClick={e => { e.stopPropagation(); navigate(`/provider/requests/${job.id}`); }}>
               View Details
@@ -182,6 +248,13 @@ export default function ProviderRequests() {
                 <Badge variant="secondary" className="ml-1">{rejectedJobs.length}</Badge>
               )}
             </TabsTrigger>
+            <TabsTrigger value="cancelled" className="gap-2">
+              <Ban className="h-4 w-4" />
+              Canceled
+              {cancelledJobs.length > 0 && (
+                <Badge variant="secondary" className="ml-1">{cancelledJobs.length}</Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="pending">
@@ -219,12 +292,39 @@ export default function ProviderRequests() {
               </div>
             )}
           </TabsContent>
+
+          <TabsContent value="cancelled">
+            {isLoading ? <SkeletonCards /> : cancelledJobs.length > 0 ? (
+              <div className="space-y-4">
+                {cancelledJobs.map(job => (
+                  <RequestCard key={job.id} job={job} showCancellation />
+                ))}
+              </div>
+            ) : (
+              <div className="card-elevated p-12 text-center">
+                <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+                  <Ban className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="font-semibold mb-2">No canceled requests</h3>
+                <p className="text-muted-foreground text-sm">
+                  Delivery requests cancelled by customers will appear here
+                </p>
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
 
         <DeleteRejectedRequestDialog
           open={deleteDialogOpen}
           onOpenChange={(open) => { setDeleteDialogOpen(open); if (!open) setJobToDelete(null); }}
           onConfirm={handleDeleteRejected}
+        />
+        <DeleteRejectedRequestDialog
+          open={deleteCancelledDialogOpen}
+          onOpenChange={(open) => { setDeleteCancelledDialogOpen(open); if (!open) setJobToDelete(null); }}
+          onConfirm={handleDeleteCancelled}
+          title="Delete Canceled Request?"
+          description="Remove this canceled delivery request from your list?"
         />
       </div>
     </DashboardLayout>

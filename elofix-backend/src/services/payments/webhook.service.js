@@ -126,7 +126,14 @@ async function processWebhookResult(providerKey, verifyResult) {
           });
           const postSettleJobStore =
             fresh.kind === "JOB_STORE_ORDER" && !fresh.materialOrderId;
-          return { processed: true, intentId: intent.id, state: "PAID", postSettleJobStore };
+          const postSettleDeliveryFee = fresh.kind === "DELIVERY_FEE";
+          return {
+            processed: true,
+            intentId: intent.id,
+            state: "PAID",
+            postSettleJobStore,
+            postSettleDeliveryFee,
+          };
         }
 
         if (verifyResult.state === "FAILED") {
@@ -189,6 +196,23 @@ async function processWebhookResult(providerKey, verifyResult) {
         return {
           httpStatus: 500,
           message: postErr?.message || "Job store settlement failed",
+          result,
+        };
+      }
+    }
+    if (result?.postSettleDeliveryFee && result?.intentId) {
+      try {
+        const intent = await prisma.paymentIntent.findUnique({
+          where: { id: result.intentId },
+        });
+        if (intent) {
+          await escrowSettlement.settleDeliveryFeeFromIntent(intent);
+        }
+      } catch (postErr) {
+        console.error("[processWebhookResult] delivery fee post-settle failed", postErr);
+        return {
+          httpStatus: 500,
+          message: postErr?.message || "Delivery fee settlement failed",
           result,
         };
       }

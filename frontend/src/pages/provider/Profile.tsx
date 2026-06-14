@@ -23,7 +23,7 @@ import {
   suggestCategory,
   type CategorySuggestion,
 } from '@/lib/api/categories';
-import { evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
+import { businessHoursComplete, evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
 import { validateSkillPricingDraft } from '@/lib/providerLaborPricing';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
@@ -53,10 +53,24 @@ import {
 
 type ProfileInfoErrors = {
   phone?: boolean;
-  businessName?: boolean;
   bio?: boolean;
   serviceAreas?: boolean;
 };
+
+function FieldRequirementBadge({ required }: { required: boolean }) {
+  if (!required) {
+    return (
+      <Badge variant="secondary" className="text-xs font-normal">
+        Optional
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="border-destructive/30 text-destructive text-xs">
+      Required
+    </Badge>
+  );
+}
 
 const ONBOARDING_KEY = 'provider_onboarding_seen';
 
@@ -105,6 +119,7 @@ export default function ProviderProfile() {
   const [suggestedServices, setSuggestedServices] = useState<CategorySuggestion[]>([]);
   const [profileTab, setProfileTab] = useState<string>('info');
   const [manualAreaInput, setManualAreaInput] = useState('');
+  const [settingsHoursError, setSettingsHoursError] = useState(false);
 
   // Settings state
   const defaultSettings = useMemo<ProviderSettings>(
@@ -255,7 +270,6 @@ export default function ProviderProfile() {
     const newErrors: ProfileInfoErrors = {};
 
     if (!phone.trim()) newErrors.phone = true;
-    if (!businessName.trim()) newErrors.businessName = true;
     if ((bio?.trim().length || 0) < 20) newErrors.bio = true;
     if (serviceAreas.length === 0) newErrors.serviceAreas = true;
 
@@ -278,15 +292,14 @@ export default function ProviderProfile() {
       await loadProvider();
       const refreshed = evaluateProviderCoreSections(updated, {
         phone,
-        businessName,
         bio,
         serviceAreas,
         selectedSkills,
         pricing,
+        settings,
       });
       if (refreshed.profileInfo) {
-        if (!refreshed.skillsAndPrices) setProfileTab('pricing');
-        else if (!refreshed.documents) setProfileTab('docs');
+        setProfileTab('pricing');
       }
       toast({ title: 'Profile saved', description: 'Your profile info has been updated.' });
     } catch {
@@ -359,13 +372,13 @@ export default function ProviderProfile() {
       await refreshProfile();
       const refreshed = evaluateProviderCoreSections(next, {
         phone,
-        businessName,
         bio,
         serviceAreas,
         selectedSkills,
         pricing,
+        settings: savedSet,
       });
-      if (refreshed.skillsAndPrices && !refreshed.documents) {
+      if (refreshed.skillsAndPrices) {
         setProfileTab('docs');
       }
       toast({
@@ -454,26 +467,40 @@ export default function ProviderProfile() {
     () =>
       evaluateProviderCoreSections(provider, {
         phone,
-        businessName,
         bio,
         serviceAreas,
         selectedSkills,
         pricing,
+        settings,
       }),
-    [provider, phone, businessName, bio, serviceAreas, selectedSkills, pricing]
+    [provider, phone, bio, serviceAreas, selectedSkills, pricing, settings]
   );
 
-  const completionDetails = useMemo(() => {
-    const postsOk = workPosts.length >= 1;
-    return {
-      infoOk: coreSections.profileInfo,
-      skillsOk: coreSections.skillsAndPrices,
-      docsOk: coreSections.documents,
-      postsOk,
-    };
-  }, [coreSections, workPosts.length]);
-
   const completionPercent = coreSections.percentCore;
+
+  const handleContinueFromDocuments = () => {
+    if (!coreSections.documents) {
+      toast({
+        title: 'Required documents missing',
+        description: 'Upload ID, company registration, and proof of address before continuing.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setProfileTab('posts');
+    toast({
+      title: 'Documents complete',
+      description: 'Work posts are optional. Continue to showcase your work or skip to Settings.',
+    });
+  };
+
+  const handleContinueFromWorkPosts = () => {
+    setProfileTab('settings');
+    toast({
+      title: 'Continue to Settings',
+      description: 'Set your business hours to finish your profile.',
+    });
+  };
 
   const dismissOnboarding = () => {
     setOnboardingOpen(false);
@@ -628,7 +655,7 @@ export default function ProviderProfile() {
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Profile completion (info · skills · documents)</span>
+              <span>Profile completion (info · skills · documents · settings)</span>
               <span>{completionPercent}%</span>
             </div>
             <Progress value={completionPercent} className="h-2" />
@@ -647,10 +674,10 @@ export default function ProviderProfile() {
               Documents {coreSections.documents ? '✅' : '⚠️'}
             </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
-              Work Posts
+              <span className="truncate">Work Posts</span>
             </TabsTrigger>
             <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm col-span-2 sm:col-span-1">
-              Settings
+              Settings {coreSections.settings ? '✅' : '⚠️'}
             </TabsTrigger>
           </TabsList>
 
@@ -699,9 +726,9 @@ export default function ProviderProfile() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Label>Phone Number</Label>
-                    {errors.phone && <span className="text-xs text-destructive">Required</span>}
+                    <FieldRequirementBadge required />
                   </div>
                   <Input
                     value={phone}
@@ -714,27 +741,26 @@ export default function ProviderProfile() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Label>Business Name</Label>
-                    {errors.businessName && <span className="text-xs text-destructive">Required</span>}
+                    <FieldRequirementBadge required={false} />
                   </div>
                   <Input
                     value={businessName}
-                    onChange={(e) => {
-                      setBusinessName(e.target.value);
-                      if (errors.businessName) setErrors((prev) => ({ ...prev, businessName: false }));
-                    }}
-                    placeholder="Your business name"
-                    className={errors.businessName ? 'border-destructive focus-visible:ring-destructive' : ''}
+                    onChange={(e) => setBusinessName(e.target.value)}
+                    placeholder="Your business name (optional)"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Label>About / Bio</Label>
-                  {errors.bio && <span className="text-xs text-destructive">Required (min 20 characters)</span>}
+                  <FieldRequirementBadge required />
                 </div>
+                {errors.bio && (
+                  <p className="text-xs text-destructive">At least 20 characters required.</p>
+                )}
                 <Textarea
                   value={bio}
                   onChange={(e) => {
@@ -748,7 +774,10 @@ export default function ProviderProfile() {
               </div>
 
               <div className="space-y-3">
-                <Label>Service Areas</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label>Service Areas</Label>
+                  <FieldRequirementBadge required />
+                </div>
                 {serviceAreaOptions.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Area list could not be loaded. Add your own areas below — you can still save your profile.
@@ -1026,19 +1055,23 @@ export default function ProviderProfile() {
                 }}
               />
             )}
+            <Button type="button" onClick={handleContinueFromDocuments} disabled={isSaving}>
+              <Save className="mr-2 h-4 w-4" />
+              Save Documents &amp; Continue
+            </Button>
           </TabsContent>
 
           {/* ═══ WORK POSTS ═══ */}
           <TabsContent value="posts" className="space-y-6">
-            {selectedSkills.length > 0 && workPosts.length === 0 && (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                You must add at least one work post to activate your profile.
-              </div>
-            )}
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold">Work Posts</h3>
-                <p className="text-sm text-muted-foreground">Showcase work tagged to specific service categories</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold">Work Posts</h3>
+                  <FieldRequirementBadge required={false} />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Optional — showcase past work when you have photos. New providers can skip this step.
+                </p>
               </div>
               <Button onClick={openNewPost} disabled={selectedSkills.length === 0}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -1123,6 +1156,11 @@ export default function ProviderProfile() {
                 <p className="text-sm text-muted-foreground">Add posts to showcase your work to clients</p>
               </div>
             ) : null}
+
+            <Button type="button" variant="secondary" onClick={handleContinueFromWorkPosts}>
+              <Save className="mr-2 h-4 w-4" />
+              Continue to Settings
+            </Button>
           </TabsContent>
           {/* ═══ SETTINGS ═══ */}
           <TabsContent value="settings" className="space-y-6">
@@ -1176,20 +1214,31 @@ export default function ProviderProfile() {
             </div>
 
             {/* Business Hours */}
-            <div className="card-elevated p-6 space-y-3">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Clock className="h-5 w-5 text-primary" />
-                Business Hours
-              </h3>
+            <div className={cn('card-elevated p-6 space-y-3', settingsHoursError && 'ring-1 ring-destructive/40')}>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-primary" />
+                  Business Hours
+                </h3>
+                <FieldRequirementBadge required />
+              </div>
+              {settingsHoursError && (
+                <p className="text-xs text-destructive">
+                  Enable at least one day with valid open and close times.
+                </p>
+              )}
               <div className="space-y-2">
                 {Object.entries(settings.businessHours).map(([day, hours]) => (
                   <div key={day} className="border-b border-primary/20 pb-3 flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50">
                     <Switch
                       checked={hours.enabled}
-                      onCheckedChange={(checked) => setSettings(s => ({
-                        ...s,
-                        businessHours: { ...s.businessHours, [day]: { ...hours, enabled: checked } },
-                      }))}
+                      onCheckedChange={(checked) => {
+                        setSettingsHoursError(false);
+                        setSettings(s => ({
+                          ...s,
+                          businessHours: { ...s.businessHours, [day]: { ...hours, enabled: checked } },
+                        }));
+                      }}
                     />
                     <span className="w-24 text-sm font-medium">{day}</span>
                     {hours.enabled ? (
@@ -1254,20 +1303,51 @@ export default function ProviderProfile() {
               </div>
             </div>
 
-            <Button onClick={async () => {
-              if (!user) return;
-              setIsSaving(true);
-              try {
-                const updated = await updateProvider(user.id, { settings });
-                setProvider(updated);
-                await refreshProfile();
-                toast({ title: 'Settings saved', description: 'Your settings have been updated.' });
-              } catch {
-                toast({ title: 'Error', description: 'Failed to save settings.', variant: 'destructive' });
-              } finally {
-                setIsSaving(false);
-              }
-            }} disabled={isSaving}>
+            <Button
+              onClick={async () => {
+                if (!user) return;
+                if (!businessHoursComplete(settings)) {
+                  setSettingsHoursError(true);
+                  toast({
+                    title: 'Business hours required',
+                    description: 'Enable at least one day and set open and close times.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                setSettingsHoursError(false);
+                setIsSaving(true);
+                try {
+                  const updated = await updateProvider(user.id, { settings });
+                  setProvider(updated);
+                  await refreshProfile();
+                  await loadProvider();
+                  const savedSettings = updated.settings ?? settings;
+                  setSettings(savedSettings);
+                  const refreshed = evaluateProviderCoreSections(updated, {
+                    phone,
+                    bio,
+                    serviceAreas,
+                    selectedSkills,
+                    pricing,
+                    settings: savedSettings,
+                  });
+                  if (refreshed.percentCore === 100) {
+                    toast({
+                      title: 'Profile complete',
+                      description: 'You can submit your profile for admin review when ready.',
+                    });
+                  } else {
+                    toast({ title: 'Settings saved', description: 'Your settings have been updated.' });
+                  }
+                } catch {
+                  toast({ title: 'Error', description: 'Failed to save settings.', variant: 'destructive' });
+                } finally {
+                  setIsSaving(false);
+                }
+              }}
+              disabled={isSaving}
+            >
               <Save className="mr-2 h-4 w-4" />
               {isSaving ? 'Saving...' : 'Save Settings'}
             </Button>
@@ -1291,7 +1371,8 @@ export default function ProviderProfile() {
             <li>Profile info</li>
             <li>Skills &amp; Pricing</li>
             <li>Documents</li>
-            <li>Work Posts</li>
+            <li>Settings (business hours)</li>
+            <li className="text-muted-foreground">Work Posts (optional)</li>
           </ul>
           <div className="flex justify-end pt-2">
             <Button onClick={dismissOnboarding}>Got it</Button>

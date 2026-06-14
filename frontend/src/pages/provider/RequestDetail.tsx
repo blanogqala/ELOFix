@@ -17,7 +17,7 @@ import { ProviderCourierQuotePanel } from '@/components/delivery/ProviderCourier
 import { Job, DeliveryRequestRecord, DeliveryGeoPoint } from '@/types';
 import {
   ArrowLeft, Check, X, MapPin, Calendar, User,
-  MessageSquare, Send, Package, XCircle,
+  MessageSquare, Send, Package, XCircle, Ban,
 } from 'lucide-react';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -216,15 +216,19 @@ export default function ProviderRequestDetail() {
             <div className="space-y-3 p-3 bg-muted/50 rounded-lg text-sm">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery route</p>
               {(() => {
-                const collection = (job.measurements as { collectionPoint?: DeliveryGeoPoint })?.collectionPoint
-                  || (job.location as { collection?: DeliveryGeoPoint })?.collection;
-                const destination = (job.measurements as { destinationPoint?: DeliveryGeoPoint })?.destinationPoint
-                  || job.location;
+                const collection =
+                  (job.measurements as { collectionPoint?: DeliveryGeoPoint })?.collectionPoint ||
+                  (job.location as { collection?: DeliveryGeoPoint })?.collection;
+                const destination =
+                  (job.measurements as { destinationPoint?: DeliveryGeoPoint })?.destinationPoint ||
+                  (job.location?.address
+                    ? { address: job.location.address, city: job.location.city }
+                    : undefined);
                 return (
                   <>
                     <div>
                       <span className="font-medium text-primary">Collect: </span>
-                      {collection?.address || '—'}
+                      {collection?.address?.trim() || 'Collection address pending — contact support'}
                     </div>
                     <div>
                       <span className="font-medium text-accent">Deliver: </span>
@@ -293,6 +297,27 @@ export default function ProviderRequestDetail() {
             deliveryRequest={deliveryRequest}
             onUpdated={(updated) => setDeliveryRequest(updated)}
           />
+        )}
+
+        {/* Cancellation Status - when CANCELLED by customer */}
+        {job.status === 'CANCELLED' && (
+          <div className="card-elevated border border-muted p-4 sm:p-6">
+            <h2 className="font-semibold text-lg flex items-center gap-2 text-muted-foreground mb-3">
+              <Ban className="h-5 w-5" /> Request cancelled
+            </h2>
+            <div className="p-3 bg-muted rounded-lg text-sm">
+              <p>
+                {job.cancellationSource === 'customer_changed_provider'
+                  ? 'The customer chose another courier for this delivery.'
+                  : job.cancellationReason || 'The customer cancelled this delivery request.'}
+              </p>
+              {job.cancelledAt && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Cancelled on {new Date(job.cancelledAt).toLocaleDateString()}
+                </p>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Rejection Status - when REJECTED */}
@@ -366,7 +391,7 @@ export default function ProviderRequestDetail() {
             )}
           </div>
 
-          {job.status !== 'REJECTED' && (
+          {job.status !== 'REJECTED' && job.status !== 'CANCELLED' && (
             <div className="flex min-w-0 gap-2">
               <Input
                 placeholder="Type a message..."
@@ -382,6 +407,9 @@ export default function ProviderRequestDetail() {
           )}
           {job.status === 'REJECTED' && (
             <p className="text-sm text-muted-foreground italic">Messaging is disabled for rejected requests.</p>
+          )}
+          {job.status === 'CANCELLED' && (
+            <p className="text-sm text-muted-foreground italic">This request was cancelled — messaging is disabled.</p>
           )}
         </div>
 

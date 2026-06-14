@@ -6,11 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import {
-  acceptDeliveryRequestQuote,
-  getDeliveryRequestById,
-  payDeliveryRequest,
-} from '@/lib/api/deliveryRequests';
+import { acceptDeliveryRequestQuote, getDeliveryRequestById } from '@/lib/api/deliveryRequests';
+import { PaymentModal } from '@/components/payments/PaymentModal';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { ArrowLeft, MapPin, Package, Truck } from 'lucide-react';
 
@@ -19,7 +16,7 @@ export default function DeliveryRequestDetailPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [paying, setPaying] = useState(false);
+  const [payModalOpen, setPayModalOpen] = useState(false);
 
   const { data: request, isLoading } = useQuery({
     queryKey: ['delivery-request', id],
@@ -39,19 +36,6 @@ export default function DeliveryRequestDetailPage() {
     }
   };
 
-  const handlePay = async () => {
-    if (!request?.quotedFee) return;
-    setPaying(true);
-    try {
-      await payDeliveryRequest(id, request.quotedFee);
-      toast({ title: 'Payment recorded', description: 'Your courier can start the delivery.' });
-      refresh();
-    } catch {
-      toast({ title: 'Error', description: 'Payment failed.', variant: 'destructive' });
-    } finally {
-      setPaying(false);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -155,8 +139,8 @@ export default function DeliveryRequestDetailPage() {
         {status === 'approved' && !request.payment?.deliveryPaid && (
           <div className="rounded-lg border border-primary/30 p-4 space-y-3">
             <p className="font-medium">Pay {formatCurrency(request.quotedFee || 0)} to start delivery</p>
-            <Button className="btn-accent" disabled={paying} onClick={() => void handlePay()}>
-              {paying ? 'Processing…' : 'Pay delivery fee'}
+            <Button className="btn-accent" onClick={() => setPayModalOpen(true)}>
+              Pay delivery fee
             </Button>
           </div>
         )}
@@ -167,6 +151,21 @@ export default function DeliveryRequestDetailPage() {
             {request.fulfillmentStatus === 'OUT_FOR_DELIVERY' ? ' Courier is on the way.' : ''}
           </p>
         )}
+        <PaymentModal
+          open={payModalOpen}
+          onOpenChange={setPayModalOpen}
+          title="Pay delivery fee"
+          description="You will be redirected to complete payment securely."
+          amount={request.quotedFee ?? 0}
+          kind="DELIVERY_FEE"
+          jobId={request.jobId}
+          materialOrderId={request.materialOrderId}
+          metadata={{ deliveryRequestId: request.id }}
+          breakdown={[
+            { label: 'Delivery fee', amount: request.quotedFee ?? 0 },
+            { label: 'Total due', amount: request.quotedFee ?? 0, isBold: true },
+          ]}
+        />
       </div>
     </DashboardLayout>
   );
