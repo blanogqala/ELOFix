@@ -9,6 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
+import { resolvePostLoginPath } from '@/lib/postLoginRedirect';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -39,40 +40,6 @@ export default function Login() {
       variant: 'destructive',
     });
   }, [sessionError, toast]);
-
-  const getRedirectPath = (role: string) => {
-    switch (role) {
-      case 'admin':
-        return '/admin/dashboard';
-      case 'provider':
-        return '/provider/dashboard';
-      case 'supplier':
-      case 'branch_staff':
-        return '/supplier/dashboard';
-      default:
-        return '/user/dashboard';
-    }
-  };
-
-  const resolvePostLoginPath = (role: string, attemptedPath: string) => {
-    const defaultPath = getRedirectPath(role);
-    const publicOrInvalidPath = ['/', '/login', '/register', '/unauthorized'];
-    if (!attemptedPath || publicOrInvalidPath.includes(attemptedPath)) {
-      return defaultPath;
-    }
-
-    if (role === 'admin') {
-      if (attemptedPath === '/admin') return defaultPath;
-      return attemptedPath.startsWith('/admin/') ? attemptedPath : defaultPath;
-    }
-    if (role === 'provider') {
-      return attemptedPath.startsWith('/provider/') ? attemptedPath : defaultPath;
-    }
-    if (role === 'supplier' || role === 'branch_staff') {
-      return attemptedPath.startsWith('/supplier/') ? attemptedPath : defaultPath;
-    }
-    return attemptedPath.startsWith('/user/') ? attemptedPath : defaultPath;
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

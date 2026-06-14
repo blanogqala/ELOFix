@@ -225,6 +225,11 @@ export default function ProviderJobDetail() {
     });
   }, [isError, jobError, toast]);
 
+  useEffect(() => {
+    if (isLoading || job) return;
+    navigate('/provider/dashboard', { replace: true });
+  }, [isLoading, job, navigate]);
+
   /** Reset local draft when navigating; hydrate from latest draft MR for this job */
   useEffect(() => {
     if (!jobId) return;
@@ -733,11 +738,9 @@ export default function ProviderJobDetail() {
   if (!job) {
     return (
       <DashboardLayout>
-        <div className="text-center py-12">
-          <h2 className="text-xl font-semibold mb-2">Job not found</h2>
-          <Button variant="outline" onClick={() => navigate('/provider/jobs')}>
-            <ArrowLeft className="mr-2 h-4 w-4" /> Back to Jobs
-          </Button>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-48 bg-muted rounded" />
+          <div className="h-64 bg-muted rounded-lg" />
         </div>
       </DashboardLayout>
     );

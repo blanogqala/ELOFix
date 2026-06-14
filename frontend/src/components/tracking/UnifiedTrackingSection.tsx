@@ -21,6 +21,7 @@ import {
   Shield,
   Truck,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 import type { MaterialBatch } from '@/types';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,17 @@ function modeHeadline(mode: UnifiedDeliveryMode): string {
 
 function fulfillmentUpper(s: string | undefined): string {
   return String(s || '').toUpperCase();
+}
+
+function deliveryIssueReasonLabel(reason: string): string {
+  const map: Record<string, string> = {
+    items_missing: 'Items missing',
+    items_broken: 'Items broken or damaged',
+    wrong_items: 'Wrong items delivered',
+    not_received: 'Delivery not received',
+    other: 'Other',
+  };
+  return map[reason] || reason;
 }
 
 interface StatusBannerSpec {
@@ -293,6 +305,18 @@ export interface UnifiedTrackingSectionProps {
   showConfirmDelivery: boolean;
   confirmDeliveryLabel?: string;
 
+  onReportDeliveryIssue?: () => void;
+  reportIssuePending?: boolean;
+  showReportDeliveryIssue?: boolean;
+  showDeliveryIssueReported?: boolean;
+  customerDeliveryIssue?: {
+    reason: string;
+    details?: string;
+    reportedAt: string;
+    status: string;
+  };
+  highlightConfirmSection?: boolean;
+
   fullTrackingHref?: string;
 
   /** After customer confirms — hide live map & block further actions. */
@@ -327,6 +351,12 @@ export function UnifiedTrackingSection({
   confirmDeliveryPending,
   showConfirmDelivery,
   confirmDeliveryLabel,
+  onReportDeliveryIssue,
+  reportIssuePending,
+  showReportDeliveryIssue,
+  showDeliveryIssueReported,
+  customerDeliveryIssue,
+  highlightConfirmSection = false,
   fullTrackingHref,
   trackingLocked = false,
   showDeliverySuccessHighlight = false,
@@ -612,14 +642,52 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
+      {deliveryArea && showDeliveryIssueReported && !locked && mode !== 'self_pickup' ? (
+        <div className="rounded-lg border border-amber-500/35 bg-amber-500/8 px-4 py-4 flex flex-col gap-2 shadow-sm ring-1 ring-amber-500/15">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
+            <div>
+              <p className="font-medium text-sm text-foreground">Issue reported — the branch has been notified</p>
+              {customerDeliveryIssue ? (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {deliveryIssueReasonLabel(customerDeliveryIssue.reason)}
+                  {customerDeliveryIssue.details ? ` — ${customerDeliveryIssue.details}` : ''}
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground mt-2">
+                The store will follow up. You cannot confirm delivery until this is resolved.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {deliveryArea && showConfirmDelivery && !locked && mode !== 'self_pickup' ? (
-        <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/8 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm ring-1 ring-emerald-500/15">
+        <div
+          className={cn(
+            'rounded-lg border border-emerald-500/35 bg-emerald-500/8 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm ring-1 ring-emerald-500/15',
+            highlightConfirmSection && 'ring-2 ring-primary/40 animate-pulse'
+          )}
+        >
           <p className="text-sm text-muted-foreground">
             Your courier or store marked delivery. Confirm you received everything.
           </p>
-          <Button className="btn-accent shrink-0 font-semibold" onClick={onConfirmDelivery} disabled={confirmDeliveryPending}>
-            {confirmDeliveryPending ? 'Confirming…' : confirmDeliveryLabel || 'Confirm delivery'}
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:shrink-0">
+            {showReportDeliveryIssue && onReportDeliveryIssue ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0 font-semibold border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={onReportDeliveryIssue}
+                disabled={reportIssuePending || confirmDeliveryPending}
+              >
+                {reportIssuePending ? 'Submitting…' : 'Report issue'}
+              </Button>
+            ) : null}
+            <Button className="btn-accent shrink-0 font-semibold" onClick={onConfirmDelivery} disabled={confirmDeliveryPending || reportIssuePending}>
+              {confirmDeliveryPending ? 'Confirming…' : confirmDeliveryLabel || 'Confirm delivery'}
+            </Button>
+          </div>
         </div>
       ) : null}
 

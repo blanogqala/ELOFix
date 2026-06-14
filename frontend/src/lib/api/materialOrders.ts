@@ -155,3 +155,21 @@ export async function acceptMaterialOrderDeliveryQuote(orderId: string): Promise
 export async function confirmMaterialOrderDeliveryReceipt(orderId: string): Promise<MaterialOrder | null> {
   return confirmMaterialOrderCollection(orderId);
 }
+
+export type MaterialOrderDeliveryIssueReason =
+  | 'items_missing'
+  | 'items_broken'
+  | 'wrong_items'
+  | 'not_received'
+  | 'other';
+
+export async function reportMaterialOrderDeliveryIssue(
+  orderId: string,
+  params: { reason: MaterialOrderDeliveryIssueReason; details?: string }
+): Promise<MaterialOrder | null> {
+  const { data } = await apiClient.post<OrderResponse>(
+    `/material-orders/${orderId}/report-delivery-issue`,
+    params
+  );
+  return data?.order ?? null;
+}

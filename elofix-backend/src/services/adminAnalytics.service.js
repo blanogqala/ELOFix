@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { aggregateRevenueFromJobs } = require("../utils/jobPaidAmount.util");
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -22,40 +23,6 @@ function eachDayInRange(from, to) {
   return keys;
 }
 
-/**
- * Revenue = paid labor (servicePayment) + paid material batches (materialPayments), bucketed by paidAt date (UTC day).
- * @param {object[]} metaList - Job.meta objects from PostgreSQL
- */
-function aggregateRevenueFromMeta(metaList, dayKeys) {
-  const laborByDay = Object.fromEntries(dayKeys.map((k) => [k, 0]));
-  const materialByDay = Object.fromEntries(dayKeys.map((k) => [k, 0]));
-
-  (Array.isArray(metaList) ? metaList : []).forEach((meta) => {
-    if (!meta || typeof meta !== "object") return;
-    const sp = meta.servicePayment;
-    if (sp && sp.status === "paid" && sp.paidAt != null && sp.amount != null) {
-      const k = dayKey(new Date(sp.paidAt));
-      if (laborByDay[k] !== undefined) {
-        laborByDay[k] += Number(sp.amount) || 0;
-      }
-    }
-    const mps = Array.isArray(meta.materialPayments) ? meta.materialPayments : [];
-    mps.forEach((p) => {
-      if (p && p.status === "paid" && p.paidAt != null && p.amount != null) {
-        const k = dayKey(new Date(p.paidAt));
-        if (materialByDay[k] !== undefined) {
-          materialByDay[k] += Number(p.amount) || 0;
-        }
-      }
-    });
-  });
-
-  return dayKeys.map((date) => ({
-    date,
-    amount: Math.round((laborByDay[date] + materialByDay[date] + Number.EPSILON) * 100) / 100,
-  }));
-}
-
 async function getAnalytics(query = {}) {
   const to = parseDate(query.to) || new Date();
   const from =
@@ -65,7 +32,7 @@ async function getAnalytics(query = {}) {
   const dayKeys = eachDayInRange(fromDay, toDay);
   const rangeEndExclusive = new Date(toDay.getTime() + MS_PER_DAY);
 
-  const [jobsInRange, providerUsers, activeProviderCount, allJobMetaRows] = await Promise.all([
+  const [jobsInRange, providerUsers, activeProviderCount, allJobRows] = await Promise.all([
     prisma.job.findMany({
       where: {
         createdAt: { gte: fromDay, lt: rangeEndExclusive },
@@ -87,7 +54,13 @@ async function getAnalytics(query = {}) {
       },
     }),
     prisma.job.findMany({
-      select: { meta: true },
+      select: {
+        meta: true,
+        laborPaid: true,
+        totalPrice: true,
+        price: true,
+        createdAt: true,
+      },
     }),
   ]);
 
@@ -105,8 +78,7 @@ async function getAnalytics(query = {}) {
   });
   const providersByDay = dayKeys.map((date) => ({ date, count: regByDayMap[date] || 0 }));
 
-  const metaList = allJobMetaRows.map((r) => r.meta).filter((m) => m != null && typeof m === "object");
-  const revenueByDay = aggregateRevenueFromMeta(metaList, dayKeys);
+  const revenueByDay = aggregateRevenueFromJobs(allJobRows, dayKeys);
 
   const totalJobs = jobsInRange.length;
   const totalRevenue = revenueByDay.reduce((s, x) => s + x.amount, 0);

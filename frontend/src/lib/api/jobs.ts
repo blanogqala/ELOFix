@@ -85,6 +85,7 @@ interface BackendJob {
   categoryDisplayName?: string | null;
   deliverySummary?: Job['deliverySummary'];
   totalPrice?: number | null;
+  customerPaidTotal?: number | null;
   commissionAmount?: number | null;
   providerAmount?: number | null;
   /** Job-level amount released to provider (escrow v2) */
@@ -214,6 +215,7 @@ function toFrontendJob(job: BackendJob): Job {
     parentJobId: job.parentJobId ?? null,
     deliverySummary: job.deliverySummary ?? null,
     totalPrice: numOrUndef(job.totalPrice),
+    customerPaidTotal: numOrUndef(job.customerPaidTotal),
     commissionAmount: numOrUndef(job.commissionAmount),
     providerAmount: numOrUndef(job.providerAmount),
     releasedAmount: numOrUndef(job.releasedAmount),

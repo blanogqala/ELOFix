@@ -9,7 +9,7 @@ import { Category, Job } from '@/types';
 import { DollarSign, Clock, CheckCircle, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getAdminEscrowV2Breakdown } from '@/lib/adminJobFinancial';
+import { getAdminEscrowV2Breakdown, getAdminJobLaborPaid } from '@/lib/adminJobFinancial';
 import { safeMoney } from '@/lib/jobMoney';
 import {
   ADMIN_FILTER_SELECT_CLASS,
@@ -21,8 +21,9 @@ import {
 
 function rowFinancials(job: Job) {
   const fin = getAdminEscrowV2Breakdown(job);
+  const laborPaid = getAdminJobLaborPaid(job);
   return {
-    totalPrice: fin.totalPrice > 0 ? fin.totalPrice : safeMoney(job.servicePrice?.amount) || safeMoney(job.totalEstimateRange?.min),
+    totalPrice: fin.totalPrice > 0 ? fin.totalPrice : laborPaid || safeMoney(job.servicePrice?.amount) || safeMoney(job.totalEstimateRange?.min),
     commission: fin.commission,
     provider: fin.provider,
     released: fin.released,

@@ -172,6 +172,14 @@ async function confirmDeliveryReceipt(req, res) {
   res.json({ success: true, order });
 }
 
+async function reportDeliveryIssue(req, res) {
+  const order = await materialOrderService.reportDeliveryIssue(req.params.id, req.user.userId, {
+    reason: req.body?.reason,
+    details: req.body?.details,
+  });
+  res.json({ success: true, order });
+}
+
 async function cancelMaterialOrder(req, res) {
   const reason = req.body?.reason;
   const out = await materialOrderService.cancelMaterialOrderAsCustomer(
@@ -222,6 +230,7 @@ module.exports = {
   updateMaterialOrderDeliveryStatus,
   patchProviderFulfillment,
   confirmDeliveryReceipt,
+  reportDeliveryIssue,
   cancelMaterialOrder,
   getDeliveryInbox,
   submitDeliveryQuote,

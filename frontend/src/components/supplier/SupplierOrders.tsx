@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Search, ArrowLeft, Copy, MapPin, Building2 } from 'lucide-react';
+import { Search, ArrowLeft, Copy, MapPin, Building2, AlertTriangle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Label } from '@/components/ui/label';
 import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
@@ -171,6 +171,24 @@ function formatDeliverySummary(order: SupplierMaterialOrderLine): string {
   if (dt === 'DELIVERY_PROVIDER') return 'Third-party delivery';
   if (String(dt).includes('SELF')) return 'Customer pickup';
   return 'See order details';
+}
+
+function orderHasCustomerIssue(order: SupplierMaterialOrderLine): boolean {
+  return (
+    Boolean(order.customerIssueFlag) ||
+    (Boolean(order.customerDeliveryIssue) && order.customerDeliveryIssue?.status === 'open')
+  );
+}
+
+function deliveryIssueReasonLabel(reason: string): string {
+  const map: Record<string, string> = {
+    items_missing: 'Items missing',
+    items_broken: 'Items broken or damaged',
+    wrong_items: 'Wrong items delivered',
+    not_received: 'Delivery not received',
+    other: 'Other',
+  };
+  return map[reason] || reason;
 }
 
 function lineQty(line: Record<string, unknown>): number {
@@ -659,9 +677,16 @@ export function SupplierOrders({ userId }: { userId: string }) {
                   <div className="space-y-2 p-4">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-mono text-xs text-muted-foreground">#{String(o.id).slice(0, 8)}</p>
-                      <Badge variant="outline" className={cn('shrink-0 capitalize border', STATUS_BADGE[st] || STATUS_BADGE.PENDING)}>
-                        {displayStatus(st)}
-                      </Badge>
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {orderHasCustomerIssue(o) ? (
+                          <Badge variant="outline" className="shrink-0 border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100">
+                            Customer issue
+                          </Badge>
+                        ) : null}
+                        <Badge variant="outline" className={cn('shrink-0 capitalize border', STATUS_BADGE[st] || STATUS_BADGE.PENDING)}>
+                          {displayStatus(st)}
+                        </Badge>
+                      </div>
                     </div>
                     <p className="font-medium leading-tight">{o.customerName || 'Customer'}</p>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -836,6 +861,29 @@ function DetailPanel({
         </div>
       </CardHeader>
       <CardContent className="space-y-6 pt-6 ">
+        {orderHasCustomerIssue(order) && order.customerDeliveryIssue ? (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex gap-3">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
+            <div className="min-w-0">
+              <p className="font-medium text-sm text-foreground">Customer reported a delivery issue</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {deliveryIssueReasonLabel(order.customerDeliveryIssue.reason)}
+                {order.customerDeliveryIssue.details
+                  ? ` — ${order.customerDeliveryIssue.details}`
+                  : ''}
+              </p>
+              {order.customerDeliveryIssue.reportedAt ? (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Reported{' '}
+                  {new Date(order.customerDeliveryIssue.reportedAt).toLocaleString(undefined, {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  })}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {readOnly && (
           <p className="rounded-md border border-muted bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
             Read-only view. Branch staff accept, fulfill, and update orders at the branch.

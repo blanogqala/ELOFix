@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -76,7 +77,9 @@ export default function AdminDashboard() {
     completedJobs: jobs.filter(j => j.status === 'COMPLETED').length,
     totalProviders: providers.length,
     pendingProviders: pendingProviders.length,
-    totalRevenue: jobs.filter(j => j.status === 'COMPLETED').reduce((sum, j) => sum + j.totalEstimateRange.min, 0),
+    totalRevenue: jobs
+      .filter((j) => j.status === 'COMPLETED')
+      .reduce((sum, j) => sum + getAdminJobDisplayTotal(j), 0),
     totalCommissionEarned,
   };
 
@@ -107,7 +110,7 @@ export default function AdminDashboard() {
     ...jobs.filter(j => j.status === 'COMPLETED').slice(0, 2).map(j => ({
       id: `pay-${j.id}`,
       icon: CreditCard,
-      title: `Payment completed: ${formatCurrency(j.totalEstimateRange.min)}`,
+      title: `Payment completed: ${formatCurrency(getAdminJobDisplayTotal(j))}`,
       description: `${j.categoryName} — ${j.userName}`,
       time: new Date(j.updatedAt).toLocaleDateString(),
       color: 'text-accent',
@@ -242,7 +245,7 @@ export default function AdminDashboard() {
                         </div>
                         <p className="text-xs text-muted-foreground">{job.userName}</p>
                       </div>
-                      <p className="text-sm font-medium">{formatCurrency(job.totalEstimateRange.min)}</p>
+                      <p className="text-sm font-medium">{formatCurrency(getAdminJobDisplayTotal(job))}</p>
                     </div>
                   </div>
                 ))}

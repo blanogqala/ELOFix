@@ -1885,6 +1885,18 @@ async function confirmDeliveryReceipt(orderId, customerUserId) {
       if (String(row.userId) !== String(customerUserId || "")) {
         throw new AppError("Forbidden", 403);
       }
+      const payloadCheck =
+        row.payload && typeof row.payload === "object" ? row.payload : {};
+      if (
+        payloadCheck.customerDeliveryIssue &&
+        typeof payloadCheck.customerDeliveryIssue === "object" &&
+        String(payloadCheck.customerDeliveryIssue.status || "") === "open"
+      ) {
+        throw new AppError(
+          "You reported a delivery issue — the branch will follow up before you can confirm receipt",
+          400
+        );
+      }
       const fs = String(row.fulfillmentStatus || "").toUpperCase();
       const pickup = orderIsPickupFromRow(row);
 
@@ -1983,6 +1995,120 @@ async function confirmDeliveryReceipt(orderId, customerUserId) {
           id: oid,
         };
   return enrichOrderFromDbRow(mergedRow, trxResult.payload);
+}
+
+const DELIVERY_ISSUE_REASONS = new Set([
+  "items_missing",
+  "items_broken",
+  "wrong_items",
+  "not_received",
+  "other",
+]);
+
+function deliveryIssueReasonLabel(reason) {
+  const map = {
+    items_missing: "Items missing",
+    items_broken: "Items broken or damaged",
+    wrong_items: "Wrong items delivered",
+    not_received: "Delivery not received",
+    other: "Other",
+  };
+  return map[String(reason || "")] || String(reason || "Issue reported");
+}
+
+async function reportDeliveryIssue(orderId, customerUserId, { reason, details } = {}) {
+  const oid = String(orderId || "").trim();
+  const reasonKey = String(reason || "").trim();
+  if (!DELIVERY_ISSUE_REASONS.has(reasonKey)) {
+    throw new AppError("Invalid issue reason", 400);
+  }
+  const detailsText = details != null ? String(details).trim() : "";
+  if (reasonKey === "other" && !detailsText) {
+    throw new AppError("Please describe the issue when selecting Other", 400);
+  }
+
+  const row = await prisma.materialOrder.findUnique({ where: { id: oid } });
+  if (!row || !row.payload || typeof row.payload !== "object") {
+    throw new AppError("Material order not found", 404);
+  }
+  if (String(row.userId) !== String(customerUserId || "")) {
+    throw new AppError("Forbidden", 403);
+  }
+  const fs = String(row.fulfillmentStatus || "").toUpperCase();
+  if (fs !== "COMPLETED") {
+    throw new AppError("Delivery is not ready to report an issue yet", 400);
+  }
+
+  const payload = { ...row.payload };
+  if (payload.deliveryConfirmed === true) {
+    throw new AppError("Delivery already confirmed — cannot report an issue", 400);
+  }
+  const existing = payload.customerDeliveryIssue;
+  if (existing && typeof existing === "object" && String(existing.status || "") === "open") {
+    throw new AppError("An issue has already been reported for this order", 400);
+  }
+
+  const reportedAt = new Date().toISOString();
+  const issue = {
+    reason: reasonKey,
+    details: detailsText || undefined,
+    reportedAt,
+    status: "open",
+  };
+  const activity = Array.isArray(payload.supplierActivity) ? [...payload.supplierActivity] : [];
+  activity.push({
+    type: "customer_delivery_issue",
+    reason: reasonKey,
+    details: detailsText || null,
+    createdAt: reportedAt,
+  });
+
+  const nextPayload = {
+    ...payload,
+    customerDeliveryIssue: issue,
+    customerIssueFlag: true,
+    supplierActivity: activity,
+  };
+
+  await prisma.materialOrder.update({
+    where: { id: oid },
+    data: { payload: nextPayload },
+  });
+
+  const shortId = `Order #${oid.slice(0, 8)}`;
+  const reasonLabel = deliveryIssueReasonLabel(reasonKey);
+  const branchId = String(row.branchId || "").trim();
+
+  try {
+    if (branchId) {
+      void branchStaffNotificationService.createForBranchUsers(branchId, {
+        category: "ORDERS",
+        type: "material_order_customer_issue",
+        title: "Customer reported a delivery issue",
+        message: `${shortId} — ${reasonLabel}. Open the order to review.`,
+        materialOrderId: oid,
+        metadata: { reason: reasonKey, details: detailsText || null, reportedAt },
+      });
+      if (global.io) {
+        global.io.to(`branch:${branchId}`).emit("supplier:material_order:customer_issue", {
+          orderId: oid,
+          branchId,
+          reason: reasonKey,
+          details: detailsText || null,
+          reportedAt,
+        });
+      }
+    }
+  } catch (e) {
+    console.error("reportDeliveryIssue notify", e);
+  }
+
+  await logAudit("material_order.delivery_issue", {
+    userId: customerUserId,
+    metadata: { orderId: oid, reason: reasonKey },
+  });
+
+  return enrichOrderFromDbRow({ ...row, payload: nextPayload }, nextPayload);
 }
 
 const ALLOWED_STATUS = [
@@ -3190,6 +3316,7 @@ module.exports = {
   updateMaterialOrderFulfillment,
   updateMaterialOrderFulfillmentByProvider,
   confirmDeliveryReceipt,
+  reportDeliveryIssue,
   syncMaterialOrderFulfillmentFromDeliveryRequest,
   autoConfirmStaleDeliveriesBatch,
   appendSupplierOrderNote,

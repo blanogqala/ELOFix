@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
@@ -12,6 +12,7 @@ import {
   updateMaterialOrderDelivery,
   confirmMaterialOrderCollection,
   cancelMaterialOrder,
+  reportMaterialOrderDeliveryIssue,
 } from '@/lib/api/materialOrders';
 import {
   getJobsByUser,
@@ -34,6 +35,10 @@ import type { JobMaterialOrderSnapshot } from '@/types';
 import { resolveMaterialBatchFromSnapshot } from '@/lib/materialBatchTracking';
 import { toCanonicalDeliveryType } from '@/lib/deliveryTypes';
 import { DeliveryExperienceFeedbackDialog } from '@/components/tracking/DeliveryExperienceFeedbackDialog';
+import {
+  DeliveryIssueReportDialog,
+  type DeliveryIssueReason,
+} from '@/components/orders/DeliveryIssueReportDialog';
 import { queryKeys } from '@/lib/queryKeys';
 
 type RouteParams = {
@@ -117,6 +122,11 @@ function mergeTrackingFields(
         ? { lat: Number(dl.lat), lng: Number(dl.lng), updatedAt: String((dl as { updatedAt?: string }).updatedAt || '') }
         : undefined,
     deliveryConfirmed: Boolean(mo.deliveryConfirmed),
+    customerIssueFlag: Boolean(mo.customerIssueFlag),
+    customerDeliveryIssue:
+      mo.customerDeliveryIssue && typeof mo.customerDeliveryIssue === 'object'
+        ? (mo.customerDeliveryIssue as NormalizedOrder['customerDeliveryIssue'])
+        : undefined,
   };
 }
 
@@ -147,6 +157,7 @@ export default function OrderDetails() {
   const { orderId, jobId, storeOrderId } = useParams<RouteParams>();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -161,6 +172,11 @@ export default function OrderDetails() {
   const [receiptPending, setReceiptPending] = useState(false);
   const [deliveryFeedbackOpen, setDeliveryFeedbackOpen] = useState(false);
   const [deliveryJustCompleted, setDeliveryJustCompleted] = useState(false);
+  const [issueReportOpen, setIssueReportOpen] = useState(false);
+  const [issueReportPending, setIssueReportPending] = useState(false);
+  const [highlightConfirmSection, setHighlightConfirmSection] = useState(
+    () => searchParams.get('highlight') === 'confirm'
+  );
   const [orderLoading, setOrderLoading] = useState(true);
   const [orderLoadError, setOrderLoadError] = useState<string | null>(null);
   const loadOrderRef = useRef<(() => Promise<void>) | null>(null);
@@ -218,6 +234,20 @@ export default function OrderDetails() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, orderId, storeOrderId, deliveryProviders.length]);
+
+  useEffect(() => {
+    if (searchParams.get('highlight') !== 'confirm') return;
+    setHighlightConfirmSection(true);
+    const t = window.setTimeout(() => {
+      setHighlightConfirmSection(false);
+      if (searchParams.get('highlight') === 'confirm') {
+        const next = new URLSearchParams(searchParams);
+        next.delete('highlight');
+        setSearchParams(next, { replace: true });
+      }
+    }, 6000);
+    return () => window.clearTimeout(t);
+  }, [searchParams, setSearchParams]);
 
   const mapDeliveryStatus = (s: string): NormalizedOrder['deliveryStatus'] =>
     s === 'delivered' ? 'delivered' : s === 'out_for_delivery' ? 'out_for_delivery' : 'processing';
@@ -647,6 +677,33 @@ export default function OrderDetails() {
     }
   };
 
+  const handleReportDeliveryIssue = async (reason: DeliveryIssueReason, details?: string) => {
+    if (!effectiveOrderId) return;
+    setIssueReportPending(true);
+    try {
+      await reportMaterialOrderDeliveryIssue(effectiveOrderId, { reason, details });
+      setIssueReportOpen(false);
+      toast({
+        title: 'Issue reported',
+        description: 'The branch has been notified and will follow up with you.',
+      });
+      await loadOrder();
+    } catch (err) {
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+          : undefined;
+      toast({
+        title: 'Could not report issue',
+        description: message || 'Please try again.',
+        variant: 'destructive',
+      });
+      throw err;
+    } finally {
+      setIssueReportPending(false);
+    }
+  };
+
   const handleBack = () => {
     if (location.key !== 'default') {
       navigate(-1);
@@ -702,6 +759,7 @@ export default function OrderDetails() {
               locationPollFailed={pollFailed}
               socketReconnecting={isSocketReconnecting}
               highlightDeliveryComplete={deliveryJustCompleted}
+              highlightConfirmSection={highlightConfirmSection}
               onDismissDeliveryHighlight={() => setDeliveryJustCompleted(false)}
               onCancelDelivery={
                 order.deliveryState === 'PendingApproval' || (order.deliveryState === 'Approved' && !order.deliveryPaid)
@@ -750,6 +808,14 @@ export default function OrderDetails() {
               onViewDeliveryInvoice={user ? handleViewInvoice : undefined}
               onConfirmReceipt={handleConfirmReceipt}
               confirmReceiptPending={receiptPending}
+              onReportDeliveryIssue={() => setIssueReportOpen(true)}
+              reportIssuePending={issueReportPending}
+            />
+            <DeliveryIssueReportDialog
+              open={issueReportOpen}
+              onOpenChange={setIssueReportOpen}
+              pending={issueReportPending}
+              onSubmit={handleReportDeliveryIssue}
             />
             <DeliveryOptionChooser
               open={deliveryChooserOpen}

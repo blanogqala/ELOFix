@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getAdminEscrowV2Breakdown } from '@/lib/adminJobFinancial';
+import { getAdminEscrowV2Breakdown, getAdminJobLaborPaid } from '@/lib/adminJobFinancial';
 import type { Job } from '@/types';
 import { DollarSign } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -23,10 +23,8 @@ export function AdminJobPaymentBreakdownCard({
   footer,
 }: Props) {
   const fin = getAdminEscrowV2Breakdown(job);
-  const totalPaid =
-    fin.totalPrice > 0
-      ? fin.totalPrice
-      : safeOrZero(job.servicePrice?.amount) || safeOrZero(job.totalEstimateRange?.min);
+  const laborPaid = getAdminJobLaborPaid(job);
+  const totalPaid = fin.totalPrice > 0 ? fin.totalPrice : laborPaid || safeOrZero(job.servicePrice?.amount) || safeOrZero(job.totalEstimateRange?.min);
 
   return (
     <Card>
@@ -41,7 +39,7 @@ export function AdminJobPaymentBreakdownCard({
         <div className="space-y-0 rounded-lg border border-primary bg-muted/20 p-4">
           <div className="flex items-center justify-between text-sm py-2">
             <span className="text-muted-foreground">Total paid by customer</span>
-            <span className="font-semibold tabular-nums">{formatCurrency(fin.totalPrice || totalPaid)}</span>
+            <span className="font-semibold tabular-nums">{formatCurrency(totalPaid)}</span>
           </div>
           <div className="flex items-center justify-between text-sm py-2">
             <span className="text-muted-foreground">Platform fee (7%)</span>

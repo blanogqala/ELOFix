@@ -695,6 +695,8 @@ export interface Job {
   } | null;
   /** Customer gross (labor) after settlement; source of truth from API */
   totalPrice?: number;
+  /** Total paid by customer (labor + materials); from API */
+  customerPaidTotal?: number;
   commissionAmount?: number;
   providerAmount?: number;
   /** Cumulative amount released to provider (not platform fee) */
@@ -892,6 +894,14 @@ export interface MaterialOrder {
   source?: string;
   /** Courier job linked to provider delivery for this material order */
   courierJobId?: string | null;
+  deliveryConfirmed?: boolean;
+  customerIssueFlag?: boolean;
+  customerDeliveryIssue?: {
+    reason: string;
+    details?: string;
+    reportedAt: string;
+    status: 'open' | 'resolved';
+  };
 }
 
 export interface DeliveryGeoPoint {

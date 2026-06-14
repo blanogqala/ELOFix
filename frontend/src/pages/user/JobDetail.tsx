@@ -350,9 +350,22 @@ export default function JobDetail() {
       await confirmJobCompletion(job.id, rating, review);
       await syncJobsAfterMutation();
       setCompletionDialogOpen(false);
-      toast({ 
-        title: 'Job Completed!', 
-        description: 'Thank you for your review. Payment has been released to the provider.' 
+      const isCourier = Boolean(job.courierFlow);
+      if (isCourier) {
+        const materialOrderId =
+          deliveryRequest?.materialOrderId ?? job.jobMaterialOrders?.[0]?.id ?? null;
+        if (materialOrderId) {
+          toast({
+            title: 'Thanks for rating your courier',
+            description: 'Next, confirm receipt of your materials with the store on your order page.',
+          });
+          navigate(`/user/material-orders/${materialOrderId}?highlight=confirm`);
+          return;
+        }
+      }
+      toast({
+        title: 'Job Completed!',
+        description: 'Thank you for your review. Payment has been released to the provider.',
       });
     } catch (error) {
       toast({
@@ -1061,7 +1074,9 @@ export default function JobDetail() {
                           <div>
                             <p className="font-medium text-sm">Waiting for your confirmation</p>
                             <p className="text-sm text-muted-foreground mt-1">
-                              {job.providerName} has marked this job as complete. Confirm when you are satisfied with the work.
+                              {isCourierJob
+                                ? `${job.providerName} has marked this delivery as complete. Rate the courier, then confirm your materials with the store on your order page.`
+                                : `${job.providerName} has marked this job as complete. Confirm when you are satisfied with the work.`}
                             </p>
                           </div>
                         </div>

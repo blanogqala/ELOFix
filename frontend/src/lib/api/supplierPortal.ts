@@ -53,6 +53,13 @@ export interface SupplierMaterialOrderLine {
     createdAt?: string;
   }>;
   paymentStatus?: string;
+  customerIssueFlag?: boolean;
+  customerDeliveryIssue?: {
+    reason: string;
+    details?: string;
+    reportedAt: string;
+    status: string;
+  };
 }
 
 export async function getSupplierMe(): Promise<SupplierAccountProfile | null> {

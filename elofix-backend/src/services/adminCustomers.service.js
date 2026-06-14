@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const jobMeta = require("./jobMeta.service");
 const AppError = require("../utils/AppError");
+const { paidAmountFromJob, roundMoney } = require("../utils/jobPaidAmount.util");
 
 const ACTIVE_STATUSES = new Set([
   "ASSIGNED",
@@ -12,27 +13,6 @@ const ACTIVE_STATUSES = new Set([
   "IN_PROGRESS",
   "AWAITING_CONFIRMATION",
 ]);
-
-function roundMoney(n) {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-/** Paid labor + paid material batches from job meta (same rules as admin analytics). */
-function paidAmountFromMeta(meta) {
-  if (!meta || typeof meta !== "object") return 0;
-  let sum = 0;
-  const sp = meta.servicePayment;
-  if (sp && sp.status === "paid" && sp.amount != null) {
-    sum += Number(sp.amount) || 0;
-  }
-  const mps = Array.isArray(meta.materialPayments) ? meta.materialPayments : [];
-  mps.forEach((p) => {
-    if (p && p.status === "paid" && p.amount != null) {
-      sum += Number(p.amount) || 0;
-    }
-  });
-  return sum;
-}
 
 function cityFromJobRow(job) {
   const loc = job.locationDetails;
@@ -155,7 +135,7 @@ function mapCustomerRow(user, jobs, categoryNameById) {
   const servicesRequested = [...serviceIds].map((id) => categoryNameById.get(id) || id);
   let totalPaid = 0;
   jobs.forEach((j) => {
-    totalPaid += paidAmountFromMeta(jobMeta.normalizeMeta(j.meta));
+    totalPaid += paidAmountFromJob(j);
   });
 
   return {
@@ -193,7 +173,7 @@ async function listCustomers(query = {}) {
   const cityFilter = String(query.city || "").trim();
   const statusFilter = String(query.status || "all").trim();
 
-  const [users, allJobs, categoryNameById, allMetaRows] = await Promise.all([
+  const [users, allJobs, categoryNameById] = await Promise.all([
     prisma.user.findMany({
       where: { role: "CUSTOMER", deletedAt: null },
       select: {
@@ -226,7 +206,6 @@ async function listCustomers(query = {}) {
       },
     }),
     loadCategoryNameMap(),
-    prisma.job.findMany({ select: { meta: true } }),
   ]);
 
   const jobsByCustomer = new Map();
@@ -237,8 +216,8 @@ async function listCustomers(query = {}) {
   });
 
   let totalRevenue = 0;
-  allMetaRows.forEach((row) => {
-    totalRevenue += paidAmountFromMeta(jobMeta.normalizeMeta(row.meta));
+  allJobs.forEach((row) => {
+    totalRevenue += paidAmountFromJob(row);
   });
   totalRevenue = roundMoney(totalRevenue);
 
@@ -343,7 +322,7 @@ async function getCustomerById(userId) {
         if (l && String(l).trim() !== "UNKNOWN") return String(l).trim();
         return "";
       })(),
-      totalPaid: roundMoney(paidAmountFromMeta(jobMeta.normalizeMeta(job.meta))),
+      totalPaid: roundMoney(paidAmountFromJob(job)),
       providerId: job.providerId,
       provider: job.providerId ? providerById.get(job.providerId) || null : null,
     };

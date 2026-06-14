@@ -420,9 +420,17 @@ async function applyDeliveryPayment(row, safeFee, paymentExtras = {}) {
     console.error("syncCourierJobFromDeliveryRow paid", e);
   }
   try {
-    await syncCourierJobPricingFromDeliveryRow(updated, { paid: true });
+    await syncCourierJobPricingFromDeliveryRow(updated, { paid: true, paymentExtras });
   } catch (e) {
     console.error("syncCourierJobPricingFromDeliveryRow paid", e);
+  }
+  if (updated.jobId) {
+    try {
+      const paymentService = require("./payment.service");
+      await paymentService.finalizeCourierDeliveryEscrowAfterPayment(updated.jobId);
+    } catch (e) {
+      console.error("finalizeCourierDeliveryEscrowAfterPayment", updated.jobId, e);
+    }
   }
   await syncMaterialOrderDeliveryFromRow(updated, "pay", {
     fee: safeFee,
@@ -584,7 +592,7 @@ function resolveDeliveryFeeFromRow(row) {
 /**
  * Mirror delivery fee onto the linked courier Job row (price, servicePrice, and settlement fields when paid).
  */
-async function syncCourierJobPricingFromDeliveryRow(row, { paid = false } = {}) {
+async function syncCourierJobPricingFromDeliveryRow(row, { paid = false, paymentExtras = {} } = {}) {
   if (!row?.jobId) return;
   const { getJobMeta, mutateJobMeta } = require("./jobMeta.service");
   const paymentService = require("./payment.service");
@@ -620,7 +628,24 @@ async function syncCourierJobPricingFromDeliveryRow(row, { paid = false } = {}) 
       note: row.quoteNote ? String(row.quoteNote) : m.servicePrice?.note || "",
       submittedAt: m.servicePrice?.submittedAt || new Date().toISOString(),
     },
-    ...(paid ? { laborPaid: true } : {}),
+    ...(paid
+      ? {
+          laborPaid: true,
+          servicePayment: {
+            status: "paid",
+            amount: fee,
+            paidAt: paymentExtras.paidAt || new Date().toISOString(),
+            paidBy: row.customerId || m.servicePayment?.paidBy || null,
+            channel: paymentExtras.provider ? String(paymentExtras.provider) : "delivery",
+            paymentRef:
+              paymentExtras.merchantReference ||
+              paymentExtras.gatewayTransactionId ||
+              m.servicePayment?.paymentRef ||
+              null,
+            maskedPaymentMethod: "**** **** **** ****",
+          },
+        }
+      : {}),
   }));
 }
 

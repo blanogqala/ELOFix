@@ -421,6 +421,148 @@ async function runSettleLaborInTransaction(
 }
 
 /**
+ * Courier delivery fee is paid via DeliveryRequest — not runSettleLaborInTransaction.
+ * Backfill commission ledger + provider earnings when missing (legacy rows and repair path).
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx
+ */
+async function backfillCourierDeliveryEscrowInTransaction(tx, { job, jobId, providerProfileId }) {
+  if (!job?.laborPaid || !isEscrowV2Job(job) || !providerProfileId || job.providerAmount == null) {
+    return { didWork: false, job };
+  }
+
+  const jobIdStr = String(jobId);
+  const providerAmt = toPrismaDecimal(job.providerAmount);
+  const { firstTranche, secondTranche } = splitProviderTranches(providerAmt);
+  let released = toPrismaDecimal(job.releasedAmount || 0);
+  let jobRow = job;
+
+  const existingLedger = await tx.commissionLedger.findUnique({ where: { jobId: jobIdStr } });
+  if (!existingLedger) {
+    const commissionAmount =
+      job.commissionAmount != null
+        ? toPrismaDecimal(job.commissionAmount)
+        : splitLaborTotalGross(job.totalPrice).commissionAmount;
+    await tx.commissionLedger.create({
+      data: {
+        id: randomUUID(),
+        jobId: jobIdStr,
+        amount: commissionAmount,
+        source: "courier_delivery_payment",
+        totalPrice: toPrismaDecimal(job.totalPrice),
+        currency: String(process.env.PAYMENT_CURRENCY || process.env.PAYSTACK_CURRENCY || "ZAR"),
+      },
+    });
+  }
+
+  let pending = await tx.earning.findFirst({
+    where: { jobId: jobIdStr, providerId: providerProfileId, type: "credit", status: "pending" },
+  });
+
+  const t1Key = `courier-escrow-t1:${jobIdStr}`;
+  const t1Released = await tx.earning.findFirst({
+    where: { jobId: jobIdStr, providerId: providerProfileId, idempotencyKey: t1Key },
+  });
+
+  if (released.lte(0) && !t1Released) {
+    if (!pending) {
+      await earningService.createLaborCreditPending(tx, {
+        providerId: providerProfileId,
+        jobId: jobIdStr,
+        amount: Number(providerAmt),
+      });
+    }
+    await earningService.applyReleaseToLedger(tx, {
+      providerId: providerProfileId,
+      jobId: jobIdStr,
+      releaseAmount: Number(firstTranche),
+      idempotencyKey: t1Key,
+    });
+    released = firstTranche;
+    await mutateJobMetaInTransaction(tx, jobIdStr, (m) => ({
+      ...m,
+      escrow: {
+        heldAmount: Number(secondTranche),
+        releasedAmount: Number(firstTranche),
+      },
+    }));
+    jobRow = await tx.job.update({
+      where: { id: jobIdStr },
+      data: { releasedAmount: firstTranche },
+    });
+    pending = await tx.earning.findFirst({
+      where: { jobId: jobIdStr, providerId: providerProfileId, type: "credit", status: "pending" },
+    });
+  }
+
+  if (!pending) {
+    const remaining = providerAmt.sub(released);
+    if (remaining.gt(0)) {
+      await earningService.syncPendingCreditToHeld(tx, {
+        providerId: providerProfileId,
+        jobId: jobIdStr,
+        heldAmount: Number(remaining),
+      });
+    }
+  }
+
+  return { didWork: true, job: jobRow };
+}
+
+/** Legacy courier rows: labor paid via DeliveryRequest but servicePayment never written. */
+async function backfillCourierServicePaymentIfMissing(jobId, job, meta) {
+  const sp = meta?.servicePayment;
+  if (sp && String(sp.status || "").toLowerCase() === "paid") return meta;
+  if (!job?.laborPaid) return meta;
+  const fee =
+    Number(meta?.servicePrice?.amount) || Number(job.totalPrice) || Number(job.price) || 0;
+  if (!Number.isFinite(fee) || fee <= 0) return meta;
+  const { mutateJobMeta } = require("./jobMeta.service");
+  return mutateJobMeta(jobId, (m) => ({
+    ...m,
+    laborPaid: true,
+    servicePayment: {
+      status: "paid",
+      amount: fee,
+      paidAt: m.servicePrice?.submittedAt || new Date().toISOString(),
+      paidBy: job.customerId || m.servicePayment?.paidBy || null,
+      channel: "delivery",
+      paymentRef: m.servicePayment?.paymentRef || null,
+      maskedPaymentMethod: "**** **** **** ****",
+    },
+  }));
+}
+
+/** Initialize courier delivery escrow after DeliveryRequest payment (outside labor pay flow). */
+async function finalizeCourierDeliveryEscrowAfterPayment(jobId) {
+  const jid = String(jobId || "").trim();
+  if (!jid) return;
+  const job = await prisma.job.findUnique({ where: { id: jid } });
+  if (!job?.providerId || !job.laborPaid) return;
+  let meta = await getJobMeta(jid);
+  if (!meta?.courierFlow) return;
+  meta = await backfillCourierServicePaymentIfMissing(jid, job, meta);
+  const providerRow = await prisma.provider.findUnique({
+    where: { userId: job.providerId },
+    select: { id: true },
+  });
+  if (!providerRow) return;
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await backfillCourierDeliveryEscrowInTransaction(tx, {
+          job,
+          jobId: jid,
+          providerProfileId: providerRow.id,
+        });
+      },
+      { maxWait: 5000, timeout: 15000 }
+    );
+  } catch (e) {
+    console.error("finalizeCourierDeliveryEscrowAfterPayment", jid, e);
+  }
+}
+
+/**
  * Second 50% of provider funds after user confirm-completion.
  * @param {import("@prisma/client").Prisma.TransactionClient} tx
  */
@@ -444,11 +586,30 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
     return { skipped: true, jobRow: null };
   }
 
-  const providerAmt = toPrismaDecimal(job.providerAmount);
-  const released = toPrismaDecimal(job.releasedAmount || 0);
+  let jobRow = job;
+  let pending = await tx.earning.findFirst({
+    where: { jobId, providerId: providerProfileId, type: "credit", status: "pending" },
+  });
+  if (!pending) {
+    const backfill = await backfillCourierDeliveryEscrowInTransaction(tx, {
+      job: jobRow,
+      jobId,
+      providerProfileId,
+    });
+    if (backfill.job) jobRow = backfill.job;
+    pending = await tx.earning.findFirst({
+      where: { jobId, providerId: providerProfileId, type: "credit", status: "pending" },
+    });
+  }
+  if (!pending) {
+    return { skipped: true, jobRow: null };
+  }
+
+  const providerAmt = toPrismaDecimal(jobRow.providerAmount);
+  const released = toPrismaDecimal(jobRow.releasedAmount || 0);
   const remaining = providerAmt.sub(released);
   if (remaining.lte(0)) {
-    const jobRow = await tx.job.update({
+    jobRow = await tx.job.update({
       where: { id: jobId },
       data: { isFullyReleased: true, paymentReleased: true, escrowSecondReleaseDone: true },
     });
@@ -470,7 +631,7 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
     escrow: { heldAmount: 0, releasedAmount: Number(providerAmt) },
   }));
 
-  const jobRow = await tx.job.update({
+  jobRow = await tx.job.update({
     where: { id: jobId },
     data: {
       releasedAmount: nextReleased,
@@ -823,6 +984,9 @@ module.exports = {
   fetchPaystackTransactionVerify,
   runSettleLaborInTransaction,
   runSecondTrancheInTransaction,
+  backfillCourierDeliveryEscrowInTransaction,
+  backfillCourierServicePaymentIfMissing,
+  finalizeCourierDeliveryEscrowAfterPayment,
   computeCancelRefundAmount,
   runCancelJobFinancialsInTransaction,
   getPaystackSecret,

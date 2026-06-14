@@ -5,39 +5,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getCurrentSession } from '@/lib/api/auth';
+import { getDefaultDashboardPath, resolvePostLoginPath } from '@/lib/postLoginRedirect';
 
-function getRedirectPath(role: string) {
-  switch (role) {
-    case 'admin':
-      return '/admin/dashboard';
-    case 'provider':
-      return '/provider/profile';
-    case 'supplier':
-    case 'branch_staff':
-      return '/supplier/dashboard';
-    default:
-      return '/user/dashboard';
-  }
-}
-
-function resolvePostLoginPath(role: string, attemptedPath: string) {
-  const defaultPath = getRedirectPath(role);
-  const publicOrInvalidPath = ['/', '/login', '/register', '/unauthorized', '/auth/google/callback'];
-  if (!attemptedPath || publicOrInvalidPath.includes(attemptedPath)) {
-    return defaultPath;
-  }
-
-  if (role === 'admin') {
-    if (attemptedPath === '/admin') return defaultPath;
-    return attemptedPath.startsWith('/admin/') ? attemptedPath : defaultPath;
-  }
-  if (role === 'provider') {
-    return attemptedPath.startsWith('/provider/') ? attemptedPath : defaultPath;
-  }
-  if (role === 'supplier' || role === 'branch_staff') {
-    return attemptedPath.startsWith('/supplier/') ? attemptedPath : defaultPath;
-  }
-  return attemptedPath.startsWith('/user/') ? attemptedPath : defaultPath;
+function getGoogleDefaultPath(role: string) {
+  if (role === 'provider') return '/provider/profile';
+  return getDefaultDashboardPath(role);
 }
 
 export default function GoogleCallback() {
@@ -82,7 +54,10 @@ export default function GoogleCallback() {
 
       const existingSession = getCurrentSession();
       if (existingSession?.user && existingSession.token) {
-        navigate(resolvePostLoginPath(existingSession.user.role, nextPath), { replace: true });
+        navigate(
+          resolvePostLoginPath(existingSession.user.role, nextPath, getGoogleDefaultPath(existingSession.user.role)),
+          { replace: true },
+        );
         return;
       }
 
@@ -98,7 +73,7 @@ export default function GoogleCallback() {
               : 'You have successfully signed in with Google.',
         });
 
-        navigate(resolvePostLoginPath(user.role, nextPath), { replace: true });
+        navigate(resolvePostLoginPath(user.role, nextPath, getGoogleDefaultPath(user.role)), { replace: true });
       } catch (err) {
         toast({
           title: 'Google sign-in failed',

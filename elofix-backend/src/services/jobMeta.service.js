@@ -162,6 +162,8 @@ function enrichJob(job, meta) {
     const r = relToProvider != null && !Number.isNaN(relToProvider) ? relToProvider : 0;
     remainingAmount = Math.max(0, provNum - r);
   }
+  const { paidAmountFromJob } = require("../utils/jobPaidAmount.util");
+  const customerPaidTotal = paidAmountFromJob({ ...job, meta: safeMeta });
   return {
     ...stripJobForApi(job),
     status,
@@ -170,6 +172,7 @@ function enrichJob(job, meta) {
     commissionAmount: job.commissionAmount != null ? Number(job.commissionAmount) : null,
     releasedAmount: job.releasedAmount != null ? Number(job.releasedAmount) : null,
     remainingAmount,
+    customerPaidTotal,
     isFullyReleased: typeof job.isFullyReleased === "boolean" ? job.isFullyReleased : false,
     escrowSecondReleaseDone:
       typeof job.escrowSecondReleaseDone === "boolean" ? job.escrowSecondReleaseDone : false,

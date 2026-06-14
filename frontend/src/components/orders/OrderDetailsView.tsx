@@ -90,6 +90,13 @@ export interface NormalizedOrder {
   driverLocation?: { lat: number; lng: number; updatedAt?: string } | null;
   deliveryConfirmed?: boolean;
   courierJobId?: string | null;
+  customerIssueFlag?: boolean;
+  customerDeliveryIssue?: {
+    reason: string;
+    details?: string;
+    reportedAt: string;
+    status: 'open' | 'resolved';
+  };
 }
 
 interface OrderDetailsViewProps {
@@ -114,7 +121,10 @@ interface OrderDetailsViewProps {
   onViewDeliveryInvoice?: (invoiceId: string) => void;
   onConfirmReceipt?: () => void;
   confirmReceiptPending?: boolean;
+  onReportDeliveryIssue?: () => void;
+  reportIssuePending?: boolean;
   highlightDeliveryComplete?: boolean;
+  highlightConfirmSection?: boolean;
   onDismissDeliveryHighlight?: () => void;
 }
 
@@ -256,7 +266,10 @@ export function OrderDetailsView({
   onViewDeliveryInvoice,
   onConfirmReceipt,
   confirmReceiptPending,
+  onReportDeliveryIssue,
+  reportIssuePending,
   highlightDeliveryComplete,
+  highlightConfirmSection,
   onDismissDeliveryHighlight,
 }: OrderDetailsViewProps) {
   const canonical: CanonicalDeliveryType =
@@ -282,7 +295,15 @@ export function OrderDetailsView({
   const showConfirmReceipt =
     Boolean(onConfirmReceipt) &&
     order.deliveryConfirmed !== true &&
+    !(
+      order.customerDeliveryIssue &&
+      order.customerDeliveryIssue.status === 'open'
+    ) &&
     ((fulfillmentU === 'READY' && isPickupCanonical) || fulfillmentU === 'COMPLETED');
+
+  const showDeliveryIssueReported =
+    Boolean(order.customerDeliveryIssue) &&
+    order.customerDeliveryIssue?.status === 'open';
 
   const confirmLabel = isPickupCanonical ? 'Confirm collection' : 'Confirm delivery';
   const trackingLocked = fulfillmentU === 'COMPLETED' && order.deliveryConfirmed === true;
@@ -353,6 +374,12 @@ export function OrderDetailsView({
     onConfirmDelivery: onConfirmReceipt,
     confirmDeliveryPending: confirmReceiptPending,
     confirmDeliveryLabel: confirmLabel,
+    showReportDeliveryIssue: showConfirmReceipt && Boolean(onReportDeliveryIssue),
+    onReportDeliveryIssue,
+    reportIssuePending,
+    showDeliveryIssueReported,
+    customerDeliveryIssue: order.customerDeliveryIssue,
+    highlightConfirmSection: Boolean(highlightConfirmSection),
   };
 
   let orderDateLabel = '';

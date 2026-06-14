@@ -52,6 +52,11 @@ router.patch(
   asyncHandler(materialOrderController.confirmDeliveryReceipt)
 );
 router.post(
+  "/:id/report-delivery-issue",
+  authorizeRoles("CUSTOMER"),
+  asyncHandler(materialOrderController.reportDeliveryIssue)
+);
+router.post(
   "/:id/cancel",
   authorizeRoles("CUSTOMER"),
   asyncHandler(materialOrderController.cancelMaterialOrder)

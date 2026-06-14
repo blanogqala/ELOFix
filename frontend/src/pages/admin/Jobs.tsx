@@ -22,6 +22,7 @@ import {
   jobMatchesCityFilter,
 } from '@/lib/adminJobFilters';
 import { groupJobsForList } from '@/lib/jobListGrouping';
+import { getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
 import { JobListRowVariant } from '@/components/jobs/JobListGroup';
 
 type SortKey = 'newest' | 'oldest' | 'status' | 'category';
@@ -133,7 +134,7 @@ export default function AdminJobs() {
         <td className="px-6 py-4 text-sm">{job.userName}</td>
         <td className="px-6 py-4 text-sm">{job.providerName || '—'}</td>
         <td className="px-6 py-4">{getStatusBadge(job)}</td>
-        <td className="px-6 py-4 text-sm font-medium">{formatCurrency(job.totalEstimateRange.min)}</td>
+        <td className="px-6 py-4 text-sm font-medium">{formatCurrency(getAdminJobDisplayTotal(job))}</td>
         <td className="px-6 py-4 text-sm text-muted-foreground">
           {new Date(job.createdAt).toLocaleDateString()}
         </td>

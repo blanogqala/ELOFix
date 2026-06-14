@@ -19,6 +19,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
+import { buildAdminJobTransactionHistory } from '@/lib/adminJobFinancial';
 import {
   Dialog,
   DialogContent,
@@ -167,26 +168,9 @@ export default function AdminPaymentDetail() {
   }
 
   const paymentStatus = getPaymentStatus();
-  const releasedAmount = job.escrow.releasedAmount || 0;
   const maxReleasable = getMaxReleasable();
 
-  const transactionHistory: { type: string; amount: number; date: string; by: string }[] = [];
-  if (job.servicePayment) {
-    transactionHistory.push({
-      type: 'Labor Payment',
-      amount: job.servicePayment.amount,
-      date: job.servicePayment.paidAt,
-      by: job.servicePayment.paidBy,
-    });
-  }
-  if (releasedAmount > 0) {
-    transactionHistory.push({
-      type: 'Escrow release (meta)',
-      amount: releasedAmount,
-      date: new Date().toISOString(),
-      by: 'Admin',
-    });
-  }
+  const transactionHistory = buildAdminJobTransactionHistory(job);
 
   return (
     <DashboardLayout>
