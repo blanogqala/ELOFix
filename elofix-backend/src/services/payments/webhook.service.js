@@ -227,6 +227,13 @@ async function processWebhookResult(providerKey, verifyResult) {
 async function handlePayfastWebhook(data, clientIp) {
   const gw = getGateway("PAYFAST");
   const verifyResult = await gw.verifyWebhook(data, clientIp);
+  if (!verifyResult.valid) {
+    console.warn("[webhook payfast] rejected ITN", {
+      clientIp,
+      merchantReference: data.m_payment_id,
+      paymentStatus: data.payment_status,
+    });
+  }
   return processWebhookResult("PAYFAST", verifyResult);
 }
 

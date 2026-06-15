@@ -35,17 +35,22 @@ function allowAdminPaymentOverride() {
 }
 
 /**
- * Local sandbox: PayFast ITN cannot reach localhost, but return_url is only used after
- * a successful checkout — settle on confirm-return instead of waiting for webhook.
+ * Sandbox: PayFast ITN may not reach the API (localhost, Render cold start, proxy IP).
+ * When enabled, confirm-return settles after a successful checkout return_url visit.
+ * Never applies when PAYFAST_MODE=live.
  */
 function payfastSettleOnReturn() {
   if (String(process.env.PAYFAST_SETTLE_ON_RETURN || "").toLowerCase() === "false") {
     return false;
   }
-  if (process.env.NODE_ENV === "production") {
+  const sandbox = String(process.env.PAYFAST_MODE || "sandbox").toLowerCase() !== "live";
+  if (!sandbox) {
     return false;
   }
-  return String(process.env.PAYFAST_MODE || "sandbox").toLowerCase() !== "live";
+  if (String(process.env.PAYFAST_SETTLE_ON_RETURN || "").toLowerCase() === "true") {
+    return true;
+  }
+  return process.env.NODE_ENV !== "production";
 }
 
 module.exports = {

@@ -36,3 +36,23 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: PAYMENT_CURRENCY
+        value: ZAR
+      - key: PAYMENT_BASE_URL
+        sync: false
+      - key: FRONTEND_BASE_URL
+        sync: false
+      - key: ENABLED_PAYMENT_PROVIDERS
+        value: payfast
+      - key: PAYFAST_MERCHANT_ID
+        sync: false
+      - key: PAYFAST_MERCHANT_KEY
+        sync: false
+      - key: PAYFAST_PASSPHRASE
+        sync: false
+      - key: PAYFAST_MODE
+        value: sandbox
+      - key: PAYFAST_SKIP_IP_CHECK
+        value: "true"
+      - key: PAYFAST_SETTLE_ON_RETURN
+        value: "true"
