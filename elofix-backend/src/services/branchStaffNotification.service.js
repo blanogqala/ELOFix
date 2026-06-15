@@ -11,6 +11,7 @@ function emitToUserRoom(userId, event, payload) {
 }
 
 function toApiShape(row) {
+  const meta = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
   return {
     id: row.id,
     userId: row.branchUserId,
@@ -20,7 +21,30 @@ function toApiShape(row) {
     read: row.read,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     materialOrderId: row.materialOrderId || undefined,
+    senderId: meta.senderId ? String(meta.senderId) : undefined,
+    senderName: meta.senderName ? String(meta.senderName) : undefined,
+    senderRole: meta.senderRole ? String(meta.senderRole) : undefined,
   };
+}
+
+async function createForBranchUser(branchUserId, { category = "SYSTEM", type, title, message, materialOrderId, metadata }) {
+  const uid = String(branchUserId || "").trim();
+  if (!uid) return null;
+  const item = await prisma.branchStaffNotification.create({
+    data: {
+      id: randomUUID(),
+      branchUserId: uid,
+      category,
+      type: String(type || "branch_event"),
+      title: String(title || "Update"),
+      message: String(message || ""),
+      materialOrderId: materialOrderId || null,
+      metadata: metadata && typeof metadata === "object" ? metadata : undefined,
+    },
+  });
+  const api = toApiShape(item);
+  emitToUserRoom(uid, "notification:new", api);
+  return api;
 }
 
 /**
@@ -84,6 +108,7 @@ async function markAllAsRead(branchUserId) {
 
 module.exports = {
   createForBranchUsers,
+  createForBranchUser,
   listForBranchUser,
   getUnreadCount,
   markAsRead,

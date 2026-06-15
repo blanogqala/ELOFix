@@ -3102,6 +3102,54 @@ async function aggregateCompletedPaidMaterialOrders({ supplierId } = {}) {
   };
 }
 
+/**
+ * Per-supplier breakdown of completed + paid material orders (for admin list filter-aware cards).
+ */
+async function aggregateCompletedPaidMaterialOrdersBySupplier() {
+  const rows = await prisma.materialOrder.findMany({
+    where: {
+      paymentStatus: "paid",
+      fulfillmentStatus: "COMPLETED",
+    },
+    select: {
+      supplierId: true,
+      materialsSubtotal: true,
+      payload: true,
+      platformCommission: true,
+    },
+  });
+
+  const bySupplier = new Map();
+  for (const row of rows) {
+    const supplierId = String(row.supplierId || "").trim();
+    if (!supplierId) continue;
+    const entry = bySupplier.get(supplierId) || {
+      orderCount: 0,
+      totalRevenue: 0,
+      totalCommission: 0,
+    };
+    entry.orderCount += 1;
+    entry.totalRevenue += orderTotalFromRow(row);
+    entry.totalCommission += Number(row.platformCommission || 0);
+    bySupplier.set(supplierId, entry);
+  }
+
+  const result = new Map();
+  for (const [supplierId, entry] of bySupplier) {
+    const orderCount = entry.orderCount;
+    const totalRevenue = roundMoney2(entry.totalRevenue);
+    const totalCommission = roundMoney2(entry.totalCommission);
+    result.set(supplierId, {
+      orderCount,
+      totalRevenue,
+      totalCommission,
+      averageOrderValue: orderCount > 0 ? roundMoney2(totalRevenue / orderCount) : 0,
+      commissionRate: ADMIN_ANALYTICS_COMMISSION_RATE,
+    });
+  }
+  return result;
+}
+
 function computeSupplierExportFinancials(order) {
   const status = String(order.fulfillmentStatus || "").toUpperCase();
   const totalAmount = roundMoney2(Number(order.total ?? order.materialsSubtotal ?? 0));
@@ -3296,6 +3344,7 @@ async function listAllMaterialOrdersForAdmin({ limit = 200 } = {}) {
 
 module.exports = {
   aggregateCompletedPaidMaterialOrders,
+  aggregateCompletedPaidMaterialOrdersBySupplier,
   buildSupplierOrdersExport,
   listRecentMaterialOrdersBySupplierForAdmin,
   orderTotalFromRow,

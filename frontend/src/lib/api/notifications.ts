@@ -53,7 +53,14 @@ export async function postSupportMessage(message: string): Promise<void> {
   await apiClient.post('/notifications/support', { message });
 }
 
-/** Admin: send a notification to a user (support reply). */
-export async function postAdminSupportReply(userId: string, message: string): Promise<void> {
-  await apiClient.post('/notifications/support/reply', { userId, message });
+/** Admin: send a support reply to a user or branch staff member. */
+export async function postAdminSupportReply(
+  message: string,
+  target: { userId?: string; branchUserId?: string }
+): Promise<void> {
+  await apiClient.post('/notifications/support/reply', {
+    message,
+    userId: target.userId ?? '',
+    ...(target.branchUserId ? { branchUserId: target.branchUserId } : {}),
+  });
 }

@@ -162,8 +162,12 @@ async function getCommissions(req, res) {
 async function listSuppliers(req, res) {
   const suppliers = await supplierService.listSuppliersForAdminDashboard();
   let globalSupplierOrderAnalytics;
+  let analyticsBySupplierId = new Map();
   try {
-    globalSupplierOrderAnalytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({});
+    [globalSupplierOrderAnalytics, analyticsBySupplierId] = await Promise.all([
+      materialOrderService.aggregateCompletedPaidMaterialOrders({}),
+      materialOrderService.aggregateCompletedPaidMaterialOrdersBySupplier(),
+    ]);
   } catch (err) {
     console.error("[admin.listSuppliers] aggregate material orders failed", err);
     globalSupplierOrderAnalytics = {
@@ -173,10 +177,21 @@ async function listSuppliers(req, res) {
       averageOrderValue: 0,
       commissionRate: 0.07,
     };
+    analyticsBySupplierId = new Map();
   }
+  const suppliersWithAnalytics = suppliers.map((s) => ({
+    ...s,
+    orderAnalytics: analyticsBySupplierId.get(String(s.id)) ?? {
+      orderCount: 0,
+      totalRevenue: 0,
+      totalCommission: 0,
+      averageOrderValue: 0,
+      commissionRate: 0.07,
+    },
+  }));
   res.json({
     success: true,
-    suppliers,
+    suppliers: suppliersWithAnalytics,
     globalSupplierOrderAnalytics: {
       totalSuppliers: suppliers.length,
       ...globalSupplierOrderAnalytics,

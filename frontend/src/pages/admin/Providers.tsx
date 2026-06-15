@@ -9,10 +9,17 @@ import { getAdminProviderRevenueSummary } from '@/lib/api/admin';
 import { getCategories } from '@/lib/api/categories';
 import { Category, Provider } from '@/types';
 import { 
-  Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin, Users, DollarSign
+  Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin, Users, TrendingUp, Percent, PackageCheck
 } from 'lucide-react';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { Card, CardContent } from '@/components/ui/card';
+import type { AdminProviderRevenueSummaryRow } from '@/lib/api/admin';
+
+type ProviderJobStats = Pick<
+  AdminProviderRevenueSummaryRow,
+  'grossRevenue' | 'platformCommission' | 'completedJobCount'
+>;
 
 export default function AdminProviders() {
   const navigate = useNavigate();
@@ -25,7 +32,7 @@ export default function AdminProviders() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'blocked'>('all');
   const [cityFilter, setCityFilter] = useState<string>('all');
   const [approvingProviderId, setApprovingProviderId] = useState<string | null>(null);
-  const [providerRevenueById, setProviderRevenueById] = useState<Record<string, number>>({});
+  const [providerStatsById, setProviderStatsById] = useState<Record<string, ProviderJobStats>>({});
 
   useEffect(() => {
     void loadProviders();
@@ -41,16 +48,20 @@ export default function AdminProviders() {
       ]);
 
       setProviders(providerRows);
-      const map: Record<string, number> = {};
+      const map: Record<string, ProviderJobStats> = {};
       (revenueSummary?.revenues || []).forEach((r) => {
-        map[r.providerId] = r.netRevenue;
+        map[r.providerId] = {
+          grossRevenue: r.grossRevenue ?? r.netRevenue ?? 0,
+          platformCommission: r.platformCommission ?? 0,
+          completedJobCount: r.completedJobCount ?? 0,
+        };
       });
-      setProviderRevenueById(map);
+      setProviderStatsById(map);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load providers';
       setProvidersError(message);
       setProviders([]);
-      setProviderRevenueById({});
+      setProviderStatsById({});
     }
     finally { setIsLoading(false); }
   };
@@ -101,9 +112,19 @@ export default function AdminProviders() {
     });
   }, [providers, searchQuery, statusFilter, cityFilter]);
 
-  const filteredNetRevenue = useMemo(() => {
-    return filteredProviders.reduce((sum, p) => sum + (providerRevenueById[p.id] ?? 0), 0);
-  }, [filteredProviders, providerRevenueById]);
+  const filteredStats = useMemo(() => {
+    return filteredProviders.reduce(
+      (acc, p) => {
+        const stats = providerStatsById[p.id];
+        return {
+          grossRevenue: acc.grossRevenue + (stats?.grossRevenue ?? 0),
+          platformCommission: acc.platformCommission + (stats?.platformCommission ?? 0),
+          completedJobCount: acc.completedJobCount + (stats?.completedJobCount ?? 0),
+        };
+      },
+      { grossRevenue: 0, platformCommission: 0, completedJobCount: 0 }
+    );
+  }, [filteredProviders, providerStatsById]);
 
   const activeFilters = [
     statusFilter !== 'all' && { key: 'status', label: statusFilter },
@@ -145,34 +166,68 @@ export default function AdminProviders() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="card-elevated p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total providers</p>
-                <p className="mt-2 text-2xl font-semibold tabular-nums">
-                  {filteredProviders.length}
-                </p>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Card className="border-2 border-primary shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total providers</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {filteredProviders.length}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-primary/10 p-2">
+                  <Users className="h-5 w-5 text-primary" />
+                </div>
               </div>
-              <div className="rounded-lg bg-primary/10 p-2">
-                <Users className="h-5 w-5 text-primary" />
+            </CardContent>
+          </Card>
+          <Card className="border-2 border-primary shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider revenue</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {formatCurrency(filteredStats.grossRevenue)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Gross labor from completed & paid jobs</p>
+                </div>
+                <div className="rounded-lg bg-emerald-500/10 p-2">
+                  <TrendingUp className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
               </div>
-            </div>
-          </div>
-          <div className="card-elevated p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider net revenue</p>
-                <p className="mt-2 text-2xl font-semibold tabular-nums">
-                  {formatCurrency(filteredNetRevenue)}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">All-time net revenue from provider jobs</p>
+            </CardContent>
+          </Card>
+          <Card className="border-2 border-primary shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Platform commission</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums text-accent">
+                    {formatCurrency(filteredStats.platformCommission)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">7% of labor totals</p>
+                </div>
+                <div className="rounded-lg bg-accent/10 p-2">
+                  <Percent className="h-5 w-5 text-accent" />
+                </div>
               </div>
-              <div className="rounded-lg bg-accent/10 p-2">
-                <DollarSign className="h-5 w-5 text-accent" />
+            </CardContent>
+          </Card>
+          <Card className="border-2 border-primary shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Jobs completed</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{filteredStats.completedJobCount}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid</p>
+                </div>
+                <div className="rounded-lg bg-primary/10 p-2">
+                  <PackageCheck className="h-5 w-5 text-primary" />
+                </div>
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Filters */}

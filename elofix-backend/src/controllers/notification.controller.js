@@ -2,6 +2,13 @@ const prisma = require("../config/prisma");
 const notificationService = require("../services/notification.service");
 const branchStaffNotificationService = require("../services/branchStaffNotification.service");
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  return UUID_RE.test(String(value || "").trim());
+}
+
 async function getNotifications(req, res) {
   if (req.user.role === "BRANCH_STAFF") {
     const notifications = await branchStaffNotificationService.listForBranchUser(req.user.userId);
@@ -38,6 +45,7 @@ async function createSupportNotifications(req, res) {
   let senderUserIdForNotify = null;
   let senderRoleFormatted;
   let fullMessage;
+  let branchUserIdForNotify = null;
 
   if (req.user.role === "BRANCH_STAFF") {
     const bu = await prisma.branchUser.findUnique({
@@ -49,6 +57,7 @@ async function createSupportNotifications(req, res) {
     senderName = "Branch staff";
     senderRoleFormatted = "branch_staff";
     fullMessage = `${senderName}: ${message}`;
+    branchUserIdForNotify = bu.id;
   } else {
     const sender = await prisma.user.findUnique({ where: { id: req.user.userId } });
     if (!sender) {
@@ -76,24 +85,104 @@ async function createSupportNotifications(req, res) {
         title,
         message: fullMessage,
         ...(senderUserIdForNotify ? { senderId: senderUserIdForNotify } : {}),
+        ...(branchUserIdForNotify ? { branchUserId: branchUserIdForNotify } : {}),
         senderName,
         senderRole: senderRoleFormatted,
+        conversationType: "support",
       })
     )
   );
+
+  if (branchUserIdForNotify) {
+    await branchStaffNotificationService.createForBranchUser(branchUserIdForNotify, {
+      category: "SYSTEM",
+      type: "support_contact",
+      title,
+      message: fullMessage,
+      metadata: {
+        senderId: branchUserIdForNotify,
+        senderName,
+        senderRole: senderRoleFormatted,
+      },
+    });
+  } else if (senderUserIdForNotify) {
+    await notificationService.addNotification({
+      userId: senderUserIdForNotify,
+      type: "support_contact",
+      title,
+      message: fullMessage,
+      senderId: senderUserIdForNotify,
+      senderName,
+      senderRole: senderRoleFormatted,
+      conversationType: "support",
+    });
+  }
+
   res.status(201).json({ success: true });
 }
 
 async function replySupportAsAdmin(req, res) {
   const targetUserId = String(req.body?.userId || "").trim();
+  const branchUserId = String(req.body?.branchUserId || "").trim();
   const message = String(req.body?.message || "").trim();
-  if (!targetUserId || message.length < 1 || message.length > 2000) {
-    return res.status(400).json({ success: false, message: "userId and message (1–2000 chars) are required" });
+
+  if (message.length < 1 || message.length > 2000) {
+    return res.status(400).json({ success: false, message: "Message must be 1–2000 characters" });
   }
+
   const admin = await prisma.user.findUnique({ where: { id: req.user.userId } });
   if (!admin) {
     return res.status(404).json({ success: false, message: "Admin not found" });
   }
+
+  if (branchUserId) {
+    if (!isUuid(branchUserId)) {
+      return res.status(400).json({ success: false, message: "branchUserId must be a valid UUID" });
+    }
+    const branchUser = await prisma.branchUser.findUnique({ where: { id: branchUserId } });
+    if (!branchUser) {
+      return res.status(404).json({ success: false, message: "Branch staff member not found" });
+    }
+    await branchStaffNotificationService.createForBranchUser(branchUserId, {
+      category: "SYSTEM",
+      type: "support_reply",
+      title: "Support",
+      message,
+      metadata: {
+        senderId: admin.id,
+        senderName: admin.name,
+        senderRole: "admin",
+      },
+    });
+    await notificationService.addNotification({
+      userId: admin.id,
+      type: "support_reply",
+      title: "Support",
+      message,
+      senderId: admin.id,
+      senderName: admin.name,
+      senderRole: "admin",
+      branchUserId,
+      conversationType: "support",
+    });
+    return res.status(201).json({ success: true });
+  }
+
+  if (!targetUserId) {
+    return res.status(400).json({ success: false, message: "userId is required" });
+  }
+  if (!isUuid(targetUserId)) {
+    return res.status(400).json({
+      success: false,
+      message: "userId must be a valid user UUID (select a support thread, do not enter a display name)",
+    });
+  }
+
+  const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!targetUser) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
   await notificationService.addNotification({
     userId: targetUserId,
     type: "support_reply",
@@ -102,7 +191,21 @@ async function replySupportAsAdmin(req, res) {
     senderId: admin.id,
     senderName: admin.name,
     senderRole: "admin",
+    conversationType: "support",
   });
+
+  await notificationService.addNotification({
+    userId: admin.id,
+    type: "support_reply",
+    title: "Support",
+    message,
+    senderId: admin.id,
+    senderName: admin.name,
+    senderRole: "admin",
+    conversationType: "support",
+    supportTargetUserId: targetUserId,
+  });
+
   res.status(201).json({ success: true });
 }
 

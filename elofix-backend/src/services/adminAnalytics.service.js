@@ -32,7 +32,8 @@ async function getAnalytics(query = {}) {
   const dayKeys = eachDayInRange(fromDay, toDay);
   const rangeEndExclusive = new Date(toDay.getTime() + MS_PER_DAY);
 
-  const [jobsInRange, providerUsers, activeProviderCount, allJobRows] = await Promise.all([
+  const [jobsInRange, providerUsers, activeProviderCount, allJobRows, laborCommissionAgg, materialOrdersInRange] =
+    await Promise.all([
     prisma.job.findMany({
       where: {
         createdAt: { gte: fromDay, lt: rangeEndExclusive },
@@ -62,6 +63,18 @@ async function getAnalytics(query = {}) {
         createdAt: true,
       },
     }),
+    prisma.commissionLedger.aggregate({
+      where: { createdAt: { gte: fromDay, lt: rangeEndExclusive } },
+      _sum: { amount: true },
+    }),
+    prisma.materialOrder.findMany({
+      where: {
+        paymentStatus: "paid",
+        fulfillmentStatus: "COMPLETED",
+        createdAt: { gte: fromDay, lt: rangeEndExclusive },
+      },
+      select: { platformCommission: true },
+    }),
   ]);
 
   const jobsByDayMap = Object.fromEntries(dayKeys.map((k) => [k, 0]));
@@ -84,6 +97,14 @@ async function getAnalytics(query = {}) {
   const totalRevenue = revenueByDay.reduce((s, x) => s + x.amount, 0);
   const totalProviderSignups = providerUsers.length;
 
+  const totalLaborCommission =
+    laborCommissionAgg._sum.amount != null ? Number(laborCommissionAgg._sum.amount) : 0;
+  const totalMaterialCommission = materialOrdersInRange.reduce(
+    (sum, row) => sum + (Number(row.platformCommission) || 0),
+    0
+  );
+  const totalCommission = Math.round((totalLaborCommission + totalMaterialCommission + Number.EPSILON) * 100) / 100;
+
   return {
     from: dayKeys[0],
     to: dayKeys[dayKeys.length - 1],
@@ -95,6 +116,9 @@ async function getAnalytics(query = {}) {
       totalRevenue: Math.round((totalRevenue + Number.EPSILON) * 100) / 100,
       totalProviderSignupsInRange: totalProviderSignups,
       activeApprovedProviders: activeProviderCount,
+      totalLaborCommission: Math.round((totalLaborCommission + Number.EPSILON) * 100) / 100,
+      totalMaterialCommission: Math.round((totalMaterialCommission + Number.EPSILON) * 100) / 100,
+      totalCommission,
     },
   };
 }

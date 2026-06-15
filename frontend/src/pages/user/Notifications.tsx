@@ -3,7 +3,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
+import { ApiHttpError } from '@/api/client';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   getNotifications,
@@ -66,6 +66,16 @@ function getThreadKey(
   }
   if (isSupportType(n.type)) {
     if (ctx.role === 'admin') {
+      if (n.branchUserId) {
+        return `support:branch:${n.branchUserId}`;
+      }
+      if (
+        n.type === 'support_reply' &&
+        n.senderId === ctx.currentUserId &&
+        n.supportTargetUserId
+      ) {
+        return `support:${n.supportTargetUserId}`;
+      }
       if (n.senderId) {
         return `support:${n.senderId}`;
       }
@@ -188,9 +198,42 @@ const PANEL_H = 'min-h-[min(70vh,560px)] max-h-[min(70vh,640px)]';
 
 function parseKey(key: string): { kind: 'job' | 'support' | 'general' | 'material' } {
   if (key.startsWith('job:')) return { kind: 'job' };
-  if (key.startsWith('support:')) return { kind: 'support' };
+  if (key.startsWith('support:branch:') || key.startsWith('support:')) return { kind: 'support' };
   if (key.startsWith('material:')) return { kind: 'material' };
   return { kind: 'general' };
+}
+
+interface SupportReplyTarget {
+  userId?: string;
+  branchUserId?: string;
+}
+
+function parseSupportReplyTarget(
+  threadKey: string | null,
+  messages: AppNotification[]
+): SupportReplyTarget | null {
+  if (!threadKey) return null;
+  if (threadKey.startsWith('support:branch:')) {
+    const branchUserId = threadKey.slice('support:branch:'.length).trim();
+    return branchUserId ? { branchUserId } : null;
+  }
+  if (threadKey.startsWith('support:')) {
+    const userId = threadKey.slice('support:'.length).trim();
+    return userId ? { userId } : null;
+  }
+  if (threadKey.startsWith('general:')) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const branchUserId = messages[i]?.branchUserId?.trim();
+      if (branchUserId) return { branchUserId };
+    }
+  }
+  return null;
+}
+
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiHttpError) return err.message || fallback;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
 }
 
 export default function NotificationsPage() {
@@ -202,7 +245,6 @@ export default function NotificationsPage() {
   const isMobile = useIsMobile();
   const [supportText, setSupportText] = useState('');
   const [supportSending, setSupportSending] = useState(false);
-  const [adminReplyUserId, setAdminReplyUserId] = useState('');
   const [adminReplyText, setAdminReplyText] = useState('');
   const [adminReplySending, setAdminReplySending] = useState(false);
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
@@ -334,6 +376,14 @@ export default function NotificationsPage() {
     ? threadMap.get(selectedThreadKey) ?? (selectedThreadKey === supportKey ? [] : [])
     : [];
 
+  const adminReplyTarget = useMemo(
+    () =>
+      role === 'admin' && selectedThreadKey
+        ? parseSupportReplyTarget(selectedThreadKey, selectedThreadMessages)
+        : null,
+    [role, selectedThreadKey, selectedThreadMessages]
+  );
+
   useLayoutEffect(() => {
     const el = messageScrollRef.current;
     if (el) {
@@ -345,24 +395,29 @@ export default function NotificationsPage() {
 
   const handleAdminReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    const uid = adminReplyUserId.trim();
     const msg = adminReplyText.trim();
-    if (uid.length < 1 || msg.length < 1 || msg.length > 2000) {
+    if (!adminReplyTarget || msg.length < 1 || msg.length > 2000) {
       toast({
         title: 'Invalid input',
-        description: 'Enter a user id and message (1–2000 characters).',
+        description: adminReplyTarget
+          ? 'Enter a message (1–2000 characters).'
+          : 'Select a support conversation to reply.',
         variant: 'destructive',
       });
       return;
     }
     setAdminReplySending(true);
     try {
-      await postAdminSupportReply(uid, msg);
+      await postAdminSupportReply(msg, adminReplyTarget);
       setAdminReplyText('');
       toast({ title: 'Reply sent' });
       void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user?.id] });
-    } catch {
-      toast({ title: 'Failed to send', variant: 'destructive' });
+    } catch (err) {
+      toast({
+        title: 'Failed to send',
+        description: apiErrorMessage(err, 'Try again later.'),
+        variant: 'destructive',
+      });
     } finally {
       setAdminReplySending(false);
     }
@@ -387,8 +442,12 @@ export default function NotificationsPage() {
       if (user?.id) {
         void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user.id] });
       }
-    } catch {
-      toast({ title: 'Failed to send', description: 'Try again later.', variant: 'destructive' });
+    } catch (err) {
+      toast({
+        title: 'Failed to send',
+        description: apiErrorMessage(err, 'Try again later.'),
+        variant: 'destructive',
+      });
     } finally {
       setSupportSending(false);
     }
@@ -411,7 +470,16 @@ export default function NotificationsPage() {
     }
 
     if (kind === 'support' && role === 'admin') {
-      const id = key.slice('support:'.length);
+      if (key.startsWith('support:branch:')) {
+        return {
+          primary: 'Branch staff',
+          secondary: 'Support request',
+          tertiary: last?.senderRole ? formatDisplayRole(last.senderRole) : 'branch staff',
+          avatarLabel: 'B',
+          preview: last?.message ? sanitizeNotificationMessage(last.message) : '',
+          time: last ? parseISO(last.createdAt) : null,
+        };
+      }
       return {
         primary: formatPersonDisplayName(last?.senderName, 'Support'),
         secondary: 'Support request',
@@ -484,6 +552,8 @@ export default function NotificationsPage() {
 
   const showSupportInput =
     supportKey && selectedThreadKey === supportKey && role !== 'admin';
+
+  const showAdminSupportInput = role === 'admin' && adminReplyTarget != null;
 
   const isSupportUserThreadEmpty =
     (role === 'user' || role === 'provider' || role === 'supplier' || role === 'branch_staff') &&
@@ -660,6 +730,32 @@ export default function NotificationsPage() {
             </div>
           </form>
         )}
+        {showAdminSupportInput && (
+          <form
+            onSubmit={(e) => void handleAdminReply(e)}
+            className="border-t border-border/80 p-3 bg-background/80 backdrop-blur-sm shrink-0"
+          >
+            <div className="flex gap-2 items-end">
+              <Textarea
+                value={adminReplyText}
+                onChange={(e) => setAdminReplyText(e.target.value)}
+                placeholder="Reply as support…"
+                rows={2}
+                maxLength={2000}
+                className="resize-none min-h-[72px] flex-1 rounded-xl"
+              />
+              <Button
+                type="submit"
+                size="icon"
+                className="h-10 w-10 rounded-full shrink-0"
+                disabled={adminReplySending || adminReplyText.trim().length < 1}
+                aria-label="Send reply"
+              >
+                {adminReplySending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
     );
   };
@@ -830,40 +926,6 @@ export default function NotificationsPage() {
           </button>
         )}
 
-        {role === 'admin' && (
-          <div className="card-elevated p-6 space-y-4 border border-border">
-            <h2 className="font-semibold">Reply as support</h2>
-            <p className="text-sm text-muted-foreground">
-              Sends an in-app notification to the user&apos;s account (test endpoint from UI).
-            </p>
-            <form onSubmit={(e) => void handleAdminReply(e)} className="space-y-3">
-              <div>
-                <label className="text-sm font-medium" htmlFor="admin-reply-user">
-                  User id
-                </label>
-                <Input
-                  id="admin-reply-user"
-                  value={adminReplyUserId}
-                  onChange={(e) => setAdminReplyUserId(e.target.value)}
-                  placeholder="Customer or provider user UUID"
-                  className="mt-1"
-                />
-              </div>
-              <Textarea
-                value={adminReplyText}
-                onChange={(e) => setAdminReplyText(e.target.value)}
-                placeholder="Support reply…"
-                rows={3}
-                maxLength={2000}
-              />
-              <div className="flex justify-end">
-                <Button type="submit" disabled={adminReplySending}>
-                  {adminReplySending ? 'Sending…' : 'Send reply'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        )}
       </div>
     </DashboardLayout>
   );

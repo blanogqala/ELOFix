@@ -20,6 +20,9 @@ export interface AdminAnalyticsResponse {
     totalRevenue: number;
     totalProviderSignupsInRange: number;
     activeApprovedProviders: number;
+    totalLaborCommission?: number;
+    totalMaterialCommission?: number;
+    totalCommission?: number;
   };
 }
 
@@ -47,6 +50,12 @@ export interface AdminProviderRevenueSummaryRow {
   providerId: string;
   /** Provider share of completed + paid labor jobs (sum(job.providerAmount)). */
   netRevenue: number;
+  /** Gross labor total including platform commission (sum(job.totalPrice)). */
+  grossRevenue: number;
+  /** Platform commission from completed + paid labor jobs (sum(job.commissionAmount)). */
+  platformCommission: number;
+  /** Count of completed + paid labor jobs. */
+  completedJobCount: number;
 }
 
 export interface AdminProviderRevenueSummaryResponse {

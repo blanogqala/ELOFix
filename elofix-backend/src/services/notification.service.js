@@ -23,6 +23,8 @@ function toApiShape(row) {
     read: row.read,
     jobId: row.jobId || undefined,
     materialOrderId: row.materialOrderId || undefined,
+    branchUserId: row.branchUserId || undefined,
+    supportTargetUserId: row.supportTargetUserId || undefined,
     conversationId: row.conversationId || undefined,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
@@ -51,7 +53,7 @@ async function getNotifications(userId) {
 
 async function addNotification(notification) {
   let conversationId = null;
-  if (notification.senderId) {
+  if (notification.senderId && notification.conversationType !== "support") {
     conversationId = await createConversationForNotification({
       senderId: notification.senderId,
       jobId: notification.jobId,
@@ -74,6 +76,14 @@ async function addNotification(notification) {
       materialOrderId:
         notification.materialOrderId != null && String(notification.materialOrderId).trim() !== ""
           ? String(notification.materialOrderId).trim()
+          : null,
+      branchUserId:
+        notification.branchUserId != null && String(notification.branchUserId).trim() !== ""
+          ? String(notification.branchUserId).trim()
+          : null,
+      supportTargetUserId:
+        notification.supportTargetUserId != null && String(notification.supportTargetUserId).trim() !== ""
+          ? String(notification.supportTargetUserId).trim()
           : null,
       conversationId,
     },

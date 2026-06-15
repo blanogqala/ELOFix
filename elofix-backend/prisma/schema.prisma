@@ -457,6 +457,10 @@ model Notification {
   jobId           String?
   /** Store material-order id for supplier portal notifications (distinct from Job). */
   materialOrderId String?
+  /** Branch staff member who sent a support message (admin inbox threading). */
+  branchUserId    String?
+  /** User id of the support thread partner (admin echo of support_reply). */
+  supportTargetUserId String?
   conversationId  String?
   conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   notificationCategory NotificationCategory @default(SYSTEM)
@@ -465,6 +469,7 @@ model Notification {
   @@index([userId])
   @@index([userId, createdAt])
   @@index([senderId])
+  @@index([branchUserId])
   @@index([conversationId])
   @@index([notificationCategory])
 }

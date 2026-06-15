@@ -897,8 +897,8 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
 }
 
 /**
- * Admin-only: net provider revenue (provider share) for completed + paid labor jobs.
- * "Net revenue" here = sum(job.providerAmount).
+ * Admin-only: per-provider labor job stats for completed + paid jobs.
+ * netRevenue = sum(job.providerAmount); grossRevenue = sum(job.totalPrice).
  */
 async function listProviderNetRevenues() {
   const providers = await prisma.provider.findMany({
@@ -917,21 +917,44 @@ async function listProviderNetRevenues() {
       laborPaid: true,
       providerAmount: { not: null },
     },
-    _sum: { providerAmount: true },
+    _sum: {
+      providerAmount: true,
+      totalPrice: true,
+      commissionAmount: true,
+    },
+    _count: { _all: true },
   });
 
-  const revenueByProviderId = new Map();
+  const statsByProviderId = new Map();
   for (const row of grouped) {
     const providerId = row.providerId;
     if (!providerId) continue;
-    const sum = prismaDecimalToNumber(row._sum?.providerAmount);
-    revenueByProviderId.set(String(providerId), Number.isFinite(sum) ? sum : 0);
+    const netRevenue = prismaDecimalToNumber(row._sum?.providerAmount);
+    const grossFromTotal = prismaDecimalToNumber(row._sum?.totalPrice);
+    const platformCommission = prismaDecimalToNumber(row._sum?.commissionAmount);
+    const grossRevenue =
+      Number.isFinite(grossFromTotal) && grossFromTotal > 0
+        ? grossFromTotal
+        : (Number.isFinite(netRevenue) ? netRevenue : 0) +
+          (Number.isFinite(platformCommission) ? platformCommission : 0);
+    statsByProviderId.set(String(providerId), {
+      netRevenue: Number.isFinite(netRevenue) ? netRevenue : 0,
+      grossRevenue: Number.isFinite(grossRevenue) ? grossRevenue : 0,
+      platformCommission: Number.isFinite(platformCommission) ? platformCommission : 0,
+      completedJobCount: row._count?._all ?? 0,
+    });
   }
 
-  return ids.map((id) => ({
-    providerId: id,
-    netRevenue: revenueByProviderId.get(id) ?? 0,
-  }));
+  return ids.map((id) => {
+    const stats = statsByProviderId.get(id);
+    return {
+      providerId: id,
+      netRevenue: stats?.netRevenue ?? 0,
+      grossRevenue: stats?.grossRevenue ?? 0,
+      platformCommission: stats?.platformCommission ?? 0,
+      completedJobCount: stats?.completedJobCount ?? 0,
+    };
+  });
 }
 
 async function getProviderById(id) {

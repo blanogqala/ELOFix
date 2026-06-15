@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -72,6 +72,30 @@ export default function AdminSuppliers() {
       (s.linkedUserEmail || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const filteredAnalytics = useMemo(() => {
+    return filtered.reduce(
+      (acc, s) => {
+        const oa = s.orderAnalytics;
+        return {
+          totalSuppliers: acc.totalSuppliers + 1,
+          orderCount: acc.orderCount + (oa?.orderCount ?? 0),
+          totalRevenue: acc.totalRevenue + (oa?.totalRevenue ?? 0),
+          totalCommission: acc.totalCommission + (oa?.totalCommission ?? 0),
+          commissionRate: oa?.commissionRate ?? acc.commissionRate,
+        };
+      },
+      {
+        totalSuppliers: 0,
+        orderCount: 0,
+        totalRevenue: 0,
+        totalCommission: 0,
+        commissionRate: ga?.commissionRate ?? 0.07,
+      }
+    );
+  }, [filtered, ga?.commissionRate]);
+
+  const cardStats = isLoading ? ga : filteredAnalytics;
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -80,7 +104,7 @@ export default function AdminSuppliers() {
             <h1 className="text-2xl font-bold">Suppliers</h1>
             <p className="text-muted-foreground max-w-2xl">
               Platform-wide supplier performance from completed, paid material orders. Commission is{' '}
-              {Math.round((ga?.commissionRate ?? 0.07) * 100)}% of each order total.
+              {Math.round((cardStats?.commissionRate ?? ga?.commissionRate ?? 0.07) * 100)}% of each order total.
             </p>
           </div>
           <Button onClick={() => setAddOpen(true)}>
@@ -95,7 +119,9 @@ export default function AdminSuppliers() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total suppliers</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums">{ga?.totalSuppliers ?? suppliers.length}</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {cardStats?.totalSuppliers ?? suppliers.length}
+                  </p>
                 </div>
                 <div className="rounded-lg bg-primary/10 p-2">
                   <Store className="h-5 w-5 text-primary" />
@@ -109,7 +135,7 @@ export default function AdminSuppliers() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Supplier revenue</p>
                   <p className="mt-2 text-2xl font-semibold tabular-nums">
-                    {formatCurrency(ga?.totalRevenue ?? 0)}
+                    {formatCurrency(cardStats?.totalRevenue ?? 0)}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">Completed & paid orders</p>
                 </div>
@@ -125,10 +151,10 @@ export default function AdminSuppliers() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Platform commission</p>
                   <p className="mt-2 text-2xl font-semibold tabular-nums text-accent">
-                    {formatCurrency(ga?.totalCommission ?? 0)}
+                    {formatCurrency(cardStats?.totalCommission ?? 0)}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {Math.round((ga?.commissionRate ?? 0.07) * 100)}% of order totals
+                    {Math.round((cardStats?.commissionRate ?? ga?.commissionRate ?? 0.07) * 100)}% of order totals
                   </p>
                 </div>
                 <div className="rounded-lg bg-accent/10 p-2">
@@ -142,7 +168,7 @@ export default function AdminSuppliers() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Orders fulfilled</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums">{ga?.orderCount ?? 0}</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{cardStats?.orderCount ?? 0}</p>
                   <p className="mt-1 text-xs text-muted-foreground">Completed & paid</p>
                 </div>
                 <div className="rounded-lg bg-primary/10 p-2">

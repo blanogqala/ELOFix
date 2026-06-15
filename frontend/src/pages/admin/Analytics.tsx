@@ -93,7 +93,7 @@ export default function AdminAnalytics() {
         <div>
           <h1 className="text-2xl font-bold">Analytics</h1>
           <p className="text-muted-foreground">
-            {from} — {to} (UTC days). Revenue = paid labor + paid materials (by payment date).
+            {from} — {to} (UTC days). Revenue = gross customer payments (labor + materials, by payment date).
           </p>
         </div>
 
@@ -139,7 +139,7 @@ export default function AdminAnalytics() {
           </div>
         )}
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">Jobs created</p>
             <p className="text-2xl font-bold">{summary.totalJobs}</p>
@@ -147,6 +147,12 @@ export default function AdminAnalytics() {
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">Revenue (range)</p>
             <p className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</p>
+            <p className="text-xs text-muted-foreground mt-1">Gross customer payments</p>
+          </div>
+          <div className="card-elevated p-4">
+            <p className="text-sm text-muted-foreground">Total commission</p>
+            <p className="text-2xl font-bold text-accent">{formatCurrency(summary.totalCommission ?? 0)}</p>
+            <p className="text-xs text-muted-foreground mt-1">Labor (7%) + material orders (7%)</p>
           </div>
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">New provider signups</p>

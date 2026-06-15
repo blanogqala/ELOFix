@@ -273,6 +273,14 @@ export interface Product {
 export interface Supplier {
   id: string;
   name: string;
+  /** Per-supplier completed + paid order analytics (admin list). */
+  orderAnalytics?: {
+    orderCount: number;
+    totalRevenue: number;
+    totalCommission: number;
+    averageOrderValue: number;
+    commissionRate: number;
+  };
   /** Org-level branches (admin dashboard, supplier profile). Catalog lives per branch. */
   branches?: SupplierBranchProfile[];
   /** Brand + branch label from API when set (e.g. "Build It - Bellville"). */
@@ -798,6 +806,8 @@ export interface AppNotification {
   jobId?: string;
   /** Material order id (supplier portal + branch staff notifications). */
   materialOrderId?: string;
+  branchUserId?: string;
+  supportTargetUserId?: string;
   conversationId?: string;
   createdAt: string;
   senderId?: string;
