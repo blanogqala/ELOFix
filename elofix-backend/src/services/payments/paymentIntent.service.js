@@ -339,8 +339,23 @@ async function confirmPaymentReturn(intentId, userId, role) {
       raw: { source: "sandbox_return_url", intentId: intent.id },
     });
     if (webhookOut?.httpStatus && webhookOut.httpStatus >= 400) {
-      console.error("[confirmPaymentReturn] sandbox settle failed", webhookOut.message);
+      console.error("[confirmPaymentReturn] sandbox settle failed", {
+        intentId: intent.id,
+        message: webhookOut.message,
+      });
+    } else {
+      console.log("[confirmPaymentReturn] sandbox settle on return", {
+        intentId: intent.id,
+        merchantReference: intent.merchantReference,
+      });
     }
+  } else if (intent.state !== "PAID" && intent.provider === "PAYFAST") {
+    console.warn("[confirmPaymentReturn] waiting for ITN webhook", {
+      intentId: intent.id,
+      state: intent.state,
+      payfastMode: process.env.PAYFAST_MODE || "sandbox",
+      settleOnReturn: payfastSettleOnReturn(),
+    });
   } else if (intent.state === "PENDING" || intent.state === "PROCESSING") {
     await prisma.paymentIntent.update({
       where: { id: intent.id },

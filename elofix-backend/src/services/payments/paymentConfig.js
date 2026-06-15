@@ -35,22 +35,15 @@ function allowAdminPaymentOverride() {
 }
 
 /**
- * Sandbox: PayFast ITN may not reach the API (localhost, Render cold start, proxy IP).
- * When enabled, confirm-return settles after a successful checkout return_url visit.
- * Never applies when PAYFAST_MODE=live.
+ * Sandbox: PayFast ITN often cannot reach the API (localhost, Render cold start, proxy IP).
+ * Settle when the customer hits return_url after checkout. Live mode always uses ITN webhooks.
+ * Opt out with PAYFAST_SETTLE_ON_RETURN=false.
  */
 function payfastSettleOnReturn() {
   if (String(process.env.PAYFAST_SETTLE_ON_RETURN || "").toLowerCase() === "false") {
     return false;
   }
-  const sandbox = String(process.env.PAYFAST_MODE || "sandbox").toLowerCase() !== "live";
-  if (!sandbox) {
-    return false;
-  }
-  if (String(process.env.PAYFAST_SETTLE_ON_RETURN || "").toLowerCase() === "true") {
-    return true;
-  }
-  return process.env.NODE_ENV !== "production";
+  return String(process.env.PAYFAST_MODE || "sandbox").toLowerCase() !== "live";
 }
 
 module.exports = {

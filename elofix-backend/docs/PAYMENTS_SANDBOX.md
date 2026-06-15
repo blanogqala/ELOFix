@@ -17,8 +17,7 @@ Set `PAYMENT_BASE_URL=https://YOUR-NGROK-ID.ngrok-free.app` and register ITN URL
 - Sandbox: https://sandbox.payfast.co.za/
 - Test merchant ID: `10000100`, key: `46f0cd694581a` (PayFast docs)
 - Set `PAYFAST_MODE=sandbox`, `PAYFAST_SKIP_IP_CHECK=true` for local ITN without IP whitelist
-- **Localhost:** PayFast cannot POST ITN to `localhost` — with `NODE_ENV=development` and `PAYFAST_MODE=sandbox`, returning from PayFast to `/payments/return` auto-settles the intent (`PAYFAST_SETTLE_ON_RETURN`, default on). Disable with `PAYFAST_SETTLE_ON_RETURN=false` if using ngrok for real ITNs.
-- **Render / hosted sandbox:** Set `PAYFAST_SETTLE_ON_RETURN=true` so the return page confirms payment when ITN is delayed or blocked. Keep `PAYFAST_MODE=sandbox`; remove settle-on-return when switching to live ITNs.
+- **Localhost / Render sandbox:** With `PAYFAST_MODE=sandbox`, returning from PayFast to `/payments/return` auto-settles the intent (ITN often cannot reach localhost or Render). Disable with `PAYFAST_SETTLE_ON_RETURN=false` if you use ngrok or registered ITNs instead.
 - After payment, check `PaymentIntent.state = PAID` and job `laborPaid = true` for labor flows
 
 Replay ITN idempotency:
