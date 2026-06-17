@@ -25,6 +25,11 @@ async function putWithdrawalProfile(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function getWithdrawals(req, res) {
+  const data = await providerAccountService.listProviderWithdrawals(req.user.userId);
+  res.json({ success: true, ...data });
+}
+
 async function postWithdraw(req, res) {
   const data = await providerAccountService.requestWithdrawal(
     req.user.userId,
@@ -42,5 +47,6 @@ module.exports = {
   getEarningJob,
   getWithdrawalProfile,
   putWithdrawalProfile,
+  getWithdrawals,
   postWithdraw,
 };

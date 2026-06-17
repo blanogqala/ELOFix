@@ -204,6 +204,9 @@ async function upsertWithdrawalProfile(userId, body) {
 
 async function requestWithdrawal(userId, body, idempotencyKey, requestHash, route) {
   const provider = await requireProviderByUserId(userId);
+  if (provider.blocked) {
+    throw new AppError("Withdrawals are frozen while your account is blocked", 403);
+  }
   const amount = coerceMoney(body?.amount);
   const bank = await prisma.providerWithdrawalProfile.findUnique({
     where: { providerId: provider.id },
@@ -229,7 +232,7 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
           id: randomUUID(),
           providerId: provider.id,
           amount,
-          status: "pending",
+          status: "paid",
           idempotencyKey,
         },
       });
@@ -238,6 +241,7 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
         providerId: provider.id,
         amount,
         withdrawalRequestId: withdrawal.id,
+        debitStatus: "withdrawn",
       });
 
       await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
@@ -270,7 +274,7 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
   const row = txResult.withdrawal;
   await logAudit("withdrawal.request", {
     userId,
-    metadata: { withdrawalId: row.id, providerId: provider.id, amount },
+    metadata: { withdrawalId: row.id, providerId: provider.id, amount, autoPaid: true },
   });
 
   return {
@@ -312,11 +316,29 @@ async function getLedgerSummaryTx(tx, providerId) {
   return { pending, creditsAvailable, withdrawn, reservedPending, available };
 }
 
+async function listProviderWithdrawals(userId) {
+  const provider = await requireProviderByUserId(userId);
+  const rows = await prisma.withdrawalRequest.findMany({
+    where: { providerId: provider.id },
+    orderBy: { createdAt: "desc" },
+  });
+  return {
+    withdrawals: rows.map((w) => ({
+      id: w.id,
+      amount: Number(w.amount),
+      status: w.status,
+      createdAt: w.createdAt instanceof Date ? w.createdAt.toISOString() : String(w.createdAt),
+    })),
+  };
+}
+
 module.exports = {
   getProviderEarnings,
   getProviderEarningJob,
   getProviderBalance,
+  getLedgerSummary,
   getWithdrawalProfile,
   upsertWithdrawalProfile,
+  listProviderWithdrawals,
   requestWithdrawal,
 };

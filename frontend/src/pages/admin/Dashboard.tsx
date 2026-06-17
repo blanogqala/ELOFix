@@ -21,8 +21,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
-import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
+import { countAdminJobsByStatus, isAdminJobWorkflowCompleted } from '@/lib/adminJobStatus';
 import { getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
 
 export default function AdminDashboard() {
@@ -70,22 +70,23 @@ export default function AdminDashboard() {
     }
   };
 
+  const jobBuckets = countAdminJobsByStatus(jobs);
   const stats = {
-    totalJobs: jobs.length,
-    pendingJobs: jobs.filter(j => j.status === 'PENDING').length,
-    activeJobs: jobs.filter(j => isActiveWorkflowStatus(j.status)).length,
-    completedJobs: jobs.filter(j => j.status === 'COMPLETED').length,
+    totalJobs: jobBuckets.total,
+    pendingJobs: jobBuckets.open,
+    activeJobs: jobBuckets.active,
+    completedJobs: jobBuckets.completed,
     totalProviders: providers.length,
     pendingProviders: pendingProviders.length,
     totalRevenue: jobs
-      .filter((j) => j.status === 'COMPLETED')
+      .filter((j) => isAdminJobWorkflowCompleted(j))
       .reduce((sum, j) => sum + getAdminJobDisplayTotal(j), 0),
     totalCommissionEarned,
   };
 
   const getStatusBadge = (job: Job) => (
-    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
-      {getJobDisplayStatusLabel(job)}
+    <span className={cn('status-badge', getUserStatusBadgeClass(job.status))}>
+      {getStandardizedStatusLabel(job.status)}
     </span>
   );
 
@@ -107,7 +108,7 @@ export default function AdminDashboard() {
       time: new Date(p.createdAt).toLocaleDateString(),
       color: 'text-success',
     })),
-    ...jobs.filter(j => j.status === 'COMPLETED').slice(0, 2).map(j => ({
+    ...jobs.filter(j => isAdminJobWorkflowCompleted(j)).slice(0, 2).map(j => ({
       id: `pay-${j.id}`,
       icon: CreditCard,
       title: `Payment completed: ${formatCurrency(getAdminJobDisplayTotal(j))}`,

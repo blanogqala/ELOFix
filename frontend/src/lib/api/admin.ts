@@ -69,6 +69,30 @@ export async function getAdminProviderRevenueSummary(): Promise<AdminProviderRev
   return data;
 }
 
+export interface AdminProviderAnalytics {
+  jobCounts: {
+    total: number;
+    completed: number;
+    active: number;
+    pending: number;
+    cancelled: number;
+  };
+  financial: {
+    totalEarnings: number;
+    releasedByPlatform: number;
+    availableToWithdraw: number;
+    remainingInEscrow: number;
+  };
+}
+
+export async function getAdminProviderAnalytics(userId: string): Promise<AdminProviderAnalytics> {
+  const { data } = await apiClient.get<{ success: boolean; analytics: AdminProviderAnalytics }>(
+    `/admin/providers/${userId}/analytics`,
+  );
+  if (!data?.analytics) throw new Error('Failed to load provider analytics');
+  return data.analytics;
+}
+
 /** Material-order analytics: completed + paid only; commission = commissionRate × totalRevenue. */
 export interface AdminSupplierOrderAnalytics {
   orderCount: number;

@@ -59,6 +59,13 @@ export interface ProviderBalanceSnapshot {
   withdrawn: number;
 }
 
+export interface ProviderWithdrawalRow {
+  id: string;
+  amount: number;
+  status: string;
+  createdAt: string;
+}
+
 export async function getProviderBalance(): Promise<{ success: boolean } & ProviderBalanceSnapshot> {
   const { data } = await apiClient.get<{ success: boolean } & ProviderBalanceSnapshot>('/provider/balance');
   return data;
@@ -97,5 +104,15 @@ export async function requestWithdrawal(amount: number): Promise<{
   withdrawal: { id: string; amount: number; status: string; createdAt: string };
 }> {
   const { data } = await apiClient.post('/provider/withdraw', { amount }, { headers: idempotencyHeaders() });
+  return data;
+}
+
+export async function getProviderWithdrawals(): Promise<{
+  success: boolean;
+  withdrawals: ProviderWithdrawalRow[];
+}> {
+  const { data } = await apiClient.get<{ success: boolean; withdrawals: ProviderWithdrawalRow[] }>(
+    '/provider/withdrawals'
+  );
   return data;
 }

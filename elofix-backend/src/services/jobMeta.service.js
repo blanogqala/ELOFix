@@ -141,10 +141,32 @@ async function getJobMeta(jobId) {
   return normalizeMeta(row?.meta);
 }
 
+/** Completed jobs must never surface a stale in-progress override. */
+function isTerminalJobState(meta, jobRow) {
+  const safe = normalizeMeta(meta);
+  if (String(jobRow?.status) === "COMPLETED") return true;
+  if (safe.completionConfirmedByUser === true) return true;
+  if (safe.statusOverride === "COMPLETED") return true;
+  return false;
+}
+
 function toFrontendStatus(dbStatus, meta) {
-  if (meta?.statusOverride) return meta.statusOverride;
+  const safe = normalizeMeta(meta);
+  if (String(dbStatus) === "COMPLETED" || safe.completionConfirmedByUser === true) {
+    return "COMPLETED";
+  }
+  if (safe.statusOverride) return safe.statusOverride;
   if (dbStatus === "ACCEPTED") return "ASSIGNED";
   return dbStatus;
+}
+
+function resolvePaymentSettlementStatus(job, safeMeta) {
+  const held = Number(safeMeta.escrow?.heldAmount) || 0;
+  const paymentReleased = typeof job.paymentReleased === "boolean" ? job.paymentReleased : false;
+  const isFullyReleased = typeof job.isFullyReleased === "boolean" ? job.isFullyReleased : false;
+  if (paymentReleased || isFullyReleased) return "released";
+  if (held > 0) return "held";
+  return "pending";
 }
 
 function enrichJob(job, meta) {
@@ -212,6 +234,7 @@ function enrichJob(job, meta) {
     rejectedByProviderUserId: safeMeta.rejectedByProviderUserId || null,
     progressStep: Number(safeMeta.progressStep) || 0,
     hasStarted: resolveJobHasStarted(meta, job),
+    paymentSettlementStatus: resolvePaymentSettlementStatus(job, safeMeta),
   };
 }
 
@@ -254,6 +277,8 @@ module.exports = {
   enrichJob,
   resolveJobHasStarted,
   toFrontendStatus,
+  isTerminalJobState,
+  resolvePaymentSettlementStatus,
   createNote,
   createChat,
   mapFrontendRole,

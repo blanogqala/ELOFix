@@ -9,6 +9,7 @@ const AppError = require("../utils/AppError");
 const supplierService = require("../services/supplier.service");
 const materialOrderService = require("../services/materialOrder.service");
 const adminCustomersService = require("../services/adminCustomers.service");
+const adminProviderService = require("../services/adminProvider.service");
 
 async function listProviders(req, res) {
   const providers = await providerService.listProviders({
@@ -21,6 +22,11 @@ async function listProviders(req, res) {
 async function listProviderNetRevenues(req, res) {
   const revenues = await providerService.listProviderNetRevenues();
   res.json({ success: true, revenues });
+}
+
+async function getProviderAnalytics(req, res) {
+  const analytics = await adminProviderService.getProviderAnalyticsForAdmin(req.params.userId);
+  res.json({ success: true, analytics });
 }
 
 async function listCustomers(req, res) {
@@ -117,7 +123,10 @@ async function rejectCategorySuggestion(req, res) {
 }
 
 async function listWithdrawals(req, res) {
-  const data = await withdrawalAdminService.listWithdrawals();
+  const data = await withdrawalAdminService.listWithdrawals({
+    search: req.query.search,
+    status: req.query.status,
+  });
   res.json({ success: true, ...data });
 }
 
@@ -286,6 +295,7 @@ async function listAllPlatformMaterialOrders(req, res) {
 module.exports = {
   listProviders,
   listProviderNetRevenues,
+  getProviderAnalytics,
   listCustomers,
   getCustomerById,
   blockCustomer,

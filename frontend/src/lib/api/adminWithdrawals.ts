@@ -10,8 +10,14 @@ export interface AdminWithdrawalRow {
   providerEmail?: string;
 }
 
-export async function listAdminWithdrawals(): Promise<{ success: boolean; withdrawals: AdminWithdrawalRow[] }> {
-  const { data } = await apiClient.get<{ success: boolean; withdrawals: AdminWithdrawalRow[] }>('/admin/withdrawals');
+export async function listAdminWithdrawals(params?: {
+  search?: string;
+  status?: string;
+}): Promise<{ success: boolean; withdrawals: AdminWithdrawalRow[] }> {
+  const { data } = await apiClient.get<{ success: boolean; withdrawals: AdminWithdrawalRow[] }>(
+    '/admin/withdrawals',
+    { params: params ?? {} }
+  );
   return data;
 }
 

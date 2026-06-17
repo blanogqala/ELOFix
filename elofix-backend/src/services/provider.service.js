@@ -2,6 +2,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const notificationEvents = require("./notificationEvents.service");
 const { randomUUID } = require("crypto");
+const { countJobsByStatus } = require("../utils/jobStatusCounts.util");
 const {
   toApiFileUrl,
   registerUploadedFile,
@@ -839,14 +840,25 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
 
   const laborByProviderUserId = await aggregateCompletedLaborByCategoryForProviders(profiles.map((p) => p.userId));
 
+  const providerUserIds = profiles.map((p) => p.userId);
+  const providerJobs =
+    providerUserIds.length > 0
+      ? await prisma.job.findMany({
+          where: { providerId: { in: providerUserIds } },
+          select: { providerId: true, status: true, meta: true },
+        })
+      : [];
+  const jobsByProviderUserId = new Map();
+  providerJobs.forEach((job) => {
+    const key = String(job.providerId);
+    if (!jobsByProviderUserId.has(key)) jobsByProviderUserId.set(key, []);
+    jobsByProviderUserId.get(key).push(job);
+  });
+
   const providers = await Promise.all(
     profiles.map(async (profile) => {
-      const completedJobs = await prisma.job.count({
-        where: {
-          providerId: profile.userId,
-          status: "COMPLETED",
-        },
-      });
+      const providerJobRows = jobsByProviderUserId.get(String(profile.userId)) || [];
+      const completedJobs = countJobsByStatus(providerJobRows).completed;
       const pendingSuggestionsCount = forAdmin
         ? await prisma.categorySuggestion.count({
             where: {

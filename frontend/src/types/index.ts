@@ -711,6 +711,8 @@ export interface Job {
   releasedAmount?: number;
   /** Provider share not yet released */
   remainingAmount?: number;
+  /** Admin payment settlement bucket from API */
+  paymentSettlementStatus?: 'released' | 'held' | 'pending';
 }
 
 export interface ServiceRequest {

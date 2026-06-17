@@ -13,6 +13,7 @@ const {
   createDefaultJobMeta,
   normalizeMeta,
   toFrontendStatus,
+  isTerminalJobState,
 } = require("./jobMeta.service");
 const earningService = require("./earning.service");
 const paymentService = require("./payment.service");
@@ -827,12 +828,20 @@ function mapFrontendStatusToDb(status) {
 
 /** Apply statusOverride and bump monotonic progressStep from job row state. */
 function withStatusAndProgress(meta, statusOverride, jobRow) {
+  if (isTerminalJobState(meta, jobRow)) {
+    const next = { ...meta };
+    next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, jobRow);
+    return next;
+  }
   const next = { ...meta, statusOverride };
   next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, jobRow);
   return next;
 }
 
 function resolveMaterialPaymentStatusOverride(meta, jobRow, allPaid) {
+  if (isTerminalJobState(meta, jobRow)) {
+    return "COMPLETED";
+  }
   const laborPaid = Boolean(jobRow.laborPaid) || Boolean(meta.laborPaid);
   if (allPaid && laborPaid) {
     return "IN_PROGRESS";
@@ -2456,10 +2465,12 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
       };
       leg.invoiceId = leg.invoiceId || `INV-MAT-${String(jobId).slice(-6)}-${Date.now()}`;
       const allPaidLegacy = jobProgressUtil.allStoreMaterialOrdersPaid(m);
-      const nextOverride = resolveMaterialPaymentStatusOverride(m, job, allPaidLegacy);
-      m.statusOverride = nextOverride;
-      if (nextOverride === "IN_PROGRESS") {
-        m.hasStarted = true;
+      if (!isTerminalJobState(m, job)) {
+        const nextOverride = resolveMaterialPaymentStatusOverride(m, job, allPaidLegacy);
+        m.statusOverride = nextOverride;
+        if (nextOverride === "IN_PROGRESS") {
+          m.hasStarted = true;
+        }
       }
       m.progressStep = jobProgressUtil.nextMonotonicProgressStep(m, job);
       return m;
@@ -2570,10 +2581,12 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
     list[oIdx] = nextOrder;
     m.storeOrders = list;
     const allPaid = jobProgressUtil.allStoreMaterialOrdersPaid(m);
-    const nextOverride = resolveMaterialPaymentStatusOverride(m, job, allPaid);
-    m.statusOverride = nextOverride;
-    if (nextOverride === "IN_PROGRESS") {
-      m.hasStarted = true;
+    if (!isTerminalJobState(m, job)) {
+      const nextOverride = resolveMaterialPaymentStatusOverride(m, job, allPaid);
+      m.statusOverride = nextOverride;
+      if (nextOverride === "IN_PROGRESS") {
+        m.hasStarted = true;
+      }
     }
     m.progressStep = jobProgressUtil.nextMonotonicProgressStep(m, job);
     return m;

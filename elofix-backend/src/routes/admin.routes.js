@@ -23,6 +23,7 @@ router.patch("/customers/:userId/unblock", asyncHandler(adminController.unblockC
 router.patch("/customers/:userId/delete", asyncHandler(adminController.deleteCustomer));
 router.get("/providers", asyncHandler(adminController.listProviders));
 router.get("/providers/revenue-summary", asyncHandler(adminController.listProviderNetRevenues));
+router.get("/providers/:userId/analytics", asyncHandler(adminController.getProviderAnalytics));
 router.patch(
   "/providers/:userId/documents/:docType/approve",
   asyncHandler(adminController.approveProviderDocument)

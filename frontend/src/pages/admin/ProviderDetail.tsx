@@ -17,7 +17,9 @@ import {
   rejectProviderDocument,
 } from '@/lib/api/providers';
 import { getCategories } from '@/lib/api/categories';
+import { getAdminProviderAnalytics, type AdminProviderAnalytics } from '@/lib/api/admin';
 import { Category, Provider } from '@/types';
+import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   ArrowLeft,
@@ -154,6 +156,8 @@ export default function AdminProviderDetail() {
   const { from, jobId } = (location.state as { from?: string; jobId?: string }) || {};
   const { toast } = useToast();
   const [provider, setProvider] = useState<Provider | null>(null);
+  const [analytics, setAnalytics] = useState<AdminProviderAnalytics | null>(null);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
@@ -186,12 +190,32 @@ export default function AdminProviderDetail() {
     }
   }, [id, toast]);
 
+  const loadAnalytics = useCallback(async () => {
+    if (!id) return;
+    setIsAnalyticsLoading(true);
+    try {
+      const data = await getAdminProviderAnalytics(id);
+      setAnalytics(data);
+    } catch (error) {
+      console.error('Failed to load provider analytics:', error);
+      setAnalytics(null);
+      toast({
+        title: 'Analytics unavailable',
+        description: error instanceof Error ? error.message : 'Could not load provider analytics.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsAnalyticsLoading(false);
+    }
+  }, [id, toast]);
+
   useEffect(() => {
     if (id) {
       void loadProvider();
+      void loadAnalytics();
     }
     void loadCategories();
-  }, [id, loadCategories, loadProvider]);
+  }, [id, loadCategories, loadProvider, loadAnalytics]);
 
   const getCategoryNames = (skills: string[]) =>
     skills
@@ -290,7 +314,7 @@ export default function AdminProviderDetail() {
     try {
       setIsMutating(true);
       await blockProvider(provider.id);
-      toast({ title: 'Provider blocked', description: 'The provider cannot log in or accept jobs.' });
+      toast({ title: 'Provider blocked', description: 'The provider cannot accept jobs or request withdrawals.' });
       setBlockModalOpen(false);
       await loadProvider();
     } catch (error) {
@@ -306,7 +330,7 @@ export default function AdminProviderDetail() {
     try {
       setIsMutating(true);
       await unblockProvider(provider.id);
-      toast({ title: 'Provider unblocked', description: 'The provider can now access the platform again.' });
+      toast({ title: 'Provider unblocked', description: 'The provider can access the platform and withdraw again.' });
       await loadProvider();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to unblock provider.';
@@ -488,6 +512,78 @@ export default function AdminProviderDetail() {
                   <Trash2 className="mr-1 h-3 w-3" />
                   Delete
                 </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6 border-b border-border px-6 py-6">
+            <div>
+              <h2 className="mb-4 text-lg font-semibold">Job activity</h2>
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                {[
+                  { label: 'Completed', value: analytics?.jobCounts.completed },
+                  { label: 'Pending', value: analytics?.jobCounts.pending },
+                  { label: 'Active', value: analytics?.jobCounts.active },
+                  { label: 'Cancelled', value: analytics?.jobCounts.cancelled },
+                ].map((stat) => (
+                  <div key={stat.label} className="card-elevated p-4">
+                    <p className="text-xs text-muted-foreground">{stat.label}</p>
+                    <p className="mt-1 font-semibold tabular-nums">
+                      {isAnalyticsLoading ? '—' : (stat.value ?? 0)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="mb-1 text-lg font-semibold">Earnings &amp; payouts</h2>
+              <p className="mb-4 text-sm text-muted-foreground">
+                Amounts match the provider Earnings page (ZAR).
+              </p>
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                {[
+                  {
+                    label: 'Total earnings',
+                    value: isAnalyticsLoading
+                      ? '—'
+                      : formatCurrency(analytics?.financial.totalEarnings ?? 0),
+                    isMoney: true,
+                  },
+                  {
+                    label: 'Released by platform',
+                    value: isAnalyticsLoading
+                      ? '—'
+                      : formatCurrency(analytics?.financial.releasedByPlatform ?? 0),
+                    isMoney: true,
+                  },
+                  {
+                    label: 'Available to withdraw',
+                    value: isAnalyticsLoading
+                      ? '—'
+                      : formatCurrency(analytics?.financial.availableToWithdraw ?? 0),
+                    isMoney: true,
+                  },
+                  {
+                    label: 'Remaining in escrow',
+                    value: isAnalyticsLoading
+                      ? '—'
+                      : formatCurrency(analytics?.financial.remainingInEscrow ?? 0),
+                    isMoney: true,
+                  },
+                ].map((stat) => (
+                  <div key={stat.label} className="card-elevated p-4">
+                    <p className="text-xs text-muted-foreground">{stat.label}</p>
+                    <p
+                      className={cn(
+                        'mt-1 font-semibold tabular-nums',
+                        stat.isMoney && 'text-lg',
+                      )}
+                    >
+                      {stat.value}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

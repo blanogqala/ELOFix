@@ -9,11 +9,8 @@ import { Category, Job } from '@/types';
 import { Search, Briefcase, ArrowRight, X, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
-import {
-  jobMatchesAdminStatusFilter,
-  ADMIN_JOB_STATUS_FILTER_LABELS,
-} from '@/lib/jobStatusMapping';
+import { getStandardizedStatusLabel, getUserStatusBadgeClass, jobMatchesAdminStatusFilter, ADMIN_JOB_STATUS_FILTER_LABELS } from '@/lib/jobStatusMapping';
+import { countAdminJobsByStatus } from '@/lib/adminJobStatus';
 import {
   ADMIN_FILTER_SELECT_CLASS,
   collectJobCities,
@@ -97,19 +94,20 @@ export default function AdminJobs() {
     return result;
   }, [jobs, searchQuery, statusFilter, categoryFilter, cityFilter, sortBy]);
 
-  const stats = useMemo(
-    () => ({
-      totalJobs: filteredJobs.length,
-      completedJobs: filteredJobs.filter((j) => j.status === 'COMPLETED').length,
-      cancelledJobs: filteredJobs.filter((j) => j.status === 'CANCELLED').length,
-      pendingJobs: filteredJobs.filter((j) => j.status === 'PENDING').length,
-    }),
-    [filteredJobs],
-  );
+  const stats = useMemo(() => {
+    const buckets = countAdminJobsByStatus(jobs);
+    return {
+      totalJobs: buckets.total,
+      completedJobs: buckets.completed,
+      cancelledJobs: buckets.cancelled,
+      pendingJobs: buckets.open,
+      activeJobs: buckets.active,
+    };
+  }, [jobs]);
 
   const getStatusBadge = (job: Job) => (
-    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
-      {getJobDisplayStatusLabel(job)}
+    <span className={cn('status-badge', getUserStatusBadgeClass(job.status))}>
+      {getStandardizedStatusLabel(job.status)}
     </span>
   );
 

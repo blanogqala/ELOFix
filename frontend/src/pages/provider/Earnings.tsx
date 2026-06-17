@@ -10,8 +10,10 @@ import {
   getWithdrawalProfile,
   saveWithdrawalProfile,
   requestWithdrawal,
+  getProviderWithdrawals,
   type ProviderEarningJobRow,
   type ProviderBalanceSnapshot,
+  type ProviderWithdrawalRow,
 } from '@/lib/api/providerAccount';
 import {
   getJobReleasedAmount,
@@ -34,6 +36,7 @@ import {
   Briefcase,
   ArrowLeft,
   ExternalLink,
+  Wallet,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -67,6 +70,8 @@ export default function ProviderEarnings() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
   const [bankMask, setBankMask] = useState<{ account: string; branch: string } | null>(null);
+  const [withdrawals, setWithdrawals] = useState<ProviderWithdrawalRow[]>([]);
+  const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
 
   const loadEarnings = useCallback(async () => {
     if (!user) return;
@@ -116,12 +121,31 @@ export default function ProviderEarnings() {
     }
   }, [user, toast]);
 
+  const loadWithdrawals = useCallback(async () => {
+    if (!user) return;
+    setWithdrawalsLoading(true);
+    try {
+      const { withdrawals: rows } = await getProviderWithdrawals();
+      setWithdrawals(rows);
+    } catch (error) {
+      console.error(error);
+      toast({
+        title: 'Could not load withdrawal history',
+        description: error instanceof Error ? error.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setWithdrawalsLoading(false);
+    }
+  }, [user, toast]);
+
   useEffect(() => {
     if (user) {
       void loadEarnings();
       void loadProfile();
+      void loadWithdrawals();
     }
-  }, [user, loadEarnings, loadProfile]);
+  }, [user, loadEarnings, loadProfile, loadWithdrawals]);
 
   useEffect(() => {
     setSelectedJob((prev) => {
@@ -226,7 +250,7 @@ export default function ProviderEarnings() {
       await requestWithdrawal(n);
       toast({ title: 'Withdrawal requested', description: 'Your request is pending processing.' });
       setWithdrawAmount('');
-      await Promise.all([loadEarnings(), loadProfile()]);
+      await Promise.all([loadEarnings(), loadProfile(), loadWithdrawals()]);
     } catch (error) {
       toast({
         title: 'Withdrawal failed',
@@ -250,6 +274,14 @@ export default function ProviderEarnings() {
   const panelPercent = panelProgress * 100;
   const panelPercentRounded = Math.round(panelPercent);
 
+  const withdrawalStatusClass = (s: string) => {
+    const v = s.toLowerCase();
+    if (v === 'paid') return 'text-success';
+    if (v === 'failed') return 'text-destructive';
+    if (v === 'approved') return 'text-primary';
+    return 'text-muted-foreground';
+  };
+
   return (
     <DashboardLayout>
       <div className="min-w-0 space-y-6 md:space-y-8 animate-fade-in">
@@ -260,7 +292,7 @@ export default function ProviderEarnings() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
@@ -285,7 +317,7 @@ export default function ProviderEarnings() {
               </div>
             </div>
           </div>
-          <div className="card-elevated p-4 sm:p-6 sm:col-span-2 lg:col-span-1">
+          <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
                 <CheckCircle className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
@@ -295,6 +327,17 @@ export default function ProviderEarnings() {
                   {formatCurrency(amountReleasedToYou)}
                 </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Amount released to you</p>
+              </div>
+            </div>
+          </div>
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
+                <Wallet className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl tabular-nums">{formatCurrency(available)}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Available to withdraw</p>
               </div>
             </div>
           </div>
@@ -310,9 +353,10 @@ export default function ProviderEarnings() {
             if (v !== 'jobs') setSelectedJob(null);
           }}
         >
-          <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsList className="grid w-full max-w-lg grid-cols-3">
             <TabsTrigger value="jobs">Jobs</TabsTrigger>
             <TabsTrigger value="withdraw">Withdrawal</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="jobs" className="mt-4 space-y-4">
@@ -617,11 +661,61 @@ export default function ProviderEarnings() {
                 </Button>
               </div>
               {withdrawExceeds && (
-                <p className="text-xs text-destructive">Amount exceeds available balance ({formatCurrency(available)}).</p>
+                <p className="text-xs text-destructive">
+                  Amount exceeds available balance ({formatCurrency(available)}).
+                </p>
               )}
               <p className="text-xs text-muted-foreground">
                 Withdrawals are created as pending requests and processed according to platform policy.
               </p>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-4">
+            <div className="card-elevated overflow-hidden">
+              <div className="border-b border-border p-4 sm:p-6">
+                <h2 className="text-lg font-semibold">Withdrawal history</h2>
+                <p className="text-sm text-muted-foreground">
+                  Past payout requests and their current status
+                </p>
+              </div>
+              {withdrawalsLoading ? (
+                <div className="flex items-center justify-center gap-2 p-10 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Loading…
+                </div>
+              ) : withdrawals.length > 0 ? (
+                <ul className="divide-y divide-border p-4 sm:p-6 space-y-0">
+                  {withdrawals.map((w) => (
+                    <li key={w.id} className="card-elevated p-4 first:mt-0 mt-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-lg font-semibold tabular-nums">{formatCurrency(w.amount)}</p>
+                        <p className={cn('text-sm font-semibold capitalize shrink-0', withdrawalStatusClass(w.status))}>
+                          {w.status}
+                        </p>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {new Date(w.createdAt).toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Ref: {w.id.slice(0, 8)}…
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex flex-col items-center gap-3 p-10 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                    <Wallet className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">No withdrawals yet</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Requests you submit on the Withdrawal tab will appear here.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </TabsContent>
         </Tabs>

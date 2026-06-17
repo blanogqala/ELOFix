@@ -19,8 +19,27 @@ function toWithdrawalDto(row) {
   };
 }
 
-async function listWithdrawals() {
+async function listWithdrawals(filters = {}) {
+  const search = String(filters.search || "").trim();
+  const statusFilter = String(filters.status || "").trim().toLowerCase();
+
+  const where = {};
+  if (statusFilter && statusFilter !== "all") {
+    where.status = statusFilter;
+  }
+  if (search) {
+    where.provider = {
+      user: {
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+        ],
+      },
+    };
+  }
+
   const rows = await prisma.withdrawalRequest.findMany({
+    where,
     orderBy: { createdAt: "desc" },
     include: {
       provider: {

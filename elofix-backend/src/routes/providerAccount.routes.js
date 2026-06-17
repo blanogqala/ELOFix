@@ -14,6 +14,7 @@ router.get("/earnings", asyncHandler(providerAccountController.getEarnings));
 router.get("/earnings/:jobId", asyncHandler(providerAccountController.getEarningJob));
 router.get("/withdrawal-profile", asyncHandler(providerAccountController.getWithdrawalProfile));
 router.put("/withdrawal-profile", asyncHandler(providerAccountController.putWithdrawalProfile));
+router.get("/withdrawals", asyncHandler(providerAccountController.getWithdrawals));
 router.post(
   "/withdraw",
   financialIdem.attachFinancialRequestFingerprint,

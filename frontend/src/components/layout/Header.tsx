@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Menu, User, LogOut, Settings, LayoutDashboard, X } from 'lucide-react';
+import { Menu, User, LogOut, UserCircle, LayoutDashboard, X } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -43,6 +43,20 @@ export function Header() {
         return '/supplier/dashboard';
       default:
         return '/user/dashboard';
+    }
+  };
+
+  const getProfilePath = () => {
+    if (!user) return '/';
+    switch (user.role) {
+      case 'provider':
+        return '/provider/profile';
+      case 'supplier':
+        return '/supplier/profile';
+      case 'branch_staff':
+        return '/supplier/branch-profile';
+      default:
+        return '/user/profile';
     }
   };
 
@@ -81,10 +95,12 @@ export function Header() {
                   <LayoutDashboard className="mr-2 h-4 w-4" />
                   Dashboard
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => navigate(`/${user?.role}/profile`)}>
-                  <Settings className="mr-2 h-4 w-4" />
-                  Settings
-                </DropdownMenuItem>
+                {user?.role !== 'admin' && (
+                  <DropdownMenuItem onClick={() => navigate(getProfilePath())}>
+                    <UserCircle className="mr-2 h-4 w-4" />
+                    Profile
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="text-destructive">
                   <LogOut className="mr-2 h-4 w-4" />

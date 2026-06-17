@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
 import { buildAdminJobTransactionHistory } from '@/lib/adminJobFinancial';
+import { getAdminPaymentStatusDisplay } from '@/lib/adminJobStatus';
 import {
   Dialog,
   DialogContent,
@@ -66,11 +67,7 @@ export default function AdminPaymentDetail() {
 
   const getPaymentStatus = () => {
     if (!job) return { label: 'Unknown', class: 'text-muted-foreground' };
-    const held = job.escrow.heldAmount || 0;
-    const released = job.escrow.releasedAmount || 0;
-    if (held > 0 && released === 0) return { label: 'Payment Held', class: 'text-warning' };
-    if (held > 0 && released > 0) return { label: 'Partially Paid', class: 'text-primary' };
-    return { label: 'Fully Paid', class: 'text-success' };
+    return getAdminPaymentStatusDisplay(job);
   };
 
   const getMaxReleasable = () => {

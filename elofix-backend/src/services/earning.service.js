@@ -109,13 +109,19 @@ async function createLaborCreditPending(tx, { providerId, jobId, amount, idempot
 }
 
 /**
- * Reserve funds for a withdrawal request (lifecycle: pending until mark-paid).
+ * Reserve funds for a withdrawal request.
+ * @param {object} opts
+ * @param {"pending"|"withdrawn"} [opts.debitStatus="pending"] — pending until admin mark-paid; withdrawn when auto-completed
  */
-async function createPendingWithdrawalDebit(tx, { providerId, amount, withdrawalRequestId }) {
+async function createPendingWithdrawalDebit(
+  tx,
+  { providerId, amount, withdrawalRequestId, debitStatus = "pending" }
+) {
   const a = Number(amount) || 0;
   if (a <= 0) {
     throw new AppError("Withdrawal amount must be positive", 400);
   }
+  const status = debitStatus === "withdrawn" ? "withdrawn" : "pending";
   await tx.earning.create({
     data: {
       id: randomUUID(),
@@ -123,7 +129,7 @@ async function createPendingWithdrawalDebit(tx, { providerId, amount, withdrawal
       jobId: null,
       amount: a,
       type: "debit",
-      status: "pending",
+      status,
       withdrawalRequestId,
     },
   });

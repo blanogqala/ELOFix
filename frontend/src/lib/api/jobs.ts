@@ -91,6 +91,7 @@ interface BackendJob {
   /** Job-level amount released to provider (escrow v2) */
   releasedAmount?: number | null;
   remainingAmount?: number | null;
+  paymentSettlementStatus?: 'released' | 'held' | 'pending';
 }
 
 interface BackendJobsResponse {
@@ -220,6 +221,12 @@ function toFrontendJob(job: BackendJob): Job {
     providerAmount: numOrUndef(job.providerAmount),
     releasedAmount: numOrUndef(job.releasedAmount),
     remainingAmount: numOrUndef(job.remainingAmount),
+    paymentSettlementStatus:
+      job.paymentSettlementStatus === 'released' ||
+      job.paymentSettlementStatus === 'held' ||
+      job.paymentSettlementStatus === 'pending'
+        ? job.paymentSettlementStatus
+        : undefined,
   };
 }
 

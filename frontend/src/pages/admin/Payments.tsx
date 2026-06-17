@@ -10,6 +10,7 @@ import { DollarSign, Clock, CheckCircle, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getAdminEscrowV2Breakdown, getAdminJobLaborPaid } from '@/lib/adminJobFinancial';
+import { getAdminPaymentStatusDisplay } from '@/lib/adminJobStatus';
 import { safeMoney } from '@/lib/jobMoney';
 import {
   ADMIN_FILTER_SELECT_CLASS,
@@ -103,11 +104,7 @@ export default function AdminPayments() {
   const totalProviderShare = filteredJobs.reduce((sum, j) => sum + safeMoney(j.providerAmount), 0);
   const totalReleasedToProviders = filteredJobs.reduce((sum, j) => sum + safeMoney(j.releasedAmount), 0);
 
-  const getPaymentStatus = (job: Job) => {
-    if (job.status === 'COMPLETED') return { label: 'Released', class: 'text-success' };
-    if (job.escrow.enabled && job.escrow.heldAmount > 0) return { label: 'Held', class: 'text-warning' };
-    return { label: 'Pending', class: 'text-muted-foreground' };
-  };
+  const getPaymentStatus = (job: Job) => getAdminPaymentStatusDisplay(job);
 
   return (
     <DashboardLayout>

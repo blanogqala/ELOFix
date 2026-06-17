@@ -2,17 +2,7 @@ const prisma = require("../config/prisma");
 const jobMeta = require("./jobMeta.service");
 const AppError = require("../utils/AppError");
 const { paidAmountFromJob, roundMoney } = require("../utils/jobPaidAmount.util");
-
-const ACTIVE_STATUSES = new Set([
-  "ASSIGNED",
-  "INSPECTED",
-  "SERVICE_PRICE_SUBMITTED",
-  "SERVICE_PAID",
-  "MATERIALS_SUBMITTED",
-  "MATERIALS_PAID",
-  "IN_PROGRESS",
-  "AWAITING_CONFIRMATION",
-]);
+const { effectiveFrontendStatus, countJobsByStatus } = require("../utils/jobStatusCounts.util");
 
 function cityFromJobRow(job) {
   const loc = job.locationDetails;
@@ -23,31 +13,6 @@ function cityFromJobRow(job) {
   const l = job.location;
   if (l && String(l).trim() && String(l).trim() !== "UNKNOWN") return String(l).trim();
   return null;
-}
-
-function effectiveFrontendStatus(jobRow) {
-  const meta = jobMeta.normalizeMeta(jobRow.meta);
-  return jobMeta.toFrontendStatus(jobRow.status, meta);
-}
-
-function countJobsByStatus(jobs) {
-  const counts = {
-    total: jobs.length,
-    completed: 0,
-    active: 0,
-    open: 0,
-    rejected: 0,
-    cancelled: 0,
-  };
-  jobs.forEach((job) => {
-    const st = effectiveFrontendStatus(job);
-    if (st === "COMPLETED") counts.completed += 1;
-    else if (st === "REJECTED") counts.rejected += 1;
-    else if (st === "CANCELLED") counts.cancelled += 1;
-    else if (ACTIVE_STATUSES.has(st)) counts.active += 1;
-    else if (st === "PENDING") counts.open += 1;
-  });
-  return counts;
 }
 
 function latestCityFromJobs(jobs) {
