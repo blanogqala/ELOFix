@@ -281,10 +281,9 @@ export function OrderDetailsView({
         : 'supplier_delivery');
 
   const fulfillmentU = String(order.fulfillmentStatus || '').toUpperCase();
-  const fulfillmentAllowsLiveMap =
-    fulfillmentU === 'OUT_FOR_DELIVERY' &&
-    canonical !== 'pickup' &&
-    !['FAILED', 'CANCELLED', 'DELAYED'].includes(fulfillmentU);
+  const liveTrackingFulfillment =
+    (fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED') &&
+    !['FAILED', 'CANCELLED'].includes(fulfillmentU);
 
   const mapLatRaw = mapDisplayLat ?? liveDriverLat ?? order.driverLocation?.lat ?? null;
   const mapLngRaw = mapDisplayLng ?? liveDriverLng ?? order.driverLocation?.lng ?? null;
@@ -335,7 +334,11 @@ export function OrderDetailsView({
     deliveryState === 'InProgress' || deliveryState === 'Delivered' || deliveryState === 'OnTheWay';
   const materialsOk = order.materialsPaid !== false;
   const showUnified = !noDeliverySelected && materialsOk;
-  const unifiedMapActive = Boolean(showTracking && fulfillmentAllowsLiveMap);
+  const unifiedMapActive = Boolean(
+    unifiedMode !== 'self_pickup' &&
+      liveTrackingFulfillment &&
+      order.activeTrackingId
+  );
   const cancellationReason = order.cancellationReason || undefined;
 
   const materialsSubtotal = order.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
@@ -645,9 +648,9 @@ export function OrderDetailsView({
           {showUnified && order.deliveryType !== 'SELF' ? (
             <>
               {unifiedMode !== 'self_pickup' &&
-              !['OUT_FOR_DELIVERY', 'COMPLETED', 'FAILED', 'CANCELLED', 'DELAYED'].includes(fulfillmentU) ? (
+              ['READY', 'PREPARING', 'ACCEPTED', 'PENDING'].includes(fulfillmentU) ? (
                 <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/25 px-3 py-2">
-                  Live map appears here once the supplier dispatches your order.
+                  Live map appears here once delivery tracking starts.
                 </p>
               ) : null}
               <UnifiedTrackingSection {...trackingSharedProps} section="delivery" />

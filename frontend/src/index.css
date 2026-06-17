@@ -339,6 +339,79 @@
     background-size: 48px 48px;
   }
 
+  .landing-cta-bg {
+    background-image: url('/final-cta-background.png');
+    background-size: cover;
+    background-position: center 45%;
+    background-repeat: no-repeat;
+    transform: scale(1.02);
+    filter: brightness(1.12) saturate(1.06);
+  }
+
+  .landing-cta-overlay {
+    background:
+      linear-gradient(
+        90deg,
+        hsl(213 80% 10% / 0.38) 0%,
+        hsl(213 75% 12% / 0.28) 20%,
+        hsl(213 78% 10% / 0.58) 50%,
+        hsl(213 75% 14% / 0.28) 80%,
+        hsl(213 80% 10% / 0.38) 100%
+      ),
+      linear-gradient(
+        180deg,
+        hsl(213 80% 8% / 0.22) 0%,
+        transparent 35%,
+        hsl(213 75% 10% / 0.42) 100%
+      ),
+      radial-gradient(ellipse 70% 55% at 50% 38%, hsl(33 100% 55% / 0.1), transparent 70%);
+  }
+
+  .landing-supplier-bg {
+    background-image: url('/supplier-partnership-background.png');
+    background-size: cover;
+    background-position: right center;
+    background-repeat: no-repeat;
+    transform: scale(1.02);
+    filter: brightness(1.12) saturate(1.06);
+  }
+
+  .landing-supplier-overlay--mobile {
+    background:
+      linear-gradient(
+        90deg,
+        hsl(213 80% 10% / 0.42) 0%,
+        hsl(213 75% 12% / 0.32) 25%,
+        hsl(213 78% 10% / 0.55) 55%,
+        hsl(213 75% 14% / 0.35) 100%
+      ),
+      linear-gradient(
+        180deg,
+        hsl(213 80% 8% / 0.25) 0%,
+        transparent 40%,
+        hsl(213 75% 10% / 0.45) 100%
+      ),
+      radial-gradient(ellipse 70% 55% at 30% 40%, hsl(33 100% 55% / 0.1), transparent 70%);
+  }
+
+  .landing-supplier-overlay--desktop {
+    background:
+      linear-gradient(
+        90deg,
+        hsl(213 80% 10% / 0.62) 0%,
+        hsl(213 75% 12% / 0.28) 30%,
+        hsl(213 78% 10% / 0.14) 65%,
+        transparent 100%
+      ),
+      linear-gradient(
+        180deg,
+        hsl(213 80% 8% / 0.18) 0%,
+        transparent 45%,
+        hsl(213 75% 10% / 0.28) 100%
+      ),
+      radial-gradient(ellipse 60% 50% at 75% 50%, hsl(33 100% 55% / 0.08), transparent 70%);
+  }
+
   .landing-reveal {
     opacity: 0;
     transform: translateY(24px);

@@ -1,6 +1,24 @@
+import howItWorksStep1 from '@/assets/how-it-works-step-1.png';
+import howItWorksStep2 from '@/assets/how-it-works-step-2.png';
+import howItWorksStep3 from '@/assets/how-it-works-step-3.png';
 import { cn } from '@/lib/utils';
 import { HOW_IT_WORKS_STEPS } from './landingData';
 import { LandingSection, SectionHeader } from './LandingSection';
+
+const STEP_IMAGES: Record<number, { src: string; alt: string }> = {
+  1: {
+    src: howItWorksStep1,
+    alt: 'Create a service request in the EloFix app with photos, measurements, and location',
+  },
+  2: {
+    src: howItWorksStep2,
+    alt: 'Compare quotes, supplier branches, and delivery options before confirming your choice',
+  },
+  3: {
+    src: howItWorksStep3,
+    alt: 'Pay securely with escrow protection until work is completed and approved',
+  },
+};
 
 export function HowItWorksSection() {
   return (
@@ -16,7 +34,6 @@ export function HowItWorksSection() {
 
         <div className="space-y-8 md:space-y-12">
           {HOW_IT_WORKS_STEPS.map((step, index) => {
-            const Icon = step.icon;
             const isEven = index % 2 === 1;
 
             return (
@@ -27,7 +44,7 @@ export function HowItWorksSection() {
                   isEven && 'md:[&>*:first-child]:order-2',
                 )}
               >
-                <div className={cn('md:text-left', isEven ? 'md:text-right' : '')}>
+                <div className={cn('md:text-left text-center', isEven ? 'md:text-right text-center' : '')}>
                   <div
                     className={cn(
                       'inline-flex items-center gap-3',
@@ -42,11 +59,13 @@ export function HowItWorksSection() {
                   <p className="mt-3 text-muted-foreground md:mt-4">{step.description}</p>
                 </div>
 
-                <div className={cn('flex', isEven ? 'md:justify-start' : 'md:justify-end')}>
-                  <div className="landing-card flex h-28 w-full max-w-sm items-center justify-center rounded-2xl border-2 border-accent bg-gradient-to-br from-card to-muted/40 shadow-sm md:h-32">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                      <Icon className="h-8 w-8" />
-                    </div>
+                <div className={cn('flex', isEven ? 'md:justify-center justify-center' : 'md:justify-center justify-center')}>
+                  <div className="landing-card flex w-full max-w-sm items-center justify-center overflow-hidden rounded-2xl border-2 border-accent bg-gradient-to-br from-card to-muted/40 shadow-sm">
+                    <img
+                      src={STEP_IMAGES[step.step].src}
+                      alt={STEP_IMAGES[step.step].alt}
+                      className="h-auto w-full object-cover"
+                    />
                   </div>
                 </div>
 

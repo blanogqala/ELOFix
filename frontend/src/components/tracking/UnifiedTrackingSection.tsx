@@ -5,14 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { DeliveryMap } from '@/components/tracking/DeliveryMap';
 import type { DriverProximityPayload } from '@/components/tracking/DeliveryMap';
 import { FulfillmentPhaseTimeline } from '@/components/tracking/FulfillmentPhaseTimeline';
-import { buildPublicTrackingUrl } from '@/lib/publicTrackingUrl';
-import { useToast } from '@/hooks/use-toast';
 import {
   Bike,
   CircleCheck,
   ClipboardList,
-  ExternalLink,
-  Link2,
   Lock,
   MapPin,
   Navigation,
@@ -238,7 +234,7 @@ function deriveStatusBanner(
       title: 'Order ready',
       description:
         mode === 'store_delivery'
-          ? 'Tracking link and live map activate when the driver goes out.'
+          ? 'Live map activates when the driver goes out.'
           : 'Your provider will begin GPS tracking once they’re dispatched.',
     };
   }
@@ -248,7 +244,6 @@ function deriveStatusBanner(
 function actionCueLine(
   mode: UnifiedDeliveryMode,
   fulfillmentStatus: string | undefined,
-  proximity: { near: boolean; arriving: boolean } | null,
   awaitingCustomerConfirmation: boolean
 ): string | null {
   const u = fulfillmentUpper(fulfillmentStatus);
@@ -258,8 +253,6 @@ function actionCueLine(
   if (awaitingCustomerConfirmation && u === 'COMPLETED') {
     return 'Next: confirm below to close this delivery.';
   }
-  if (u === 'OUT_FOR_DELIVERY' && proximity?.arriving) return 'Driver arriving soon — be ready at the drop-off.';
-  if (u === 'OUT_FOR_DELIVERY') return 'Driver is on the way — live map updates when GPS is active.';
   if (u === 'READY' && mode === 'self_pickup' && !awaitingCustomerConfirmation) {
     return 'You’ll be able to collect once the supplier marks this ready.';
   }
@@ -339,8 +332,6 @@ export function UnifiedTrackingSection({
   lastDriverPingMs,
   locationPollFailed,
   socketReconnecting = false,
-  activeTrackingId,
-  activeTrackingToken,
   supplierDisplayName,
   supplierPhone,
   supplierAddress,
@@ -362,7 +353,6 @@ export function UnifiedTrackingSection({
   showDeliverySuccessHighlight = false,
   onDismissDeliverySuccess,
 }: UnifiedTrackingSectionProps) {
-  const { toast } = useToast();
   const fulfillmentU = fulfillmentUpper(fulfillmentStatus);
   const [proximity, setProximity] = useState<{ near: boolean; arriving: boolean } | null>(null);
 
@@ -387,7 +377,7 @@ export function UnifiedTrackingSection({
   const mapActive = Boolean(showLiveMap) && !locked && variant !== 'embedded';
 
   const banner = deriveStatusBanner(mode, fulfillmentStatus, proximity, showConfirmDelivery);
-  const cue = !locked ? actionCueLine(mode, fulfillmentStatus, proximity, showConfirmDelivery) : null;
+  const cue = !locked ? actionCueLine(mode, fulfillmentStatus, showConfirmDelivery) : null;
 
   const hasLiveCoords =
     mapLat != null && mapLng != null && Number.isFinite(Number(mapLat)) && Number.isFinite(Number(mapLng));
@@ -399,11 +389,6 @@ export function UnifiedTrackingSection({
     driverOffline && lastDriverPingMs != null
       ? Math.max(0, Math.floor((Date.now() - lastDriverPingMs) / 1000))
       : 0;
-
-  const trackingUrl =
-    activeTrackingId && mode === 'store_delivery' && fulfillmentU === 'OUT_FOR_DELIVERY'
-      ? buildPublicTrackingUrl(activeTrackingId, activeTrackingToken)
-      : '';
 
   const embed = variant === 'embedded';
   const orderArea = section === 'all' || section === 'order';
@@ -576,10 +561,6 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {deliveryArea && cue && ['OUT_FOR_DELIVERY', 'DELAYED'].includes(fulfillmentU) ? (
-        <p className="text-xs font-medium text-primary border-l-2 border-primary pl-2 py-0.5">{cue}</p>
-      ) : null}
-
       {deliveryArea && mode === 'store_delivery' && (fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED') ? (
         <div className="rounded-lg border border-border bg-background/70 px-3 py-2.5 space-y-2 text-xs">
           <p className="font-semibold text-foreground flex items-center gap-1.5">
@@ -612,33 +593,6 @@ export function UnifiedTrackingSection({
           ) : (
             <p className="text-muted-foreground leading-relaxed">Driver details will appear when the store dispatches.</p>
           )}
-        </div>
-      ) : null}
-
-      {deliveryArea && mode === 'store_delivery' && trackingUrl ? (
-        <div className="rounded-md border border-border p-3 space-y-2">
-          <p className="text-xs font-medium flex items-center gap-1">
-            <Link2 className="h-3.5 w-3.5" /> Driver GPS link
-          </p>
-          <p className="text-[11px] text-muted-foreground break-all">{trackingUrl}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void navigator.clipboard.writeText(trackingUrl);
-                toast({ title: 'Copied', description: 'Tracking link copied to clipboard.' });
-              }}
-            >
-              Copy link
-            </Button>
-            <Button type="button" variant="ghost" size="sm" className="gap-1" asChild>
-              <a href={trackingUrl} target="_blank" rel="noreferrer">
-                Open <ExternalLink className="h-3 w-3" />
-              </a>
-            </Button>
-          </div>
         </div>
       ) : null}
 
@@ -688,22 +642,6 @@ export function UnifiedTrackingSection({
               {confirmDeliveryPending ? 'Confirming…' : confirmDeliveryLabel || 'Confirm delivery'}
             </Button>
           </div>
-        </div>
-      ) : null}
-
-      {deliveryArea &&
-      !embed &&
-      !mapActive &&
-      mode !== 'self_pickup' &&
-      !['FAILED', 'CANCELLED', 'COMPLETED', 'DELAYED'].includes(fulfillmentU) &&
-      !locked ? (
-        <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-8 text-center space-y-2">
-          <Package className="h-8 w-8 mx-auto text-muted-foreground opacity-60" aria-hidden />
-          <p className="text-sm font-medium text-foreground">Waiting to go out for delivery</p>
-          <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
-            The map turns on when the driver is dispatched. Drop-off —{' '}
-            {destination || materialBatch?.deliveryAddress || 'your job address'}.
-          </p>
         </div>
       ) : null}
 
