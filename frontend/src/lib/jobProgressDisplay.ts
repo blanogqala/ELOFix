@@ -15,6 +15,7 @@ export const JOB_TIMELINE_LABELS = UNIFIED_TIMELINE_STEPS;
 export function getJobDisplayStatusLabel(job: Job): string {
   if (job.status === 'CANCELLED') return 'Cancelled';
   if (job.status === 'REJECTED') return 'Rejected';
+  if (job.status === 'DISPUTED') return 'Disputed';
   if (job.courierFlow) {
     return getCourierJobDisplayStatusLabel(job);
   }
@@ -22,7 +23,7 @@ export function getJobDisplayStatusLabel(job: Job): string {
 }
 
 export function getUserJobBadgeClassForJob(job: Job): string {
-  if (job.status === 'CANCELLED' || job.status === 'REJECTED') {
+  if (job.status === 'CANCELLED' || job.status === 'REJECTED' || job.status === 'DISPUTED') {
     return getUserStatusBadgeClass(job.status);
   }
   const idx = job.courierFlow
@@ -135,7 +136,7 @@ export function getStepIndexFromJobState(job: Job): number {
   if (st === 'CANCELLED' || st === 'REJECTED') return 0;
 
   if (job.completionConfirmedByUser === true || st === 'COMPLETED') return 5;
-  if (st === 'AWAITING_CONFIRMATION') return 4;
+  if (st === 'AWAITING_CONFIRMATION' || st === 'DISPUTED') return 4;
 
   if (jobHasStarted(job)) return 3;
 

@@ -108,6 +108,35 @@ async function notifyProviderApproved(providerUserId) {
   });
 }
 
+async function notifyAdminFraudAlert(alert) {
+  try {
+    const admins = await require("../config/prisma").user.findMany({
+      where: { role: "ADMIN", deletedAt: null },
+      select: { id: true },
+    });
+    const title = "Fraud alert";
+    const message = `${alert?.alertType || "ALERT"}: ${alert?.description || "Review required"}`;
+    for (const admin of admins) {
+      await notifyUser(admin.id, {
+        type: "fraud_alert",
+        title,
+        message,
+      });
+    }
+  } catch (err) {
+    console.error("[notifications] notifyAdminFraudAlert failed", err);
+  }
+}
+
+async function notifyProviderFraudReview(providerUserId) {
+  return notifyUser(providerUserId, {
+    type: "fraud_review",
+    title: "Account under fraud review",
+    message:
+      "Your company registration is under review due to a potential duplicate. An admin will contact you if needed.",
+  });
+}
+
 async function notifyCategorySuggestion(adminId, suggestionName, suggestionId) {
   return notifyUser(adminId, {
     type: "category_suggestion",
@@ -145,6 +174,107 @@ async function notifyChatMessage({ recipientId, jobId, jobTitle, message, sender
   }
 }
 
+async function queueEmailStub({ to, subject, body }) {
+  if (!to) return;
+  console.log("[emailQueue:stub]", { to, subject, body: String(body || "").slice(0, 200) });
+}
+
+async function notifyCustomerConfirmationNeeded(customerId, jobId, jobTitle) {
+  await notifyUser(customerId, {
+    type: "confirmation_needed",
+    title: "Confirm job completion",
+    message: `${jobTitle || "Your job"} is awaiting your confirmation. You have 7 days to review the completed work.`,
+    jobId,
+  });
+}
+
+async function notifyJobMarkedComplete(providerId, jobId, jobTitle) {
+  await notifyUser(providerId, {
+    type: "job_marked_complete",
+    title: "Job marked complete",
+    message: `You marked "${jobTitle || "the job"}" as complete. Waiting for customer confirmation.`,
+    jobId,
+  });
+}
+
+async function notifyJobCompleted(providerId, jobId, jobTitle) {
+  await notifyUser(providerId, {
+    type: "job_completed",
+    title: "Job completed",
+    message: `"${jobTitle || "The job"}" has been marked complete.`,
+    jobId,
+  });
+}
+
+async function notifyPaymentReleased(providerId, jobId, jobTitle) {
+  await notifyUser(providerId, {
+    type: "payment_released",
+    title: "Payment released",
+    message: `Remaining payment for "${jobTitle || "your job"}" has been released to your account.`,
+    jobId,
+  });
+}
+
+async function notifyDisputeOpened({ customerId, providerId, jobId, disputeId, jobTitle }) {
+  await notifyUser(providerId, {
+    type: "dispute_opened",
+    title: "Dispute opened",
+    message: `A customer opened a dispute for "${jobTitle || "a job"}".`,
+    jobId,
+  });
+  const admins = await require("../config/prisma").user.findMany({
+    where: { role: "ADMIN" },
+    select: { id: true },
+    take: 20,
+  });
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "dispute_opened",
+      title: "New dispute",
+      message: `Dispute ${disputeId?.slice(-8) || ""} opened for job "${jobTitle || jobId}".`,
+      jobId,
+    });
+  }
+  const supportEmail = process.env.SUPPORT_EMAIL || process.env.ADMIN_EMAIL;
+  if (supportEmail) {
+    await queueEmailStub({
+      to: supportEmail,
+      subject: `EloFix dispute opened — job ${jobId}`,
+      body: `Customer ${customerId} opened dispute ${disputeId} on job ${jobId}.`,
+    });
+  }
+}
+
+async function notifyDisputeUnderInvestigation({ customerId, providerId, jobId, disputeId }) {
+  await notifyUser(customerId, {
+    type: "dispute_under_investigation",
+    title: "Dispute under review",
+    message: "EloFix is investigating your dispute. We will update you soon.",
+    jobId,
+  });
+  await notifyUser(providerId, {
+    type: "dispute_under_investigation",
+    title: "Dispute under review",
+    message: "EloFix is investigating a dispute on your job.",
+    jobId,
+  });
+}
+
+async function notifyRefundApproved({ customerId, jobId, amount }) {
+  await notifyUser(customerId, {
+    type: "refund_approved",
+    title: "Refund approved",
+    message: `Your refund of R ${Number(amount || 0).toFixed(2)} has been approved.`,
+    jobId,
+  });
+}
+
+async function notifyCaseClosed({ customerId, providerId, jobId, disputeId, action }) {
+  const msg = `Dispute case closed (${String(action || "resolved").replace(/_/g, " ").toLowerCase()}).`;
+  await notifyUser(customerId, { type: "case_closed", title: "Case closed", message: msg, jobId });
+  await notifyUser(providerId, { type: "case_closed", title: "Case closed", message: msg, jobId });
+}
+
 module.exports = {
   notifyUser,
   notifyJobRequest,
@@ -157,7 +287,18 @@ module.exports = {
   notifyDeliveryQuoteSubmitted,
   notifyCourierDeliveryRequest,
   notifyProviderApproved,
+  notifyAdminFraudAlert,
+  notifyProviderFraudReview,
   notifyCategorySuggestion,
   notifyMaterialsListSubmitted,
   notifyChatMessage,
+  notifyCustomerConfirmationNeeded,
+  notifyJobMarkedComplete,
+  notifyJobCompleted,
+  notifyPaymentReleased,
+  notifyDisputeOpened,
+  notifyDisputeUnderInvestigation,
+  notifyRefundApproved,
+  notifyCaseClosed,
+  queueEmailStub,
 };

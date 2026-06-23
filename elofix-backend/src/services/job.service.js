@@ -1089,10 +1089,25 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
       include: jobInclude,
     });
   }
-  const meta = await mutateJobMeta(jobId, (m) => withStatusAndProgress(m, status, updatedJob));
+  const meta = await mutateJobMeta(jobId, (m) => {
+    const next = withStatusAndProgress(m, status, updatedJob);
+    if (String(status) === "AWAITING_CONFIRMATION") {
+      const now = new Date();
+      const deadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      next.markedCompleteAt = now.toISOString();
+      next.confirmationDeadlineAt = deadline.toISOString();
+    }
+    return next;
+  });
   const result = await finalizeJob(updatedJob, meta);
   if (String(status) === "INSPECTED" && job.customerId) {
     await notificationEvents.notifyInspectionCompleted(job.customerId, jobId, job.title);
+  }
+  if (String(status) === "AWAITING_CONFIRMATION" && job.customerId) {
+    await notificationEvents.notifyCustomerConfirmationNeeded(job.customerId, jobId, job.title);
+    if (job.providerId) {
+      await notificationEvents.notifyJobMarkedComplete(job.providerId, jobId, job.title);
+    }
   }
   return result;
 }
@@ -1876,21 +1891,43 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   };
 }
 
-async function confirmJobCompletion(jobId, rating, review, customerUserId) {
+async function confirmJobCompletion(jobId, rating, review, customerUserId, options = {}) {
+  const images = Array.isArray(options.images) ? options.images.map(String) : [];
+  const videos = Array.isArray(options.videos) ? options.videos.map(String) : [];
+  const autoCompleted = Boolean(options.autoCompleted);
+  const jobCompletionEvidence = require("./jobCompletionEvidence.service");
+  const providerTrustScore = require("./providerTrustScore.service");
+
+  jobCompletionEvidence.assertMediaLimits(images, videos);
+  if (!autoCompleted) {
+    jobCompletionEvidence.assertMinimumMedia(images, videos);
+  }
+
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  if (String(job.customerId) !== String(customerUserId)) {
+  if (String(job.customerId) !== String(customerUserId) && !autoCompleted) {
     throw new AppError("Only the customer can confirm job completion", 403);
   }
+
+  const metaBefore = await getJobMeta(jobId);
+  const { toFrontendStatus } = require("./jobMeta.service");
+  const currentStatus = toFrontendStatus(job.status, metaBefore);
+  if (currentStatus === "DISPUTED") {
+    throw new AppError("Cannot confirm completion while dispute is open", 400);
+  }
+  if (!autoCompleted && currentStatus !== "AWAITING_CONFIRMATION" && currentStatus !== "COMPLETED") {
+    throw new AppError("Job is not awaiting confirmation", 400);
+  }
+
   const r = Number(rating);
-  if (!Number.isFinite(r) || r < 1 || r > 5) {
+  if (!autoCompleted && (!Number.isFinite(r) || r < 1 || r > 5)) {
     throw new AppError("rating must be between 1 and 5", 400);
   }
 
-  const roundedRating = normalizeRating(r);
+  const roundedRating = autoCompleted ? null : normalizeRating(r);
 
   const existingReview = await prisma.providerReview.findUnique({ where: { jobId } });
-  if (existingReview) {
+  if (existingReview && !autoCompleted) {
     const ageMs = Date.now() - existingReview.createdAt.getTime();
     if (ageMs > 10 * 60 * 1000) {
       throw new AppError("Review can only be edited within 10 minutes of submission", 400);
@@ -1900,6 +1937,8 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId) {
   const providerRow = job.providerId
     ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
     : null;
+
+  const paymentReleasedAt = new Date();
 
   const { updated } = await prisma.$transaction(
     async (tx) => {
@@ -1919,12 +1958,27 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId) {
             completionConfirmedByUser: true,
             userRating: roundedRating,
             userReview: review,
+            confirmationDeadlineAt: null,
           },
           "COMPLETED",
           updated0
         )
       );
-      if (providerRow) {
+      if (job.providerId) {
+        await jobCompletionEvidence.createEvidenceInTransaction(tx, {
+          jobId,
+          customerId: job.customerId,
+          providerId: job.providerId,
+          rating: roundedRating,
+          review,
+          images,
+          videos,
+          jobCategory: job.category,
+          autoCompleted,
+          paymentReleasedAt,
+        });
+      }
+      if (providerRow && roundedRating != null) {
         const trimmedComment =
           review != null && String(review).trim() !== "" ? String(review).trim() : null;
         await tx.providerReview.upsert({
@@ -1964,10 +2018,12 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId) {
     }
   );
 
-  await logAudit("review.upsert", {
-    userId: job.customerId,
-    metadata: { jobId, rating: roundedRating },
-  });
+  if (!autoCompleted) {
+    await logAudit("review.upsert", {
+      userId: job.customerId,
+      metadata: { jobId, rating: roundedRating },
+    });
+  }
 
   if (job.providerId) {
     const pRow2 = await prisma.provider.findUnique({
@@ -1975,8 +2031,13 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId) {
       select: { id: true },
     });
     if (pRow2) {
-      const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
-      await syncProviderAggregateRating(pRow2.id);
+      if (roundedRating != null) {
+        const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+        await syncProviderAggregateRating(pRow2.id);
+        await providerTrustScore.onJobCompleted(pRow2.id, roundedRating);
+      } else if (autoCompleted) {
+        await providerTrustScore.onJobCompleted(pRow2.id, 3);
+      }
       const payoutMeta = await getJobMeta(jobId);
       const grossLabor =
         Number(updated.totalPrice) ||
@@ -1989,10 +2050,42 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId) {
         await expandLaborPricingFromPaidJob(job.providerId, catSlug, grossLabor);
       }
     }
+    await notificationEvents.notifyJobCompleted(job.providerId, jobId, job.title);
+    await notificationEvents.notifyPaymentReleased(job.providerId, jobId, job.title);
   }
 
   const finalMeta = await getJobMeta(jobId);
   return await finalizeJob(updated, finalMeta);
+}
+
+async function autoCompleteJobAfterDeadline(jobId) {
+  const job = await prisma.job.findUnique({ where: { id: jobId } });
+  if (!job) return null;
+  const meta = await getJobMeta(jobId);
+  const { toFrontendStatus } = require("./jobMeta.service");
+  if (toFrontendStatus(job.status, meta) !== "AWAITING_CONFIRMATION") return null;
+  const existing = await prisma.jobCompletionEvidence.findUnique({ where: { jobId } });
+  if (existing) return null;
+  const existingDispute = await prisma.jobDispute.findFirst({
+    where: { jobId, status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
+  });
+  if (existingDispute) return null;
+
+  const result = await confirmJobCompletion(jobId, null, null, job.customerId, {
+    images: [],
+    videos: [],
+    autoCompleted: true,
+  });
+
+  if (job.customerId) {
+    await notificationEvents.notifyUser(job.customerId, {
+      type: "job_completed",
+      title: "Job auto-completed",
+      message: `The confirmation window expired. "${job.title || "Your job"}" was marked complete and payment released.`,
+      jobId,
+    });
+  }
+  return result;
 }
 
 function ensureStoreOrder(meta, storeId, fallback) {
@@ -2641,6 +2734,14 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
     throw new AppError("Job has no provider", 400);
   }
 
+  const jobMeta = normalizeMeta(job.meta);
+  if (jobMeta.courierFlow && jobMeta.completionConfirmedByUser !== true) {
+    throw new AppError(
+      "Courier delivery funds can only be released after the customer confirms delivery",
+      400
+    );
+  }
+
   const providerRow = await prisma.provider.findUnique({
     where: { userId: job.providerId },
     select: { id: true },
@@ -3132,6 +3233,7 @@ module.exports = {
   acceptProposedPrice,
   cancelJob,
   confirmJobCompletion,
+  autoCompleteJobAfterDeadline,
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
   updateStoreOrderDeliveryStatus,

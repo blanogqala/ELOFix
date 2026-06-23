@@ -5,6 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getJobById, releaseEscrowPayment } from '@/lib/api/jobs';
+import { getAdminJobCompletionEvidence, getAdminDisputeDetail, adminCompletionEvidenceExportUrl } from '@/lib/api/adminDisputes';
+import type { AdminDisputeRow } from '@/lib/api/adminDisputes';
+import { formatRequestedResolution } from '@/lib/disputeLabels';
+import { JobDisputeStatusBanner } from '@/components/jobs/JobDisputeStatusBanner';
+import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
+import { getTimelineStepInsight } from '@/lib/jobTimelineInsights';
+import type { JobCompletionEvidence } from '@/types';
 import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { getProviderById } from '@/lib/api/providers';
@@ -19,7 +26,6 @@ import {
   FileText,
   Clock,
   CheckCircle,
-  AlertCircle,
   Mail,
   Phone,
   MapPin,
@@ -27,14 +33,18 @@ import {
   Package,
   Store,
   ArrowRight,
-  Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
+import { AdminMaterialStoreBreakdown } from '@/components/admin/AdminMaterialStoreBreakdown';
+import { AdminJobQuoteBreakdown } from '@/components/admin/AdminJobQuoteBreakdown';
+import { canAdminManualReleaseEscrow, getAdminJobQuoteBreakdown } from '@/lib/adminJobFinancial';
+import { getStoreOrderDeliveryLine } from '@/lib/jobQuoteDisplay';
+import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
-import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob, JOB_TIMELINE_LABELS } from '@/lib/jobProgressDisplay';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import {
   Dialog,
@@ -61,6 +71,10 @@ export default function AdminJobDetail() {
   const [materialsModalOpen, setMaterialsModalOpen] = useState(false);
   const [commTab, setCommTab] = useState<'messages' | 'notes'>('messages');
   const [materialRequests, setMaterialRequests] = useState<MaterialRequestDto[]>([]);
+  const [completionEvidence, setCompletionEvidence] = useState<JobCompletionEvidence | null>(null);
+  const [openDispute, setOpenDispute] = useState<AdminDisputeRow | null>(null);
+  const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
+  const [hoveredTimelineStep, setHoveredTimelineStep] = useState<number | null>(null);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -95,6 +109,21 @@ export default function AdminJobDetail() {
         setProvider(providerData || null);
       } else {
         setProvider(null);
+      }
+      try {
+        setCompletionEvidence(await getAdminJobCompletionEvidence(id));
+      } catch {
+        setCompletionEvidence(null);
+      }
+      if (data?.disputeId) {
+        try {
+          const disputeData = await getAdminDisputeDetail(data.disputeId);
+          setOpenDispute(disputeData.dispute);
+        } catch {
+          setOpenDispute(null);
+        }
+      } else {
+        setOpenDispute(null);
       }
     } catch (error) {
       console.error('Failed to load job:', error);
@@ -189,6 +218,7 @@ export default function AdminJobDetail() {
   const heldAmount = job.escrow.heldAmount || 0;
   const releasedAmount = job.escrow.releasedAmount || 0;
   const maxReleasable = getMaxReleasable();
+  const canReleaseEscrow = canAdminManualReleaseEscrow(job);
 
   const materials = job.materials || [];
   const materialsByStore = materials.reduce(
@@ -208,68 +238,113 @@ export default function AdminJobDetail() {
     {} as Record<string, { id: string; name: string; materials: MaterialLine[]; total: number }>
   );
   const hasMaterials = Object.keys(materialsByStore).length > 0;
+  const quoteBreakdown = getAdminJobQuoteBreakdown(job);
+  const showQuoteSummary = quoteBreakdown.labor > 0 || quoteBreakdown.material > 0;
+  const timelineView = getUserTimelineViewState(job, materialRequests);
+  const cancellationReasonText =
+    (job.cancellationDetails && job.cancellationDetails.trim()) ||
+    (job.cancellationReason && job.cancellationReason.trim()) ||
+    'No reason provided';
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
         <div className="flex items-center justify-between">
-          <Button variant="ghost" onClick={() => navigate('/admin/jobs')}>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              navigate(job.status === 'DISPUTED' ? '/admin/jobs?view=dispatched' : '/admin/jobs')
+            }
+          >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Jobs
           </Button>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Job progress</CardTitle>
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">Job progress</h2>
             <p className="text-sm text-muted-foreground">Shared milestones (customer, provider, admin).</p>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="flex items-center justify-between overflow-x-auto pb-2">
-              {JOB_TIMELINE_LABELS.map((label, index, arr) => {
-                const view = getUserTimelineViewState(job, materialRequests);
-                const isTerminal = view.terminal !== 'none';
-                const isCancelled = view.terminal === 'cancelled';
-                const pinIndex = view.pinIndex;
-                const currentIdx = view.currentIdx;
-                const isFutureTerminalStep = isTerminal && isCancelled && index > pinIndex;
-                const isActive =
-                  !isTerminal && job.status !== 'COMPLETED' && index === currentIdx;
-                const isPast = isTerminal
-                  ? index < pinIndex
-                  : job.status === 'COMPLETED' || index < currentIdx;
-                return (
-                  <div key={label} className="flex items-center">
-                    <div className="flex flex-col items-center min-w-[56px]">
-                      <div
-                        className={cn(
-                          'h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold',
-                          isFutureTerminalStep && 'opacity-40',
-                          isPast ? 'bg-success text-success-foreground' :
-                          isActive ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2' :
-                          'bg-muted text-muted-foreground'
-                        )}
-                      >
-                        {isPast ? <Check className="h-4 w-4" /> : index + 1}
-                      </div>
-                      <span
-                        className={cn(
-                          'text-[10px] mt-1 text-center leading-tight max-w-[80px]',
-                          isActive ? 'font-medium' : 'text-muted-foreground'
-                        )}
-                      >
-                        {label}
-                      </span>
-                    </div>
-                    {index < arr.length - 1 && (
-                      <div className={cn('w-4 sm:w-8 h-0.5 mx-0.5 shrink-0', isPast ? 'bg-success' : 'bg-muted')} />
-                    )}
+          </div>
+          <JobWorkflowTimeline
+            job={job}
+            view={timelineView}
+            variant="user"
+            getStepInsight={(stepIndex) => getTimelineStepInsight(job, stepIndex, materialRequests)}
+            cancellationReasonText={cancellationReasonText}
+            lockedTimelineStep={lockedTimelineStep}
+            setLockedTimelineStep={setLockedTimelineStep}
+            hoveredTimelineStep={hoveredTimelineStep}
+            setHoveredTimelineStep={setHoveredTimelineStep}
+          />
+        </div>
+
+        {(job.status === 'DISPUTED' || job.disputeId) && (
+          <JobDisputeStatusBanner
+            variant="admin"
+            customerRequested={
+              openDispute
+                ? formatRequestedResolution(
+                    openDispute.requestedResolution,
+                    openDispute.otherResolutionDetail,
+                  )
+                : undefined
+            }
+            customerComment={openDispute?.customerComment}
+            disputeId={job.disputeId}
+            onOpenDisputeCase={
+              job.disputeId
+                ? () => navigate(`/admin/disputes/${job.disputeId}`)
+                : undefined
+            }
+          />
+        )}
+
+        {completionEvidence && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-lg">Completion Evidence</CardTitle>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" asChild>
+                  <a href={adminCompletionEvidenceExportUrl(job.id)} target="_blank" rel="noreferrer">
+                    Export ZIP
+                  </a>
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid sm:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-muted-foreground">Rating</p>
+                  <p className="font-medium">{completionEvidence.rating ?? '—'} / 5</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Confirmed</p>
+                  <p>{new Date(completionEvidence.confirmedAt).toLocaleString()}</p>
+                </div>
+                {completionEvidence.paymentReleasedAt && (
+                  <div>
+                    <p className="text-muted-foreground">Payment released</p>
+                    <p>{new Date(completionEvidence.paymentReleasedAt).toLocaleString()}</p>
                   </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+                )}
+              </div>
+              {completionEvidence.review && (
+                <p className="text-sm border rounded-lg p-3 bg-muted/30">{completionEvidence.review}</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {completionEvidence.images.map((url) => (
+                  <a key={url} href={resolveUploadUrl(url)} target="_blank" rel="noreferrer">
+                    <img src={resolveUploadUrl(url)} alt="" className="h-20 w-20 rounded object-cover" />
+                  </a>
+                ))}
+                {completionEvidence.videos.map((url) => (
+                  <video key={url} src={resolveUploadUrl(url)} className="h-20 w-32 rounded" controls />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid lg:grid-cols-2 gap-6">
           <Card>
@@ -332,13 +407,26 @@ export default function AdminJobDetail() {
                   <p>{new Date(job.updatedAt).toLocaleString()}</p>
                 </div>
               </div>
+              {showQuoteSummary ? (
+                <div className="border-b border-primary/20 pb-3">
+                  <p className="text-sm text-muted-foreground mb-2">Quote (labor + material)</p>
+                  <AdminJobQuoteBreakdown job={job} className="text-sm" />
+                </div>
+              ) : null}
               <div>
                 <p className="text-sm text-muted-foreground mb-2">Material Stores</p>
                 {hasMaterials ? (
                   <div className="space-y-1">
-                    <ul className="list-disc list-inside text-sm space-y-0.5">
+                    <ul className="list-none text-sm space-y-2">
                       {Object.values(materialsByStore).map(store => (
-                        <li key={store.id}>{store.name}</li>
+                        <li key={store.id} className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+                          <span className="text-sm font-medium">{store.name}</span>
+                          <AdminMaterialStoreBreakdown
+                            job={job}
+                            supplierId={store.id}
+                            lineItemsTotal={store.total}
+                          />
+                        </li>
                       ))}
                     </ul>
                     <Button
@@ -460,7 +548,7 @@ export default function AdminJobDetail() {
                 <span className="text-muted-foreground">Escrow / workflow status</span>
                 <span className={cn('font-medium', paymentStatus.class)}>{paymentStatus.label}</span>
               </div>
-              {maxReleasable > 0 ? (
+              {maxReleasable > 0 && canReleaseEscrow ? (
                 <Button
                   className="w-full sm:w-auto"
                   onClick={() => {
@@ -470,6 +558,10 @@ export default function AdminJobDetail() {
                 >
                   Release payment
                 </Button>
+              ) : maxReleasable > 0 && !canReleaseEscrow ? (
+                <p className="text-sm text-muted-foreground">
+                  Courier delivery funds are held until the customer confirms delivery.
+                </p>
               ) : heldAmount > 0 ? (
                 <p className="text-sm text-muted-foreground">
                   Up to {formatCurrency(heldAmount)} still held in escrow for release when the job is ready.
@@ -605,7 +697,10 @@ export default function AdminJobDetail() {
               {hasMaterials &&
                 Object.entries(materialsByStore).map(([storeId, store]) => {
                   const storeOrder = job.storeOrders?.find((so: JobStoreOrder) => so.storeId === storeId);
-                  const deliveryFee = storeOrder?.deliveryFee || 0;
+                  const mo = storeOrder ? resolveMaterialOrderForStoreOrder(job, storeOrder) : null;
+                  const deliveryLine = storeOrder ? getStoreOrderDeliveryLine(storeOrder, mo) : null;
+                  const deliveryFee =
+                    deliveryLine?.includeInSubtotal && !deliveryLine.struck ? deliveryLine.amount : 0;
                   const grandTotal = store.total + deliveryFee;
                   return (
                     <div key={storeId} className="border rounded-lg p-4 space-y-3">
@@ -632,8 +727,18 @@ export default function AdminJobDetail() {
                             <span>{formatCurrency(deliveryFee)}</span>
                           </div>
                         )}
+                        <div className="space-y-2 pt-2 border-t border-border text-sm">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Materials settlement
+                          </p>
+                          <AdminMaterialStoreBreakdown
+                            job={job}
+                            supplierId={storeId}
+                            lineItemsTotal={store.total}
+                          />
+                        </div>
                         <div className="flex justify-between font-semibold pt-2 text-base">
-                          <span>Total Cost</span>
+                          <span>Customer total{deliveryFee > 0 ? ' (materials + delivery)' : ''}</span>
                           <span>{formatCurrency(grandTotal)}</span>
                         </div>
                       </div>

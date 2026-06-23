@@ -104,3 +104,19 @@ export function fulfillmentStatusBadgeLabel(fs: string | undefined): string {
   if (u === 'CANCELLED') return 'Cancelled';
   return u.replace(/_/g, ' ');
 }
+
+/** Cancelled before dispatch with customer refund (93% net). */
+export function isMaterialOrderRefunded(
+  mo: Pick<JobMaterialOrderSnapshot, 'fulfillmentStatus' | 'paymentStatus' | 'refundStatus' | 'refundAmount'> | null | undefined
+): boolean {
+  if (!mo) return false;
+  const refundSt = String(mo.refundStatus || '').toLowerCase();
+  const pay = String(mo.paymentStatus || '').toLowerCase();
+  const amount = Number(mo.refundAmount ?? 0);
+  if (refundSt === 'processed' && amount > 0) return true;
+  if (pay === 'refunded' && amount > 0) return true;
+  if (String(mo.fulfillmentStatus || '').toUpperCase() === 'CANCELLED' && amount > 0 && refundSt === 'processed') {
+    return true;
+  }
+  return false;
+}

@@ -78,6 +78,7 @@ async function getProviderAnalyticsForAdmin(userId) {
     active: rawCounts.active,
     pending: rawCounts.open,
     cancelled: rawCounts.cancelled,
+    disputed: rawCounts.disputed,
   };
 
   const financialSums = sumJobFinancials(jobs);

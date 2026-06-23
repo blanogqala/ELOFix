@@ -5,6 +5,7 @@
 const assert = require("assert");
 const payfast = require("../src/services/payments/payfast.gateway");
 const { normalizeProvider } = require("../src/services/payments/gatewayRegistry");
+const { parsePaymentCardFromGatewayPayload } = require("../src/utils/paymentCard.util");
 
 function testPayfastSignature() {
   const data = {
@@ -33,6 +34,31 @@ function testNormalizeProvider() {
   assert.strictEqual(normalizeProvider("invalid"), null);
 }
 
+function testParsePaymentCardFromGatewayPayload() {
+  const sandbox = parsePaymentCardFromGatewayPayload(
+    { source: "sandbox_return_url", intentId: "abc" },
+    "PAYFAST"
+  );
+  assert.strictEqual(sandbox.last4, "4242");
+  assert.strictEqual(sandbox.brand, "visa");
+
+  const payfastItn = parsePaymentCardFromGatewayPayload(
+    { card_last4: "2221", card_brand: "visa" },
+    "PAYFAST"
+  );
+  assert.strictEqual(payfastItn.last4, "2221");
+
+  const bnpl = parsePaymentCardFromGatewayPayload({ status: "approved" }, "PAYFLEX");
+  assert.strictEqual(bnpl, null);
+
+  const masked = parsePaymentCardFromGatewayPayload(
+    { maskedPaymentMethod: "**** **** **** 3456" },
+    "PAYFAST"
+  );
+  assert.strictEqual(masked.last4, "3456");
+}
+
 testPayfastSignature();
 testNormalizeProvider();
+testParsePaymentCardFromGatewayPayload();
 console.log("payments.intent.test.js: OK");

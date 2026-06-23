@@ -18,7 +18,7 @@ import type { AdminProviderRevenueSummaryRow } from '@/lib/api/admin';
 
 type ProviderJobStats = Pick<
   AdminProviderRevenueSummaryRow,
-  'grossRevenue' | 'platformCommission' | 'completedJobCount'
+  'netRevenue' | 'platformCommission' | 'completedJobCount' | 'paidJobCount'
 >;
 
 export default function AdminProviders() {
@@ -51,9 +51,10 @@ export default function AdminProviders() {
       const map: Record<string, ProviderJobStats> = {};
       (revenueSummary?.revenues || []).forEach((r) => {
         map[r.providerId] = {
-          grossRevenue: r.grossRevenue ?? r.netRevenue ?? 0,
+          netRevenue: r.netRevenue ?? 0,
           platformCommission: r.platformCommission ?? 0,
           completedJobCount: r.completedJobCount ?? 0,
+          paidJobCount: r.paidJobCount ?? 0,
         };
       });
       setProviderStatsById(map);
@@ -117,12 +118,13 @@ export default function AdminProviders() {
       (acc, p) => {
         const stats = providerStatsById[p.id];
         return {
-          grossRevenue: acc.grossRevenue + (stats?.grossRevenue ?? 0),
+          netRevenue: acc.netRevenue + (stats?.netRevenue ?? 0),
           platformCommission: acc.platformCommission + (stats?.platformCommission ?? 0),
           completedJobCount: acc.completedJobCount + (stats?.completedJobCount ?? 0),
+          paidJobCount: acc.paidJobCount + (stats?.paidJobCount ?? 0),
         };
       },
-      { grossRevenue: 0, platformCommission: 0, completedJobCount: 0 }
+      { netRevenue: 0, platformCommission: 0, completedJobCount: 0, paidJobCount: 0 }
     );
   }, [filteredProviders, providerStatsById]);
 
@@ -188,9 +190,9 @@ export default function AdminProviders() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider revenue</p>
                   <p className="mt-2 text-2xl font-semibold tabular-nums">
-                    {formatCurrency(filteredStats.grossRevenue)}
+                    {formatCurrency(filteredStats.netRevenue)}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">Gross labor from completed & paid jobs</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Provider received, without 7% commission per job</p>
                 </div>
                 <div className="rounded-lg bg-emerald-500/10 p-2">
                   <TrendingUp className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
@@ -206,7 +208,7 @@ export default function AdminProviders() {
                   <p className="mt-2 text-2xl font-semibold tabular-nums text-accent">
                     {formatCurrency(filteredStats.platformCommission)}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">7% of labor totals</p>
+                  <p className="mt-1 text-xs text-muted-foreground">7% platform share per job</p>
                 </div>
                 <div className="rounded-lg bg-accent/10 p-2">
                   <Percent className="h-5 w-5 text-accent" />
@@ -219,8 +221,10 @@ export default function AdminProviders() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Jobs completed</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums">{filteredStats.completedJobCount}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {filteredStats.completedJobCount} / {filteredStats.paidJobCount}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid / All paid jobs in revenue totals</p>
                 </div>
                 <div className="rounded-lg bg-primary/10 p-2">
                   <PackageCheck className="h-5 w-5 text-primary" />

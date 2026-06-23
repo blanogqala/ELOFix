@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { registerUploadedFile } = require("./fileStorage.service");
+const fraudDetection = require("./fraudDetection.service");
+const { normalizePhone } = require("../utils/phoneNormalization.util");
 
 const userPublicSelect = {
   id: true,
@@ -39,7 +41,12 @@ async function updateUserProfile(userId, body = {}) {
 
   if (body.phone !== undefined) {
     const raw = body.phone;
-    data.phone = raw != null && String(raw).trim() ? String(raw).trim() : null;
+    const phone = raw != null && String(raw).trim() ? String(raw).trim() : null;
+    const phoneNormalized = phone
+      ? await fraudDetection.assertPhoneAvailable(phone, userId, { attemptUserId: userId })
+      : null;
+    data.phone = phone;
+    data.phoneNormalized = phoneNormalized;
   }
 
   if (body.profileImage !== undefined) {

@@ -67,6 +67,9 @@ function computeProgressStepFromMeta(meta, jobRow) {
   if (frontendStatus === "AWAITING_CONFIRMATION") {
     return 4;
   }
+  if (frontendStatus === "DISPUTED") {
+    return 4;
+  }
 
   if (deriveHasStartedFromMeta(safe, jobRow)) {
     return 3;

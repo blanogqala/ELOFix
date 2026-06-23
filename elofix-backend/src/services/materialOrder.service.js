@@ -354,6 +354,12 @@ function enrichOrderFromDbRow(row, payload) {
   if (row.refundProcessedAt != null) p.refundProcessedAt = row.refundProcessedAt instanceof Date ? row.refundProcessedAt.toISOString() : String(row.refundProcessedAt);
   if (row.refundReference != null) p.refundReference = String(row.refundReference);
   if (row.commissionReversed != null) p.commissionReversed = Number(row.commissionReversed);
+  p.finance = supplierService.buildOrderFinanceBreakdown({
+    ...p,
+    paymentStatus: row.paymentStatus,
+    platformCommission: row.platformCommission != null ? Number(row.platformCommission) : p.platformCommission,
+    supplierEarning: row.supplierEarning != null ? Number(row.supplierEarning) : p.supplierEarning,
+  });
   return p;
 }
 
@@ -381,6 +387,105 @@ function normalizeDeliveryStatus(status) {
     "Delivered",
   ]);
   return allowed.has(s) ? s : "Processing";
+}
+
+function defaultDeliveryStatusForType(delivery) {
+  const delType = String(delivery?.type || "SELF").toUpperCase();
+  if (delType === "SELF") return "SelfCollect";
+  if (delType === "STORE" && Number(delivery?.fee || 0) <= 0) return "PendingApproval";
+  if (delType === "PROVIDER") return "PendingApproval";
+  return "Processing";
+}
+
+/** Store delivery waiting for branch to set a delivery fee (quote workflow). */
+function storeDeliveryAwaitingBranchQuote(payload) {
+  const dt = String(payload?.deliveryType || "").toUpperCase();
+  if (dt !== "STORE_DELIVERY") return false;
+  if (payload?.payment?.deliveryPaid === true) return false;
+  const dStatus = normalizeDeliveryStatus(payload?.delivery?.status);
+  if (dStatus === "Rejected") return false;
+  if (dStatus === "Approved") return false;
+  const fee = Number(payload?.deliveryFee ?? payload?.delivery?.fee ?? payload?.deliveryQuote?.fee ?? 0);
+  if (fee > 0) return false;
+  return true;
+}
+
+/** Block store dispatch until customer pays quoted delivery fee (mirrors courier pay gate). */
+function assertStoreDeliveryPaidBeforeDispatch(payload) {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const dt = String(p.deliveryType || "").toUpperCase();
+  if (dt !== "STORE_DELIVERY") return;
+  const fee = Math.max(
+    0,
+    Number(p.deliveryFee ?? p.delivery?.fee ?? p.deliveryQuote?.fee ?? 0) || 0
+  );
+  if (fee <= 0) return;
+  if (p.payment?.deliveryPaid === true) return;
+  throw new AppError("Customer must pay the delivery fee before dispatch", 409);
+}
+
+/** Keep job meta storeOrders in sync when material order delivery is quoted / paid / reset. */
+async function syncJobStoreOrderDeliveryFromMaterialOrder(row, payload) {
+  const jobId = row?.jobId ? String(row.jobId).trim() : "";
+  if (!jobId) return;
+  const p = payload && typeof payload === "object" ? payload : {};
+  const storeOrderId = String(p.jobStoreOrderId || "").trim();
+  if (!storeOrderId) return;
+
+  const dt = String(p.deliveryType || "").toUpperCase();
+  const deliveryType =
+    dt === "STORE_DELIVERY" ? "STORE" : dt === "DELIVERY_PROVIDER" ? "PROVIDER" : "SELF";
+  const dStatus = normalizeDeliveryStatus(p.delivery?.status);
+  const deliveryFee = Math.max(0, Number(p.deliveryFee ?? p.delivery?.fee ?? 0) || 0);
+  const deliveryPaid = p.payment?.deliveryPaid === true;
+
+  let deliveryStatus = "PendingApproval";
+  if (deliveryType === "SELF") {
+    deliveryStatus = "SelfCollect";
+  } else if (dStatus === "Rejected") {
+    deliveryStatus = "Rejected";
+  } else if (dStatus === "Cancelled") {
+    deliveryStatus = "Cancelled";
+  } else if (deliveryPaid && ["Processing", "InProgress", "OnTheWay", "Delivered"].includes(dStatus)) {
+    deliveryStatus = dStatus;
+  } else if (dStatus === "Approved" || (deliveryFee > 0 && deliveryType === "STORE")) {
+    deliveryStatus = "Approved";
+  } else if (dStatus === "Quoted") {
+    deliveryStatus = "Quoted";
+  } else if (dStatus) {
+    deliveryStatus = dStatus;
+  }
+
+  try {
+    const { mutateJobMeta } = require("./jobMeta.service");
+    await mutateJobMeta(jobId, (m) => {
+      const list = Array.isArray(m.storeOrders) ? [...m.storeOrders] : [];
+      const idx = list.findIndex((o) => String(o.orderId) === storeOrderId);
+      if (idx < 0) return m;
+      const prev = list[idx];
+      list[idx] = {
+        ...prev,
+        deliveryType,
+        deliveryFee,
+        deliveryStatus,
+        delivery: {
+          ...(prev.delivery || {}),
+          type: deliveryType,
+          status: deliveryStatus,
+          fee: deliveryFee,
+          providerId: p.deliveryProviderId || prev.deliveryProviderId || prev.delivery?.providerId,
+        },
+        payment: {
+          ...(prev.payment || {}),
+          materialsPaid: p.payment?.materialsPaid !== false,
+          deliveryPaid,
+        },
+      };
+      return { ...m, storeOrders: list };
+    });
+  } catch (e) {
+    console.error("syncJobStoreOrderDeliveryFromMaterialOrder", jobId, storeOrderId, e);
+  }
 }
 
 function normalizeOrder(input) {
@@ -452,7 +557,7 @@ function normalizeOrder(input) {
           : "processing",
     delivery: {
       type: delivery.type || "SELF",
-      status: normalizeDeliveryStatus(delivery.status),
+      status: normalizeDeliveryStatus(delivery.status ?? defaultDeliveryStatusForType(delivery)),
       providerId: delivery.providerId || undefined,
       fee: deliveryFee,
     },
@@ -873,6 +978,23 @@ async function getMaterialOrderById(orderId) {
     await reconcileMaterialOrderWithDeliveryContext(row, base, deliveryRequest);
   }
 
+  try {
+    const rating = await prisma.materialOrderRating.findUnique({
+      where: { orderId: String(orderId) },
+      select: { rating: true, comment: true, createdAt: true },
+    });
+    if (rating) {
+      base.customerRating = {
+        rating: rating.rating,
+        comment: rating.comment != null ? String(rating.comment) : undefined,
+        createdAt:
+          rating.createdAt instanceof Date ? rating.createdAt.toISOString() : String(rating.createdAt || ""),
+      };
+    }
+  } catch (e) {
+    console.error("getMaterialOrderById customerRating", orderId, e);
+  }
+
   return base;
 }
 
@@ -1023,6 +1145,21 @@ async function ensureCourierJobForMaterialOrder(materialOrderId) {
   return { courierJobId };
 }
 
+function assertDeliveryChangeAllowed(row, current, updates = {}) {
+  if (updates.status && normalizeDeliveryStatus(updates.status) === "Cancelled") return;
+  const fulfillment = String(row.fulfillmentStatus || current.fulfillmentStatus || "").toUpperCase();
+  if (["OUT_FOR_DELIVERY", "COMPLETED", "CANCELLED"].includes(fulfillment)) {
+    throw new AppError("Delivery option cannot be changed after dispatch", 409);
+  }
+  const dStatus = normalizeDeliveryStatus(current.delivery?.status);
+  if (["InProgress", "OnTheWay", "Delivered"].includes(dStatus)) {
+    throw new AppError("Delivery option cannot be changed while in transit", 409);
+  }
+  if (current.payment?.deliveryPaid === true && updates.type) {
+    throw new AppError("Cancel or refund delivery payment before changing delivery option", 409);
+  }
+}
+
 async function updateMaterialOrderDelivery(orderId, updates = {}) {
   const rowBefore = await prisma.materialOrder.findUnique({ where: { id: orderId } });
   const prevPayload =
@@ -1036,11 +1173,39 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
         throw new AppError("Material order not found", 404);
       }
       const current = row.payload;
-      const nextDelivery = {
+      assertDeliveryChangeAllowed(row, current, updates);
+      const prevDeliveryType = String(current.delivery?.type || "").toUpperCase();
+      const nextTypeRaw = updates.type != null ? String(updates.type).toUpperCase() : prevDeliveryType;
+      const typeChanging = updates.type != null && nextTypeRaw !== prevDeliveryType;
+
+      let nextDelivery = {
         ...(current.delivery || {}),
         ...(updates || {}),
         status: updates.status ? normalizeDeliveryStatus(updates.status) : current.delivery?.status,
       };
+
+      if (typeChanging) {
+        delete current.deliveryQuote;
+        delete current.deliveryRejection;
+        if (nextTypeRaw === "SELF") {
+          nextDelivery = { type: "SELF", status: "SelfCollect", fee: 0 };
+        } else if (nextTypeRaw === "STORE") {
+          nextDelivery = {
+            type: "STORE",
+            status: "PendingApproval",
+            fee: 0,
+            providerId: undefined,
+          };
+        } else if (nextTypeRaw === "PROVIDER") {
+          nextDelivery = {
+            type: "PROVIDER",
+            status: "PendingApproval",
+            fee: 0,
+            providerId: updates.providerId || undefined,
+          };
+        }
+      }
+
       const next = {
         ...current,
         delivery: nextDelivery,
@@ -1051,7 +1216,7 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
               ? "STORE_DELIVERY"
               : "DELIVERY_PROVIDER",
         deliveryProviderId: nextDelivery.providerId || undefined,
-        deliveryFee: Number(nextDelivery.fee || current.deliveryFee || 0),
+        deliveryFee: typeChanging ? 0 : Number(nextDelivery.fee ?? current.deliveryFee ?? 0),
         deliveryStatus:
           nextDelivery.status === "Delivered"
             ? "delivered"
@@ -1059,6 +1224,17 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
               ? "out_for_delivery"
               : "processing",
       };
+      if (typeChanging) {
+        delete next.deliveryQuote;
+        delete next.deliveryRejection;
+        next.total = Number(next.materialsSubtotal ?? 0);
+      }
+      if (updates.type && next.materialBatch && typeof next.materialBatch === "object") {
+        next.materialBatch = {
+          ...next.materialBatch,
+          deliveryType: deliveryJobTypeToCanonical(nextDelivery.type || "SELF"),
+        };
+      }
       await tx.materialOrder.update({
         where: { id: orderId },
         data: { payload: next },
@@ -1114,7 +1290,151 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
     }
   }
 
+  await syncJobStoreOrderDeliveryFromMaterialOrder(rowBefore, result);
   return result;
+}
+
+async function approveMaterialOrderDeliveryBySupplier(orderId, supplierId, options = {}) {
+  const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  if (!row) throw new AppError("Material order not found", 404);
+  await assertOrderOwnedBySupplierOrg(row, supplierId);
+  const bScope = options.branchScopeId != null && String(options.branchScopeId).trim() !== "" ? String(options.branchScopeId).trim() : null;
+  if (bScope && String(row.branchId || "") !== bScope) {
+    throw new AppError("Forbidden", 403);
+  }
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  const dt = String(payload.deliveryType || "").toUpperCase();
+  if (dt !== "STORE_DELIVERY") {
+    throw new AppError("Only store delivery requests can be approved here", 400);
+  }
+  const dStatus = normalizeDeliveryStatus(payload.delivery?.status);
+  if (dStatus === "Approved" && payload.payment?.deliveryPaid !== true) {
+    const existingFee = Number(payload.deliveryFee ?? payload.delivery?.fee ?? 0);
+    if (existingFee > 0) {
+      return enrichOrderFromDbRow(row, payload);
+    }
+  }
+  if (!storeDeliveryAwaitingBranchQuote(payload)) {
+    throw new AppError("Delivery is not awaiting branch approval", 400);
+  }
+  const safeFee = safeMoney2(Number(options.fee ?? 0));
+  if (!Number.isFinite(safeFee) || safeFee <= 0) {
+    throw new AppError("Valid delivery fee is required to accept delivery", 400);
+  }
+  const staffId = options.userId ? String(options.userId) : undefined;
+  const note = options.note ? String(options.note).trim() : "";
+  const nextPayload = {
+    ...payload,
+    deliveryFee: safeFee,
+    deliveryQuote: {
+      fee: safeFee,
+      note,
+      submittedAt: new Date().toISOString(),
+      ...(staffId ? { branchStaffId: staffId } : {}),
+    },
+    delivery: {
+      ...(payload.delivery || {}),
+      type: "STORE",
+      fee: safeFee,
+      status: "Approved",
+    },
+    deliveryStatus: "processing",
+  };
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: { payload: nextPayload },
+  });
+  await syncJobStoreOrderDeliveryFromMaterialOrder(row, nextPayload);
+  const enriched = enrichOrderFromDbRow(row, nextPayload);
+  if (options.userId) {
+    await appendSupplierOrderNote(
+      orderId,
+      options.userId,
+      `Delivery accepted at R${safeFee.toFixed(2)}${note ? ` — ${note}` : ""}`,
+      {
+        branchScopeId: bScope || undefined,
+        supplierOrgId: String(supplierId),
+      }
+    ).catch(() => null);
+  }
+  try {
+    const notificationEvents = require("./notificationEvents.service");
+    await notificationEvents.notifyDeliveryUpdate(
+      row.userId,
+      row.jobId || orderId,
+      "Store delivery approved",
+      `Your delivery fee is R${safeFee.toFixed(2)}. Pay delivery to proceed.`
+    );
+  } catch (e) {
+    console.error("notifyStoreDeliveryApproved", e);
+  }
+  return enriched;
+}
+
+async function rejectMaterialOrderDeliveryBySupplier(orderId, supplierId, options = {}) {
+  const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  if (!row) throw new AppError("Material order not found", 404);
+  await assertOrderOwnedBySupplierOrg(row, supplierId);
+  const bScope = options.branchScopeId != null && String(options.branchScopeId).trim() !== "" ? String(options.branchScopeId).trim() : null;
+  if (bScope && String(row.branchId || "") !== bScope) {
+    throw new AppError("Forbidden", 403);
+  }
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  const dt = String(payload.deliveryType || "").toUpperCase();
+  if (dt !== "STORE_DELIVERY") {
+    throw new AppError("Only store delivery requests can be rejected here", 400);
+  }
+  const dStatus = normalizeDeliveryStatus(payload.delivery?.status);
+  if (!storeDeliveryAwaitingBranchQuote(payload) && !["PendingApproval", "Quoted"].includes(dStatus)) {
+    throw new AppError("Delivery cannot be rejected in current state", 400);
+  }
+  const reason = options.reason ? String(options.reason).trim() : "";
+  const nextPayload = {
+    ...payload,
+    deliveryFee: 0,
+    deliveryQuote: undefined,
+    deliveryRejection: {
+      reason,
+      rejectedAt: new Date().toISOString(),
+      ...(options.userId ? { branchStaffId: String(options.userId) } : {}),
+    },
+    delivery: {
+      ...(payload.delivery || {}),
+      fee: 0,
+      status: "Rejected",
+    },
+    deliveryStatus: "processing",
+  };
+  delete nextPayload.deliveryQuote;
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: { payload: nextPayload },
+  });
+  await syncJobStoreOrderDeliveryFromMaterialOrder(row, nextPayload);
+  const enriched = enrichOrderFromDbRow(row, nextPayload);
+  if (options.userId) {
+    await appendSupplierOrderNote(
+      orderId,
+      options.userId,
+      reason ? `Delivery request rejected — ${reason}` : "Delivery request rejected by branch",
+      {
+        branchScopeId: bScope || undefined,
+        supplierOrgId: String(supplierId),
+      }
+    ).catch(() => null);
+  }
+  try {
+    const notificationEvents = require("./notificationEvents.service");
+    await notificationEvents.notifyDeliveryUpdate(
+      row.userId,
+      row.jobId || orderId,
+      "Store delivery declined",
+      reason || "Choose pickup or another delivery option"
+    );
+  } catch (e) {
+    console.error("notifyStoreDeliveryRejected", e);
+  }
+  return enriched;
 }
 
 async function approveMaterialOrderDelivery(orderId) {
@@ -1379,13 +1699,32 @@ async function markMaterialOrderDeliveryPaid(orderId, paymentExtras = {}) {
         deliveryInvoiceId:
           paymentExtras.invoiceId || current.deliveryInvoiceId || `INV-DEL-${Date.now()}`,
       };
-      const fulfillmentStatus =
-        deliveryType === "DELIVERY_PROVIDER" ? "READY" : row.fulfillmentStatus || "PENDING";
+      const fulfillmentStatus = (() => {
+        const current = String(row.fulfillmentStatus || "PENDING").toUpperCase();
+        const postDispatch = ["OUT_FOR_DELIVERY", "COMPLETED"];
+        if (deliveryType === "DELIVERY_PROVIDER" || deliveryType === "STORE_DELIVERY") {
+          if (postDispatch.includes(current)) return current;
+          return "READY";
+        }
+        return row.fulfillmentStatus || "PENDING";
+      })();
+      const dbData = { payload: updated, fulfillmentStatus };
+      if (deliveryType === "STORE_DELIVERY") {
+        const materialsSubtotal = Number(row.materialsSubtotal ?? current.materialsSubtotal ?? 0);
+        const { platformCommission, supplierEarning } = supplierService.splitStoreDeliveryCommission(
+          materialsSubtotal,
+          safeFee
+        );
+        dbData.platformCommission = new Prisma.Decimal(platformCommission);
+        dbData.supplierEarning = new Prisma.Decimal(supplierEarning);
+        updated.platformCommission = platformCommission;
+        updated.supplierEarning = supplierEarning;
+      }
       await tx.materialOrder.update({
         where: { id: orderId },
-        data: { payload: updated, fulfillmentStatus },
+        data: dbData,
       });
-      return enrichOrderFromDbRow({ ...row, fulfillmentStatus }, updated);
+      return enrichOrderFromDbRow({ ...row, fulfillmentStatus, ...dbData }, updated);
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 }
   ).then(async (enriched) => {
@@ -1404,6 +1743,14 @@ async function markMaterialOrderDeliveryPaid(orderId, paymentExtras = {}) {
       }
     } catch (e) {
       console.error("markMaterialOrderDeliveryPaid sync delivery request", orderId, e);
+    }
+    try {
+      const row = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+      if (row?.payload) {
+        await syncJobStoreOrderDeliveryFromMaterialOrder(row, enriched);
+      }
+    } catch (e) {
+      console.error("markMaterialOrderDeliveryPaid sync job store order", orderId, e);
     }
     return enriched;
   });
@@ -1649,6 +1996,9 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus, o
         throw new AppError(`Cannot transition from ${currentStatus} to ${next}`, 400);
       }
       let payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+      if (next === "OUT_FOR_DELIVERY" || next === "COMPLETED") {
+        assertStoreDeliveryPaidBeforeDispatch(payload);
+      }
       payload.fulfillmentStatus = next;
       const ts = new Date().toISOString();
       const activity = Array.isArray(payload.supplierActivity) ? [...payload.supplierActivity] : [];
@@ -2176,7 +2526,7 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus, fro
     orderBy: { createdAt: "desc" },
     include: {
       supplier: { select: { id: true, name: true, businessName: true } },
-      branch: { select: { id: true, name: true } },
+      branch: { select: { id: true, name: true, deliveryFee: true, hasDelivery: true } },
     },
   });
   const trackRows = await prisma.trackingSession.findMany({
@@ -2231,11 +2581,14 @@ async function listMaterialOrdersBySupplier(supplierId, { fulfillmentStatus, fro
         : undefined);
     const courierId = resolveAssignedCourierId(payload);
     const courier = courierId ? courierMap.get(courierId) : undefined;
+    const branchDeliveryFee = Number(r.branch?.deliveryFee ?? 0);
     return {
       ...base,
       id: r.id,
       branchId: r.branchId,
       branchName: r.branch?.name ? String(r.branch.name) : undefined,
+      branchDeliveryFee: Number.isFinite(branchDeliveryFee) ? branchDeliveryFee : 0,
+      branchHasDelivery: Boolean(r.branch?.hasDelivery),
       customerId: r.userId,
       customerName: u?.name,
       customerEmail: u?.email,
@@ -2921,7 +3274,7 @@ async function ensureJobMaterialPurchaseOrder(params) {
     storeName: lines[0]?.supplierName || "Store",
     items,
     materialsTotal,
-    delivery: { type: apiDel, fee: 0, providerId: resolvedCourierForCreate },
+    delivery: { type: apiDel, fee: 0, providerId: resolvedCourierForCreate, status: defaultDeliveryStatusForType({ type: apiDel, fee: 0 }) },
     jobId: String(jobId),
     providerId: providerUserId ? String(providerUserId) : null,
     paymentStatus: "paid",
@@ -2965,6 +3318,16 @@ async function ensureJobMaterialPurchaseOrder(params) {
     coordinates: jobSiteLocation?.coordinates,
     label: "Delivery destination",
   });
+  if (apiDel === "STORE") {
+    finalPayload.deliveryType = "STORE_DELIVERY";
+    finalPayload.deliveryFee = 0;
+    finalPayload.delivery = {
+      ...(finalPayload.delivery || {}),
+      type: "STORE",
+      status: "PendingApproval",
+      fee: 0,
+    };
+  }
   if (apiDel === "PROVIDER" && resolvedCourierForCreate) {
     finalPayload.deliveryType = "DELIVERY_PROVIDER";
     finalPayload.deliveryProviderId = resolvedCourierForCreate;
@@ -3021,6 +3384,12 @@ async function getJobMaterialOrdersForJob(jobId) {
     orderBy: { createdAt: "desc" },
     include: { supplier: { select: { id: true, name: true, businessName: true } } },
   });
+  for (const r of rows) {
+    const payload = r.payload && typeof r.payload === "object" ? r.payload : {};
+    if (payload.jobStoreOrderId) {
+      await syncJobStoreOrderDeliveryFromMaterialOrder(r, payload).catch(() => null);
+    }
+  }
   return rows.map((r) => {
     const payload = r.payload && typeof r.payload === "object" ? r.payload : {};
     const items = Array.isArray(payload.items) ? payload.items : [];
@@ -3039,12 +3408,30 @@ async function getJobMaterialOrdersForJob(jobId) {
       materialsSubtotal: Number(r.materialsSubtotal ?? 0),
       platformCommission: Number(r.platformCommission ?? 0),
       supplierEarning: Number(r.supplierEarning ?? 0),
+      refundStatus: r.refundStatus != null ? String(r.refundStatus) : undefined,
+      refundAmount: r.refundAmount != null ? Number(r.refundAmount) : undefined,
+      refundProcessedAt:
+        r.refundProcessedAt instanceof Date
+          ? r.refundProcessedAt.toISOString()
+          : r.refundProcessedAt != null
+            ? String(r.refundProcessedAt)
+            : undefined,
+      cancelledBy: r.cancelledBy != null ? String(r.cancelledBy) : undefined,
+      cancellationReason: r.cancellationReason != null ? String(r.cancellationReason) : undefined,
+      cancelledAt:
+        r.cancelledAt instanceof Date ? r.cancelledAt.toISOString() : r.cancelledAt != null ? String(r.cancelledAt) : undefined,
       items: items.map((i) => ({
         name: i.name,
         quantity: Number(i.quantity ?? i.qty ?? 0),
         price: Number(i.price ?? i.unitPrice ?? 0),
         productId: i.productId,
       })),
+      deliveryType: payload.deliveryType ? String(payload.deliveryType) : undefined,
+      deliveryFee: Number(payload.deliveryFee ?? payload.delivery?.fee ?? 0),
+      deliveryQuote: payload.deliveryQuote,
+      delivery: payload.delivery,
+      deliveryStatus: payload.delivery?.status,
+      payment: payload.payment,
       materialBatch: mergeMaterialBatch(payload, r, {}),
       createdAt: r.createdAt?.toISOString?.() || String(r.createdAt),
     };
@@ -3067,14 +3454,23 @@ function orderTotalFromRow(row) {
   return Math.max(0, mat + fee);
 }
 
+/** Order total for supplier export rows (enriched payload from listMaterialOrdersBySupplier). */
+function orderTotalForExport(order) {
+  const fromTotal = Number(order.total);
+  if (Number.isFinite(fromTotal) && fromTotal >= 0) return roundMoney2(fromTotal);
+  const mat = Number(order.materialsSubtotal ?? 0);
+  const delivery = order.delivery && typeof order.delivery === "object" ? order.delivery : {};
+  const fee = Number(order.deliveryFee ?? delivery.fee ?? 0);
+  return roundMoney2(Math.max(0, mat + fee));
+}
+
 /**
- * Aggregates completed + paid material orders (platform-wide or per supplier).
+ * Aggregates paid material orders (platform-wide or per supplier).
  * Commission = 7% of each order's total (see orderTotalFromRow).
  */
-async function aggregateCompletedPaidMaterialOrders({ supplierId } = {}) {
+async function aggregatePaidMaterialOrders({ supplierId } = {}) {
   const where = {
     paymentStatus: "paid",
-    fulfillmentStatus: "COMPLETED",
     ...(supplierId != null && String(supplierId).trim() !== ""
       ? { branch: { supplierId: String(supplierId) } }
       : {}),
@@ -3103,13 +3499,19 @@ async function aggregateCompletedPaidMaterialOrders({ supplierId } = {}) {
 }
 
 /**
- * Per-supplier breakdown of completed + paid material orders (for admin list filter-aware cards).
+ * @deprecated Use aggregatePaidMaterialOrders — kept as alias for callers expecting the old name.
  */
-async function aggregateCompletedPaidMaterialOrdersBySupplier() {
+async function aggregateCompletedPaidMaterialOrders(opts = {}) {
+  return aggregatePaidMaterialOrders(opts);
+}
+
+/**
+ * Per-supplier breakdown of paid material orders (for admin list filter-aware cards).
+ */
+async function aggregatePaidMaterialOrdersBySupplier() {
   const rows = await prisma.materialOrder.findMany({
     where: {
       paymentStatus: "paid",
-      fulfillmentStatus: "COMPLETED",
     },
     select: {
       supplierId: true,
@@ -3150,11 +3552,17 @@ async function aggregateCompletedPaidMaterialOrdersBySupplier() {
   return result;
 }
 
+/** @deprecated Alias for aggregatePaidMaterialOrdersBySupplier */
+async function aggregateCompletedPaidMaterialOrdersBySupplier() {
+  return aggregatePaidMaterialOrdersBySupplier();
+}
+
 function computeSupplierExportFinancials(order) {
   const status = String(order.fulfillmentStatus || "").toUpperCase();
-  const totalAmount = roundMoney2(Number(order.total ?? order.materialsSubtotal ?? 0));
-  const commission = roundMoney2(totalAmount * 0.07);
-  const netEarnings = roundMoney2(totalAmount - commission);
+  const finance = supplierService.buildOrderFinanceBreakdown(order);
+  const totalAmount = finance.orderGross;
+  const commission = finance.platformCommission;
+  const netEarnings = finance.supplierNet;
   const cancelled = status === "CANCELLED";
   const cancelledBy = String(order.cancelledBy || "").toLowerCase();
   const completedPaid = status === "COMPLETED" && String(order.paymentStatus || "").toLowerCase() === "paid";
@@ -3164,6 +3572,7 @@ function computeSupplierExportFinancials(order) {
       totalAmount,
       commission,
       netEarnings,
+      completedPaid: false,
       revenueImpact: roundMoney2(-totalAmount),
       commissionImpact: cancelledBy === "supplier" ? roundMoney2(-commission) : commission,
       netImpact: roundMoney2(-netEarnings),
@@ -3174,6 +3583,7 @@ function computeSupplierExportFinancials(order) {
       totalAmount,
       commission,
       netEarnings,
+      completedPaid: false,
       revenueImpact: 0,
       commissionImpact: 0,
       netImpact: 0,
@@ -3183,6 +3593,7 @@ function computeSupplierExportFinancials(order) {
     totalAmount,
     commission,
     netEarnings,
+    completedPaid: true,
     revenueImpact: totalAmount,
     commissionImpact: commission,
     netImpact: netEarnings,
@@ -3204,6 +3615,7 @@ async function buildSupplierOrdersExport(supplierId, { from, to, branchId } = {}
       commissionImpact: fx.commissionImpact,
       netImpact: fx.netImpact,
       isCancelled: String(o.fulfillmentStatus || "").toUpperCase() === "CANCELLED",
+      isCompletedPaid: fx.completedPaid,
       cancellationReason: o.cancellationReason || null,
       cancelledBy: o.cancelledBy || null,
       createdAt: o.createdAt || null,
@@ -3217,10 +3629,46 @@ async function buildSupplierOrdersExport(supplierId, { from, to, branchId } = {}
       acc.totalRevenueImpact = roundMoney2(acc.totalRevenueImpact + row.revenueImpact);
       acc.totalCommissionImpact = roundMoney2(acc.totalCommissionImpact + row.commissionImpact);
       acc.totalNetImpact = roundMoney2(acc.totalNetImpact + row.netImpact);
-      if (row.isCancelled) acc.cancelledCount += 1;
+      if (row.isCancelled) {
+        acc.cancelledCount += 1;
+        acc.cancelledRevenueAdjustment = roundMoney2(acc.cancelledRevenueAdjustment + row.revenueImpact);
+        acc.cancelledCommissionAdjustment = roundMoney2(
+          acc.cancelledCommissionAdjustment + row.commissionImpact
+        );
+        acc.cancelledNetAdjustment = roundMoney2(acc.cancelledNetAdjustment + row.netImpact);
+      } else {
+        acc.activeRevenue = roundMoney2(acc.activeRevenue + row.totalAmount);
+        acc.activeCommission = roundMoney2(acc.activeCommission + row.commission);
+        acc.activeNet = roundMoney2(acc.activeNet + row.netEarnings);
+        if (row.isCompletedPaid) {
+          acc.completedCount += 1;
+          acc.completedRevenue = roundMoney2(acc.completedRevenue + row.totalAmount);
+          acc.completedCommission = roundMoney2(acc.completedCommission + row.commission);
+          acc.completedNet = roundMoney2(acc.completedNet + row.netEarnings);
+        } else {
+          acc.pendingCount += 1;
+        }
+      }
       return acc;
     },
-    { orderCount: 0, cancelledCount: 0, totalRevenueImpact: 0, totalCommissionImpact: 0, totalNetImpact: 0 }
+    {
+      orderCount: 0,
+      cancelledCount: 0,
+      completedCount: 0,
+      pendingCount: 0,
+      completedRevenue: 0,
+      completedCommission: 0,
+      completedNet: 0,
+      activeRevenue: 0,
+      activeCommission: 0,
+      activeNet: 0,
+      cancelledRevenueAdjustment: 0,
+      cancelledCommissionAdjustment: 0,
+      cancelledNetAdjustment: 0,
+      totalRevenueImpact: 0,
+      totalCommissionImpact: 0,
+      totalNetImpact: 0,
+    }
   );
   return { rows, summary };
 }
@@ -3286,6 +3734,7 @@ async function ensureStoreDeliveryTrackingSession(orderId, supplierStoreId, opti
   if (String(row.fulfillmentStatus || "").toUpperCase() !== "OUT_FOR_DELIVERY") {
     throw new AppError("Order must be out for delivery to start tracking", 400);
   }
+  assertStoreDeliveryPaidBeforeDispatch(payload);
   await trackingService.expireOldSessions();
   const existing = await prisma.trackingSession.findFirst({
     where: { orderId: oid, isActive: true },
@@ -3343,6 +3792,8 @@ async function listAllMaterialOrdersForAdmin({ limit = 200 } = {}) {
 }
 
 module.exports = {
+  aggregatePaidMaterialOrders,
+  aggregatePaidMaterialOrdersBySupplier,
   aggregateCompletedPaidMaterialOrders,
   aggregateCompletedPaidMaterialOrdersBySupplier,
   buildSupplierOrdersExport,
@@ -3353,6 +3804,8 @@ module.exports = {
   getMaterialOrderById,
   updateMaterialOrderDelivery,
   approveMaterialOrderDelivery,
+  approveMaterialOrderDeliveryBySupplier,
+  rejectMaterialOrderDeliveryBySupplier,
   rejectMaterialOrderDelivery,
   submitDeliveryQuote,
   rejectDeliveryRequestByProvider,

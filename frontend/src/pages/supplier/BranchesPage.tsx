@@ -15,6 +15,11 @@ import { MapPin, ChevronRight, Plus } from 'lucide-react';
 import { SupplierSupportFab } from '@/components/supplier/SupplierSupportFab';
 import { formatCurrency } from '@/lib/formatCurrency';
 import {
+  SUPPLIER_GROSS_EARNINGS_HINT,
+  SUPPLIER_GROSS_EARNINGS_LABEL,
+  supplierOverviewGrossRevenue,
+} from '@/lib/supplierAnalyticsDisplay';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -159,13 +164,15 @@ export default function SupplierBranchesPage() {
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Net earnings (all branches)</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {SUPPLIER_GROSS_EARNINGS_LABEL}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                {analytics != null ? formatCurrency(analytics.sumNetEarningsAllBranches) : '—'}
+                {analytics != null ? formatCurrency(supplierOverviewGrossRevenue(analytics) ?? 0) : '—'}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Excludes cancelled orders</p>
+              <p className="mt-1 text-xs text-muted-foreground">{SUPPLIER_GROSS_EARNINGS_HINT}</p>
             </CardContent>
           </Card>
           <Card className="card-elevated">

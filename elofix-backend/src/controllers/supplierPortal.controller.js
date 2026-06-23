@@ -196,6 +196,39 @@ async function postOrderNote(req, res) {
   res.json({ success: true, order });
 }
 
+async function patchDeliveryApprove(req, res) {
+  assertBranchStaffCanMutateOrders(req);
+  const actor = await portalActor(req);
+  const fee = req.body?.fee;
+  const note = req.body?.note;
+  const order = await materialOrderService.approveMaterialOrderDeliveryBySupplier(
+    req.params.orderId,
+    actor.supplierOrgId,
+    {
+      branchScopeId: actor.branchScopeId || undefined,
+      userId: actor.userId,
+      fee,
+      note,
+    }
+  );
+  res.json({ success: true, order });
+}
+
+async function patchDeliveryReject(req, res) {
+  assertBranchStaffCanMutateOrders(req);
+  const actor = await portalActor(req);
+  const order = await materialOrderService.rejectMaterialOrderDeliveryBySupplier(
+    req.params.orderId,
+    actor.supplierOrgId,
+    {
+      branchScopeId: actor.branchScopeId || undefined,
+      userId: actor.userId,
+      reason: req.body?.reason,
+    }
+  );
+  res.json({ success: true, order });
+}
+
 async function postProduct(req, res) {
   const supplier = await supplierService.upsertSupplierProductForPortal(req.user, req.body || {});
   return res.status(201).json({ success: true, supplier });
@@ -251,6 +284,8 @@ module.exports = {
   getOrders,
   getOrdersExport,
   patchFulfillment,
+  patchDeliveryApprove,
+  patchDeliveryReject,
   cancelOrder,
   postEnsureTracking,
   postOrderNote,

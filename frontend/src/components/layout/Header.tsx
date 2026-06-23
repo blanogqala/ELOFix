@@ -64,7 +64,7 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-lg supports-[backdrop-filter]:bg-background/70">
-      <div className="container flex h-16 items-center justify-between gap-4 px-4">
+      <div className="container-xl flex h-16 items-center justify-between gap-4 px-4">
         <EloFixLogo variant="dark" className="h-10 shrink-0 sm:h-12" />
 
         <nav className="hidden items-center gap-1 lg:flex">

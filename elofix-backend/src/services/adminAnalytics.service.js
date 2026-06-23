@@ -64,13 +64,14 @@ async function getAnalytics(query = {}) {
       },
     }),
     prisma.commissionLedger.aggregate({
-      where: { createdAt: { gte: fromDay, lt: rangeEndExclusive } },
+      where: {
+        createdAt: { gte: fromDay, lt: rangeEndExclusive },
+      },
       _sum: { amount: true },
     }),
     prisma.materialOrder.findMany({
       where: {
         paymentStatus: "paid",
-        fulfillmentStatus: "COMPLETED",
         createdAt: { gte: fromDay, lt: rangeEndExclusive },
       },
       select: { platformCommission: true },
@@ -98,7 +99,9 @@ async function getAnalytics(query = {}) {
   const totalProviderSignups = providerUsers.length;
 
   const totalLaborCommission =
-    laborCommissionAgg._sum.amount != null ? Number(laborCommissionAgg._sum.amount) : 0;
+    laborCommissionAgg._sum.amount != null
+      ? Number(laborCommissionAgg._sum.amount)
+      : 0;
   const totalMaterialCommission = materialOrdersInRange.reduce(
     (sum, row) => sum + (Number(row.platformCommission) || 0),
     0

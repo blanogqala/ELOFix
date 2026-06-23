@@ -36,6 +36,7 @@ import {
   Building2,
   ChevronDown,
   UserCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -73,6 +74,7 @@ type AdminNavEntry = AdminNavLink | AdminNavGroup;
 const adminNavStructure: AdminNavEntry[] = [
   { type: 'link', label: 'Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard className="h-4 w-4 shrink-0" /> },
   { type: 'link', label: 'Analytics', path: '/admin/analytics', icon: <Activity className="h-4 w-4 shrink-0" /> },
+  { type: 'link', label: 'Fraud Center', path: '/admin/fraud-center', icon: <ShieldAlert className="h-4 w-4 shrink-0" /> },
   {
     type: 'group',
     label: 'Users',
@@ -97,6 +99,10 @@ const adminNavStructure: AdminNavEntry[] = [
 ];
 
 function adminPathMatches(pathname: string, path: string) {
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
+
+function navPathMatches(pathname: string, path: string) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
@@ -412,14 +418,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 );
               })
             ) : (
-              navItems.map((item) => (
+              navItems.map((item) => {
+                const active = navPathMatches(location.pathname, item.path);
+                return (
                 <Link
                   key={item.path}
                   to={item.path}
                   onClick={() => setSidebarOpen(false)}
                   className={cn(
                     'nav-link relative',
-                    location.pathname === item.path && 'active',
+                    active && 'active',
                   )}
                 >
                   {item.icon}
@@ -427,11 +435,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   {jobsNavPath && item.path === jobsNavPath && hasJobsNavActivity && (
                     <ActivityDot className="ml-1" aria-label="Job activity" />
                   )}
-                  {location.pathname === item.path && (
+                  {active && (
                     <ChevronRight className="ml-auto h-4 w-4" />
                   )}
                 </Link>
-              ))
+              );
+              })
             )}
           </nav>
 

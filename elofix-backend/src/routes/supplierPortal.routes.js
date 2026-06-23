@@ -37,6 +37,8 @@ router.post("/inventory/categories", asyncHandler(portal.postInventoryCategory))
 router.get("/orders", asyncHandler(portal.getOrders));
 router.get("/orders/export", asyncHandler(portal.getOrdersExport));
 router.patch("/orders/:orderId/fulfillment", asyncHandler(portal.patchFulfillment));
+router.patch("/orders/:orderId/delivery/approve", asyncHandler(portal.patchDeliveryApprove));
+router.patch("/orders/:orderId/delivery/reject", asyncHandler(portal.patchDeliveryReject));
 router.post("/orders/:orderId/cancel", asyncHandler(portal.cancelOrder));
 router.post("/orders/:orderId/tracking/start", asyncHandler(portal.postEnsureTracking));
 router.post("/orders/:orderId/notes", asyncHandler(portal.postOrderNote));

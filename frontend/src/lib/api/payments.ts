@@ -154,6 +154,22 @@ export async function confirmPaymentReturn(intentId: string): Promise<{
   return { intent: data.intent, message: data.message };
 }
 
+export async function processAdminJobRefund(
+  jobId: string,
+  payload: { laborRefundNet: number; materialsRefundNet?: number }
+): Promise<import('@/types').Job> {
+  const { data } = await apiClient.post<{ success: boolean; job: import('@/types').Job }>(
+    `/admin/jobs/${jobId}/refund`,
+    {
+      laborRefundNet: payload.laborRefundNet,
+      materialsRefundNet: payload.materialsRefundNet ?? 0,
+    },
+    { headers: idempotencyHeaders() }
+  );
+  if (!data?.job) throw new Error('Failed to process refund');
+  return data.job;
+}
+
 export async function createRefundInvoice(
   userId: string,
   jobId: string,

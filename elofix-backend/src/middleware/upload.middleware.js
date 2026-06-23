@@ -152,6 +152,40 @@ const uploadWorkPostImage = multer({
   fileFilter: imageFileFilter,
 });
 
+const ALLOWED_VIDEO = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+
+function videoFileFilter(req, file, cb) {
+  if (!file.mimetype || !ALLOWED_VIDEO.has(file.mimetype)) {
+    return cb(new AppError("Only MP4, WebM, or MOV video files are allowed", 400));
+  }
+  cb(null, true);
+}
+
+function jobCompletionStorage() {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const jobId = String(req.params.id || "").trim() || "unknown";
+      const sub = file.mimetype && file.mimetype.startsWith("video/") ? "videos" : "images";
+      const dir = path.join(UPLOAD_ROOT, "jobs", jobId, "completion", sub);
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || (file.mimetype?.startsWith("video/") ? ".mp4" : ".jpg");
+      cb(null, `completion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
+const uploadJobCompletionMedia = multer({
+  storage: jobCompletionStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype && ALLOWED_VIDEO.has(file.mimetype)) return videoFileFilter(req, file, cb);
+    return imageFileFilter(req, file, cb);
+  },
+});
+
 const uploadJobImage = multer({
   storage: jobImageStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
@@ -234,6 +268,7 @@ module.exports = {
   uploadProviderAvatar,
   uploadWorkPostImage,
   uploadJobImage,
+  uploadJobCompletionMedia,
   uploadJobQuotation,
   uploadSupplierProductImage,
   uploadSupplierLogo,

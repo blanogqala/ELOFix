@@ -10,10 +10,10 @@ import {
   getWithdrawalProfile,
   saveWithdrawalProfile,
   requestWithdrawal,
-  getProviderWithdrawals,
+  getProviderTransactions,
   type ProviderEarningJobRow,
   type ProviderBalanceSnapshot,
-  type ProviderWithdrawalRow,
+  type ProviderTransactionRow,
 } from '@/lib/api/providerAccount';
 import {
   getJobReleasedAmount,
@@ -22,10 +22,14 @@ import {
   getJobTotalPrice,
   getJobProviderNet,
   getJobProviderReleaseProgress,
+  getJobClawbackAmount,
+  getJobNetReleasedAfterRefund,
+  jobHasRefundImpact,
   getStatusColor,
   sumProviderNetAcrossJobs,
   sumReleasedAcrossJobs,
 } from '@/lib/providerEarningsDerived';
+import { RefundSummaryLine, hasRefundDisplay } from '@/components/payments/RefundSummaryLine';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   DollarSign,
@@ -37,6 +41,7 @@ import {
   ArrowLeft,
   ExternalLink,
   Wallet,
+  RotateCcw,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -70,8 +75,8 @@ export default function ProviderEarnings() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
   const [bankMask, setBankMask] = useState<{ account: string; branch: string } | null>(null);
-  const [withdrawals, setWithdrawals] = useState<ProviderWithdrawalRow[]>([]);
-  const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
+  const [transactions, setTransactions] = useState<ProviderTransactionRow[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
 
   const loadEarnings = useCallback(async () => {
     if (!user) return;
@@ -81,6 +86,8 @@ export default function ProviderEarnings() {
         available: bal.available,
         pending: bal.pending,
         withdrawn: bal.withdrawn,
+        refundDebtOwed: bal.refundDebtOwed ?? 0,
+        totalClawback: bal.totalClawback ?? 0,
       });
       setJobs(data.jobs);
     } catch (error) {
@@ -121,21 +128,21 @@ export default function ProviderEarnings() {
     }
   }, [user, toast]);
 
-  const loadWithdrawals = useCallback(async () => {
+  const loadTransactions = useCallback(async () => {
     if (!user) return;
-    setWithdrawalsLoading(true);
+    setTransactionsLoading(true);
     try {
-      const { withdrawals: rows } = await getProviderWithdrawals();
-      setWithdrawals(rows);
+      const { transactions: rows } = await getProviderTransactions();
+      setTransactions(rows);
     } catch (error) {
       console.error(error);
       toast({
-        title: 'Could not load withdrawal history',
+        title: 'Could not load transaction history',
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
     } finally {
-      setWithdrawalsLoading(false);
+      setTransactionsLoading(false);
     }
   }, [user, toast]);
 
@@ -143,9 +150,9 @@ export default function ProviderEarnings() {
     if (user) {
       void loadEarnings();
       void loadProfile();
-      void loadWithdrawals();
+      void loadTransactions();
     }
-  }, [user, loadEarnings, loadProfile, loadWithdrawals]);
+  }, [user, loadEarnings, loadProfile, loadTransactions]);
 
   useEffect(() => {
     setSelectedJob((prev) => {
@@ -160,6 +167,8 @@ export default function ProviderEarnings() {
   const pendingBalanceFromJobs = jobs.reduce((sum, j) => sum + getJobRemainingAmount(j), 0);
 
   const available = balance?.available ?? 0;
+  const refundDebtOwed = balance?.refundDebtOwed ?? 0;
+  const totalClawback = balance?.totalClawback ?? 0;
   const withdrawNum = parseFloat(withdrawAmount);
   const withdrawExceeds =
     Number.isFinite(withdrawNum) && withdrawNum > 0 && withdrawNum > available + 1e-6;
@@ -250,7 +259,7 @@ export default function ProviderEarnings() {
       await requestWithdrawal(n);
       toast({ title: 'Withdrawal requested', description: 'Your request is pending processing.' });
       setWithdrawAmount('');
-      await Promise.all([loadEarnings(), loadProfile(), loadWithdrawals()]);
+      await Promise.all([loadEarnings(), loadProfile(), loadTransactions()]);
     } catch (error) {
       toast({
         title: 'Withdrawal failed',
@@ -274,6 +283,29 @@ export default function ProviderEarnings() {
   const panelPercent = panelProgress * 100;
   const panelPercentRounded = Math.round(panelPercent);
 
+  const panelClawback = mergedPanelJob ? getJobClawbackAmount(mergedPanelJob) : 0;
+  const panelNetReleased = mergedPanelJob ? getJobNetReleasedAfterRefund(mergedPanelJob) : 0;
+  const panelEscrowReversed = mergedPanelJob
+    ? Number(mergedPanelJob.escrowReversed ?? mergedPanelJob.refundDetails?.escrowApplied) || 0
+    : 0;
+  const panelRefundDebt = mergedPanelJob
+    ? Number(mergedPanelJob.providerRefundDebt ?? mergedPanelJob.refundDetails?.providerDebtAdded) || 0
+    : 0;
+  const panelHasRefund = mergedPanelJob ? jobHasRefundImpact(mergedPanelJob) : false;
+
+  const transactionAmountClass = (kind: ProviderTransactionRow['kind']) => {
+    if (kind === 'withdrawal') return 'text-foreground';
+    return 'text-destructive';
+  };
+
+  const transactionKindLabel = (tx: ProviderTransactionRow) => {
+    if (tx.kind === 'withdrawal') return 'Bank withdrawal';
+    if (tx.kind === 'refund_clawback') return 'Refund recovery';
+    if (tx.kind === 'debt_recovery') return 'Debt recovered';
+    if (tx.kind === 'refund_debt') return 'Refund debt';
+    return tx.description;
+  };
+
   const withdrawalStatusClass = (s: string) => {
     const v = s.toLowerCase();
     if (v === 'paid') return 'text-success';
@@ -292,14 +324,14 @@ export default function ProviderEarnings() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
                 <DollarSign className="h-4 w-4 text-success sm:h-5 sm:w-5" />
               </div>
-              <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl tabular-nums">
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
                   {formatCurrency(yourTotalEarnings)}
                 </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Your total earnings</p>
@@ -311,8 +343,10 @@ export default function ProviderEarnings() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
                 <Clock className="h-4 w-4 text-warning sm:h-5 sm:w-5" />
               </div>
-              <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">{formatCurrency(pendingBalanceFromJobs)}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
+                  {formatCurrency(pendingBalanceFromJobs)}
+                </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Remaining to you (escrow)</p>
               </div>
             </div>
@@ -322,8 +356,8 @@ export default function ProviderEarnings() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
                 <CheckCircle className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
               </div>
-              <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl tabular-nums">
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
                   {formatCurrency(amountReleasedToYou)}
                 </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Amount released to you</p>
@@ -335,9 +369,34 @@ export default function ProviderEarnings() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
                 <Wallet className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
               </div>
-              <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl tabular-nums">{formatCurrency(available)}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
+                  {formatCurrency(available)}
+                </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Available to withdraw</p>
+                {totalClawback > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5 sm:text-xs">
+                    Includes {formatCurrency(totalClawback)} deducted for customer refunds
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10 sm:h-12 sm:w-12">
+                <RotateCcw className="h-4 w-4 text-destructive sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold leading-tight tabular-nums truncate text-destructive sm:text-lg lg:text-xl xl:text-2xl">
+                  {refundDebtOwed > 0 ? `−${formatCurrency(refundDebtOwed)}` : formatCurrency(0)}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Refund owed</p>
+                {refundDebtOwed > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5 sm:text-xs">
+                    Auto-deducted from available balance and future job earnings
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -383,7 +442,10 @@ export default function ProviderEarnings() {
                       {jobs.map((job) => {
                         const totalP = getJobTotalPrice(job);
                         const released = getJobReleasedAmount(job);
+                        const clawback = getJobClawbackAmount(job);
+                        const netReleased = getJobNetReleasedAfterRefund(job);
                         const remaining = getJobRemainingAmount(job);
+                        const hasRefund = jobHasRefundImpact(job);
                         const fromRow = job.customerName?.trim();
                         const customerDisplay = customerNameCache[job.id] ?? (fromRow || '—');
                         const displayStatus = getJobStatus(job);
@@ -417,10 +479,29 @@ export default function ProviderEarnings() {
                                   <p className="font-semibold tabular-nums text-primary">{formatCurrency(released)}</p>
                                 </div>
                                 <div>
-                                  <p className="text-muted-foreground">Remaining to you</p>
-                                  <p className="font-semibold tabular-nums">{formatCurrency(remaining)}</p>
+                                  {hasRefund && clawback > 0 ? (
+                                    <>
+                                      <p className="text-muted-foreground">Taken back (refund)</p>
+                                      <p className="font-semibold tabular-nums text-destructive">
+                                        −{formatCurrency(clawback)}
+                                      </p>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <p className="text-muted-foreground">Remaining to you</p>
+                                      <p className="font-semibold tabular-nums">{formatCurrency(remaining)}</p>
+                                    </>
+                                  )}
                                 </div>
                               </div>
+                              {hasRefund && clawback > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  Net you kept:{' '}
+                                  <span className="font-semibold tabular-nums text-foreground">
+                                    {formatCurrency(netReleased)}
+                                  </span>
+                                </p>
+                              )}
                             </button>
                           </li>
                         );
@@ -515,6 +596,46 @@ export default function ProviderEarnings() {
                           <dt className="text-muted-foreground">Remaining amount</dt>
                           <dd className="text-right font-semibold tabular-nums">{formatCurrency(panelRemaining)}</dd>
                         </div>
+                        {panelHasRefund && (
+                          <>
+                            {hasRefundDisplay(mergedPanelJob) && (
+                              <div className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2">
+                                <RefundSummaryLine
+                                  refundAmount={mergedPanelJob.refundAmount}
+                                  refundStatus={mergedPanelJob.refundStatus}
+                                />
+                              </div>
+                            )}
+                            {panelClawback > 0 && (
+                              <div className="flex justify-between gap-4">
+                                <dt className="text-muted-foreground">Taken back from your balance</dt>
+                                <dd className="text-right font-semibold tabular-nums text-destructive">
+                                  −{formatCurrency(panelClawback)}
+                                </dd>
+                              </div>
+                            )}
+                            {panelEscrowReversed > 0 && (
+                              <div className="flex justify-between gap-4">
+                                <dt className="text-muted-foreground">Escrow reversed (not released)</dt>
+                                <dd className="text-right font-semibold tabular-nums text-destructive">
+                                  −{formatCurrency(panelEscrowReversed)}
+                                </dd>
+                              </div>
+                            )}
+                            {panelRefundDebt > 0 && (
+                              <div className="flex justify-between gap-4">
+                                <dt className="text-muted-foreground">Outstanding refund debt</dt>
+                                <dd className="text-right font-semibold tabular-nums text-destructive">
+                                  {formatCurrency(panelRefundDebt)}
+                                </dd>
+                              </div>
+                            )}
+                            <div className="flex justify-between gap-4 border-t border-border pt-2">
+                              <dt className="font-medium text-foreground">Net you kept from this job</dt>
+                              <dd className="text-right font-semibold tabular-nums">{formatCurrency(panelNetReleased)}</dd>
+                            </div>
+                          </>
+                        )}
                         <div className="flex justify-between gap-4">
                           <dt className="text-muted-foreground">Status</dt>
                           <dd className="text-right">
@@ -569,6 +690,26 @@ export default function ProviderEarnings() {
               <p className="text-sm text-muted-foreground">
                 Bank details are stored encrypted. Ledger balance available to withdraw: {formatCurrency(available)}.
               </p>
+              {(totalClawback > 0 || refundDebtOwed > 0) && (
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                  {totalClawback > 0 && (
+                    <p>
+                      Refund deductions from balance:{' '}
+                      <span className="font-semibold text-destructive tabular-nums">
+                        −{formatCurrency(totalClawback)}
+                      </span>
+                    </p>
+                  )}
+                  {refundDebtOwed > 0 && (
+                    <p>
+                      Outstanding refund debt (auto-recovered from future releases):{' '}
+                      <span className="font-semibold text-destructive tabular-nums">
+                        {formatCurrency(refundDebtOwed)}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
               {bankMask && (
                 <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/30 px-3 py-2">
                   On file: account {bankMask.account}, branch {bankMask.branch}. Enter new values below only if you
@@ -674,32 +815,49 @@ export default function ProviderEarnings() {
           <TabsContent value="history" className="mt-4">
             <div className="card-elevated overflow-hidden">
               <div className="border-b border-border p-4 sm:p-6">
-                <h2 className="text-lg font-semibold">Withdrawal history</h2>
+                <h2 className="text-lg font-semibold">Transaction history</h2>
                 <p className="text-sm text-muted-foreground">
-                  Past payout requests and their current status
+                  Bank withdrawals and automatic refund deductions from your balance
                 </p>
               </div>
-              {withdrawalsLoading ? (
+              {transactionsLoading ? (
                 <div className="flex items-center justify-center gap-2 p-10 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" />
                   Loading…
                 </div>
-              ) : withdrawals.length > 0 ? (
+              ) : transactions.length > 0 ? (
                 <ul className="divide-y divide-border p-4 sm:p-6 space-y-0">
-                  {withdrawals.map((w) => (
-                    <li key={w.id} className="card-elevated p-4 first:mt-0 mt-3">
+                  {transactions.map((tx) => (
+                    <li key={`${tx.kind}-${tx.id}`} className="card-elevated p-4 first:mt-0 mt-3">
                       <div className="flex items-start justify-between gap-3">
-                        <p className="text-lg font-semibold tabular-nums">{formatCurrency(w.amount)}</p>
-                        <p className={cn('text-sm font-semibold capitalize shrink-0', withdrawalStatusClass(w.status))}>
-                          {w.status}
+                        <div className="min-w-0">
+                          <p className="font-medium">{transactionKindLabel(tx)}</p>
+                          {tx.jobTitle && (
+                            <p className="text-sm text-muted-foreground truncate">Job: {tx.jobTitle}</p>
+                          )}
+                        </div>
+                        <p
+                          className={cn(
+                            'text-lg font-semibold tabular-nums shrink-0',
+                            transactionAmountClass(tx.kind)
+                          )}
+                        >
+                          {tx.kind === 'withdrawal' ? '' : '−'}
+                          {formatCurrency(tx.amount)}
                         </p>
                       </div>
+                      {tx.kind === 'withdrawal' && tx.status && (
+                        <p className={cn('mt-1 text-sm font-semibold capitalize', withdrawalStatusClass(tx.status))}>
+                          {tx.status}
+                        </p>
+                      )}
+                      {tx.kind !== 'withdrawal' && (
+                        <p className="mt-1 text-xs text-muted-foreground">{tx.description}</p>
+                      )}
                       <p className="mt-2 text-sm text-muted-foreground">
-                        {new Date(w.createdAt).toLocaleString()}
+                        {new Date(tx.createdAt).toLocaleString()}
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Ref: {w.id.slice(0, 8)}…
-                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">Ref: {tx.id.slice(0, 8)}…</p>
                     </li>
                   ))}
                 </ul>
@@ -709,9 +867,9 @@ export default function ProviderEarnings() {
                     <Wallet className="h-6 w-6 text-muted-foreground" />
                   </div>
                   <div>
-                    <p className="font-medium text-foreground">No withdrawals yet</p>
+                    <p className="font-medium text-foreground">No transactions yet</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Requests you submit on the Withdrawal tab will appear here.
+                      Withdrawals and refund deductions will appear here.
                     </p>
                   </div>
                 </div>

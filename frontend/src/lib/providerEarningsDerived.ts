@@ -1,6 +1,6 @@
 import type { ProviderEarningJobRow } from '@/lib/api/providerAccount';
 
-export type EarningsJobDisplayStatus = 'Pending' | 'In Progress' | 'Completed';
+export type EarningsJobDisplayStatus = 'Pending' | 'In Progress' | 'Completed' | 'Held' | 'Cancelled' | 'Refunded';
 
 /** Customer gross (what the user paid for labor) — from API, not recalculated. */
 export function getJobTotalPrice(j: ProviderEarningJobRow): number {
@@ -47,7 +47,32 @@ export function getJobProviderReleaseProgress(j: ProviderEarningJobRow): number 
   return Math.min(1, getJobReleasedAmount(j) / net);
 }
 
+/** Clawback from released balance due to customer refund. */
+export function getJobClawbackAmount(j: ProviderEarningJobRow): number {
+  const fromApi = j.clawbackFromReleased;
+  if (typeof fromApi === 'number' && Number.isFinite(fromApi)) return Math.max(0, fromApi);
+  const fromMeta = j.refundDetails?.clawbackApplied;
+  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta)) return Math.max(0, fromMeta);
+  return 0;
+}
+
+/** Net amount provider kept after refund clawback. */
+export function getJobNetReleasedAfterRefund(j: ProviderEarningJobRow): number {
+  const fromApi = j.netReleasedAfterRefund;
+  if (typeof fromApi === 'number' && Number.isFinite(fromApi)) return Math.max(0, fromApi);
+  return Math.max(0, getJobReleasedAmount(j) - getJobClawbackAmount(j));
+}
+
+export function jobHasRefundImpact(j: ProviderEarningJobRow): boolean {
+  const status = getJobStatus(j);
+  return status === 'Refunded' || getJobClawbackAmount(j) > 0 || (Number(j.refundAmount) || 0) > 0;
+}
+
 export function getJobStatus(job: ProviderEarningJobRow): EarningsJobDisplayStatus {
+  const refundStatus = String(job.refundStatus || '').toLowerCase();
+  if (refundStatus === 'processed' || refundStatus === 'partial') return 'Refunded';
+  if (job.workflowStatus === 'CANCELLED') return 'Cancelled';
+  if (job.workflowStatus === 'DISPUTED') return 'Held';
   const target = getJobProviderNet(job);
   const releasedAmount = getJobReleasedAmount(job);
   if (target <= 0) return 'Pending';
@@ -75,6 +100,12 @@ export function getStatusColor(status: EarningsJobDisplayStatus): string {
       return 'text-blue-500';
     case 'Completed':
       return 'text-green-500';
+    case 'Held':
+      return 'text-warning';
+    case 'Cancelled':
+      return 'text-destructive';
+    case 'Refunded':
+      return 'text-destructive';
     default:
       return 'text-muted-foreground';
   }

@@ -54,6 +54,20 @@ export interface Provider {
   phone: string;
   role: 'provider';
   businessName?: string;
+  hasSaIdNumber?: boolean;
+  companyRegistrationNumber?: string;
+  fraudReviewStatus?: 'NONE' | 'PENDING_REVIEW' | 'CLEARED' | 'REJECTED';
+  trustScore?: number;
+  trustLevel?: { id: string; label: string; score?: number };
+  verificationSummary?: {
+    verifiedId: boolean;
+    verifiedCompany: boolean;
+    verifiedBankAccount: boolean;
+    trustScore: number;
+    trustLevel: { id: string; label: string };
+    jobsCompleted: number;
+    customerSatisfaction: number;
+  };
   vehicleType?: string;
   numberPlate?: string;
   city?: string;
@@ -438,7 +452,7 @@ export interface Escrow {
   releasedAmount: number;
 }
 
-export type JobStatus = 'PENDING' | 'ASSIGNED' | 'INSPECTED' | 'SERVICE_PRICE_SUBMITTED' | 'SERVICE_PAID' | 'MATERIALS_SUBMITTED' | 'MATERIALS_PAID' | 'IN_PROGRESS' | 'AWAITING_CONFIRMATION' | 'COMPLETED' | 'CANCELLED' | 'REJECTED';
+export type JobStatus = 'PENDING' | 'ASSIGNED' | 'INSPECTED' | 'SERVICE_PRICE_SUBMITTED' | 'SERVICE_PAID' | 'MATERIALS_SUBMITTED' | 'MATERIALS_PAID' | 'IN_PROGRESS' | 'AWAITING_CONFIRMATION' | 'DISPUTED' | 'COMPLETED' | 'CANCELLED' | 'REJECTED';
 
 export interface JobNote {
   id: string;
@@ -612,6 +626,19 @@ export interface JobMaterialOrderSnapshot {
   /** Canonical tracking (supplier ↔ customer); same payload as MaterialOrder.materialBatch. */
   materialBatch?: MaterialBatch;
   createdAt: string;
+  refundStatus?: string;
+  refundAmount?: number;
+  refundProcessedAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  /** Mirrors material order payload — used when job meta storeOrders is stale. */
+  deliveryType?: string;
+  deliveryFee?: number;
+  deliveryQuote?: { fee?: number; note?: string };
+  delivery?: OrderDelivery;
+  payment?: OrderPayment;
+  deliveryStatus?: string;
 }
 
 export interface Job {
@@ -659,6 +686,9 @@ export interface Job {
   /** When a provider declines a pending request before assignment */
   rejectedByProviderUserId?: string | null;
   completionConfirmedByUser?: boolean;
+  confirmationDeadlineAt?: string | null;
+  markedCompleteAt?: string | null;
+  disputeId?: string | null;
   /** Persisted MaterialOrder rows for this job (supplier fulfillment) after payment */
   jobMaterialOrders?: JobMaterialOrderSnapshot[];
   /** Per-supplier store checkout orders embedded on the job (API: `storeOrders`) */
@@ -712,7 +742,20 @@ export interface Job {
   /** Provider share not yet released */
   remainingAmount?: number;
   /** Admin payment settlement bucket from API */
-  paymentSettlementStatus?: 'released' | 'held' | 'pending';
+  paymentSettlementStatus?: 'released' | 'held' | 'pending' | 'refund';
+  /** Refund status/kind when job was cancelled after payment */
+  refundStatus?: string;
+  /** Per-refund breakdown from admin processing */
+  refundDetails?: {
+    customerNet?: number;
+    materialsNet?: number;
+    escrowApplied?: number;
+    clawbackApplied?: number;
+    providerDebtAdded?: number;
+    cumulativeCustomerNet?: number;
+    processedAt?: string | null;
+  };
+  providerRefundDebt?: number;
 }
 
 export interface ServiceRequest {
@@ -773,6 +816,13 @@ export type AppNotificationType =
   | 'provider_rejected'
   | 'material_paid'
   | 'job_completed'
+  | 'confirmation_needed'
+  | 'job_marked_complete'
+  | 'dispute_opened'
+  | 'dispute_under_investigation'
+  | 'refund_approved'
+  | 'case_closed'
+  | 'payment_released'
   | 'refund_issued'
   | 'provider_suggestion'
   | 'job_cancelled'
@@ -815,6 +865,83 @@ export interface AppNotification {
   senderId?: string;
   senderName?: string;
   senderRole?: string;
+}
+
+export interface JobCompletionEvidence {
+  id: string;
+  jobId: string;
+  customerId: string;
+  providerId: string;
+  rating: number | null;
+  review: string | null;
+  images: string[];
+  videos: string[];
+  verified: boolean;
+  autoCompleted: boolean;
+  jobCategory: string;
+  confirmedAt: string;
+  paymentReleasedAt: string | null;
+}
+
+export interface JobDisputeRound {
+  id: string;
+  disputeId: string;
+  roundNumber: number;
+  status: 'OPEN' | 'UNDER_INVESTIGATION' | 'RESOLVED' | 'CLOSED';
+  requestedResolution: 'PROVIDER_RETURN_FIX' | 'REFUND' | 'PARTIAL_REFUND' | 'FULL_REFUND' | 'OTHER';
+  customerComment: string;
+  otherResolutionDetail?: string | null;
+  customerImages: string[];
+  customerVideos: string[];
+  providerComment?: string | null;
+  providerImages: string[];
+  providerVideos: string[];
+  resolutionAction?: string | null;
+  resolutionNotes?: string | null;
+  openedAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface JobDispute {
+  id: string;
+  jobId: string;
+  customerId: string;
+  providerId: string;
+  status: 'OPEN' | 'UNDER_INVESTIGATION' | 'RESOLVED' | 'CLOSED';
+  requestedResolution: 'PROVIDER_RETURN_FIX' | 'REFUND' | 'PARTIAL_REFUND' | 'FULL_REFUND' | 'OTHER';
+  customerComment: string;
+  otherResolutionDetail?: string | null;
+  customerImages: string[];
+  customerVideos: string[];
+  providerComment?: string | null;
+  providerImages: string[];
+  providerVideos: string[];
+  adminNotes?: string | null;
+  openedAt: string;
+  resolvedAt?: string | null;
+  messages?: Array<{
+    id: string;
+    senderId: string;
+    senderRole: string;
+    body: string;
+    attachments: string[];
+    createdAt: string;
+  }>;
+  resolutionLogs?: Array<{
+    id: string;
+    adminId: string;
+    action: string;
+    amount: number | null;
+    notes: string | null;
+    createdAt: string;
+  }>;
+  rounds?: JobDisputeRound[];
+  job?: {
+    id: string;
+    title?: string;
+    categoryName?: string;
+    status?: string;
+  } | null;
 }
 
 // Specials Types
@@ -868,6 +995,20 @@ export interface MaterialOrder {
   deliveryProviderId?: string;
   deliveryFee: number;
   total: number;
+  materialsSubtotal?: number;
+  platformCommission?: number;
+  supplierEarning?: number;
+  finance?: {
+    materialsSubtotal: number;
+    deliveryFee: number;
+    orderGross: number;
+    platformCommission: number;
+    supplierNet: number;
+    commissionBasis: 'materials_only' | 'materials_plus_delivery';
+    deliveryPaid?: boolean;
+    materialsPaid?: boolean;
+    deliveryType?: string;
+  };
   paymentStatus: 'paid' | 'pending' | 'refunded';
   deliveryStatus: 'processing' | 'out_for_delivery' | 'delivered';
   // New nested delivery/payment state; legacy fields above mirror these
@@ -902,7 +1043,8 @@ export interface MaterialOrder {
   materialBatch?: MaterialBatch | null;
   collectionPoint?: DeliveryGeoPoint;
   destinationPoint?: DeliveryGeoPoint;
-  deliveryQuote?: { fee: number; note?: string; submittedAt?: string; providerId?: string };
+  deliveryQuote?: { fee: number; note?: string; submittedAt?: string; providerId?: string; branchStaffId?: string };
+  deliveryRejection?: { reason?: string; rejectedAt?: string; branchStaffId?: string };
   source?: string;
   /** Courier job linked to provider delivery for this material order */
   courierJobId?: string | null;
@@ -913,6 +1055,11 @@ export interface MaterialOrder {
     details?: string;
     reportedAt: string;
     status: 'open' | 'resolved';
+  };
+  customerRating?: {
+    rating: number;
+    comment?: string;
+    createdAt?: string;
   };
 }
 
@@ -974,7 +1121,7 @@ export interface AdminCustomerJobCounts {
   total: number;
   completed: number;
   active: number;
-  open: number;
+  disputed: number;
   rejected: number;
   cancelled: number;
 }
@@ -1021,6 +1168,8 @@ export interface AdminCustomerJobRow {
   createdAt: string;
   siteAddress: string;
   totalPaid: number;
+  /** Net labour refund returned to customer (when job was cancelled / refunded). */
+  refundAmount?: number;
   providerId: string | null;
   provider: AdminCustomerProviderSummary | null;
 }

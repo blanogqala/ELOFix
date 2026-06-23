@@ -2,6 +2,7 @@ const providerService = require("../services/provider.service");
 const adminAnalyticsService = require("../services/adminAnalytics.service");
 const categoryService = require("../services/category.service");
 const withdrawalAdminService = require("../services/withdrawalAdmin.service");
+const disputeAdminService = require("../services/disputeAdmin.service");
 const { reconcileProvider } = require("../services/reconciliation.service");
 const { getFinancialSummary } = require("../services/financialSummary.service");
 const { getCommissionSummary } = require("../services/commission.service");
@@ -10,6 +11,25 @@ const supplierService = require("../services/supplier.service");
 const materialOrderService = require("../services/materialOrder.service");
 const adminCustomersService = require("../services/adminCustomers.service");
 const adminProviderService = require("../services/adminProvider.service");
+const prisma = require("../config/prisma");
+const refundJobService = require("../services/refundJob.service");
+
+async function processAdminJobRefund(req, res) {
+  const jobId = String(req.params.jobId || "").trim();
+  if (!jobId) throw new AppError("jobId is required", 400);
+  const laborRefundNet = Number(req.body?.laborRefundNet ?? req.body?.laborRefund ?? 0);
+  const materialsRefundNet = Number(req.body?.materialsRefundNet ?? req.body?.materialsRefund ?? 0);
+  const job = await refundJobService.processAdminJobRefund({
+    jobId,
+    laborRefundNet,
+    materialsRefundNet,
+    adminUserId: req.user.userId,
+    idempotencyKey: req.financialIdempotencyKey,
+    requestHash: req.financialRequestHash,
+    route: req.financialIdempotencyRoute,
+  });
+  res.json({ success: true, job });
+}
 
 async function listProviders(req, res) {
   const providers = await providerService.listProviders({
@@ -174,8 +194,8 @@ async function listSuppliers(req, res) {
   let analyticsBySupplierId = new Map();
   try {
     [globalSupplierOrderAnalytics, analyticsBySupplierId] = await Promise.all([
-      materialOrderService.aggregateCompletedPaidMaterialOrders({}),
-      materialOrderService.aggregateCompletedPaidMaterialOrdersBySupplier(),
+      materialOrderService.aggregatePaidMaterialOrders({}),
+      materialOrderService.aggregatePaidMaterialOrdersBySupplier(),
     ]);
   } catch (err) {
     console.error("[admin.listSuppliers] aggregate material orders failed", err);
@@ -225,7 +245,7 @@ async function getAdminSupplierDetail(req, res) {
   }
   let analytics;
   try {
-    analytics = await materialOrderService.aggregateCompletedPaidMaterialOrders({ supplierId });
+    analytics = await materialOrderService.aggregatePaidMaterialOrders({ supplierId });
   } catch (err) {
     console.error("[admin.getAdminSupplierDetail] aggregate failed", err);
     analytics = {
@@ -292,6 +312,157 @@ async function listAllPlatformMaterialOrders(req, res) {
   });
 }
 
+async function listAdminDisputes(req, res) {
+  const data = await disputeAdminService.listDisputes({
+    search: req.query.search,
+    status: req.query.status,
+    requestedResolution: req.query.requestedResolution,
+  });
+  res.json({ success: true, ...data });
+}
+
+async function getAdminDisputeDetail(req, res) {
+  const data = await disputeAdminService.getDisputeDetail(req.params.id);
+  res.json({ success: true, ...data });
+}
+
+async function updateAdminDisputeStatus(req, res) {
+  const data = await disputeAdminService.updateDisputeStatus(
+    req.user.userId,
+    req.params.id,
+    req.body?.status,
+    req.body?.adminNotes
+  );
+  res.json({ success: true, ...data });
+}
+
+async function resolveAdminDispute(req, res) {
+  const data = await disputeAdminService.resolveDispute(req.user.userId, req.params.id, req.body || {});
+  res.json({ success: true, ...data });
+}
+
+async function exportJobCompletionEvidence(req, res) {
+  await disputeAdminService.streamEvidenceZip(req.params.jobId, res);
+}
+
+async function getAdminJobCompletionEvidence(req, res) {
+  const jobCompletionEvidence = require("../services/jobCompletionEvidence.service");
+  const evidence = await jobCompletionEvidence.getEvidenceByJobId(req.params.jobId);
+  res.json({ success: true, evidence });
+}
+
+async function getProviderTrustScore(req, res) {
+  const providerTrustScore = require("../services/providerTrustScore.service");
+  const providerService = require("../services/provider.service");
+  const userId = await providerService.resolveProviderUserIdFromRouteParam(req.params.userId);
+  if (!userId) {
+    return res.status(404).json({ success: false, message: "Provider not found" });
+  }
+  const row = await prisma.provider.findUnique({ where: { userId }, select: { id: true } });
+  if (!row) {
+    return res.status(404).json({ success: false, message: "Provider not found" });
+  }
+  const trust = await providerTrustScore.getTrustScoreForProviderProfile(row.id);
+  res.json({ success: true, trustScore: trust });
+}
+
+async function getFraudCenterSummary(req, res) {
+  const fraudAlert = require("../services/fraudAlert.service");
+  const summary = await fraudAlert.getSummaryCounts();
+  res.json({ success: true, summary });
+}
+
+async function listFraudAlerts(req, res) {
+  const fraudAlert = require("../services/fraudAlert.service");
+  const data = await fraudAlert.listAlerts({
+    status: req.query.status,
+    severity: req.query.severity,
+    alertType: req.query.alertType,
+    limit: req.query.limit,
+    offset: req.query.offset,
+  });
+  res.json({ success: true, ...data });
+}
+
+async function getFraudAlertDetail(req, res) {
+  const fraudAlert = require("../services/fraudAlert.service");
+  const alert = await fraudAlert.getAlertById(req.params.id);
+  if (!alert) {
+    return res.status(404).json({ success: false, message: "Alert not found" });
+  }
+  res.json({ success: true, alert });
+}
+
+async function patchFraudAlert(req, res) {
+  const fraudAlert = require("../services/fraudAlert.service");
+  const alert = await fraudAlert.updateAlertStatus(req.params.id, {
+    status: req.body?.status,
+    reviewedBy: req.user?.userId,
+    notes: req.body?.notes,
+  });
+  res.json({ success: true, alert });
+}
+
+async function getFraudDuplicatePhones(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const items = await fraudCenterAdmin.getDuplicatePhones();
+  res.json({ success: true, items });
+}
+
+async function getFraudDuplicateIds(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const items = await fraudCenterAdmin.getDuplicateIds();
+  res.json({ success: true, items });
+}
+
+async function getFraudDuplicateCompanies(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const data = await fraudCenterAdmin.getDuplicateCompanies();
+  res.json({ success: true, ...data });
+}
+
+async function getFraudDuplicateBanks(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const items = await fraudCenterAdmin.getDuplicateBanks();
+  res.json({ success: true, items });
+}
+
+async function getFraudSuspiciousDevices(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const items = await fraudCenterAdmin.listSuspiciousDevices();
+  res.json({ success: true, items });
+}
+
+async function getFraudHighRiskProviders(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const items = await fraudCenterAdmin.getHighRiskProviders();
+  res.json({ success: true, items });
+}
+
+async function getFraudFlaggedCustomers(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const items = await fraudCenterAdmin.getFlaggedCustomers();
+  res.json({ success: true, items });
+}
+
+async function getFraudDeviceDetail(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const data = await fraudCenterAdmin.getDeviceDetail(req.params.id);
+  if (!data) {
+    return res.status(404).json({ success: false, message: "Device not found" });
+  }
+  res.json({ success: true, ...data });
+}
+
+async function patchProviderFraudReview(req, res) {
+  const fraudCenterAdmin = require("../services/fraudCenterAdmin.service");
+  const provider = await fraudCenterAdmin.updateProviderFraudReview(req.params.userId, {
+    status: req.body?.status,
+    adminId: req.user?.userId,
+  });
+  res.json({ success: true, provider });
+}
+
 module.exports = {
   listProviders,
   listProviderNetRevenues,
@@ -326,4 +497,25 @@ module.exports = {
   getAdminSupplierOrdersExport,
   listSupplierMaterialOrders,
   listAllPlatformMaterialOrders,
+  listAdminDisputes,
+  getAdminDisputeDetail,
+  updateAdminDisputeStatus,
+  resolveAdminDispute,
+  exportJobCompletionEvidence,
+  getAdminJobCompletionEvidence,
+  getProviderTrustScore,
+  getFraudCenterSummary,
+  listFraudAlerts,
+  getFraudAlertDetail,
+  patchFraudAlert,
+  getFraudDuplicatePhones,
+  getFraudDuplicateIds,
+  getFraudDuplicateCompanies,
+  getFraudDuplicateBanks,
+  getFraudSuspiciousDevices,
+  getFraudHighRiskProviders,
+  getFraudFlaggedCustomers,
+  getFraudDeviceDetail,
+  patchProviderFraudReview,
+  processAdminJobRefund,
 };

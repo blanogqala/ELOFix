@@ -1,15 +1,19 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getJobsByUser } from '@/lib/api/jobs';
+import { listDisputes } from '@/lib/api/disputes';
+import { formatRequestedResolution } from '@/lib/disputeLabels';
 import { queryKeys } from '@/lib/queryKeys';
 import { getJobPriceDisplay } from '@/lib/jobUtils';
-import { Job } from '@/types';
-import { Search, Briefcase, ArrowRight } from 'lucide-react';
+import { formatCurrency } from '@/lib/formatCurrency';
+import { Job, JobDispute, JobStatus } from '@/types';
+import { Search, Briefcase, ArrowRight, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
@@ -20,13 +24,18 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 
+type JobsView = 'jobs' | 'disputes';
+
 export default function UserJobs() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const jobsView: JobsView = searchParams.get('view') === 'disputes' ? 'disputes' : 'jobs';
   const userId = user?.id ?? '';
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'completed' | 'cancelled'>('all');
+  const [disputes, setDisputes] = useState<JobDispute[]>([]);
   const {
     data: jobs = [],
     isLoading,
@@ -40,7 +49,15 @@ export default function UserJobs() {
   });
   const loadError = isError ? (error instanceof Error ? error.message : 'Failed to load jobs.') : null;
   const { jobHasActivity, notifications } = useJobActivityIndicators();
-  const activeFilterHasDot = activeTabHasActivity(notifications, jobs, (s) => isActiveWorkflowStatus(s));
+  const activeFilterHasDot = activeTabHasActivity(notifications, jobs, (s) =>
+    s ? isActiveWorkflowStatus(s as JobStatus) : false
+  );
+
+  useEffect(() => {
+    void listDisputes()
+      .then((data) => setDisputes(data.disputes))
+      .catch(() => setDisputes([]));
+  }, []);
 
   useEffect(() => {
     if (!isError || !loadError) return;
@@ -51,19 +68,56 @@ export default function UserJobs() {
     });
   }, [isError, loadError, toast]);
 
-  const filteredJobs = jobs
-    .filter(job => {
-      const matchesSearch = job.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           job.categoryName.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesStatus =
+  const disputeByJobId = useMemo(() => {
+    const map = new Map<string, JobDispute>();
+    disputes.forEach((d) => map.set(d.jobId, d));
+    return map;
+  }, [disputes]);
+
+  const disputedCount = useMemo(
+    () => jobs.filter((job) => job.status === 'DISPUTED').length,
+    [jobs]
+  );
+
+  const searchFilteredJobs = useMemo(
+    () =>
+      jobs
+        .filter((job) => {
+          const q = searchQuery.toLowerCase();
+          return (
+            job.description.toLowerCase().includes(q) ||
+            job.categoryName.toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [jobs, searchQuery]
+  );
+
+  const viewJobs = useMemo(() => {
+    if (jobsView === 'disputes') {
+      return searchFilteredJobs.filter((job) => job.status === 'DISPUTED');
+    }
+    return searchFilteredJobs.filter((job) => {
+      if (job.status === 'DISPUTED') return false;
+      return (
         statusFilter === 'all' ||
         (statusFilter === 'pending' && job.status === 'PENDING') ||
         (statusFilter === 'active' && isActiveWorkflowStatus(job.status)) ||
         (statusFilter === 'completed' && job.status === 'COMPLETED') ||
-        (statusFilter === 'cancelled' && job.status === 'CANCELLED');
-      return matchesSearch && matchesStatus;
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        (statusFilter === 'cancelled' && job.status === 'CANCELLED')
+      );
+    });
+  }, [searchFilteredJobs, jobsView, statusFilter]);
+
+  const setJobsView = (view: JobsView) => {
+    if (view === 'jobs') {
+      searchParams.delete('view');
+      setSearchParams(searchParams, { replace: true });
+    } else {
+      searchParams.set('view', 'disputes');
+      setSearchParams(searchParams, { replace: true });
+    }
+  };
 
   const getStatusBadge = (job: Job) => (
     <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
@@ -71,7 +125,7 @@ export default function UserJobs() {
     </span>
   );
 
-  const groupedEntries = groupJobsForList(filteredJobs);
+  const groupedEntries = groupJobsForList(viewJobs);
 
   const renderJobRow = (job: Job, variant: JobListRowVariant) => (
     <>
@@ -89,13 +143,23 @@ export default function UserJobs() {
       </div>
       <div className="text-right shrink-0 hidden sm:block">
         {(() => {
-          const { text, isPaid } = getJobPriceDisplay(job);
+          const { text, isPaid, refundAmount, refundStatus } = getJobPriceDisplay(job);
+          const refunded =
+            refundAmount != null &&
+            refundAmount > 0 &&
+            ['processed', 'partial', 'gateway_failed'].includes(String(refundStatus || '').toLowerCase());
           return (
             <>
               <p className="font-medium">
                 {text}
-                {isPaid && <span className="ml-1 text-xs text-success">(Paid)</span>}
+                {isPaid && !refunded && <span className="ml-1 text-xs text-success">(Paid)</span>}
+                {isPaid && refunded && (
+                  <span className="ml-1 text-xs text-destructive">(Refunded)</span>
+                )}
               </p>
+              {refunded && (
+                <p className="text-xs text-destructive tabular-nums">−{formatCurrency(refundAmount!)} refund</p>
+              )}
               <p className="text-xs text-muted-foreground">
                 {new Date(job.createdAt).toLocaleDateString()}
               </p>
@@ -110,13 +174,69 @@ export default function UserJobs() {
     </>
   );
 
+  const renderDisputeNote = (job: Job) => {
+    const dispute = disputeByJobId.get(job.id);
+    if (!dispute) return null;
+    return (
+      <div className="border-b border-destructive/20 bg-destructive/5 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <div className="text-sm min-w-0">
+              <p className="font-medium text-destructive">Dispute in progress</p>
+              <p className="text-muted-foreground mt-0.5">
+                {dispute.status} ·{' '}
+                {formatRequestedResolution(dispute.requestedResolution, dispute.otherResolutionDetail)}
+              </p>
+              <p className="text-muted-foreground line-clamp-2 mt-1">{dispute.customerComment}</p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/user/disputes/${dispute.id}`);
+            }}
+          >
+            View case
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const disputedRowClass =
+    jobsView === 'disputes' ? 'border-l-4 border-destructive bg-destructive/5' : undefined;
+
+  const renderEntry = (entry: ReturnType<typeof groupJobsForList>[number]) => {
+    const key = entry.kind === 'group' ? entry.parent.id : entry.job.id;
+    const primaryJob = entry.kind === 'group' ? entry.parent : entry.job;
+
+    return (
+      <div key={key}>
+        <JobListGroup
+          entry={entry}
+          className={disputedRowClass}
+          onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
+          renderRow={renderJobRow}
+        />
+        {jobsView === 'disputes' && renderDisputeNote(primaryJob)}
+      </div>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6 md:space-y-8 animate-fade-in">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">My Jobs</h1>
-            <p className="text-sm text-muted-foreground sm:text-base">Track and manage your service requests</p>
+            <p className="text-sm text-muted-foreground sm:text-base">
+              Track service requests and open dispute cases
+            </p>
           </div>
           <Button className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={() => navigate('/user/new-request')}>
             New Request
@@ -134,23 +254,46 @@ export default function UserJobs() {
               className="pl-10 pr-4 h-11 rounded-lg border border-input focus-visible:ring-2 focus-visible:ring-primary/20"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {(['all', 'pending', 'active', 'completed', 'cancelled'] as const).map((filter) => (
-              <Button
-                key={filter}
-                variant={statusFilter === filter ? 'default' : 'outline'}
-                size="sm"
-                className="relative whitespace-nowrap gap-1.5"
-                onClick={() => setStatusFilter(filter)}
-              >
-                {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                {filter === 'active' && activeFilterHasDot && (
-                  <ActivityDot aria-label="Active jobs need attention" />
-                )}
-              </Button>
-            ))}
-          </div>
+          {jobsView === 'jobs' && (
+            <div className="flex flex-wrap gap-2">
+              {(['all', 'pending', 'active', 'completed', 'cancelled'] as const).map((filter) => (
+                <Button
+                  key={filter}
+                  variant={statusFilter === filter ? 'default' : 'outline'}
+                  size="sm"
+                  className="relative whitespace-nowrap gap-1.5"
+                  onClick={() => setStatusFilter(filter)}
+                >
+                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                  {filter === 'active' && activeFilterHasDot && (
+                    <ActivityDot aria-label="Active jobs need attention" />
+                  )}
+                </Button>
+              ))}
+            </div>
+          )}
         </div>
+
+        <div className="space-y-2">
+          <Tabs value={jobsView} onValueChange={(v) => setJobsView(v as JobsView)}>
+            <TabsList>
+              <TabsTrigger value="jobs">My Jobs</TabsTrigger>
+              <TabsTrigger value="disputes" className="gap-2">
+                Dispute Center
+                {disputedCount > 0 && (
+                  <span className="rounded-full bg-destructive px-2 py-0.5 text-xs text-destructive-foreground">
+                    {disputedCount}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {/* {jobsView === 'disputes' && (
+            <p className="text-sm text-muted-foreground">
+              Jobs you flagged as not complete stay here until EloFix resolves the case.
+            </p>
+          )} */}
 
         {/* Jobs List */}
         <div className="card-elevated w-full min-w-0 max-w-full overflow-hidden">
@@ -177,35 +320,33 @@ export default function UserJobs() {
                 Retry
               </Button>
             </div>
-          ) : filteredJobs.length > 0 ? (
+          ) : viewJobs.length > 0 ? (
             <div className="divide-y divide-border">
-              {groupedEntries.map((entry) => (
-                <JobListGroup
-                  key={entry.kind === 'group' ? entry.parent.id : entry.job.id}
-                  entry={entry}
-                  onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
-                  renderRow={renderJobRow}
-                />
-              ))}
+              {groupedEntries.map((entry) => renderEntry(entry))}
             </div>
           ) : (
             <div className="p-12 text-center">
               <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
                 <Briefcase className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h3 className="font-semibold mb-2">No jobs found</h3>
+              <h3 className="font-semibold mb-2">
+                {jobsView === 'disputes' ? 'No open disputes' : 'No jobs found'}
+              </h3>
               <p className="text-muted-foreground text-sm mb-4">
-                {searchQuery || statusFilter !== 'all'
-                  ? 'Try adjusting your filters'
-                  : 'No jobs available'}
+                {jobsView === 'disputes'
+                  ? 'When you flag work as not complete, the job appears here.'
+                  : searchQuery || statusFilter !== 'all'
+                    ? 'Try adjusting your filters'
+                    : 'No jobs available'}
               </p>
-              {!searchQuery && statusFilter === 'all' && (
+              {jobsView === 'jobs' && !searchQuery && statusFilter === 'all' && (
                 <Button onClick={() => navigate('/user/new-request')}>
                   Create Request
                 </Button>
               )}
             </div>
           )}
+        </div>
         </div>
       </div>
     </DashboardLayout>

@@ -336,7 +336,12 @@ async function confirmPaymentReturn(intentId, userId, role) {
       state: "PAID",
       amount: Number(intent.amount),
       externalEventId: `sandbox-return-${intent.id}`,
-      raw: { source: "sandbox_return_url", intentId: intent.id },
+      raw: {
+        source: "sandbox_return_url",
+        intentId: intent.id,
+        card_last4: "4242",
+        card_brand: "visa",
+      },
     });
     if (webhookOut?.httpStatus && webhookOut.httpStatus >= 400) {
       console.error("[confirmPaymentReturn] sandbox settle failed", {
@@ -392,7 +397,12 @@ async function adminForceSettle(intentId, adminUserId) {
     state: "PAID",
     amount: Number(intent.amount),
     externalEventId: `admin-force-${intent.id}`,
-    raw: { source: "admin_force_settle", adminUserId },
+    raw: {
+      source: "admin_force_settle",
+      adminUserId,
+      card_last4: "4242",
+      card_brand: "visa",
+    },
   };
 
   const out = await webhookService.processWebhookResult(intent.provider, verifyResult);

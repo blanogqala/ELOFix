@@ -69,10 +69,27 @@ async function uploadWorkPostImageScoped(req, res) {
   res.json({ success: true, url: result.url });
 }
 
+async function listCompletedProjects(req, res) {
+  const userId = await providerService.resolveProviderUserIdFromRouteParam(req.params.id);
+  if (!userId) throw new AppError("Provider not found", 404);
+  const jobCompletionEvidence = require("../services/jobCompletionEvidence.service");
+  const projects = await jobCompletionEvidence.listVerifiedByProviderUserId(userId, req.query.limit);
+  const ratings = projects.filter((p) => p.rating != null).map((p) => p.rating);
+  const averageRating =
+    ratings.length > 0 ? ratings.reduce((a, b) => a + b, 0) / ratings.length : 0;
+  res.json({
+    success: true,
+    projects,
+    averageRating: Math.round(averageRating * 10) / 10,
+    jobsCompleted: projects.length,
+  });
+}
+
 module.exports = {
   listProviders,
   getProvider,
   listProviderReviews,
+  listCompletedProjects,
   updateProviderScoped,
   uploadDocumentScoped,
   uploadAvatarScoped,

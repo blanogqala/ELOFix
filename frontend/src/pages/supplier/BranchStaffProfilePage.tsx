@@ -86,7 +86,7 @@ export default function BranchStaffProfilePage() {
 
   return (
     <DashboardLayout>
-      <div className="animate-fade-in mx-auto max-w-lg space-y-6">
+      <div className="animate-fade-in mx-auto max-w-3xl space-y-6">
         <div>
           <h1 className="text-xl font-semibold sm:text-2xl">Branch profile</h1>
           <p className="text-sm text-muted-foreground">

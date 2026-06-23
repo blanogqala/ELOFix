@@ -8,6 +8,8 @@ import { MaterialBatches } from '@/components/materials/MaterialBatches';
 import { MaterialTabs, type MaterialsTabId } from '@/components/materials/MaterialTabs';
 import { PendingMaterialsList } from '@/components/materials/PendingMaterialsList';
 import { CustomerSuggestionsList } from '@/components/materials/CustomerSuggestionsList';
+import { isMaterialOrderRefunded } from '@/lib/materialBatchTracking';
+import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
 
 export interface MaterialsSectionProps {
   job: Job;
@@ -51,7 +53,7 @@ export function MaterialsSection({
   customerSuggestionsForDisplay,
   getPendingOrderForAcceptedSuggestion,
   allMaterialsPaid,
-  hasAnyMaterialPaid,
+  hasAnyMaterialPaid: _hasAnyMaterialPaid,
   canEditMaterials,
   profileBlocksWorkflow,
   materialsBuilder,
@@ -69,6 +71,14 @@ export function MaterialsSection({
   const [activeTab, setActiveTab] = useState<MaterialsTabId>('pending');
   const suggestionCount = customerSuggestionsForDisplay.length;
   const submitDisabled = materialsBuilder.length === 0 && !draftMrFromApi;
+  const hasRefundedMaterial = paidBatches.some((card) =>
+    isMaterialOrderRefunded(resolveMaterialOrderForStoreOrder(job, card))
+  );
+  const hasActiveMaterialPaid = paidBatches.some(
+    (card) =>
+      card.payment?.materialsPaid &&
+      !isMaterialOrderRefunded(resolveMaterialOrderForStoreOrder(job, card))
+  );
 
   if (!job.servicePrice || !job.laborPaid) {
     return (
@@ -91,10 +101,19 @@ export function MaterialsSection({
         <h2 className="font-semibold text-lg flex items-center gap-2">
           <Package className="h-5 w-5" /> Materials
         </h2>
-        {allMaterialsPaid && <Badge className="bg-green-600 text-white">Paid</Badge>}
+        {hasRefundedMaterial && !hasActiveMaterialPaid ? (
+          <Badge variant="destructive">Refund issued</Badge>
+        ) : allMaterialsPaid && hasActiveMaterialPaid ? (
+          <Badge className="bg-green-600 text-white">Paid</Badge>
+        ) : null}
       </div>
 
-      {hasAnyMaterialPaid && (
+      {hasRefundedMaterial && !hasActiveMaterialPaid && (
+        <p className="text-sm text-destructive font-medium">
+          A material order was cancelled and refunded to the customer.
+        </p>
+      )}
+      {hasActiveMaterialPaid && (
         <p className="text-sm text-green-600 font-medium">
           User has completed material purchase for this job. You can proceed with the work.
         </p>
@@ -151,7 +170,7 @@ export function MaterialsSection({
         </div>
       </div>
 
-      {hasAnyMaterialPaid && (
+      {hasActiveMaterialPaid && (
         <p className="text-xs text-muted-foreground">
           Materials paid for one or more stores. You can still add new material batches.
         </p>

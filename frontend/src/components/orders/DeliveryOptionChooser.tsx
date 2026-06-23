@@ -30,6 +30,8 @@ interface DeliveryOptionChooserProps {
   deliveryProviders: DeliveryProvider[];
   deliveryProvidersError?: string | null;
   onSelect: (delivery: DeliveryOptionSelection) => void;
+  /** When changing from self-pickup, hide the collect-yourself option. */
+  hideSelfOption?: boolean;
 }
 
 export function DeliveryOptionChooser({
@@ -41,14 +43,29 @@ export function DeliveryOptionChooser({
   deliveryProviders,
   deliveryProvidersError,
   onSelect,
+  hideSelfOption = false,
 }: DeliveryOptionChooserProps) {
-  const [selectedType, setSelectedType] = useState<'SELF' | 'STORE' | 'PROVIDER'>('SELF');
-  const [selectedProviderId, setSelectedProviderId] = useState('');
   const hasCourierOption = deliveryProviders.length > 0;
+  const defaultType = (): 'SELF' | 'STORE' | 'PROVIDER' => {
+    if (hideSelfOption) {
+      if (storeHasDelivery) return 'STORE';
+      if (hasCourierOption) return 'PROVIDER';
+    }
+    return 'SELF';
+  };
+
+  const [selectedType, setSelectedType] = useState<'SELF' | 'STORE' | 'PROVIDER'>(defaultType);
+  const [selectedProviderId, setSelectedProviderId] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedType(defaultType());
+    setSelectedProviderId('');
+  }, [open, hideSelfOption, storeHasDelivery, hasCourierOption]);
 
   useEffect(() => {
     if (!hasCourierOption) {
-      setSelectedType(prev => (prev === 'PROVIDER' ? 'SELF' : prev));
+      setSelectedType(prev => (prev === 'PROVIDER' ? defaultType() : prev));
       setSelectedProviderId('');
     }
   }, [hasCourierOption]);
@@ -59,7 +76,7 @@ export function DeliveryOptionChooser({
     if (selectedType === 'SELF') {
       onSelect({ type: 'SELF', status: 'SelfCollect', fee: 0 });
     } else if (selectedType === 'STORE') {
-      onSelect({ type: 'STORE', status: 'PendingApproval', fee: storeDeliveryFee });
+      onSelect({ type: 'STORE', status: 'PendingApproval', fee: 0 });
     } else {
       const provider = deliveryProviders.find(p => p.id === selectedProviderId);
       if (provider) {
@@ -72,7 +89,7 @@ export function DeliveryOptionChooser({
       }
     }
     onOpenChange(false);
-    setSelectedType('SELF');
+    setSelectedType(defaultType());
     setSelectedProviderId('');
   };
 
@@ -80,10 +97,13 @@ export function DeliveryOptionChooser({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
         <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
-          <DialogTitle>Choose Delivery Option for {storeName}</DialogTitle>
+          <DialogTitle>
+            {hideSelfOption ? `Change delivery option for ${storeName}` : `Choose Delivery Option for ${storeName}`}
+          </DialogTitle>
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-2">
           <RadioGroup value={selectedType} onValueChange={v => setSelectedType(v as 'SELF' | 'STORE' | 'PROVIDER')}>
+            {!hideSelfOption ? (
             <div className="p-3 border rounded-lg">
               <div className="flex items-center space-x-3">
                 <RadioGroupItem value="SELF" id="chooser-self" />
@@ -93,6 +113,7 @@ export function DeliveryOptionChooser({
                 </Label>
               </div>
             </div>
+            ) : null}
 
             {storeHasDelivery && (
               <div className="p-3 border rounded-lg">
@@ -102,9 +123,10 @@ export function DeliveryOptionChooser({
                     <div className="flex justify-between">
                       <div>
                         <p className="font-medium">Use store delivery</p>
-                        <p className="text-sm text-muted-foreground">Delivered by {storeName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Price confirmed by the branch after your request
+                        </p>
                       </div>
-                      <p className="font-medium">{formatCurrency(storeDeliveryFee)}</p>
                     </div>
                   </Label>
                 </div>

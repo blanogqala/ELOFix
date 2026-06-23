@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { RefundSummaryLine } from '@/components/payments/RefundSummaryLine';
 
 export interface OrderCardViewModel {
   id: string;
@@ -19,6 +20,10 @@ export interface OrderCardViewModel {
   fulfillmentStatusLabel?: string;
   deliveryStatusClassName: string;
   createdAt: string;
+  paymentStatus?: string;
+  refundStatus?: string;
+  refundAmount?: number;
+  isRefunded?: boolean;
 }
 
 interface OrderCardProps {
@@ -28,11 +33,13 @@ interface OrderCardProps {
 
 export function OrderCard({ order, onClick }: OrderCardProps) {
   const isService = Boolean(order.jobId);
+  const isRefunded = Boolean(order.isRefunded || (order.refundAmount != null && order.refundAmount > 0));
   return (
     <div
       className={cn(
         'rounded-xl border border-border bg-card p-4 shadow-sm hover:bg-muted/40 transition-colors cursor-pointer',
-        'flex flex-col gap-2'
+        'flex flex-col gap-2',
+        isRefunded && 'border-destructive/30 bg-destructive/[0.03]'
       )}
       onClick={onClick}
       role="presentation"
@@ -45,8 +52,14 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <p className="font-medium">{order.storeName}</p>
             {order.fulfillmentStatusLabel ? (
-              <Badge variant="secondary" className="text-xs">
-                {order.fulfillmentStatusLabel}
+              <Badge
+                variant="secondary"
+                className={cn(
+                  'text-xs',
+                  isRefunded && 'bg-destructive/10 text-destructive border-destructive/30'
+                )}
+              >
+                {isRefunded ? 'Cancelled · Refunded' : order.fulfillmentStatusLabel}
               </Badge>
             ) : (
               <Badge className={order.deliveryStatusClassName}>{order.deliveryStatusLabel}</Badge>
@@ -67,7 +80,16 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
           </p>
         </div>
         <div className="hidden shrink-0 text-right sm:block">
-          <p className="font-bold">{formatCurrency(order.total, { decimals: 2 })}</p>
+          <p className={cn('font-bold', isRefunded && 'text-muted-foreground line-through')}>
+            {formatCurrency(order.total, { decimals: 2 })}
+          </p>
+          {isRefunded && order.refundAmount != null && order.refundAmount > 0 && (
+            <RefundSummaryLine
+              refundAmount={order.refundAmount}
+              refundStatus={order.refundStatus || 'processed'}
+              variant="inline"
+            />
+          )}
           <p className="text-xs text-muted-foreground">
             {new Date(order.createdAt).toLocaleDateString()}
           </p>

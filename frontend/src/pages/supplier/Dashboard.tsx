@@ -12,6 +12,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  SUPPLIER_GROSS_EARNINGS_HINT,
+  SUPPLIER_GROSS_EARNINGS_LABEL,
+  supplierBranchGrossRevenue,
+  supplierOverviewGrossRevenue,
+} from '@/lib/supplierAnalyticsDisplay';
 import { ClipboardList, DollarSign, ArrowRight, ShoppingCart, Building2 } from 'lucide-react';
 import {
   Select,
@@ -45,7 +51,7 @@ export default function SupplierDashboard() {
   const { data: overview } = useQuery({
     queryKey: ['supplier', 'analytics', 'overview', userId],
     queryFn: () => getSupplierAnalyticsOverview(),
-    enabled: Boolean(userId) && !isBranchStaff,
+    enabled: Boolean(userId),
   });
 
   const { data: branchAnalytics = [] } = useQuery({
@@ -104,7 +110,6 @@ export default function SupplierDashboard() {
     () => orders.filter((o) => String(o.fulfillmentStatus || 'PENDING').toUpperCase() === 'PENDING').length,
     [orders]
   );
-  const net = useMemo(() => orders.reduce((s, o) => s + Number(o.supplierEarning ?? 0), 0), [orders]);
 
   const recent = useMemo(
     () =>
@@ -160,9 +165,13 @@ export default function SupplierDashboard() {
                 </div>
                 <div>
                   <p className="text-xl font-bold sm:text-2xl">
-                    {overview != null ? formatCurrency(overview.sumNetEarningsAllBranches) : '—'}
+                    {overview != null
+                      ? formatCurrency(supplierOverviewGrossRevenue(overview) ?? 0)
+                      : '—'}
                   </p>
-                  <p className="text-xs text-muted-foreground sm:text-sm">Net earnings (all branches, excl. cancelled)</p>
+                  <p className="text-xs text-muted-foreground sm:text-sm">
+                    {SUPPLIER_GROSS_EARNINGS_LABEL} ({SUPPLIER_GROSS_EARNINGS_HINT.toLowerCase()})
+                  </p>
                 </div>
               </div>
             </Card>
@@ -220,9 +229,9 @@ export default function SupplierDashboard() {
                     </div>
                     <div>
                       <p className="font-semibold text-emerald-700 dark:text-emerald-400">
-                        {formatCurrency(b.netEarnings)}
+                        {formatCurrency(supplierBranchGrossRevenue(b))}
                       </p>
-                      <p className="text-muted-foreground">Net</p>
+                      <p className="text-muted-foreground">Net + 7%</p>
                     </div>
                   </div>
                   <Button asChild className="w-full btn-accent" size="sm">
@@ -284,8 +293,14 @@ export default function SupplierDashboard() {
                 <DollarSign className="h-4 w-4 text-emerald-600" />
               </div>
               <div>
-                <p className="text-xl font-bold sm:text-2xl">{formatCurrency(net)}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Net earnings (branch)</p>
+                <p className="text-xl font-bold sm:text-2xl">
+                  {overview != null
+                    ? formatCurrency(supplierOverviewGrossRevenue(overview) ?? 0)
+                    : '—'}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  {SUPPLIER_GROSS_EARNINGS_LABEL} ({SUPPLIER_GROSS_EARNINGS_HINT.toLowerCase()})
+                </p>
               </div>
             </div>
           </Card>

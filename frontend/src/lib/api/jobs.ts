@@ -91,7 +91,14 @@ interface BackendJob {
   /** Job-level amount released to provider (escrow v2) */
   releasedAmount?: number | null;
   remainingAmount?: number | null;
-  paymentSettlementStatus?: 'released' | 'held' | 'pending';
+  paymentSettlementStatus?: 'released' | 'held' | 'pending' | 'refund';
+  refundAmount?: number;
+  refundStatus?: string;
+  refundDetails?: Job['refundDetails'];
+  providerRefundDebt?: number;
+  confirmationDeadlineAt?: string | null;
+  markedCompleteAt?: string | null;
+  disputeId?: string | null;
 }
 
 interface BackendJobsResponse {
@@ -224,9 +231,17 @@ function toFrontendJob(job: BackendJob): Job {
     paymentSettlementStatus:
       job.paymentSettlementStatus === 'released' ||
       job.paymentSettlementStatus === 'held' ||
-      job.paymentSettlementStatus === 'pending'
+      job.paymentSettlementStatus === 'pending' ||
+      job.paymentSettlementStatus === 'refund'
         ? job.paymentSettlementStatus
         : undefined,
+    refundAmount: numOrUndef(job.refundAmount),
+    refundStatus: job.refundStatus,
+    refundDetails: job.refundDetails,
+    providerRefundDebt: numOrUndef(job.providerRefundDebt),
+    confirmationDeadlineAt: job.confirmationDeadlineAt ?? null,
+    markedCompleteAt: job.markedCompleteAt ?? null,
+    disputeId: job.disputeId ?? null,
   };
 }
 
@@ -634,13 +649,57 @@ export async function cancelJob(
 export async function confirmJobCompletion(
   jobId: string,
   rating: number,
-  review: string
+  review: string,
+  options?: { images?: string[]; videos?: string[] }
 ): Promise<Job> {
   const { data } = await apiClient.post<BackendJobResponse>(`/jobs/${jobId}/confirm-completion`, {
     rating,
     review,
+    images: options?.images ?? [],
+    videos: options?.videos ?? [],
   });
   return ensureJob(data, 'confirm job completion');
+}
+
+export async function uploadCompletionEvidence(
+  jobId: string,
+  file: File
+): Promise<{ url: string; kind: 'image' | 'video' }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await apiClient.post<{ success: boolean; url?: string; kind?: string }>(
+    `/jobs/${jobId}/completion-evidence/upload`,
+    formData
+  );
+  if (!data?.url) throw new Error('Upload failed');
+  return { url: data.url, kind: data.kind === 'video' ? 'video' : 'image' };
+}
+
+export async function openJobDispute(
+  jobId: string,
+  payload: {
+    comment: string;
+    requestedResolution: string;
+    otherResolutionDetail?: string;
+    images?: string[];
+    videos?: string[];
+  }
+): Promise<import('@/types').JobDispute> {
+  const { data } = await apiClient.post<{ success: boolean; dispute: import('@/types').JobDispute }>(
+    `/jobs/${jobId}/disputes`,
+    payload
+  );
+  if (!data?.dispute) throw new Error('Invalid dispute response');
+  return data.dispute;
+}
+
+export async function getJobCompletionEvidence(
+  jobId: string
+): Promise<import('@/types').JobCompletionEvidence | null> {
+  const { data } = await apiClient.get<{ success: boolean; evidence: import('@/types').JobCompletionEvidence | null }>(
+    `/jobs/${jobId}/completion-evidence`
+  );
+  return data?.evidence ?? null;
 }
 
 export async function setStoreDeliveryOption(

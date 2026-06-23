@@ -4,6 +4,7 @@ import { useNavigate, useParams, useLocation, useSearchParams } from 'react-rout
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
+import { resolveEffectiveDeliveryFee, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid } from '@/lib/orderFinance';
 import { OrderDetailsView, NormalizedOrder, NormalizedDeliveryState } from '@/components/orders/OrderDetailsView';
 import { DeliveryOptionChooser, DeliveryOptionSelection } from '@/components/orders/DeliveryOptionChooser';
 import { getSuppliers } from '@/lib/api/suppliers';
@@ -57,6 +58,40 @@ const CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES = new Set([
 function toFulfillmentStatusU(status: string | undefined): string {
   const normalized = String(status || 'PENDING').toUpperCase().trim();
   return normalized || 'PENDING';
+}
+
+function applyEffectiveDeliveryFee(order: NormalizedOrder): NormalizedOrder {
+  const fee = resolveEffectiveDeliveryFee(order);
+  return fee > 0 ? { ...order, deliveryFee: fee } : { ...order, deliveryFee: 0 };
+}
+
+function resolveDeliveryFeeFromApi(input: {
+  deliveryState: NormalizedDeliveryState;
+  deliveryFee?: number;
+  deliveryQuote?: { fee?: number };
+  delivery?: { fee?: number };
+}): number {
+  const quoteFee = input.deliveryQuote?.fee;
+  if (
+    (input.deliveryState === 'Quoted' || input.deliveryState === 'Approved') &&
+    quoteFee != null &&
+    Number.isFinite(Number(quoteFee))
+  ) {
+    return Number(quoteFee);
+  }
+  const raw = Number(input.deliveryFee ?? input.delivery?.fee ?? 0);
+  return Number.isFinite(raw) ? raw : 0;
+}
+
+function resolveDeliveryRejectionReason(
+  mo: MaterialOrder | Record<string, unknown> | null | undefined
+): string | undefined {
+  if (!mo || typeof mo !== 'object') return undefined;
+  const rej = (mo as MaterialOrder).deliveryRejection;
+  if (rej && typeof rej === 'object' && typeof rej.reason === 'string' && rej.reason.trim()) {
+    return rej.reason.trim();
+  }
+  return undefined;
 }
 
 function mergeTrackingFields(
@@ -127,6 +162,10 @@ function mergeTrackingFields(
       mo.customerDeliveryIssue && typeof mo.customerDeliveryIssue === 'object'
         ? (mo.customerDeliveryIssue as NormalizedOrder['customerDeliveryIssue'])
         : undefined,
+    customerRating:
+      mo.customerRating && typeof mo.customerRating === 'object'
+        ? (mo.customerRating as NormalizedOrder['customerRating'])
+        : undefined,
   };
 }
 
@@ -167,6 +206,7 @@ export default function OrderDetails() {
   const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
   const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
   const [deliveryChooserOpen, setDeliveryChooserOpen] = useState(false);
+  const [deliveryChooserFromPickup, setDeliveryChooserFromPickup] = useState(false);
   const [storeHasDelivery, setStoreHasDelivery] = useState(false);
   const [storeDeliveryFee, setStoreDeliveryFee] = useState(0);
   const [receiptPending, setReceiptPending] = useState(false);
@@ -188,7 +228,8 @@ export default function OrderDetails() {
     user &&
       trackingRoomOrderId &&
       order?.deliveryType !== 'SELF' &&
-      fulfillmentUForSocket === 'OUT_FOR_DELIVERY'
+      fulfillmentUForSocket === 'OUT_FOR_DELIVERY' &&
+      (order?.deliveryType !== 'STORE' || order?.deliveryPaid)
   );
   const { liveLat, liveLng, lastPingAtMs, pollFailed, isSocketReconnecting } = useOrderLocationSocket({
     orderId: trackingRoomOrderId,
@@ -318,11 +359,12 @@ export default function OrderDetails() {
           fulfillmentStatus,
           courierJobId
         );
-        const quotedFee = (found as MaterialOrder).deliveryQuote?.fee;
-        const deliveryFee =
-          deliveryState === 'Quoted' && quotedFee != null
-            ? Number(quotedFee)
-            : found.deliveryFee;
+        const deliveryFee = resolveDeliveryFeeFromApi({
+          deliveryState,
+          deliveryFee: found.deliveryFee,
+          deliveryQuote: (found as MaterialOrder).deliveryQuote,
+          delivery: found.delivery,
+        });
         const addr = addressFromMaterialOrder(found);
         const provider = found.deliveryProviderId
           ? deliveryProviders.find(dp => dp.id === found.deliveryProviderId)
@@ -354,16 +396,25 @@ export default function OrderDetails() {
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: found.jobId,
           courierJobId,
+          finance: found.finance,
+          materialsSubtotal: found.materialsSubtotal,
+          platformCommission: found.platformCommission,
+          supplierEarning: found.supplierEarning,
+          deliveryRejectionReason: resolveDeliveryRejectionReason(found),
+          deliveryQuote: (found as MaterialOrder).deliveryQuote,
           collectionAddress: addr.collectionAddress,
           destinationAddress: addr.destinationAddress,
+          customerRating: (found as MaterialOrder).customerRating,
         };
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === found.storeId);
         setOrder(
-          enrichOrderContact(
-            mergeTrackingFields(normalized, found as unknown as Record<string, unknown>),
-            supplier,
-            provider ?? undefined
+          applyEffectiveDeliveryFee(
+            enrichOrderContact(
+              mergeTrackingFields(normalized, found as unknown as Record<string, unknown>),
+              supplier,
+              provider ?? undefined
+            )
           )
         );
         setJobContext(null);
@@ -404,11 +455,12 @@ export default function OrderDetails() {
           moFulfillment,
           courierJobId
         );
-        const quotedFee = moRow?.deliveryQuote?.fee;
-        const deliveryFee =
-          deliveryState === 'Quoted' && quotedFee != null
-            ? Number(quotedFee)
-            : storeOrder.deliveryFee;
+        const deliveryFee = resolveDeliveryFeeFromApi({
+          deliveryState,
+          deliveryFee: moRow?.deliveryFee ?? storeOrder.deliveryFee,
+          deliveryQuote: moRow?.deliveryQuote,
+          delivery: moRow?.delivery ?? d,
+        });
         const addr = addressFromMaterialOrder(moRow);
         const materialsTotal = storeOrder.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
         const provider = storeOrder.deliveryProviderId
@@ -439,18 +491,27 @@ export default function OrderDetails() {
           storeId: storeOrder.storeId,
           fulfillmentStatus: moFulfillment,
           courierJobId,
+          finance: moRow?.finance,
+          materialsSubtotal: moRow?.materialsSubtotal,
+          platformCommission: moRow?.platformCommission,
+          supplierEarning: moRow?.supplierEarning,
+          deliveryRejectionReason: resolveDeliveryRejectionReason(moRow),
+          deliveryQuote: moRow?.deliveryQuote,
           collectionAddress: addr.collectionAddress,
           destinationAddress: addr.destinationAddress || job.location?.address,
+          customerRating: moRow?.customerRating,
         };
         const suppliers = await getSuppliers();
         const supplier = suppliers.find(s => s.id === storeOrder.storeId);
         setOrder(
-          enrichOrderContact(
-            mergeTrackingFields(normalized, moRow as unknown as Record<string, unknown>, {
-              destinationCoords: job.location?.coordinates ?? null,
-            }),
-            supplier,
-            provider ?? undefined
+          applyEffectiveDeliveryFee(
+            enrichOrderContact(
+              mergeTrackingFields(normalized, moRow as unknown as Record<string, unknown>, {
+                destinationCoords: job.location?.coordinates ?? null,
+              }),
+              supplier,
+              provider ?? undefined
+            )
           )
         );
         setJobContext({ jobId: job.id, storeId: storeOrder.storeId });
@@ -619,17 +680,39 @@ export default function OrderDetails() {
   };
 
   const handlePayDelivery = () => {
-    if (!order || !effectiveOrderId || order.deliveryFee <= 0) return;
+    if (!order || !effectiveOrderId) return;
+    const fee = resolveEffectiveDeliveryFee({
+      deliveryFee: order.deliveryFee,
+      deliveryType:
+        order.deliveryType === 'STORE'
+          ? 'STORE_DELIVERY'
+          : order.deliveryType === 'PROVIDER'
+            ? 'DELIVERY_PROVIDER'
+            : 'SELF',
+      delivery: { fee: order.deliveryFee, status: order.deliveryState },
+      deliveryPaid: order.deliveryPaid,
+      deliveryState: order.deliveryState,
+    });
+    if (fee <= 0) return;
     setPayDeliveryModalOpen(true);
   };
 
   const handleChangeDelivery = () => {
     const isApprovedUnpaid = order?.deliveryState === 'Approved' && !order?.deliveryPaid;
     if (isApprovedUnpaid && !window.confirm('Change delivery option? Your current approval will be lost.')) return;
+    setDeliveryChooserFromPickup(false);
     setDeliveryChooserOpen(true);
   };
 
-  const handleChooseDelivery = () => setDeliveryChooserOpen(true);
+  const handleChangeFromPickup = () => {
+    setDeliveryChooserFromPickup(true);
+    setDeliveryChooserOpen(true);
+  };
+
+  const handleChooseDelivery = () => {
+    setDeliveryChooserFromPickup(false);
+    setDeliveryChooserOpen(true);
+  };
 
   const handleDeliveryOptionSelected = async (delivery: DeliveryOptionSelection) => {
     if (!order || !effectiveOrderId) return;
@@ -659,17 +742,29 @@ export default function OrderDetails() {
   };
 
   const handleConfirmReceipt = async () => {
-    if (!effectiveOrderId) return;
+    if (!effectiveOrderId || !order) return;
+    const isPickup = order.deliveryType === 'SELF' || order.canonicalDelivery === 'pickup';
     setReceiptPending(true);
     try {
       await confirmMaterialOrderCollection(effectiveOrderId);
       toast({
-        title: 'Delivery completed successfully',
-        description: 'Thanks — share quick feedback below if you have a moment.',
+        title: isPickup ? 'Collection confirmed' : 'Delivery completed successfully',
+        description: isPickup
+          ? 'Your pickup has been confirmed.'
+          : 'Thanks — share quick feedback below if you have a moment.',
       });
-      setDeliveryJustCompleted(true);
+      setDeliveryJustCompleted(!isPickup);
       await loadOrder();
-      setDeliveryFeedbackOpen(true);
+      if (!isPickup) {
+        try {
+          const fresh = await getMaterialOrderById(effectiveOrderId);
+          if (!(fresh as MaterialOrder | null)?.customerRating) {
+            setDeliveryFeedbackOpen(true);
+          }
+        } catch {
+          setDeliveryFeedbackOpen(true);
+        }
+      }
     } catch {
       toast({ title: 'Error', description: 'Could not confirm.', variant: 'destructive' });
     } finally {
@@ -721,6 +816,55 @@ export default function OrderDetails() {
     Boolean(order?.courierJobId) &&
     !order?.deliveryPaid;
 
+  const hasDeliveryAlternatives = storeHasDelivery || deliveryProviders.length > 0;
+  const canChangeFromPickup =
+    Boolean(order) &&
+    order.deliveryType === 'SELF' &&
+    CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES.has(orderFulfillmentStatusU) &&
+    hasDeliveryAlternatives;
+
+  const dispatchLocked = ['OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(orderFulfillmentStatusU);
+  const deliveryInTransit = ['InProgress', 'OnTheWay', 'Delivered'].includes(order?.deliveryState || '');
+  const canChangeDeliveryOption =
+    Boolean(order) &&
+    !dispatchLocked &&
+    !deliveryInTransit &&
+    (isStoreDeliveryAwaitingBranchQuote({
+      deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
+      deliveryState: order.deliveryState,
+      deliveryFee: order.deliveryFee,
+      deliveryQuote: order.deliveryQuote,
+      deliveryPaid: order.deliveryPaid,
+    }) ||
+      order.deliveryState === 'PendingApproval' ||
+      order.deliveryState === 'Rejected' ||
+      order.deliveryState === 'Quoted' ||
+      (order.deliveryState === 'Approved' && !order.deliveryPaid) ||
+      isStoreDeliveryQuotedUnpaid({
+        deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
+        deliveryState: order.deliveryState,
+        deliveryFee: order.deliveryFee,
+        deliveryQuote: order.deliveryQuote,
+        deliveryPaid: order.deliveryPaid,
+      }) ||
+      (order.deliveryState === 'Processing' && !order.deliveryPaid && order.deliveryType === 'STORE'));
+
+  const payDeliveryAmount = order
+    ? resolveEffectiveDeliveryFee({
+        deliveryFee: order.deliveryFee,
+        deliveryType:
+          order.deliveryType === 'STORE'
+            ? 'STORE_DELIVERY'
+            : order.deliveryType === 'PROVIDER'
+              ? 'DELIVERY_PROVIDER'
+              : 'SELF',
+        delivery: { fee: order.deliveryFee, status: order.deliveryState },
+        deliveryQuote: order.deliveryQuote,
+        deliveryPaid: order.deliveryPaid,
+        deliveryState: order.deliveryState,
+      })
+    : 0;
+
   return (
     <DashboardLayout>
       <div className="mx-auto min-w-0 max-w-4xl space-y-6 md:space-y-8 animate-fade-in">
@@ -767,18 +911,26 @@ export default function OrderDetails() {
                   : undefined
               }
               onChangeDelivery={
-                order.deliveryState === 'PendingApproval' || order.deliveryState === 'Rejected' ||
-                (order.deliveryState === 'Approved' && !order.deliveryPaid)
+                canChangeDeliveryOption
                   ? handleChangeDelivery
-                  : undefined
+                  : canChangeFromPickup
+                    ? handleChangeFromPickup
+                    : undefined
               }
               onChooseDelivery={handleChooseDelivery}
               onCancelOrder={canCustomerCancelOrder ? handleCancelOrder : undefined}
               onPayDelivery={
                 !isCourierLinked &&
-                order.deliveryState === 'Approved' &&
                 !order.deliveryPaid &&
-                order.deliveryFee > 0
+                payDeliveryAmount > 0 &&
+                (order.deliveryState === 'Approved' ||
+                  isStoreDeliveryQuotedUnpaid({
+                    deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
+                    deliveryState: order.deliveryState,
+                    deliveryFee: order.deliveryFee,
+                    deliveryQuote: order.deliveryQuote,
+                    deliveryPaid: order.deliveryPaid,
+                  }))
                   ? handlePayDelivery
                   : undefined
               }
@@ -819,22 +971,30 @@ export default function OrderDetails() {
             />
             <DeliveryOptionChooser
               open={deliveryChooserOpen}
-              onOpenChange={setDeliveryChooserOpen}
+              onOpenChange={(open) => {
+                setDeliveryChooserOpen(open);
+                if (!open) setDeliveryChooserFromPickup(false);
+              }}
               storeName={order.storeName}
               storeId={order.storeId || ''}
               storeHasDelivery={storeHasDelivery}
               storeDeliveryFee={storeDeliveryFee}
               deliveryProviders={deliveryProviders}
               deliveryProvidersError={deliveryProvidersError}
+              hideSelfOption={deliveryChooserFromPickup}
               onSelect={handleDeliveryOptionSelected}
             />
-            {!isCourierLinked && (
+            {!isCourierLinked && payDeliveryAmount > 0 ? (
             <PaymentModal
               open={payDeliveryModalOpen}
               onOpenChange={setPayDeliveryModalOpen}
               title="Pay delivery fee"
-              description="Complete payment so your courier can collect and deliver your materials."
-              amount={order.deliveryFee}
+              description={
+                order.deliveryType === 'STORE'
+                  ? 'Complete payment so the store can dispatch your materials.'
+                  : 'Complete payment so your courier can collect and deliver your materials.'
+              }
+              amount={payDeliveryAmount}
               kind="DELIVERY_FEE"
               jobId={jobContext?.jobId || order.jobId}
               materialOrderId={order.materialOrderId || effectiveOrderId}
@@ -847,11 +1007,12 @@ export default function OrderDetails() {
                   : undefined
               }
               breakdown={[
-                { label: 'Delivery fee', amount: order.deliveryFee },
-                { label: 'Total due', amount: order.deliveryFee, isBold: true },
+                { label: 'Delivery fee', amount: payDeliveryAmount },
+                { label: 'Total due', amount: payDeliveryAmount, isBold: true },
               ]}
             />
-            )}
+            ) : null}
+            {order.deliveryType !== 'SELF' && order.canonicalDelivery !== 'pickup' ? (
             <DeliveryExperienceFeedbackDialog
               open={deliveryFeedbackOpen}
               onOpenChange={setDeliveryFeedbackOpen}
@@ -864,8 +1025,10 @@ export default function OrderDetails() {
               canSubmit={
                 Boolean(order.jobId) &&
                 String(order.fulfillmentStatus || '').toUpperCase() === 'COMPLETED' &&
-                order.deliveryConfirmed === true
+                order.deliveryConfirmed === true &&
+                !order.customerRating
               }
+              existingRating={order.customerRating ?? null}
               onRated={() => {
                 void loadOrder();
                 void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
@@ -875,6 +1038,7 @@ export default function OrderDetails() {
                 }
               }}
             />
+            ) : null}
           </>
         ) : (
           <div className="card-elevated p-6 text-center text-sm text-muted-foreground sm:p-8 sm:text-base">

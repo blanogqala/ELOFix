@@ -32,18 +32,34 @@ export interface SupplierMaterialOrderLine {
   refundStatus?: string;
   refundAmount?: number;
   refundProcessedAt?: string;
+  branchDeliveryFee?: number;
+  branchHasDelivery?: boolean;
+  deliveryRejection?: { reason?: string; rejectedAt?: string };
+  deliveryQuote?: { fee?: number; note?: string };
   commissionReversed?: number;
   /** Job materials payment pipeline */
   jobId?: string;
   source?: string;
   deliveryType?: string;
+  deliveryFee?: number;
   deliveryProviderId?: string;
   deliveryProviderName?: string;
   deliveryProviderPhone?: string;
   deliveryProviderEmail?: string;
   activeTrackingId?: string;
   activeTrackingToken?: string;
-  delivery?: Record<string, unknown>;
+  delivery?: Record<string, unknown> & { status?: string; fee?: number };
+  finance?: {
+    materialsSubtotal: number;
+    deliveryFee: number;
+    orderGross: number;
+    platformCommission: number;
+    supplierNet: number;
+    commissionBasis: 'materials_only' | 'materials_plus_delivery';
+    deliveryPaid?: boolean;
+    materialsPaid?: boolean;
+    deliveryType?: string;
+  };
   supplierActivity?: Array<{
     type: string;
     status?: string;
@@ -109,6 +125,30 @@ export async function patchSupplierOrderFulfillment(
   return data.order;
 }
 
+export async function patchSupplierDeliveryApprove(
+  orderId: string,
+  body: { fee: number; note?: string }
+): Promise<SupplierMaterialOrderLine> {
+  const { data } = await apiClient.patch<{ success: boolean; order: SupplierMaterialOrderLine }>(
+    `/supplier/orders/${encodeURIComponent(orderId)}/delivery/approve`,
+    body
+  );
+  if (!data?.order) throw new Error('Delivery approval failed');
+  return data.order;
+}
+
+export async function patchSupplierDeliveryReject(
+  orderId: string,
+  reason?: string
+): Promise<SupplierMaterialOrderLine> {
+  const { data } = await apiClient.patch<{ success: boolean; order: SupplierMaterialOrderLine }>(
+    `/supplier/orders/${encodeURIComponent(orderId)}/delivery/reject`,
+    { reason }
+  );
+  if (!data?.order) throw new Error('Delivery rejection failed');
+  return data.order;
+}
+
 export async function postSupplierOrderNote(orderId: string, message: string): Promise<SupplierMaterialOrderLine> {
   const { data } = await apiClient.post<{ success: boolean; order: SupplierMaterialOrderLine }>(
     `/supplier/orders/${orderId}/notes`,
@@ -142,6 +182,7 @@ export interface SupplierOrdersExportRow {
   commissionImpact: number;
   netImpact: number;
   isCancelled: boolean;
+  isCompletedPaid?: boolean;
   cancellationReason?: string | null;
   cancelledBy?: string | null;
   createdAt?: string | null;
@@ -149,26 +190,52 @@ export interface SupplierOrdersExportRow {
   refundStatus?: string | null;
 }
 
+export interface SupplierOrdersExportSummary {
+  orderCount: number;
+  cancelledCount: number;
+  completedCount: number;
+  pendingCount: number;
+  completedRevenue: number;
+  completedCommission: number;
+  completedNet: number;
+  activeRevenue: number;
+  activeCommission: number;
+  activeNet: number;
+  cancelledRevenueAdjustment: number;
+  cancelledCommissionAdjustment: number;
+  cancelledNetAdjustment: number;
+  totalRevenueImpact: number;
+  totalCommissionImpact: number;
+  totalNetImpact: number;
+}
+
+export const EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY: SupplierOrdersExportSummary = {
+  orderCount: 0,
+  cancelledCount: 0,
+  completedCount: 0,
+  pendingCount: 0,
+  completedRevenue: 0,
+  completedCommission: 0,
+  completedNet: 0,
+  activeRevenue: 0,
+  activeCommission: 0,
+  activeNet: 0,
+  cancelledRevenueAdjustment: 0,
+  cancelledCommissionAdjustment: 0,
+  cancelledNetAdjustment: 0,
+  totalRevenueImpact: 0,
+  totalCommissionImpact: 0,
+  totalNetImpact: 0,
+};
+
 export async function getSupplierOrdersExport(filters?: { from?: string; to?: string; branchId?: string }): Promise<{
   rows: SupplierOrdersExportRow[];
-  summary: {
-    orderCount: number;
-    cancelledCount: number;
-    totalRevenueImpact: number;
-    totalCommissionImpact: number;
-    totalNetImpact: number;
-  };
+  summary: SupplierOrdersExportSummary;
 }> {
   const { data } = await apiClient.get<{
     success: boolean;
     rows: SupplierOrdersExportRow[];
-    summary: {
-      orderCount: number;
-      cancelledCount: number;
-      totalRevenueImpact: number;
-      totalCommissionImpact: number;
-      totalNetImpact: number;
-    };
+    summary: SupplierOrdersExportSummary;
   }>('/supplier/orders/export', {
     params: {
       ...(filters?.from ? { from: filters.from } : {}),
@@ -178,13 +245,7 @@ export async function getSupplierOrdersExport(filters?: { from?: string; to?: st
   });
   return {
     rows: Array.isArray(data?.rows) ? data.rows : [],
-    summary: data?.summary || {
-      orderCount: 0,
-      cancelledCount: 0,
-      totalRevenueImpact: 0,
-      totalCommissionImpact: 0,
-      totalNetImpact: 0,
-    },
+    summary: data?.summary || { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
   };
 }
 
@@ -426,6 +487,8 @@ export async function patchSupplierProfile(body: {
 export interface SupplierAnalyticsOverview {
   totalBranches: number;
   sumNetEarningsAllBranches: number;
+  sumPlatformCommissionAllBranches?: number;
+  sumGrossRevenueAllBranches?: number;
   totalOrders: number;
   totalPendingOrders: number;
 }
@@ -438,6 +501,8 @@ export async function getSupplierAnalyticsOverview(): Promise<SupplierAnalyticsO
   return {
     totalBranches: data.totalBranches ?? 0,
     sumNetEarningsAllBranches: data.sumNetEarningsAllBranches ?? 0,
+    sumPlatformCommissionAllBranches: data.sumPlatformCommissionAllBranches ?? 0,
+    sumGrossRevenueAllBranches: data.sumGrossRevenueAllBranches ?? 0,
     totalOrders: data.totalOrders ?? 0,
     totalPendingOrders: data.totalPendingOrders ?? 0,
   };
@@ -453,6 +518,8 @@ export interface SupplierBranchAnalyticsRow {
   totalOrders: number;
   pendingOrders: number;
   netEarnings: number;
+  platformCommission?: number;
+  grossRevenue?: number;
   managerEmails?: string[];
 }
 

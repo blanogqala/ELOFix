@@ -2,6 +2,7 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../../config/prisma");
 const escrowSettlement = require("./escrowSettlement.service");
+const paymentService = require("../payment.service");
 const { getGateway } = require("./gatewayRegistry");
 
 function toPrismaDecimal(v) {
@@ -124,6 +125,17 @@ async function processWebhookResult(providerKey, verifyResult) {
             where: { provider: providerKey, externalEventId },
             data: { processedAt: new Date(), paymentIntentId: intent.id },
           });
+          try {
+            const cardDetails = paymentService.parsePaymentCardFromGatewayPayload(
+              verifyResult.raw,
+              intent.provider
+            );
+            if (cardDetails) {
+              await paymentService.ensureSavedCardFromPayment(intent.userId, cardDetails, tx);
+            }
+          } catch (cardErr) {
+            console.error("[processWebhookResult] ensureSavedCardFromPayment", cardErr);
+          }
           const postSettleJobStore =
             fresh.kind === "JOB_STORE_ORDER" && !fresh.materialOrderId;
           const postSettleDeliveryFee = fresh.kind === "DELIVERY_FEE";

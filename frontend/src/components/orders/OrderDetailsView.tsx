@@ -20,6 +20,8 @@ import { canonicalDeliveryLabel } from '@/lib/deliveryTypes';
 import { fulfillmentStatusBadgeLabel } from '@/lib/materialBatchTracking';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { resolveOrderFinance, resolveEffectiveDeliveryFee, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid, isStoreDeliveryRejected } from '@/lib/orderFinance';
+import { RefundSummaryLine } from '@/components/payments/RefundSummaryLine';
 import { format, parseISO } from 'date-fns';
 
 import type { MaterialBatch } from '@/types';
@@ -79,8 +81,12 @@ export interface NormalizedOrder {
   branchArea?: string;
   branchHasDelivery?: boolean;
   branchDeliveryFee?: number;
+  deliveryQuote?: { fee?: number; note?: string };
+  deliveryRejectionReason?: string;
   cancelledBy?: string;
   cancellationReason?: string;
+  refundStatus?: string;
+  refundAmount?: number;
   activeTrackingId?: string | null;
   activeTrackingToken?: string | null;
   materialOrderId?: string;
@@ -97,6 +103,15 @@ export interface NormalizedOrder {
     reportedAt: string;
     status: 'open' | 'resolved';
   };
+  customerRating?: {
+    rating: number;
+    comment?: string;
+    createdAt?: string;
+  };
+  finance?: import('@/lib/orderFinance').OrderFinanceBreakdown;
+  materialsSubtotal?: number;
+  platformCommission?: number;
+  supplierEarning?: number;
 }
 
 interface OrderDetailsViewProps {
@@ -133,7 +148,7 @@ const DELIVERY_STATE_BADGES: Record<
   { label: string; className: string }
 > = {
   SelfCollect: { label: 'Self-collect', className: 'bg-muted text-muted-foreground' },
-  PendingApproval: { label: 'Awaiting courier quote', className: 'bg-warning/20 text-warning' },
+  PendingApproval: { label: 'Awaiting approval', className: 'bg-warning/20 text-warning' },
   Quoted: { label: 'Quote received', className: 'bg-primary/20 text-primary' },
   Approved: { label: 'Approved — pay to start', className: 'bg-primary/20 text-primary' },
   Rejected: { label: 'Rejected', className: 'bg-destructive/20 text-destructive' },
@@ -281,7 +296,12 @@ export function OrderDetailsView({
         : 'supplier_delivery');
 
   const fulfillmentU = String(order.fulfillmentStatus || '').toUpperCase();
+  const storeDeliveryFeePending =
+    order.deliveryType === 'STORE' &&
+    !order.deliveryPaid &&
+    Number(order.deliveryFee ?? order.deliveryQuote?.fee ?? order.finance?.deliveryFee ?? 0) > 0;
   const liveTrackingFulfillment =
+    !storeDeliveryFeePending &&
     (fulfillmentU === 'OUT_FOR_DELIVERY' || fulfillmentU === 'DELAYED') &&
     !['FAILED', 'CANCELLED'].includes(fulfillmentU);
 
@@ -319,6 +339,13 @@ export function OrderDetailsView({
   const deliveryEffectivelyPaid = Boolean(order.deliveryPaid) || deliveryEffectivelyComplete;
 
   const isPendingApproval = deliveryState === 'PendingApproval';
+  const isStoreAwaitingQuote = isStoreDeliveryAwaitingBranchQuote({
+    deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
+    deliveryState: order.deliveryState,
+    deliveryFee: order.deliveryFee,
+    deliveryQuote: order.deliveryQuote,
+    deliveryPaid: order.deliveryPaid,
+  });
   const isQuoted =
     deliveryState === 'Quoted' && !deliveryEffectivelyPaid && !deliveryEffectivelyComplete;
   const isDeliveryPaidProvider =
@@ -326,10 +353,26 @@ export function OrderDetailsView({
     deliveryEffectivelyPaid &&
     (Boolean(order.courierJobId) || deliveryEffectivelyComplete);
   const isApproved =
-    deliveryState === 'Approved' && !deliveryEffectivelyPaid && !deliveryEffectivelyComplete;
-  const isRejected = deliveryState === 'Rejected';
+    (deliveryState === 'Approved' || isStoreDeliveryQuotedUnpaid({
+      deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
+      deliveryState: order.deliveryState,
+      deliveryFee: order.deliveryFee,
+      deliveryQuote: order.deliveryQuote,
+      deliveryPaid: order.deliveryPaid,
+    })) &&
+    !deliveryEffectivelyPaid &&
+    !deliveryEffectivelyComplete;
+  const isRejected = deliveryState === 'Rejected' || isStoreDeliveryRejected({
+    deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
+    deliveryState: order.deliveryState,
+  });
   const isCancelled = deliveryState === 'Cancelled';
   const noDeliverySelected = isCancelled || !order.deliveryType;
+  const isSelfPickup =
+    isPickupCanonical &&
+    order.deliveryType === 'SELF' &&
+    (deliveryState === 'SelfCollect' || deliveryState === 'Processing');
+  const pickupChangeBlocked = ['CANCELLED', 'COMPLETED', 'OUT_FOR_DELIVERY'].includes(fulfillmentU);
   const isInProgressOrDelivered =
     deliveryState === 'InProgress' || deliveryState === 'Delivered' || deliveryState === 'OnTheWay';
   const materialsOk = order.materialsPaid !== false;
@@ -342,6 +385,45 @@ export function OrderDetailsView({
   const cancellationReason = order.cancellationReason || undefined;
 
   const materialsSubtotal = order.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
+  const effectiveDeliveryFee = resolveEffectiveDeliveryFee({
+    deliveryFee: order.deliveryFee,
+    deliveryType:
+      order.deliveryType === 'SELF'
+        ? 'SELF'
+        : order.deliveryType === 'STORE'
+          ? 'STORE_DELIVERY'
+          : 'DELIVERY_PROVIDER',
+    delivery: { fee: order.deliveryFee, status: order.deliveryState },
+    deliveryQuote: order.deliveryQuote,
+    finance: order.finance,
+    deliveryPaid: order.deliveryPaid,
+    deliveryState: order.deliveryState,
+  });
+  const finance = resolveOrderFinance({
+    finance: order.finance,
+    materialsSubtotal: order.materialsSubtotal ?? materialsSubtotal,
+    deliveryFee: effectiveDeliveryFee,
+    deliveryType:
+      order.deliveryType === 'SELF'
+        ? 'SELF'
+        : order.deliveryType === 'STORE'
+          ? 'STORE_DELIVERY'
+          : 'DELIVERY_PROVIDER',
+    deliveryState: order.deliveryState,
+    platformCommission: order.platformCommission,
+    supplierEarning: order.supplierEarning,
+    deliveryPaid: order.deliveryPaid,
+    materialsPaid: order.materialsPaid,
+  });
+  const storeDeliveryApproved =
+    order.deliveryType === 'STORE' &&
+    (order.deliveryPaid || isApproved || isStoreDeliveryQuotedUnpaid({
+      deliveryType: 'STORE_DELIVERY',
+      deliveryState: order.deliveryState,
+      deliveryFee: effectiveDeliveryFee,
+      deliveryQuote: order.deliveryQuote,
+      deliveryPaid: order.deliveryPaid,
+    }));
 
   const showStoreContactBlock = Boolean(
     order.supplierAddress ||
@@ -355,6 +437,7 @@ export function OrderDetailsView({
     mode: unifiedMode,
     fulfillmentStatus: order.fulfillmentStatus,
     materialBatch: order.materialBatch ?? null,
+    deliveryPaid: order.deliveryPaid !== false,
     showLiveMap: unifiedMapActive,
     mapLat,
     mapLng,
@@ -363,8 +446,8 @@ export function OrderDetailsView({
     lastDriverPingMs: lastDriverPingMs ?? null,
     locationPollFailed,
     socketReconnecting,
-    activeTrackingId: fulfillmentU === 'OUT_FOR_DELIVERY' ? order.activeTrackingId ?? null : null,
-    activeTrackingToken: fulfillmentU === 'OUT_FOR_DELIVERY' ? order.activeTrackingToken ?? null : null,
+    activeTrackingId: liveTrackingFulfillment ? order.activeTrackingId ?? null : null,
+    activeTrackingToken: liveTrackingFulfillment ? order.activeTrackingToken ?? null : null,
     supplierDisplayName: order.supplierDisplayName || order.storeName,
     supplierPhone: order.supplierPhone,
     supplierAddress: order.supplierAddress,
@@ -442,6 +525,18 @@ export function OrderDetailsView({
               <span>Materials total</span>
               <span className="tabular-nums">{formatCurrency(materialsSubtotal, { decimals: 2 })}</span>
             </div>
+            {order.deliveryType === 'STORE' && storeDeliveryApproved && effectiveDeliveryFee > 0 ? (
+              <>
+                <div className="flex justify-between px-3 py-2.5 text-sm bg-background/50">
+                  <span className="text-muted-foreground">Delivery fee</span>
+                  <span className="tabular-nums">{formatCurrency(effectiveDeliveryFee, { decimals: 2 })}</span>
+                </div>
+                <div className="flex justify-between px-3 py-2.5 text-sm font-semibold bg-muted/40">
+                  <span>Subtotal</span>
+                  <span className="tabular-nums">{formatCurrency(finance.orderGross, { decimals: 2 })}</span>
+                </div>
+              </>
+            ) : null}
           </div>
 
           {showStoreContactBlock ? (
@@ -486,11 +581,21 @@ export function OrderDetailsView({
           ) : null}
 
           {String(order.fulfillmentStatus || '').toUpperCase() === 'CANCELLED' ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm space-y-2">
               <p className="font-medium text-destructive">Order cancelled</p>
               {cancellationReason ? (
-                <p className="text-muted-foreground mt-1 text-xs">Reason: {cancellationReason}</p>
+                <p className="text-muted-foreground text-xs">Reason: {cancellationReason}</p>
               ) : null}
+              {Number(order.refundAmount ?? 0) > 0 ? (
+                <RefundSummaryLine
+                  refundAmount={Number(order.refundAmount)}
+                  refundStatus={order.refundStatus || 'processed'}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Cancelled before delivery — refund is processed to your original payment method (93% net).
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -526,8 +631,94 @@ export function OrderDetailsView({
           <p className="text-xs text-muted-foreground pt-1">{canonicalDeliveryLabel(canonical)}</p>
         </CardHeader>
         <CardContent className="pt-5 space-y-4">
+          {/* Store delivery — simplified */}
+          {!noDeliverySelected && order.deliveryType === 'STORE' ? (
+            <>
+              {(isPendingApproval || isStoreAwaitingQuote) ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-4 space-y-3">
+                  <p className="text-sm font-medium leading-snug">
+                    Waiting for the store to set a delivery price.
+                  </p>
+                  {(onChangeDelivery || onChooseDelivery) ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={onChangeDelivery ?? onChooseDelivery}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                      Change delivery option
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {isApproved && !order.deliveryPaid && effectiveDeliveryFee > 0 ? (
+                <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium">Delivery fee</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {formatCurrency(effectiveDeliveryFee, { decimals: 2 })}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {onPayDelivery ? (
+                      <Button size="sm" className="btn-accent" onClick={onPayDelivery}>
+                        <CreditCard className="h-3.5 w-3.5 mr-1" />
+                        Pay delivery
+                      </Button>
+                    ) : null}
+                    {onChangeDelivery ? (
+                      <Button size="sm" variant="outline" onClick={onChangeDelivery}>
+                        Change option
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {order.deliveryPaid && effectiveDeliveryFee > 0 ? (
+                <div className="rounded-lg border border-success/30 bg-success/5 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium">Delivery fee</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-semibold tabular-nums">
+                        {formatCurrency(effectiveDeliveryFee, { decimals: 2 })}
+                      </span>
+                      <Badge className="bg-success/20 text-success text-xs">Paid</Badge>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {isRejected ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+                  <p className="text-sm font-medium">Store declined this delivery request.</p>
+                  {order.deliveryRejectionReason ? (
+                    <p className="text-xs text-muted-foreground">Reason: {order.deliveryRejectionReason}</p>
+                  ) : null}
+                  <Button size="sm" className="btn-accent" onClick={onChooseDelivery}>
+                    Choose delivery option
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
           <CourierContactCard order={order} />
           <DeliveryRouteSummary order={order} />
+
+          {isSelfPickup && !pickupChangeBlocked && onChangeDelivery ? (
+            <div className="rounded-lg border border-border/80 bg-muted/25 p-4 space-y-3">
+              <p className="text-sm text-muted-foreground leading-snug">
+                You chose to collect materials yourself from the store. You can switch to store or courier
+                delivery before your order is dispatched.
+              </p>
+              <Button size="sm" variant="outline" onClick={onChangeDelivery}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                Change delivery option
+              </Button>
+            </div>
+          ) : null}
 
           {noDeliverySelected ? (
             <div className="rounded-lg border border-dashed border-border bg-muted/30 p-5 text-center space-y-3">
@@ -540,12 +731,10 @@ export function OrderDetailsView({
             </div>
           ) : null}
 
-          {!noDeliverySelected && isPendingApproval ? (
+          {!noDeliverySelected && isPendingApproval && order.deliveryType !== 'STORE' ? (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-4 space-y-3">
               <p className="text-sm font-medium leading-snug">
-                {order.deliveryType === 'PROVIDER'
-                  ? 'Your courier will review this request and send a delivery price.'
-                  : 'Waiting for the store to approve delivery.'}
+                Your courier will review this request and send a delivery price.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={onCancelDelivery}>
@@ -566,7 +755,7 @@ export function OrderDetailsView({
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
               <p className="text-sm font-medium">
                 Delivery quote:{' '}
-                <span className="text-primary">{formatCurrency(order.deliveryFee, { decimals: 2 })}</span>
+                <span className="text-primary">{formatCurrency(effectiveDeliveryFee, { decimals: 2 })}</span>
               </p>
               <div className="flex flex-wrap gap-2">
                 {onGoToDeliveryJob ? (
@@ -601,7 +790,7 @@ export function OrderDetailsView({
             </div>
           ) : null}
 
-          {!noDeliverySelected && isApproved && order.deliveryFee > 0 ? (
+          {!noDeliverySelected && isApproved && order.deliveryType !== 'STORE' && effectiveDeliveryFee > 0 ? (
             <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
               <p className="text-sm">
                 {onGoToDeliveryJob
@@ -609,7 +798,7 @@ export function OrderDetailsView({
                   : (
                     <>
                       Delivery approved — pay{' '}
-                      <strong>{formatCurrency(order.deliveryFee, { decimals: 2 })}</strong> to start.
+                      <strong>{formatCurrency(effectiveDeliveryFee, { decimals: 2 })}</strong> to start.
                     </>
                   )}
               </p>
@@ -636,17 +825,14 @@ export function OrderDetailsView({
             </div>
           ) : null}
 
-          {!noDeliverySelected && isRejected ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
-              <p className="text-sm font-medium">Delivery request was rejected.</p>
-              <Button size="sm" className="btn-accent" onClick={onChooseDelivery}>
-                Choose delivery option
-              </Button>
-            </div>
-          ) : null}
-
           {showUnified && order.deliveryType !== 'SELF' ? (
             <>
+              {storeDeliveryFeePending && effectiveDeliveryFee > 0 ? (
+                <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+                  Pay your delivery fee so the store can dispatch your order. Delivery will not start until
+                  payment is complete.
+                </div>
+              ) : null}
               {unifiedMode !== 'self_pickup' &&
               ['READY', 'PREPARING', 'ACCEPTED', 'PENDING'].includes(fulfillmentU) ? (
                 <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/25 px-3 py-2">

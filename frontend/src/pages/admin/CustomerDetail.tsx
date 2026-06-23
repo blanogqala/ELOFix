@@ -217,13 +217,18 @@ export default function AdminCustomerDetail() {
               {[
                 { label: 'Completed', value: customer.jobCounts.completed },
                 { label: 'Active', value: customer.jobCounts.active },
-                { label: 'Open', value: customer.jobCounts.open },
+                { label: 'Disputed', value: customer.jobCounts.disputed },
                 { label: 'Rejected', value: customer.jobCounts.rejected },
                 { label: 'Total paid', value: formatCurrency(customer.totalPaid), isMoney: true },
               ].map((stat) => (
-                <div key={stat.label} className="card-elevated p-4">
+                <div key={stat.label} className="card-elevated min-w-0 p-4">
                   <p className="text-xs text-muted-foreground">{stat.label}</p>
-                  <p className={cn('mt-1 font-semibold', stat.isMoney && 'text-lg')}>
+                  <p
+                    className={cn(
+                      'mt-1 font-semibold leading-tight tabular-nums truncate',
+                      stat.isMoney && 'text-base sm:text-lg lg:text-xl',
+                    )}
+                  >
                     {stat.value}
                   </p>
                 </div>
@@ -373,10 +378,17 @@ export default function AdminCustomerDetail() {
                             className="cursor-pointer px-6 py-4 text-sm"
                             onClick={() => navigate(`/admin/jobs/${job.id}`)}
                           >
-                            <span className="inline-flex items-center gap-1">
-                              <DollarSign className="h-3 w-3 text-muted-foreground" />
-                              {formatCurrency(job.totalPaid)}
-                            </span>
+                            <div className="inline-flex flex-col gap-0.5">
+                              <span className="inline-flex items-center gap-1">
+                                <DollarSign className="h-3 w-3 text-muted-foreground" />
+                                {formatCurrency(job.totalPaid)}
+                              </span>
+                              {(job.refundAmount ?? 0) > 0 ? (
+                                <span className="text-xs text-destructive tabular-nums">
+                                  −{formatCurrency(job.refundAmount!)} refunded
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
                           <td
                             className="cursor-pointer px-6 py-4 text-sm text-muted-foreground"

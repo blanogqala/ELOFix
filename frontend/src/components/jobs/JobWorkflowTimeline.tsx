@@ -42,15 +42,27 @@ export function JobWorkflowTimeline({
   const pinIndex = view.pinIndex;
   const currentIdx = view.currentIdx;
   const allComplete = job.status === 'COMPLETED';
+  const isDisputed = job.status === 'DISPUTED';
+  const isAwaitingConfirmation = job.status === 'AWAITING_CONFIRMATION';
+
+  function stepLabel(index: number, defaultLabel: string): string {
+    if (index === 4 && isDisputed) return 'Dispute Opened';
+    if (index === 4 && isAwaitingConfirmation) return 'Waiting for customer confirmation';
+    if (index === 5 && job.status === 'COMPLETED') return 'Completed';
+    return defaultLabel;
+  }
 
   return (
     <Card>
       <CardContent className="pt-6">
         <div className="flex items-center justify-between overflow-x-auto pb-2">
           {steps.map((label, index, arr) => {
+            const displayLabel = stepLabel(index, label);
             const insight = getStepInsight(index);
             const isTerminalStep = isTerminal && index === pinIndex;
             const isFutureTerminalStep = isTerminal && index > pinIndex;
+            const isDisputeStep = isDisputed && index === 4;
+            const isAwaitingStep = isAwaitingConfirmation && index === 4;
 
             let isPast: boolean;
             let isActive: boolean;
@@ -112,6 +124,10 @@ export function JobWorkflowTimeline({
                           disableInteraction && 'opacity-40 cursor-not-allowed',
                           isPast
                             ? 'bg-success text-success-foreground'
+                            : isDisputeStep && (isActive || isPast === false && index === currentIdx)
+                              ? 'bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2'
+                            : isAwaitingStep && isActive
+                              ? 'bg-amber-500 text-white ring-2 ring-amber-500 ring-offset-2'
                             : isTerminalStep
                               ? 'bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2'
                               : isActive
@@ -139,14 +155,16 @@ export function JobWorkflowTimeline({
                     className={cn(
                       'text-[10px] mt-1 text-center leading-tight max-w-[72px]',
                       isTerminalStep ? 'font-medium text-destructive' : '',
-                      isActive ? 'font-medium' : 'text-muted-foreground'
+                      isDisputeStep && isActive ? 'font-medium text-destructive' : '',
+                      isAwaitingStep && isActive ? 'font-medium text-amber-700 dark:text-amber-400' : '',
+                      isActive && !isDisputeStep && !isAwaitingStep ? 'font-medium' : 'text-muted-foreground'
                     )}
                   >
                     {isTerminalStep
                       ? isCancelled
                         ? `Cancelled${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
                         : `Rejected${view.terminalAt ? ` ${new Date(view.terminalAt).toLocaleDateString()}` : ''}`
-                      : label}
+                      : displayLabel}
                   </span>
                 </div>
                 {index < arr.length - 1 && (

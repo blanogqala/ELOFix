@@ -154,7 +154,7 @@ export default function AdminSuppliers() {
                     {formatCurrency(cardStats?.totalCommission ?? 0)}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {Math.round((cardStats?.commissionRate ?? ga?.commissionRate ?? 0.07) * 100)}% of order totals
+                    {Math.round((cardStats?.commissionRate ?? ga?.commissionRate ?? 0.07) * 100)}% of paid order totals
                   </p>
                 </div>
                 <div className="rounded-lg bg-accent/10 p-2">

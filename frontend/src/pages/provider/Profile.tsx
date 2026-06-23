@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ProviderVerificationDocuments } from '@/components/provider/ProviderVerificationDocuments';
+import { VerifiedCompletedWorkSection } from '@/components/providers/VerifiedCompletedWorkSection';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { socket } from '@/lib/socket';
@@ -55,6 +56,8 @@ type ProfileInfoErrors = {
   phone?: boolean;
   bio?: boolean;
   serviceAreas?: boolean;
+  saIdNumber?: boolean;
+  companyRegistrationNumber?: boolean;
 };
 
 function FieldRequirementBadge({ required }: { required: boolean }) {
@@ -88,6 +91,8 @@ export default function ProviderProfile() {
   // Profile info state
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
+  const [saIdNumber, setSaIdNumber] = useState('');
+  const [companyRegistrationNumber, setCompanyRegistrationNumber] = useState('');
   const [bio, setBio] = useState('');
   const [serviceAreas, setServiceAreas] = useState<string[]>([]);
   const [errors, setErrors] = useState<ProfileInfoErrors>({});
@@ -183,6 +188,8 @@ export default function ProviderProfile() {
             : '';
         setPhone(phoneFromApi || phoneFromSession);
         setBusinessName(data.businessName || '');
+        setCompanyRegistrationNumber(data.companyRegistrationNumber || '');
+        if (!data.hasSaIdNumber) setSaIdNumber('');
         setBio(data.bio || '');
         setServiceAreas(data.serviceAreas || []);
         setSelectedSkills(data.skills);
@@ -270,6 +277,8 @@ export default function ProviderProfile() {
     const newErrors: ProfileInfoErrors = {};
 
     if (!phone.trim()) newErrors.phone = true;
+    if (!saIdNumber.trim() && !provider?.hasSaIdNumber) newErrors.saIdNumber = true;
+    if (!companyRegistrationNumber.trim()) newErrors.companyRegistrationNumber = true;
     if ((bio?.trim().length || 0) < 20) newErrors.bio = true;
     if (serviceAreas.length === 0) newErrors.serviceAreas = true;
 
@@ -286,7 +295,14 @@ export default function ProviderProfile() {
 
     setIsSaving(true);
     try {
-      const updated = await updateProvider(user.id, { phone, businessName, bio, serviceAreas });
+      const updated = await updateProvider(user.id, {
+        phone,
+        businessName,
+        bio,
+        serviceAreas,
+        ...(saIdNumber.trim() ? { saIdNumber: saIdNumber.trim() } : {}),
+        companyRegistrationNumber: companyRegistrationNumber.trim(),
+      } as Partial<Provider>);
       setProvider(updated);
       await refreshProfile();
       await loadProvider();
@@ -302,8 +318,12 @@ export default function ProviderProfile() {
         setProfileTab('pricing');
       }
       toast({ title: 'Profile saved', description: 'Your profile info has been updated.' });
-    } catch {
-      toast({ title: 'Error', description: 'Failed to save profile.', variant: 'destructive' });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to save profile.',
+        variant: 'destructive',
+      });
     } finally {
       setIsSaving(false);
     }
@@ -676,6 +696,9 @@ export default function ProviderProfile() {
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
               <span className="truncate">Work Posts</span>
             </TabsTrigger>
+            <TabsTrigger value="verified" className="gap-1.5 text-xs sm:text-sm">
+              <span className="truncate">Verified Work</span>
+            </TabsTrigger>
             <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm col-span-2 sm:col-span-1">
               Settings {coreSections.settings ? '✅' : '⚠️'}
             </TabsTrigger>
@@ -749,6 +772,47 @@ export default function ProviderProfile() {
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
                     placeholder="Your business name (optional)"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Label>SA ID Number</Label>
+                    <FieldRequirementBadge required />
+                  </div>
+                  {provider?.hasSaIdNumber && !saIdNumber ? (
+                    <p className="text-sm text-muted-foreground">ID number on file. Enter again only to update.</p>
+                  ) : null}
+                  <Input
+                    value={saIdNumber}
+                    onChange={(e) => {
+                      setSaIdNumber(e.target.value.replace(/\D/g, '').slice(0, 13));
+                      if (errors.saIdNumber) setErrors((prev) => ({ ...prev, saIdNumber: false }));
+                    }}
+                    placeholder="13-digit South African ID"
+                    inputMode="numeric"
+                    className={errors.saIdNumber ? 'border-destructive focus-visible:ring-destructive' : ''}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Label>Company Registration Number</Label>
+                    <FieldRequirementBadge required />
+                  </div>
+                  <Input
+                    value={companyRegistrationNumber}
+                    onChange={(e) => {
+                      setCompanyRegistrationNumber(e.target.value);
+                      if (errors.companyRegistrationNumber) {
+                        setErrors((prev) => ({ ...prev, companyRegistrationNumber: false }));
+                      }
+                    }}
+                    placeholder="CIPC registration number"
+                    className={
+                      errors.companyRegistrationNumber ? 'border-destructive focus-visible:ring-destructive' : ''
+                    }
                   />
                 </div>
               </div>
@@ -1162,6 +1226,13 @@ export default function ProviderProfile() {
               Continue to Settings
             </Button>
           </TabsContent>
+
+          <TabsContent value="verified" className="space-y-6">
+            {user?.id ? (
+              <VerifiedCompletedWorkSection providerId={user.id} title="Verified Completed Work" />
+            ) : null}
+          </TabsContent>
+
           {/* ═══ SETTINGS ═══ */}
           <TabsContent value="settings" className="space-y-6">
             {/* Availability */}

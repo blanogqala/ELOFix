@@ -33,6 +33,7 @@ function countJobsByStatus(jobs) {
     open: 0,
     rejected: 0,
     cancelled: 0,
+    disputed: 0,
   };
   (Array.isArray(jobs) ? jobs : []).forEach((job) => {
     if (isJobWorkflowCompleted(job)) {
@@ -43,7 +44,10 @@ function countJobsByStatus(jobs) {
     if (st === "COMPLETED") counts.completed += 1;
     else if (st === "REJECTED") counts.rejected += 1;
     else if (st === "CANCELLED") counts.cancelled += 1;
-    else if (ACTIVE_STATUSES.has(st)) counts.active += 1;
+    else if (st === "DISPUTED") {
+      counts.disputed += 1;
+      counts.active += 1;
+    } else if (ACTIVE_STATUSES.has(st)) counts.active += 1;
     else if (st === "PENDING") counts.open += 1;
   });
   return counts;

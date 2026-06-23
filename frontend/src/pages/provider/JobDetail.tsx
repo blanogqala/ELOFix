@@ -62,9 +62,11 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
+import { JobDisputeStatusBanner } from '@/components/jobs/JobDisputeStatusBanner';
 import { MaterialsSection } from '@/components/materials/MaterialsSection';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   getJobDisplayStatusLabel,
   getProviderJobBadgeVariantForJob,
@@ -86,7 +88,13 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
-import { getJobPriceDisplay } from '@/lib/jobUtils';
+import { getJobPriceDisplay, getQuoteMaterialsTotal, getQuoteMaterialsRefundTotal, jobHasRefundedMaterials } from '@/lib/jobUtils';
+import { RefundSummaryLine, isJobRefunded } from '@/components/payments/RefundSummaryLine';
+import {
+  getCustomerQuoteTotal,
+  getQuoteDeliveryLine,
+  getQuoteLaborLine,
+} from '@/lib/jobQuoteDisplay';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
@@ -750,6 +758,16 @@ export default function ProviderJobDetail() {
     ? getCourierTimelineViewState(job, deliveryRequest ?? null, materialRequests)
     : getProviderJobTimelineViewState(job, materialRequests);
 
+  const materialsTotal = getQuoteMaterialsTotal(job);
+  const materialsRefundTotal = getQuoteMaterialsRefundTotal(job);
+  const hasRefundedMaterials = jobHasRefundedMaterials(job);
+  const quoteLaborLine = getQuoteLaborLine(job, deliveryRequest ?? null);
+  const quoteDeliveryLine = getQuoteDeliveryLine(job, deliveryRequest ?? null);
+  const quoteGrandTotal = getCustomerQuoteTotal(job, deliveryRequest ?? null);
+  const showQuoteCard =
+    !isCourierJob &&
+    (job.servicePrice != null || job.laborPaid || materialsTotal > 0 || materialsRefundTotal > 0);
+
   return (
     <DashboardLayout>
       <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
@@ -782,6 +800,19 @@ export default function ProviderJobDetail() {
           hoveredTimelineStep={hoveredTimelineStep}
           setHoveredTimelineStep={setHoveredTimelineStep}
         />
+
+        {job.status === 'DISPUTED' && (
+          <JobDisputeStatusBanner
+            variant="provider"
+            disputeId={job.disputeId}
+            onViewDisputeCase={
+              job.disputeId
+                ? () => navigate(`/provider/disputes/${job.disputeId}`)
+                : undefined
+            }
+          />
+        )}
+
         {/* Job Overview */}
         <div className="card-elevated p-6 space-y-4">
           <h2 className="font-semibold text-lg">Job Overview</h2>
@@ -833,6 +864,20 @@ export default function ProviderJobDetail() {
           </div>
           </div>
 
+          {job.images.length > 0 && (
+            <div>
+              <p className="text-muted-foreground text-sm mb-2">Uploaded Images</p>
+              <div className="flex gap-2 flex-wrap">
+                {job.images.map((img, i) => (
+                  <div key={i} className="h-20 w-20 rounded-lg bg-muted overflow-hidden">
+                    <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2 items-start">
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-muted-foreground text-sm">{specsSectionLabel}</p>
@@ -917,33 +962,21 @@ export default function ProviderJobDetail() {
             )}
           </div>
 
-          {job.images.length > 0 && (
-            <div>
-              <p className="text-muted-foreground text-sm mb-2">Uploaded Images</p>
-              <div className="flex gap-2 flex-wrap">
-                {job.images.map((img, i) => (
-                  <div key={i} className="h-20 w-20 rounded-lg bg-muted overflow-hidden">
-                    <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {!isCourierJob ? (
-          <>
           <div
             role="button"
             tabIndex={0}
             onClick={() => (job.servicePrice || job.laborPaid) && setPaymentDetailsOpen(true)}
             onKeyDown={e => e.key === 'Enter' && (job.servicePrice || job.laborPaid) && setPaymentDetailsOpen(true)}
             className={cn(
-              "p-4 rounded-lg relative cursor-pointer transition-colors hover:opacity-90",
+              "p-4 rounded-lg relative cursor-pointer transition-colors hover:opacity-90 h-full",
               job.laborPaid ? "bg-green-500/30 border border-green-500/90" : "bg-primary/5"
             )}
           >
             {job.laborPaid && (
-              <Badge className="absolute top-2 right-2 bg-green-900 text-white">Paid</Badge>
+              <Badge className="absolute top-2 right-2 bg-green-900 text-white">
+                {job.refundStatus === 'processed' || job.refundStatus === 'partial' ? 'Refunded' : 'Paid'}
+              </Badge>
             )}
             {!job.laborPaid && job.servicePrice && (
               <Badge variant="secondary" className="absolute top-2 right-2">Unpaid</Badge>
@@ -952,6 +985,13 @@ export default function ProviderJobDetail() {
             <p className="text-xl font-bold text-primary">
               {job.servicePrice ? formatCurrency(job.servicePrice.amount) : `${formatCurrency(job.laborEstimateRange.min)} - ${formatCurrency(job.laborEstimateRange.max)}`}
             </p>
+            {job.refundAmount != null && job.refundAmount > 0 && (
+              <RefundSummaryLine
+                refundAmount={job.refundAmount}
+                refundStatus={job.refundStatus}
+                className="mt-2"
+              />
+            )}
             {job.servicePrice?.note && (
               <p className="text-xs text-muted-foreground mt-1">{job.servicePrice.note}</p>
             )}
@@ -962,6 +1002,95 @@ export default function ProviderJobDetail() {
               <p className="text-xs text-primary mt-2">Click for payment details</p>
             )}
           </div>
+          ) : null}
+          </div>
+
+          {!isCourierJob ? (
+          <>
+          {showQuoteCard && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">Quote</CardTitle>
+              </CardHeader>
+              <CardContent className="min-w-0 space-y-2 text-sm">
+                <p className="text-xs text-muted-foreground">
+                  {hasRefundedMaterials
+                    ? 'Cancelled material orders are excluded from the total; customer refunds show below (93% net).'
+                    : 'Materials total includes paid customer purchases; cancelled store orders are excluded.'}
+                </p>
+                <div className="flex justify-between gap-3 min-w-0">
+                  <span className="shrink-0 text-muted-foreground">Materials</span>
+                  <span className="min-w-0 text-right font-medium tabular-nums">
+                    {formatCurrency(materialsTotal, { decimals: 2 })}
+                  </span>
+                </div>
+                {materialsRefundTotal > 0 && (
+                  <RefundSummaryLine
+                    refundAmount={materialsRefundTotal}
+                    refundStatus="processed"
+                    className="text-xs"
+                  />
+                )}
+                {quoteDeliveryLine ? (
+                  <div className="flex justify-between gap-3 min-w-0">
+                    <span className="shrink-0 text-muted-foreground">{quoteDeliveryLine.label}</span>
+                    <span className="min-w-0 text-right font-medium tabular-nums">{quoteDeliveryLine.amountText}</span>
+                  </div>
+                ) : null}
+                {quoteLaborLine ? (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex justify-between gap-3 min-w-0">
+                      <span className="shrink-0 text-muted-foreground">{quoteLaborLine.label}</span>
+                      <span
+                        className={cn(
+                          'min-w-0 text-right font-medium tabular-nums',
+                          quoteLaborLine.pendingAcceptance && 'text-amber-700 dark:text-amber-300'
+                        )}
+                      >
+                        {quoteLaborLine.amountText}
+                      </span>
+                    </div>
+                    {quoteLaborLine.hint ? (
+                      <p className="text-xs text-muted-foreground text-right">{quoteLaborLine.hint}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {(job.refundAmount ?? 0) > 0 && (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex justify-between gap-3 min-w-0">
+                      <span className="shrink-0 text-muted-foreground">Service refund</span>
+                    </div>
+                    <RefundSummaryLine refundAmount={job.refundAmount} refundStatus={job.refundStatus} />
+                  </div>
+                )}
+                <div className="border-t border-border pt-2">
+                  <div className="flex justify-between font-bold">
+                    <span>Total</span>
+                    <span className="text-primary">
+                      {formatCurrency(quoteGrandTotal, { decimals: 2 })}
+                    </span>
+                  </div>
+                </div>
+                {job.laborPaid && (
+                  <div className="mt-2 space-y-1">
+                    {hasRefundedMaterials || isJobRefunded(job) ? (
+                      <p className="text-xs text-destructive">
+                        {hasRefundedMaterials && isJobRefunded(job)
+                          ? 'Material and service refunds issued to customer'
+                          : hasRefundedMaterials
+                            ? 'Material order cancelled — customer refund processed'
+                            : 'Service refund issued to customer'}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-success">
+                        {hasAnyMaterialPaid ? 'Customer paid for service & materials' : 'Customer paid for service'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
           {(job.status === 'INSPECTED' || job.status === 'ASSIGNED') && !job.servicePrice && (
             <div className="p-4 border border-primary/40 rounded-lg space-y-4">
               <div>
@@ -1363,8 +1492,10 @@ export default function ProviderJobDetail() {
         )}
 
         {job.status === 'AWAITING_CONFIRMATION' && (
-          <div className="card-elevated p-6 text-center">
-            <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+          <div className="card-elevated p-6 space-y-4">
+            <ConfirmationCountdown deadlineAt={job.confirmationDeadlineAt} />
+            <div className="text-center">
+            <Clock className="h-12 w-12 text-amber-600 mx-auto mb-3" />
             {isCourierJob && deliveryRequest ? (
               <>
                 <h3 className="font-semibold mb-1">
@@ -1386,6 +1517,7 @@ export default function ProviderJobDetail() {
                 </p>
               </>
             )}
+            </div>
           </div>
         )}
 

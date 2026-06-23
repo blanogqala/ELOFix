@@ -4,6 +4,8 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const earningService = require("./earning.service");
 const bankCrypto = require("../utils/bankCrypto");
+const fraudDetection = require("./fraudDetection.service");
+const providerTrustScore = require("./providerTrustScore.service");
 const { logAudit } = require("./auditLog.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { enrichJob, normalizeMeta } = require("./jobMeta.service");
@@ -25,7 +27,7 @@ async function requireProviderByUserId(userId) {
   return provider;
 }
 
-function jobToEarningRow(job) {
+function jobToEarningRow(job, clawbackFromLedger = 0) {
   const e = enrichJob(job, normalizeMeta(job.meta));
   const amount = e.totalPrice != null && !Number.isNaN(Number(e.totalPrice)) ? Number(e.totalPrice) : Number(job.price) || 0;
   const released = Boolean(job.paymentReleased);
@@ -33,6 +35,12 @@ function jobToEarningRow(job) {
   let status = "PENDING";
   if (released) status = "RELEASED";
   else if (paidLabor) status = "PENDING";
+
+  const clawbackMeta = Number(e.refundDetails?.clawbackApplied) || 0;
+  const clawbackFromReleased = Math.max(clawbackMeta, Number(clawbackFromLedger) || 0);
+  const escrowReversed = Number(e.refundDetails?.escrowApplied) || 0;
+  const releasedAmount = Number(e.releasedAmount) || 0;
+  const netReleasedAfterRefund = Math.max(0, releasedAmount - clawbackFromReleased);
 
   return {
     id: job.id,
@@ -45,15 +53,41 @@ function jobToEarningRow(job) {
     releasedAmount: e.releasedAmount,
     remainingAmount: e.remainingAmount,
     status,
+    workflowStatus: e.status,
     laborPaid: paidLabor,
     paymentReleased: released,
+    refundAmount: e.refundAmount,
+    refundStatus: e.refundStatus,
+    refundDetails: e.refundDetails,
+    providerRefundDebt: e.providerRefundDebt,
+    clawbackFromReleased,
+    escrowReversed,
+    netReleasedAfterRefund,
     createdAt: job.createdAt instanceof Date ? job.createdAt.toISOString() : String(job.createdAt),
     customerName: job.customer?.name,
   };
 }
 
+async function getJobClawbackMap(providerId, jobIds) {
+  if (!jobIds.length) return {};
+  const rows = await prisma.earning.groupBy({
+    by: ["jobId"],
+    where: {
+      providerId,
+      type: "debit",
+      status: "clawback",
+      jobId: { in: jobIds },
+    },
+    _sum: { amount: true },
+  });
+  return Object.fromEntries(
+    rows.filter((r) => r.jobId).map((r) => [r.jobId, Number(r._sum.amount) || 0])
+  );
+}
+
 async function getLedgerSummary(providerId) {
-  const [pendingSum, availSum, debitWithdrawnSum, debitPendingSum] = await Promise.all([
+  const [pendingSum, availSum, debitWithdrawnSum, debitPendingSum, clawbackSum, refundDebtSum] =
+    await Promise.all([
     prisma.earning.aggregate({
       where: { providerId, type: "credit", status: "pending" },
       _sum: { amount: true },
@@ -70,15 +104,25 @@ async function getLedgerSummary(providerId) {
       where: { providerId, type: "debit", status: "pending" },
       _sum: { amount: true },
     }),
+    prisma.earning.aggregate({
+      where: { providerId, type: "debit", status: "clawback" },
+      _sum: { amount: true },
+    }),
+    prisma.earning.aggregate({
+      where: { providerId, type: "debit", status: "refund_debt" },
+      _sum: { amount: true },
+    }),
   ]);
 
   const pending = Number(pendingSum._sum.amount) || 0;
   const creditsAvailable = Number(availSum._sum.amount) || 0;
   const withdrawn = Number(debitWithdrawnSum._sum.amount) || 0;
   const reservedPending = Number(debitPendingSum._sum.amount) || 0;
-  const available = Math.max(0, creditsAvailable - withdrawn - reservedPending);
+  const clawback = Number(clawbackSum._sum.amount) || 0;
+  const refundDebtOwed = Number(refundDebtSum._sum.amount) || 0;
+  const available = Math.max(0, creditsAvailable - withdrawn - reservedPending - clawback);
 
-  return { pending, creditsAvailable, withdrawn, reservedPending, available };
+  return { pending, creditsAvailable, withdrawn, reservedPending, clawback, refundDebtOwed, available };
 }
 
 async function getProviderBalance(userId) {
@@ -88,6 +132,8 @@ async function getProviderBalance(userId) {
     available: s.available,
     pending: s.pending,
     withdrawn: s.withdrawn,
+    refundDebtOwed: s.refundDebtOwed,
+    totalClawback: s.clawback,
   };
 }
 
@@ -112,14 +158,21 @@ async function getProviderEarnings(userId) {
   const pendingWithdrawals = withdrawals.filter((w) => openStatuses.has(String(w.status)));
   const pendingWithdrawalAmount = pendingWithdrawals.reduce((s, w) => s + Number(w.amount), 0);
 
+  const jobIds = jobs.map((j) => j.id);
+  const clawbackMap = await getJobClawbackMap(provider.id, jobIds);
+
   return {
     summary: {
       totalReleased: ledger.creditsAvailable,
       withdrawn: ledger.withdrawn,
       pendingWithdrawals: pendingWithdrawalAmount,
       available: ledger.available,
+      refundDebtOwed: ledger.refundDebtOwed,
+      totalClawback: ledger.clawback,
     },
-    jobs: jobs.map(jobToEarningRow),
+    jobs: jobs.map((job) =>
+      jobToEarningRow(job, clawbackMap[job.id] || 0)
+    ),
   };
 }
 
@@ -132,9 +185,10 @@ async function getProviderEarningJob(userId, jobId) {
     },
   });
   if (!job) throw new AppError("Job not found", 404);
+  const clawbackMap = await getJobClawbackMap(provider.id, [job.id]);
   return {
     job: {
-      ...jobToEarningRow(job),
+      ...jobToEarningRow(job, clawbackMap[job.id] || 0),
       customerName: job.customer?.name,
     },
   };
@@ -182,6 +236,19 @@ async function upsertWithdrawalProfile(userId, body) {
     branchEnc = bankCrypto.encryptField(branchIn);
   }
 
+  const plainAccount =
+    accIn.length >= 4 ? accIn : existing ? bankCrypto.decryptField(existing.accountNumber) : accIn;
+  const plainBranch =
+    branchIn.length >= 2 ? branchIn : existing ? bankCrypto.decryptField(existing.branchCode) : branchIn;
+
+  const bankCheck = await fraudDetection.checkBankAccountDuplicate(
+    bankName,
+    plainBranch,
+    plainAccount,
+    provider.id
+  );
+  const bankHash = bankCheck.hash;
+
   const profile = await prisma.providerWithdrawalProfile.upsert({
     where: { providerId: provider.id },
     create: {
@@ -191,14 +258,25 @@ async function upsertWithdrawalProfile(userId, body) {
       accountHolder,
       accountNumber: accountEnc,
       branchCode: branchEnc,
+      bankAccountHash: bankHash,
     },
     update: {
       bankName,
       accountHolder,
       accountNumber: accountEnc,
       branchCode: branchEnc,
+      bankAccountHash: bankHash,
     },
   });
+
+  if (!bankCheck.duplicate) {
+    await prisma.provider.update({
+      where: { id: provider.id },
+      data: { bankVerifiedAt: new Date() },
+    });
+    await providerTrustScore.onVerifiedBank(provider.id);
+  }
+
   return { profile: bankCrypto.toPublicProfileRow(profile) };
 }
 
@@ -206,6 +284,13 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
   const provider = await requireProviderByUserId(userId);
   if (provider.blocked) {
     throw new AppError("Withdrawals are frozen while your account is blocked", 403);
+  }
+  const trust = await providerTrustScore.getTrustScoreForProviderProfile(provider.id);
+  if (trust?.isHighRisk) {
+    throw new AppError(
+      "Withdrawals are unavailable while your trust score is High Risk. Improve your score to request payouts.",
+      403
+    );
   }
   const amount = coerceMoney(body?.amount);
   const bank = await prisma.providerWithdrawalProfile.findUnique({
@@ -288,7 +373,8 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
 }
 
 async function getLedgerSummaryTx(tx, providerId) {
-  const [pendingSum, availSum, debitWithdrawnSum, debitPendingSum] = await Promise.all([
+  const [pendingSum, availSum, debitWithdrawnSum, debitPendingSum, clawbackSum, refundDebtSum] =
+    await Promise.all([
     tx.earning.aggregate({
       where: { providerId, type: "credit", status: "pending" },
       _sum: { amount: true },
@@ -305,15 +391,98 @@ async function getLedgerSummaryTx(tx, providerId) {
       where: { providerId, type: "debit", status: "pending" },
       _sum: { amount: true },
     }),
+    tx.earning.aggregate({
+      where: { providerId, type: "debit", status: "clawback" },
+      _sum: { amount: true },
+    }),
+    tx.earning.aggregate({
+      where: { providerId, type: "debit", status: "refund_debt" },
+      _sum: { amount: true },
+    }),
   ]);
 
   const pending = Number(pendingSum._sum.amount) || 0;
   const creditsAvailable = Number(availSum._sum.amount) || 0;
   const withdrawn = Number(debitWithdrawnSum._sum.amount) || 0;
   const reservedPending = Number(debitPendingSum._sum.amount) || 0;
-  const available = Math.max(0, creditsAvailable - withdrawn - reservedPending);
+  const clawback = Number(clawbackSum._sum.amount) || 0;
+  const refundDebtOwed = Number(refundDebtSum._sum.amount) || 0;
+  const available = Math.max(0, creditsAvailable - withdrawn - reservedPending - clawback);
 
-  return { pending, creditsAvailable, withdrawn, reservedPending, available };
+  return { pending, creditsAvailable, withdrawn, reservedPending, clawback, refundDebtOwed, available };
+}
+
+async function listProviderTransactions(userId) {
+  const provider = await requireProviderByUserId(userId);
+
+  const [withdrawals, clawbacks, debts, jobs] = await Promise.all([
+    prisma.withdrawalRequest.findMany({
+      where: { providerId: provider.id },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.earning.findMany({
+      where: { providerId: provider.id, type: "debit", status: "clawback" },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.earning.findMany({
+      where: { providerId: provider.id, type: "debit", status: "refund_debt" },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.job.findMany({
+      where: { providerId: provider.userId },
+      select: { id: true, title: true },
+    }),
+  ]);
+
+  const jobTitleMap = Object.fromEntries(jobs.map((j) => [j.id, j.title]));
+
+  const transactions = [];
+
+  for (const w of withdrawals) {
+    transactions.push({
+      id: w.id,
+      kind: "withdrawal",
+      amount: Number(w.amount),
+      status: w.status,
+      jobId: null,
+      jobTitle: null,
+      createdAt: w.createdAt instanceof Date ? w.createdAt.toISOString() : String(w.createdAt),
+      description: "Bank withdrawal",
+    });
+  }
+
+  for (const row of clawbacks) {
+    const isDebtRecovery = String(row.idempotencyKey || "").includes(":debt:");
+    transactions.push({
+      id: row.id,
+      kind: isDebtRecovery ? "debt_recovery" : "refund_clawback",
+      amount: Number(row.amount),
+      status: null,
+      jobId: row.jobId,
+      jobTitle: row.jobId ? jobTitleMap[row.jobId] || null : null,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+      description: isDebtRecovery
+        ? "Refund debt recovered from release"
+        : "Refund recovery — deducted from balance",
+    });
+  }
+
+  for (const row of debts) {
+    transactions.push({
+      id: row.id,
+      kind: "refund_debt",
+      amount: Number(row.amount),
+      status: null,
+      jobId: row.jobId,
+      jobTitle: row.jobId ? jobTitleMap[row.jobId] || null : null,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+      description: "Refund debt recorded — recovered from future releases",
+    });
+  }
+
+  transactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return { transactions };
 }
 
 async function listProviderWithdrawals(userId) {
@@ -337,8 +506,11 @@ module.exports = {
   getProviderEarningJob,
   getProviderBalance,
   getLedgerSummary,
+  getLedgerSummaryTx,
   getWithdrawalProfile,
   upsertWithdrawalProfile,
   listProviderWithdrawals,
+  listProviderTransactions,
   requestWithdrawal,
+  jobToEarningRow,
 };

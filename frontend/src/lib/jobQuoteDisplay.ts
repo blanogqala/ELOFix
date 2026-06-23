@@ -1,21 +1,27 @@
-import type { DeliveryRequestRecord, Job, JobMaterialOrderSnapshot, JobStoreOrder } from '@/types';
+import type {
+  DeliveryRequestRecord,
+  Job,
+  JobMaterialOrderSnapshot,
+  JobStoreOrder,
+  StoreOrderDeliveryType,
+} from '@/types';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getQuoteMaterialsTotal, getUserLaborGross } from '@/lib/jobUtils';
 
-export interface QuoteLaborLine {
+export interface QuoteLine {
   label: string;
   amountText: string;
+}
+
+export interface QuoteLaborLine extends QuoteLine {
   hint?: string;
-  isEstimate: boolean;
-  pendingAcceptance: boolean;
+  pendingAcceptance?: boolean;
 }
 
 function deliveryFeePaid(dr?: DeliveryRequestRecord | null): boolean {
   if (!dr) return false;
   const status = String(dr.status || '').toLowerCase();
-  return (
-    ['paid', 'in_transit', 'completed'].includes(status) || dr.payment?.deliveryPaid === true
-  );
+  return status === 'paid' || dr.payment?.deliveryPaid === true;
 }
 
 export function getQuoteLaborLine(
@@ -31,78 +37,63 @@ export function getQuoteLaborLine(
     return null;
   }
   if (job.laborPaid) {
+    const amount = getUserLaborGross(job);
     return {
-      label: 'Labor / Service',
-      amountText: formatCurrency(getUserLaborGross(job), { decimals: 2 }),
-      hint: 'Paid',
-      isEstimate: false,
-      pendingAcceptance: false,
+      label: 'Service',
+      amountText: formatCurrency(amount, { decimals: 2 }),
     };
   }
   if (job.proposedLaborPrice?.amount != null) {
     return {
-      label: 'Labor / Service',
-      amountText: formatCurrency(job.proposedLaborPrice.amount, { decimals: 2 }),
-      hint: 'Revised quote — accept above to pay this amount',
-      isEstimate: false,
+      label: 'Service (proposed)',
+      amountText: formatCurrency(Number(job.proposedLaborPrice.amount), { decimals: 2 }),
       pendingAcceptance: true,
+      hint: 'Awaiting your acceptance',
     };
   }
   if (job.servicePrice?.amount != null) {
     return {
-      label: 'Labor / Service',
-      amountText: formatCurrency(job.servicePrice.amount, { decimals: 2 }),
-      hint: job.servicePrice.note?.trim() || 'Provider quotation',
-      isEstimate: false,
-      pendingAcceptance: false,
+      label: 'Service',
+      amountText: formatCurrency(Number(job.servicePrice.amount), { decimals: 2 }),
+      pendingAcceptance: !job.laborPaid,
+      hint: !job.laborPaid ? 'Pay service to proceed' : undefined,
     };
   }
-  if (job.courierFlow) {
-    return null;
+  if (!job.courierFlow && job.laborEstimateRange?.max != null) {
+    const est = Number(job.laborEstimateRange.max);
+    if (Number.isFinite(est) && est > 0) {
+      return {
+        label: 'Service (estimate)',
+        amountText: formatCurrency(est, { decimals: 2 }),
+        hint: 'Final price after inspection',
+      };
+    }
   }
-  const min = Number(job.laborEstimateRange?.min);
-  const max = Number(job.laborEstimateRange?.max);
-  if (Number.isFinite(min) && Number.isFinite(max) && (min > 0 || max > 0)) {
-    return {
-      label: 'Labor / Service',
-      amountText: `${formatCurrency(min, { decimals: 2 })} – ${formatCurrency(max, { decimals: 2 })}`,
-      hint: 'Estimate until your provider submits a quote',
-      isEstimate: true,
-      pendingAcceptance: false,
-    };
-  }
-  return {
-    label: 'Labor / Service',
-    amountText: '—',
-    hint: 'Waiting for provider quote',
-    isEstimate: true,
-    pendingAcceptance: false,
-  };
+  return null;
 }
 
 export function getQuoteDeliveryLine(
   job: Job,
   deliveryRequest?: DeliveryRequestRecord | null
-): { label: string; amountText: string; hint?: string } | null {
-  if (!job.courierFlow && !deliveryRequest) return null;
-  const dr = deliveryRequest;
-  if (!dr) return null;
-  const status = String(dr.status || '').toLowerCase();
-  const paid =
-    ['paid', 'in_transit', 'completed'].includes(status) || dr.payment?.deliveryPaid === true;
-  if (dr.quotedFee == null && status === 'pending_quote') {
+): QuoteLine | null {
+  if (job.courierFlow || job.deliverySummary) {
+    const drStatus = String(deliveryRequest?.status || job.deliverySummary?.status || '').toLowerCase();
+    const deliveryPaid =
+      deliveryFeePaid(deliveryRequest) || job.deliverySummary?.deliveryPaid === true;
+    const quoted =
+      deliveryRequest?.quotedFee != null
+        ? Number(deliveryRequest.quotedFee)
+        : job.deliverySummary?.quotedFee != null
+          ? Number(job.deliverySummary.quotedFee)
+          : null;
+    if (quoted == null || !Number.isFinite(quoted)) return null;
+    if (drStatus === 'pending_quote' && !deliveryPaid) return null;
     return {
-      label: 'Delivery fee',
-      amountText: '—',
-      hint: 'Waiting for courier quote',
+      label: deliveryPaid ? 'Delivery (paid)' : 'Delivery',
+      amountText: formatCurrency(quoted, { decimals: 2 }),
     };
   }
-  if (dr.quotedFee == null) return null;
-  return {
-    label: 'Delivery fee',
-    amountText: formatCurrency(dr.quotedFee, { decimals: 2 }),
-    hint: paid ? 'Paid' : status === 'quoted' ? 'Accept quote to pay' : 'Quoted',
-  };
+  return null;
 }
 
 /** Customer-facing total for the quote card (materials + active labor quote + delivery when applicable). */
@@ -144,36 +135,66 @@ export interface StoreOrderDeliveryLine {
   includeInSubtotal: boolean;
 }
 
+function mapSnapshotDeliveryType(mo?: JobMaterialOrderSnapshot | null): StoreOrderDeliveryType | undefined {
+  const raw = String(mo?.deliveryType || '').toUpperCase();
+  if (raw === 'STORE_DELIVERY' || raw === 'STORE') return 'STORE';
+  if (raw === 'DELIVERY_PROVIDER' || raw === 'PROVIDER') return 'PROVIDER';
+  if (raw === 'SELF') return 'SELF';
+  return undefined;
+}
+
+/** Merge job meta store order with DB material-order snapshot (snapshot wins when fresher). */
+function resolveStoreOrderDeliveryContext(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): {
+  deliveryType: StoreOrderDeliveryType;
+  status: string;
+  amount: number;
+  deliveryPaid: boolean;
+} {
+  const deliveryType = mapSnapshotDeliveryType(mo) ?? storeOrder.deliveryType;
+  const status = String(
+    mo?.delivery?.status ??
+      mo?.deliveryStatus ??
+      storeOrder.deliveryStatus ??
+      storeOrder.delivery?.status ??
+      ''
+  );
+  const amount = Math.max(
+    0,
+    Number(
+      mo?.deliveryQuote?.fee ??
+        mo?.deliveryFee ??
+        mo?.delivery?.fee ??
+        (storeOrder.deliveryFee > 0 ? storeOrder.deliveryFee : undefined) ??
+        storeOrder.delivery?.fee ??
+        0
+    ) || 0
+  );
+  const deliveryPaid =
+    mo?.payment?.deliveryPaid === true || storeOrder.payment?.deliveryPaid === true;
+  return { deliveryType, status, amount, deliveryPaid };
+}
+
 /** Delivery row for job material store-order cards (paid / pending). */
 export function getStoreOrderDeliveryLine(
   storeOrder: JobStoreOrder,
   mo?: JobMaterialOrderSnapshot | null
 ): StoreOrderDeliveryLine | null {
-  if (storeOrder.deliveryType === 'SELF') return null;
+  const { deliveryType, status, amount, deliveryPaid } = resolveStoreOrderDeliveryContext(
+    storeOrder,
+    mo
+  );
 
-  const statusRaw =
-    storeOrder.deliveryStatus ||
-    storeOrder.delivery?.status ||
-    '';
-  const status = String(statusRaw);
+  if (deliveryType === 'SELF') return null;
+
   const isCancelled =
     status === 'Cancelled' ||
     status === 'Rejected' ||
     status.toLowerCase() === 'cancelled';
 
-  const moQuoteFee = (mo as { deliveryQuote?: { fee?: number } } | null | undefined)?.deliveryQuote?.fee;
-  const amount =
-    typeof storeOrder.deliveryFee === 'number' && Number.isFinite(storeOrder.deliveryFee) && storeOrder.deliveryFee > 0
-      ? storeOrder.deliveryFee
-      : typeof moQuoteFee === 'number' && Number.isFinite(moQuoteFee)
-        ? moQuoteFee
-        : typeof storeOrder.delivery?.fee === 'number' && Number.isFinite(storeOrder.delivery.fee)
-          ? storeOrder.delivery.fee
-          : 0;
-
   if (amount <= 0 && !isCancelled) return null;
-
-  const deliveryPaid = storeOrder.payment?.deliveryPaid === true;
 
   if (isCancelled) {
     return {
@@ -183,6 +204,18 @@ export function getStoreOrderDeliveryLine(
       muted: true,
       struck: true,
       includeInSubtotal: false,
+    };
+  }
+
+  if (deliveryType === 'STORE') {
+    if (status === 'PendingApproval' || amount <= 0) return null;
+    if (status === 'Rejected') return null;
+    return {
+      label: 'Delivery',
+      amount,
+      hint: deliveryPaid ? 'Paid' : 'Approved',
+      muted: !deliveryPaid,
+      includeInSubtotal: true,
     };
   }
 
@@ -216,6 +249,15 @@ export function getStoreOrderDeliveryLine(
   return {
     label: 'Delivery',
     amount,
-    includeInSubtotal: false,
+    includeInSubtotal: amount > 0,
   };
+}
+
+/** Store delivery quoted/approved but customer has not paid the delivery fee yet. */
+export function isStoreDeliveryPaymentPending(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): boolean {
+  const line = getStoreOrderDeliveryLine(storeOrder, mo);
+  return Boolean(line && !line.struck && line.amount > 0 && line.hint === 'Approved');
 }

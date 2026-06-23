@@ -1,5 +1,23 @@
 import apiClient from '@/api/client';
-import type { AdminCustomerDetail, AdminCustomerListItem } from '@/types';
+import type { AdminCustomerDetail, AdminCustomerListItem, AdminCustomerJobCounts } from '@/types';
+
+function normalizeCustomerJobCounts(raw: Partial<AdminCustomerJobCounts> | undefined): AdminCustomerJobCounts {
+  return {
+    total: Number(raw?.total) || 0,
+    completed: Number(raw?.completed) || 0,
+    active: Number(raw?.active) || 0,
+    disputed: Number(raw?.disputed) || 0,
+    rejected: Number(raw?.rejected) || 0,
+    cancelled: Number(raw?.cancelled) || 0,
+  };
+}
+
+function normalizeCustomerListItem(customer: AdminCustomerListItem): AdminCustomerListItem {
+  return {
+    ...customer,
+    jobCounts: normalizeCustomerJobCounts(customer.jobCounts),
+  };
+}
 
 export interface AdminCustomersListResponse {
   success: boolean;
@@ -19,7 +37,7 @@ export async function getAdminCustomers(params?: {
   return {
     success: Boolean(data?.success),
     summary: data?.summary ?? { totalRegistered: 0, totalRevenue: 0 },
-    customers: Array.isArray(data?.customers) ? data.customers : [],
+    customers: Array.isArray(data?.customers) ? data.customers.map(normalizeCustomerListItem) : [],
   };
 }
 
@@ -30,7 +48,10 @@ export async function getAdminCustomerById(userId: string): Promise<AdminCustome
   if (!data?.customer) {
     throw new Error('Customer not found');
   }
-  return data.customer;
+  return {
+    ...data.customer,
+    jobCounts: normalizeCustomerJobCounts(data.customer.jobCounts),
+  };
 }
 
 export async function blockAdminCustomer(userId: string): Promise<AdminCustomerDetail> {

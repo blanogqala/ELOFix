@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const materialOrderService = require("./materialOrder.service");
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -6,6 +7,22 @@ function parseDate(value) {
   if (!value) return null;
   const d = new Date(String(value));
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function roundMoney(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
+/** All labor-paid jobs (any status), matching admin commission cards. */
+async function sumPaidLaborCommission() {
+  const agg = await prisma.job.aggregate({
+    where: {
+      laborPaid: true,
+      providerAmount: { not: null },
+    },
+    _sum: { commissionAmount: true },
+  });
+  return roundMoney(agg._sum.commissionAmount != null ? Number(agg._sum.commissionAmount) : 0);
 }
 
 /**
@@ -17,7 +34,7 @@ async function getCommissionSummary(query = {}) {
   const toDay = new Date(to.getFullYear(), to.getMonth(), to.getDate());
   const rangeEnd = new Date(toDay.getTime() + MS_PER_DAY);
 
-  const [agg, byDay] = await Promise.all([
+  const [agg, byDay, totalLaborCommission, materialAgg] = await Promise.all([
     prisma.commissionLedger.aggregate({
       where: { createdAt: { gte: from, lt: rangeEnd } },
       _sum: { amount: true },
@@ -28,6 +45,8 @@ async function getCommissionSummary(query = {}) {
       select: { amount: true, createdAt: true, currency: true, jobId: true, totalPrice: true },
       orderBy: { createdAt: "asc" },
     }),
+    sumPaidLaborCommission(),
+    materialOrderService.aggregatePaidMaterialOrders({}),
   ]);
 
   const dayMap = new Map();
@@ -39,13 +58,18 @@ async function getCommissionSummary(query = {}) {
 
   const byDayList = Array.from(dayMap.entries()).map(([date, amount]) => ({ date, amount: Math.round(amount * 100) / 100 }));
 
+  const totalMaterialCommission = roundMoney(materialAgg.totalCommission || 0);
+  const totalCommission = roundMoney(totalLaborCommission + totalMaterialCommission);
+
   return {
     from: from.toISOString().slice(0, 10),
     to: toDay.toISOString().slice(0, 10),
-    totalCommission: agg._sum.amount != null ? Number(agg._sum.amount) : 0,
+    totalLaborCommission,
+    totalMaterialCommission,
+    totalCommission,
     transactionCount: agg._count._all,
     byDay: byDayList,
   };
 }
 
-module.exports = { getCommissionSummary };
+module.exports = { getCommissionSummary, sumPaidLaborCommission, sumCompletedLaborCommission: sumPaidLaborCommission };

@@ -9,8 +9,15 @@ import { Category, Job } from '@/types';
 import { DollarSign, Clock, CheckCircle, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getAdminEscrowV2Breakdown, getAdminJobLaborPaid } from '@/lib/adminJobFinancial';
-import { getAdminPaymentStatusDisplay } from '@/lib/adminJobStatus';
+import {
+  formatAdminCommissionBreakdown,
+  getAdminEscrowV2Breakdown,
+  getAdminJobLaborPaid,
+  getAdminPaidLaborProviderShare,
+  getAdminPaidLaborReleasedAmount,
+  isAdminPaidLaborProviderJob,
+} from '@/lib/adminJobFinancial';
+import { getAdminPaymentStatusDisplay, jobMatchesAdminPaymentStatusFilter, type AdminPaymentStatusFilter } from '@/lib/adminJobStatus';
 import { safeMoney } from '@/lib/jobMoney';
 import {
   ADMIN_FILTER_SELECT_CLASS,
@@ -37,10 +44,15 @@ export default function AdminPayments() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [totalCommissionEarned, setTotalCommissionEarned] = useState(0);
+  const [commissionBreakdown, setCommissionBreakdown] = useState({
+    labor: 0,
+    material: 0,
+    total: 0,
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<AdminPaymentStatusFilter>('all');
 
   useEffect(() => {
     void loadJobs();
@@ -55,10 +67,21 @@ export default function AdminPayments() {
         const end = new Date();
         const toStr = (d: Date) => d.toISOString().slice(0, 10);
         const comm = await getAdminCommissions({ from: '2000-01-01', to: toStr(end) });
-        const v = comm?.totalCommission;
-        setTotalCommissionEarned(typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        const labor =
+          typeof comm?.totalLaborCommission === 'number' && Number.isFinite(comm.totalLaborCommission)
+            ? comm.totalLaborCommission
+            : 0;
+        const material =
+          typeof comm?.totalMaterialCommission === 'number' && Number.isFinite(comm.totalMaterialCommission)
+            ? comm.totalMaterialCommission
+            : 0;
+        const total =
+          typeof comm?.totalCommission === 'number' && Number.isFinite(comm.totalCommission)
+            ? comm.totalCommission
+            : labor + material;
+        setCommissionBreakdown({ labor, material, total });
       } catch {
-        setTotalCommissionEarned(0);
+        setCommissionBreakdown({ labor: 0, material: 0, total: 0 });
       }
     } catch (error) {
       console.error('Failed to load jobs:', error);
@@ -84,11 +107,16 @@ export default function AdminPayments() {
       label: categories.find((c) => c.id === categoryFilter)?.name || categoryFilter,
     },
     cityFilter !== 'all' && { key: 'city', label: cityFilter },
+    statusFilter !== 'all' && {
+      key: 'status',
+      label: statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1),
+    },
   ].filter(Boolean) as { key: string; label: string }[];
 
   const clearFilter = (key: string) => {
     if (key === 'category') setCategoryFilter('all');
     if (key === 'city') setCityFilter('all');
+    if (key === 'status') setStatusFilter('all');
   };
 
   const filteredJobs = useMemo(() => {
@@ -96,13 +124,18 @@ export default function AdminPayments() {
       const matchesSearch = jobMatchesAdminSearch(job, searchQuery);
       const matchesCategory = jobMatchesCategoryFilter(job, categoryFilter);
       const matchesCity = jobMatchesCityFilter(job, cityFilter);
-      return matchesSearch && matchesCategory && matchesCity;
+      const matchesStatus = jobMatchesAdminPaymentStatusFilter(job, statusFilter);
+      return matchesSearch && matchesCategory && matchesCity && matchesStatus;
     });
-  }, [jobs, searchQuery, categoryFilter, cityFilter]);
+  }, [jobs, searchQuery, categoryFilter, cityFilter, statusFilter]);
 
   const jobsWithEscrow = filteredJobs.filter((j) => j.escrow.enabled);
-  const totalProviderShare = filteredJobs.reduce((sum, j) => sum + safeMoney(j.providerAmount), 0);
-  const totalReleasedToProviders = filteredJobs.reduce((sum, j) => sum + safeMoney(j.releasedAmount), 0);
+  const paidLaborJobs = filteredJobs.filter(isAdminPaidLaborProviderJob);
+  const totalProviderShare = paidLaborJobs.reduce((sum, j) => sum + getAdminPaidLaborProviderShare(j), 0);
+  const totalReleasedToProviders = paidLaborJobs.reduce(
+    (sum, j) => sum + getAdminPaidLaborReleasedAmount(j),
+    0
+  );
 
   const getPaymentStatus = (job: Job) => getAdminPaymentStatusDisplay(job);
 
@@ -153,6 +186,17 @@ export default function AdminPayments() {
                   </option>
                 ))}
               </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as AdminPaymentStatusFilter)}
+                className={ADMIN_FILTER_SELECT_CLASS}
+                aria-label="Filter by payment status"
+              >
+                <option value="all">All Status</option>
+                <option value="released">Released</option>
+                <option value="held">Held</option>
+                <option value="refund">Refund</option>
+              </select>
             </div>
           </div>
 
@@ -174,6 +218,7 @@ export default function AdminPayments() {
                 onClick={() => {
                   setCategoryFilter('all');
                   setCityFilter('all');
+                  setStatusFilter('all');
                 }}
                 className="text-xs text-muted-foreground hover:text-foreground underline"
               >
@@ -204,6 +249,7 @@ export default function AdminPayments() {
               <div className="min-w-0">
                 <p className="text-2xl font-bold tabular-nums">{formatCurrency(totalProviderShare)}</p>
                 <p className="text-sm font-medium text-foreground">Total provider share</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Labor & delivery (93%, all paid)</p>
               </div>
             </div>
           </div>
@@ -216,6 +262,7 @@ export default function AdminPayments() {
               <div>
                 <p className="text-2xl font-bold tabular-nums">{formatCurrency(totalReleasedToProviders)}</p>
                 <p className="text-sm text-muted-foreground">Released to providers</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Released by admin (excludes held)</p>
               </div>
             </div>
           </div>
@@ -226,8 +273,15 @@ export default function AdminPayments() {
                 <DollarSign className="h-6 w-6 text-accent" />
               </div>
               <div className="min-w-0">
-                <p className="text-2xl font-bold tabular-nums">{formatCurrency(totalCommissionEarned)}</p>
+                <p className="text-base sm:text-lg font-bold tabular-nums leading-snug">
+                  {formatAdminCommissionBreakdown(
+                    commissionBreakdown.labor,
+                    commissionBreakdown.material,
+                    commissionBreakdown.total
+                  )}
+                </p>
                 <p className="text-sm text-muted-foreground">Total commission earned</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Labor + material (7%, all paid)</p>
               </div>
             </div>
           </div>
@@ -299,7 +353,7 @@ export default function AdminPayments() {
                   <tr>
                     <td colSpan={9} className="px-6 py-12 text-center">
                       <p className="text-muted-foreground">
-                        {activeFilters.length > 0 || searchQuery
+                        {activeFilters.length > 0 || searchQuery || statusFilter !== 'all'
                           ? 'No transactions match your filters'
                           : 'No transactions yet'}
                       </p>

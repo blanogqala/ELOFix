@@ -6,6 +6,8 @@ const providerService = require("./provider.service");
 const supplierService = require("./supplier.service");
 const branchUserService = require("./branchUser.service");
 const { validateLegalAcceptance } = require("./legalAcceptance.service");
+const fraudDetection = require("./fraudDetection.service");
+const { normalizePhone } = require("../utils/phoneNormalization.util");
 
 const VALID_ROLES = ["CUSTOMER", "PROVIDER", "ADMIN"];
 
@@ -82,6 +84,7 @@ async function register(body) {
   const legalData = validateLegalAcceptance(body, roleToUse);
   const hashed = await bcrypt.hash(password, 12);
   const phoneNorm = phone != null && String(phone).trim() ? String(phone).trim() : null;
+  const phoneNormalized = phoneNorm ? await fraudDetection.assertPhoneAvailable(phoneNorm, null, {}) : null;
 
   try {
     const existing = await prisma.user.findUnique({
@@ -98,6 +101,7 @@ async function register(body) {
         password: hashed,
         name: String(name).trim(),
         phone: phoneNorm,
+        phoneNormalized: phoneNormalized || (phoneNorm ? normalizePhone(phoneNorm) : null),
         authProvider: "LOCAL",
         role: roleToUse,
         ...legalData,
@@ -124,6 +128,9 @@ async function register(body) {
     return { user: safe, token };
   } catch (err) {
     if (err.code === "P2002") {
+      if (String(err.meta?.target || "").includes("phoneNormalized")) {
+        throw new AppError(fraudDetection.DUPLICATE_PHONE_MESSAGE, 409);
+      }
       throw new AppError("Email already registered", 409);
     }
     throw err;

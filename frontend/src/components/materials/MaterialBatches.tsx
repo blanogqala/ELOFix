@@ -5,10 +5,13 @@ import { MaterialCard } from '@/components/materials/MaterialCard';
 import { MaterialTrackingMini } from '@/components/materials/MaterialTrackingMini';
 import {
   fulfillmentStatusBadgeLabel,
+  isMaterialOrderRefunded,
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
+import { getStoreOrderDeliveryLine, isStoreDeliveryPaymentPending } from '@/lib/jobQuoteDisplay';
 import { ProviderCourierActions } from '@/components/tracking/ProviderCourierActions';
+import { cn } from '@/lib/utils';
 
 export interface MaterialBatchesProps {
   job: Job;
@@ -23,9 +26,15 @@ export function MaterialBatches({
   materialRequests,
   hasSubmittedMaterialRequests,
 }: MaterialBatchesProps) {
+  const hasRefundedMaterial = paidBatches.some((card) =>
+    isMaterialOrderRefunded(resolveMaterialOrderForStoreOrder(job, card))
+  );
+
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-muted-foreground">Material purchases</h3>
+      <h3 className="text-sm font-semibold text-muted-foreground">
+        {hasRefundedMaterial ? 'Material orders' : 'Material purchases'}
+      </h3>
       {hasSubmittedMaterialRequests && (
         <p className="text-xs text-muted-foreground">
           Paid batches unlock supplier tracking. Pending batches await customer payment.
@@ -40,6 +49,7 @@ export function MaterialBatches({
           {paidBatches.map((card) => {
             const total = card.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
             const mo = resolveMaterialOrderForStoreOrder(job, card);
+            const isRefunded = isMaterialOrderRefunded(mo);
             const batch = resolveMaterialBatchFromSnapshot(mo);
             const batchMeta = card.materialRequestId
               ? materialRequests.find((r) => r.id === card.materialRequestId)
@@ -85,14 +95,38 @@ export function MaterialBatches({
                 </span>
               );
 
+            const deliveryLine = getStoreOrderDeliveryLine(card, mo);
+            const deliveryPayPending = isStoreDeliveryPaymentPending(card, mo);
+            const cardSubtotal =
+              total + (deliveryLine?.includeInSubtotal && !deliveryLine.struck ? deliveryLine.amount : 0);
+            const extraLines =
+              deliveryLine && !deliveryLine.struck
+                ? [{ label: deliveryLine.label, amount: deliveryLine.amount, muted: deliveryLine.muted, hint: deliveryLine.hint }]
+                : undefined;
+
             return (
               <MaterialCard
                 key={card.orderId}
-                status="paid"
+                status={isRefunded ? 'refunded' : 'paid'}
                 collapsible
+                refundAmount={isRefunded ? mo?.refundAmount : undefined}
+                refundStatus={isRefunded ? mo?.refundStatus : undefined}
+                cancellationNote={
+                  isRefunded
+                    ? mo?.cancellationReason
+                      ? `Cancelled before delivery — ${mo.cancellationReason}`
+                      : 'Cancelled before delivery — customer received a refund (93% net).'
+                    : undefined
+                }
                 deliveryLocation={deliveryLocation}
                 supplierName={card.storeName || card.storeId}
-                subtotal={total}
+                subtotal={cardSubtotal}
+                extraLines={extraLines}
+                deliveryPaymentReminder={
+                  deliveryPayPending
+                    ? 'Customer must pay the delivery fee before this order can be dispatched.'
+                    : undefined
+                }
                 items={card.items.map((item) => ({
                   rowKey: `${card.orderId}-${item.productId}`,
                   name: item.name,
@@ -109,37 +143,46 @@ export function MaterialBatches({
                     ) : null}
                     <p className="text-xs text-muted-foreground">
                       Tracking:{' '}
-                      <span className="font-medium text-foreground">
-                        {fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
+                      <span
+                        className={cn(
+                          'font-medium',
+                          isRefunded ? 'text-destructive' : 'text-foreground'
+                        )}
+                      >
+                        {isRefunded
+                          ? 'Cancelled'
+                          : fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
                       </span>
                     </p>
                   </div>
                 }
                 footer={
-                  <div className="space-y-3 border-t border-green-600/25 pt-3">
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Supplier</p>
-                      <p className="text-sm font-medium">{mo?.supplierName || card.storeName || card.storeId}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {card.deliveryType === 'SELF' && 'Pickup'}
-                        {card.deliveryType === 'STORE' && 'Store delivery'}
-                        {card.deliveryType === 'PROVIDER' && 'Courier'}
-                        {!(summaryIsPickup && batch?.pickupAddress) && batch?.pickupAddress
-                          ? ` · ${batch.pickupAddress}`
-                          : ''}
-                      </p>
-                      {!(!summaryIsPickup && batch?.deliveryAddress) && batch?.deliveryAddress ? (
-                        <p className="text-xs text-muted-foreground">Deliver to: {batch.deliveryAddress}</p>
-                      ) : null}
+                  isRefunded ? undefined : (
+                    <div className="space-y-3 border-t border-green-600/25 pt-3">
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Supplier</p>
+                        <p className="text-sm font-medium">{mo?.supplierName || card.storeName || card.storeId}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {card.deliveryType === 'SELF' && 'Pickup'}
+                          {card.deliveryType === 'STORE' && 'Store delivery'}
+                          {card.deliveryType === 'PROVIDER' && 'Courier'}
+                          {!(summaryIsPickup && batch?.pickupAddress) && batch?.pickupAddress
+                            ? ` · ${batch.pickupAddress}`
+                            : ''}
+                        </p>
+                        {!(!summaryIsPickup && batch?.deliveryAddress) && batch?.deliveryAddress ? (
+                          <p className="text-xs text-muted-foreground">Deliver to: {batch.deliveryAddress}</p>
+                        ) : null}
+                      </div>
+                      <MaterialTrackingMini batch={batch} />
+                      <ProviderCourierActions
+                        jobId={job.id}
+                        orderId={mo?.id || card.orderId}
+                        fulfillmentStatus={mo?.fulfillmentStatus}
+                        deliveryType={card.deliveryType}
+                      />
                     </div>
-                    <MaterialTrackingMini batch={batch} />
-                    <ProviderCourierActions
-                      jobId={job.id}
-                      orderId={mo?.id || card.orderId}
-                      fulfillmentStatus={mo?.fulfillmentStatus}
-                      deliveryType={card.deliveryType}
-                    />
-                  </div>
+                  )
                 }
               />
             );

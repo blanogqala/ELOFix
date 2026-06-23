@@ -82,8 +82,8 @@ async function getAllMaterialOrdersForUser(req, res) {
       jobTitle: job?.title ?? null,
       providerName: job?.provider?.name ?? null,
       itemsCount: (order.items || []).reduce((sum, i) => sum + Number(i.qty || 0), 0),
-      total: Number(order.total || 0),
-      deliveryFee: Number(order.deliveryFee || 0),
+      total: Number(order.finance?.orderGross ?? order.total ?? 0),
+      deliveryFee: Number(order.finance?.deliveryFee ?? order.deliveryFee ?? 0),
       deliveryTypeLabel:
         order.deliveryType === "SELF" ? "Pickup" : order.deliveryType === "STORE_DELIVERY" ? "Store delivery" : "Courier",
       deliveryStatusLabel: legacyDeliveryLabel,
@@ -91,6 +91,13 @@ async function getAllMaterialOrdersForUser(req, res) {
       fulfillmentStatusLabel: fulfillmentLabel(fulfillment),
       deliveryStatusClassName: "bg-warning/20 text-warning",
       createdAt: order.createdAt,
+      paymentStatus: order.paymentStatus,
+      refundStatus: order.refundStatus,
+      refundAmount: order.refundAmount != null ? Number(order.refundAmount) : undefined,
+      isRefunded:
+        fulfillment === "CANCELLED" &&
+        Number(order.refundAmount || 0) > 0 &&
+        String(order.refundStatus || "").toLowerCase() === "processed",
     };
   });
 

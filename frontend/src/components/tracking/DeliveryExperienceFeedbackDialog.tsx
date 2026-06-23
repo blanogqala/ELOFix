@@ -14,6 +14,12 @@ import { Star, Package, Loader2, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { submitMaterialOrderRating } from '@/lib/api/ratings';
 
+export interface DeliveryExperienceExistingRating {
+  rating: number;
+  comment?: string;
+  createdAt?: string;
+}
+
 interface DeliveryExperienceFeedbackDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -21,6 +27,8 @@ interface DeliveryExperienceFeedbackDialogProps {
   materialOrderId: string | null;
   /** When false, dialog explains that ratings need a job-linked order with a provider. */
   canSubmit: boolean;
+  /** When set, the customer already rated — show read-only confirmation instead of the form. */
+  existingRating?: DeliveryExperienceExistingRating | null;
   onRated?: () => void;
 }
 
@@ -34,37 +42,54 @@ function errorMessage(err: unknown): string {
   return 'Could not submit your rating. Please try again.';
 }
 
+function isAlreadyRatedError(message: string): boolean {
+  return /already submitted a rating/i.test(message);
+}
+
+function ratingHint(stars: number): string {
+  if (stars >= 4) return 'Excellent experience';
+  if (stars >= 3) return 'Good experience';
+  return 'We will use this to improve';
+}
+
 export function DeliveryExperienceFeedbackDialog({
   open,
   onOpenChange,
   merchantLabel,
   materialOrderId,
   canSubmit,
+  existingRating,
   onRated,
 }: DeliveryExperienceFeedbackDialogProps) {
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
   const [review, setReview] = useState('');
-  const [phase, setPhase] = useState<'form' | 'success'>('form');
+  const [phase, setPhase] = useState<'form' | 'success' | 'already'>('form');
   const [pending, setPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    setPhase('form');
-    setRating(0);
+    if (existingRating) {
+      setPhase('already');
+      setRating(existingRating.rating);
+      setReview(existingRating.comment || '');
+    } else {
+      setPhase('form');
+      setRating(0);
+      setReview('');
+    }
     setHoveredRating(0);
-    setReview('');
     setSubmitError(null);
     setPending(false);
-  }, [open, materialOrderId]);
+  }, [open, materialOrderId, existingRating]);
 
   const close = () => {
     onOpenChange(false);
   };
 
   const submit = async () => {
-    if (rating === 0 || !materialOrderId || !canSubmit) return;
+    if (rating === 0 || !materialOrderId || !canSubmit || existingRating) return;
     setPending(true);
     setSubmitError(null);
     try {
@@ -76,11 +101,19 @@ export function DeliveryExperienceFeedbackDialog({
       setPhase('success');
       onRated?.();
     } catch (e) {
-      setSubmitError(errorMessage(e));
+      const msg = errorMessage(e);
+      if (isAlreadyRatedError(msg)) {
+        setPhase('already');
+        onRated?.();
+        return;
+      }
+      setSubmitError(msg);
     } finally {
       setPending(false);
     }
   };
+
+  const displayStars = phase === 'already' ? existingRating?.rating ?? rating : rating;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -101,6 +134,31 @@ export function DeliveryExperienceFeedbackDialog({
             <p className="text-lg font-semibold text-foreground">Thanks for your feedback</p>
             <p className="text-sm text-muted-foreground">Your rating has been recorded.</p>
             <Button type="button" className="btn-accent mt-2" onClick={close}>
+              Done
+            </Button>
+          </div>
+        ) : phase === 'already' ? (
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <CheckCircle2 className="h-12 w-12 text-emerald-500" aria-hidden />
+            <p className="text-lg font-semibold text-foreground">Rating already submitted</p>
+            <div className="flex justify-center gap-1" aria-label={`${displayStars} out of 5 stars`}>
+              {[1, 2, 3, 4, 5].map(star => (
+                <Star
+                  key={star}
+                  className={cn(
+                    'h-7 w-7',
+                    star <= (displayStars || 0) ? 'fill-accent text-accent' : 'text-muted-foreground/40'
+                  )}
+                />
+              ))}
+            </div>
+            {existingRating?.comment || review ? (
+              <p className="text-sm text-muted-foreground italic max-w-sm">
+                &ldquo;{existingRating?.comment || review}&rdquo;
+              </p>
+            ) : null}
+            <p className="text-sm text-muted-foreground">You can only rate each delivery once.</p>
+            <Button type="button" className="btn-accent mt-1" onClick={close}>
               Done
             </Button>
           </div>
@@ -136,9 +194,7 @@ export function DeliveryExperienceFeedbackDialog({
                   ))}
                 </div>
                 {rating > 0 ? (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {rating >= 4 ? 'Glad it went well.' : rating >= 3 ? 'Thanks for the feedback.' : "We'll use this to improve."}
-                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">{ratingHint(rating)}</p>
                 ) : null}
               </div>
 

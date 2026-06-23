@@ -3,6 +3,8 @@ import {
   getSupplierOrders,
   getSupplierMe,
   patchSupplierOrderFulfillment,
+  patchSupplierDeliveryApprove,
+  patchSupplierDeliveryReject,
   postSupplierOrderNote,
   postSupplierEnsureTracking,
   cancelSupplierOrder,
@@ -19,9 +21,21 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
+import { resolveOrderFinance, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid, isStoreDeliveryRejected, isStoreDeliveryType } from '@/lib/orderFinance';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { buildPublicTrackingUrl } from '@/lib/publicTrackingUrl';
 import { cn } from '@/lib/utils';
+import {
+  SUPPLIER_GROSS_EARNINGS_HINT,
+  SUPPLIER_GROSS_EARNINGS_LABEL,
+  supplierOverviewGrossRevenue,
+} from '@/lib/supplierAnalyticsDisplay';
+import {
+  getSupplierOrderRefundAmount,
+  supplierOrderHasRefund,
+  supplierOrderRefundLabel,
+} from '@/lib/supplierOrderRefund';
 import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -60,11 +74,11 @@ const STATUS_BADGE: Record<string, string> = {
 function SupplierPortalOrderKpis({
   totalOrders,
   totalPending,
-  netEarnings,
+  grossRevenue,
 }: {
   totalOrders: number | null | undefined;
   totalPending: number | null | undefined;
-  netEarnings: number | null | undefined;
+  grossRevenue: number | null | undefined;
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-3">
@@ -88,13 +102,15 @@ function SupplierPortalOrderKpis({
       </Card>
       <Card className="card-elevated">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">Net earnings</CardTitle>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            {SUPPLIER_GROSS_EARNINGS_LABEL}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-            {netEarnings == null ? '—' : formatCurrency(netEarnings)}
+            {grossRevenue == null ? '—' : formatCurrency(grossRevenue)}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">Excludes cancelled</p>
+          <p className="mt-1 text-xs text-muted-foreground">{SUPPLIER_GROSS_EARNINGS_HINT}</p>
         </CardContent>
       </Card>
     </div>
@@ -473,7 +489,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
         <SupplierPortalOrderKpis
           totalOrders={portalOverview?.totalOrders}
           totalPending={portalOverview?.totalPendingOrders}
-          netEarnings={portalOverview?.sumNetEarningsAllBranches}
+          grossRevenue={supplierOverviewGrossRevenue(portalOverview)}
         />
         <p className="text-sm text-muted-foreground">
           Read-only overview. Pick a branch to view its orders.
@@ -557,7 +573,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
           <SupplierPortalOrderKpis
             totalOrders={portalOverview?.totalOrders}
             totalPending={portalOverview?.totalPendingOrders}
-            netEarnings={portalOverview?.sumNetEarningsAllBranches}
+            grossRevenue={supplierOverviewGrossRevenue(portalOverview)}
           />
         )}
       <Card className="card-elevated border-dashed">
@@ -591,7 +607,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
         <SupplierPortalOrderKpis
           totalOrders={portalOverview?.totalOrders}
           totalPending={portalOverview?.totalPendingOrders}
-          netEarnings={portalOverview?.sumNetEarningsAllBranches}
+          grossRevenue={supplierOverviewGrossRevenue(portalOverview)}
         />
       )}
       {!selected && isSupplierReadOnly && supplierBrowse === 'list' && (
@@ -663,7 +679,19 @@ export function SupplierOrders({ userId }: { userId: string }) {
             filtered.map((o) => {
               const st = String(o.fulfillmentStatus || 'PENDING').toUpperCase();
               const items = Array.isArray(o.items) ? o.items : [];
-              const total = Number(o.total ?? o.materialsSubtotal ?? 0);
+              const finance = resolveOrderFinance({
+                finance: o.finance,
+                materialsSubtotal: Number(o.materialsSubtotal ?? 0),
+                deliveryFee: Number(o.deliveryFee ?? (o.delivery as { fee?: number })?.fee ?? 0),
+                deliveryType: o.deliveryType,
+                platformCommission: o.platformCommission,
+                supplierEarning: o.supplierEarning,
+                deliveryPaid: Boolean((o as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid),
+                materialsPaid: o.paymentStatus === 'paid',
+              });
+              const total = finance.orderGross;
+              const refunded = supplierOrderHasRefund(o);
+              const refundAmount = getSupplierOrderRefundAmount(o);
               return (
                 <button
                   key={o.id}
@@ -686,12 +714,27 @@ export function SupplierOrders({ userId }: { userId: string }) {
                         <Badge variant="outline" className={cn('shrink-0 capitalize border', STATUS_BADGE[st] || STATUS_BADGE.PENDING)}>
                           {displayStatus(st)}
                         </Badge>
+                        {refunded && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 border-destructive/40 bg-destructive/10 text-destructive"
+                          >
+                            Refunded
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <p className="font-medium leading-tight">{o.customerName || 'Customer'}</p>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
-                      <span>{formatCurrency(total)}</span>
+                      <span className={cn(refunded && 'line-through decoration-destructive/50')}>
+                        {formatCurrency(total)}
+                      </span>
+                      {refunded && refundAmount > 0 && (
+                        <span className="font-medium text-destructive tabular-nums">
+                          Refunded {formatCurrency(refundAmount)}
+                        </span>
+                      )}
                       <span>
                         {o.createdAt ? new Date(o.createdAt).toLocaleString(undefined, {
                           dateStyle: 'short',
@@ -786,11 +829,63 @@ function DetailPanel({
   const st = String(order.fulfillmentStatus || 'PENDING').toUpperCase();
   const next = nextFulfillmentStatus(st);
   const items = Array.isArray(order.items) ? order.items : [];
-  const total = Number(order.total ?? order.materialsSubtotal ?? 0);
+  const isStoreDelivery = isStoreDeliveryType(
+    order.deliveryType || (order.delivery as { type?: string })?.type
+  );
+  const finance = resolveOrderFinance({
+    finance: order.finance,
+    materialsSubtotal: Number(order.materialsSubtotal ?? 0),
+    deliveryFee: Number(order.deliveryFee ?? (order.delivery as { fee?: number })?.fee ?? 0),
+    deliveryType: order.deliveryType,
+    platformCommission: order.platformCommission,
+    supplierEarning: order.supplierEarning,
+    deliveryPaid: Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid),
+    materialsPaid: order.paymentStatus === 'paid',
+  });
+  const total = finance.orderGross;
+  const refunded = supplierOrderHasRefund(order);
+  const refundAmount = getSupplierOrderRefundAmount(order);
   const src = String((order as { source?: string }).source || '');
   const jobId = (order as { jobId?: string }).jobId;
   const timeline = buildTimeline(order);
-  const isStoreDelivery = String(order.deliveryType || '').toUpperCase() === 'STORE_DELIVERY';
+  const deliveryPendingApproval = isStoreDeliveryAwaitingBranchQuote({
+    deliveryType: order.deliveryType,
+    delivery: order.delivery as { type?: string; status?: string; fee?: number },
+    deliveryFee: order.deliveryFee,
+    deliveryQuote: order.deliveryQuote,
+    deliveryPaid: Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid),
+  });
+  const deliveryApproved = isStoreDeliveryQuotedUnpaid({
+    deliveryType: order.deliveryType,
+    delivery: order.delivery as { type?: string; status?: string; fee?: number },
+    deliveryFee: order.deliveryFee,
+    deliveryQuote: order.deliveryQuote,
+    deliveryPaid: Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid),
+  });
+  const deliveryRejected = isStoreDeliveryRejected({
+    deliveryType: order.deliveryType,
+    delivery: order.delivery as { type?: string; status?: string },
+  });
+  const deliveryPaid = Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid);
+  const storeDispatchBlocked =
+    isStoreDelivery && finance.deliveryFee > 0 && !deliveryPaid;
+  const blockOutForDelivery = storeDispatchBlocked && st === 'READY' && next === 'OUT_FOR_DELIVERY';
+  const blockDispatchActions = storeDispatchBlocked && st === 'OUT_FOR_DELIVERY';
+  const branchFeeHint = Number(order.branchDeliveryFee ?? 0);
+  const [deliveryFeeDraft, setDeliveryFeeDraft] = useState('');
+  const [deliveryNoteDraft, setDeliveryNoteDraft] = useState('');
+  const [rejectReasonDraft, setRejectReasonDraft] = useState('');
+
+  useEffect(() => {
+    if (deliveryPendingApproval && branchFeeHint > 0) {
+      setDeliveryFeeDraft(String(branchFeeHint));
+    } else if (deliveryPendingApproval) {
+      setDeliveryFeeDraft('');
+    }
+    setDeliveryNoteDraft('');
+    setRejectReasonDraft('');
+  }, [order.id, deliveryPendingApproval, branchFeeHint]);
+
   const trackSocketEnabled = st === 'OUT_FOR_DELIVERY' && isStoreDelivery && !readOnly;
   const canCancelOrder = !['CANCELLED', 'COMPLETED', 'FAILED'].includes(st);
 
@@ -810,6 +905,44 @@ function DetailPanel({
     },
     onError: (e: Error) => {
       toast({ title: 'Could not start tracking', description: e.message, variant: 'destructive' });
+    },
+  });
+
+  const approveDeliveryMut = useMutation({
+    mutationFn: () => {
+      const fee = Number(deliveryFeeDraft);
+      if (!Number.isFinite(fee) || fee <= 0) {
+        throw new Error('Enter a valid delivery fee');
+      }
+      return patchSupplierDeliveryApprove(order.id, {
+        fee,
+        note: deliveryNoteDraft.trim() || undefined,
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
+      toast({
+        title: 'Delivery accepted',
+        description: 'The customer can now pay the delivery fee.',
+      });
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Could not accept delivery', description: e.message, variant: 'destructive' });
+    },
+  });
+
+  const parsedDeliveryFee = Number(deliveryFeeDraft);
+  const canAcceptDelivery = Number.isFinite(parsedDeliveryFee) && parsedDeliveryFee > 0;
+
+  const rejectDeliveryMut = useMutation({
+    mutationFn: () =>
+      patchSupplierDeliveryReject(order.id, rejectReasonDraft.trim() || undefined),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['supplier', 'orders', userId] });
+      toast({ title: 'Delivery rejected', description: 'Customer can choose another option.' });
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Could not reject delivery', description: e.message, variant: 'destructive' });
     },
   });
 
@@ -858,6 +991,11 @@ function DetailPanel({
           <Badge variant="outline" className={cn('capitalize border', STATUS_BADGE[st] || STATUS_BADGE.PENDING)}>
             {displayStatus(st)}
           </Badge>
+          {refunded && (
+            <Badge variant="outline" className="border-destructive/40 bg-destructive/10 text-destructive">
+              Refunded
+            </Badge>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-6 pt-6 ">
@@ -889,13 +1027,18 @@ function DetailPanel({
             Read-only view. Branch staff accept, fulfill, and update orders at the branch.
           </p>
         )}
+        {storeDispatchBlocked && (st === 'READY' || st === 'OUT_FOR_DELIVERY') ? (
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+            Customer must pay the delivery fee before this order can leave the store.
+          </div>
+        ) : null}
         <div className="grid grid-cols-2 gap-0">
         {next && !readOnly && (
           <div className="col-span-1">
             <Button
               type="button"
               className="btn-accent w-full sm:w-auto"
-              disabled={patching || !next}
+              disabled={patching || !next || blockOutForDelivery || (blockDispatchActions && next === 'COMPLETED')}
               onClick={() => next && onPatch(next)}
             >
               {actionButtonLabel(st)}
@@ -960,6 +1103,17 @@ function DetailPanel({
                 Reason: {String((order as { cancellationReason?: string }).cancellationReason)}
               </p>
             )}
+            {refunded && (
+              <p className="pt-1 font-medium text-destructive tabular-nums">
+                {supplierOrderRefundLabel(order)}
+                {refundAmount > 0 ? `: ${formatCurrency(refundAmount)}` : ''}
+              </p>
+            )}
+            {refunded && String((order as { cancelledBy?: string }).cancelledBy || '').toLowerCase() === 'customer' && (
+              <p className="text-xs text-muted-foreground">
+                Customer receives 93% of the order total; platform keeps the 7% commission.
+              </p>
+            )}
           </div>
         )}
 
@@ -969,7 +1123,7 @@ function DetailPanel({
               type="button"
               variant="outline"
               size="sm"
-              disabled={patching}
+              disabled={patching || blockDispatchActions}
               className="border-amber-500/40"
               onClick={() => onPatch('DELAYED')}
             >
@@ -979,7 +1133,7 @@ function DetailPanel({
               type="button"
               variant="outline"
               size="sm"
-              disabled={patching}
+              disabled={patching || blockDispatchActions}
               className="border-destructive/40 text-destructive"
               onClick={() => {
                 if (!window.confirm('Mark delivery as failed?')) return;
@@ -992,7 +1146,7 @@ function DetailPanel({
               type="button"
               variant="outline"
               size="sm"
-              disabled={patching}
+              disabled={patching || blockDispatchActions}
               onClick={() => {
                 if (!window.confirm('Cancel this delivery?')) return;
                 onPatch('CANCELLED');
@@ -1017,7 +1171,7 @@ function DetailPanel({
                 type="button"
                 size="sm"
                 className="btn-accent"
-                disabled={ensureTrackMut.isPending || patching}
+                disabled={ensureTrackMut.isPending || patching || blockDispatchActions}
                 onClick={() => ensureTrackMut.mutate()}
               >
                 {ensureTrackMut.isPending ? 'Starting…' : 'Start delivery tracking'}
@@ -1131,19 +1285,106 @@ function DetailPanel({
           </div>
           <div className="rounded-lg border border-primary p-4">
             <p className="text-xs font-medium uppercase text-muted-foreground">Totals</p>
-            <p className="mt-1 text-sm">
-              Order total: <span className="font-semibold">{formatCurrency(total)}</span>
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Your share (93%): {formatCurrency(Number(order.supplierEarning ?? 0))} · Platform (7%):{' '}
-              {formatCurrency(Number(order.platformCommission ?? 0))}
-            </p>
+            <div className="mt-2">
+              <OrderFinanceBreakdown finance={finance} showSupplierNet={!refunded} />
+            </div>
+            {refunded && refundAmount > 0 && (
+              <p className="mt-2 text-sm font-medium text-destructive tabular-nums">
+                Customer refunded: {formatCurrency(refundAmount)}
+              </p>
+            )}
+            {refunded ? (
+              <p className="mt-1 text-xs text-muted-foreground">No supplier payout — order was cancelled before completion.</p>
+            ) : null}
           </div>
         </div>
 
         <div className="rounded-lg border border-primary p-4">
           <p className="text-xs font-medium uppercase text-muted-foreground">Delivery / pickup</p>
           <p className="mt-2 text-sm">{formatDeliverySummary(order)}</p>
+
+          {deliveryPendingApproval && !readOnly ? (
+            <div className="mt-3 space-y-3 rounded-md border-2 border-amber-500/40 bg-amber-500/10 p-4">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-warning/20 text-warning border-amber-500/30">Action required</Badge>
+              </div>
+              <p className="text-sm font-semibold">Delivery request from customer</p>
+              <p className="text-xs text-muted-foreground">
+                Enter the delivery fee based on distance, then accept or reject. The customer will only see the price after you accept.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor={`delivery-fee-${order.id}`}>Delivery fee (ZAR)</Label>
+                <Input
+                  id={`delivery-fee-${order.id}`}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={branchFeeHint > 0 ? String(branchFeeHint) : '0.00'}
+                  value={deliveryFeeDraft}
+                  onChange={(e) => setDeliveryFeeDraft(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`delivery-note-${order.id}`}>Note (optional)</Label>
+                <Input
+                  id={`delivery-note-${order.id}`}
+                  value={deliveryNoteDraft}
+                  onChange={(e) => setDeliveryNoteDraft(e.target.value)}
+                  placeholder="e.g. Long distance to Milnerton"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`reject-reason-${order.id}`}>Rejection reason (optional)</Label>
+                <Input
+                  id={`reject-reason-${order.id}`}
+                  value={rejectReasonDraft}
+                  onChange={(e) => setRejectReasonDraft(e.target.value)}
+                  placeholder="e.g. Outside delivery area"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  className="btn-accent"
+                  disabled={approveDeliveryMut.isPending || !canAcceptDelivery}
+                  onClick={() => approveDeliveryMut.mutate()}
+                >
+                  {approveDeliveryMut.isPending ? 'Accepting…' : 'Accept delivery'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive border-destructive/40"
+                  disabled={rejectDeliveryMut.isPending}
+                  onClick={() => rejectDeliveryMut.mutate()}
+                >
+                  {rejectDeliveryMut.isPending ? 'Rejecting…' : 'Reject delivery'}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {deliveryApproved && finance.deliveryFee > 0 ? (
+            <p className="mt-2 text-sm">
+              Quoted delivery fee:{' '}
+              <span className="font-semibold tabular-nums">{formatCurrency(finance.deliveryFee, { decimals: 2 })}</span>
+              {!Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid) ? (
+                <span className="text-muted-foreground"> — awaiting customer payment</span>
+              ) : (
+                <span className="text-success"> — paid</span>
+              )}
+            </p>
+          ) : null}
+
+          {deliveryRejected ? (
+            <div className="mt-2 space-y-1">
+              <p className="text-sm text-destructive">Delivery request was rejected.</p>
+              {order.deliveryRejection?.reason ? (
+                <p className="text-xs text-muted-foreground">Reason: {order.deliveryRejection.reason}</p>
+              ) : null}
+            </div>
+          ) : null}
+
           {String(order.deliveryType || '').toUpperCase() === 'DELIVERY_PROVIDER' && (
             <div className="mt-2 space-y-1 text-xs text-muted-foreground">
               {order.deliveryProviderName ? (

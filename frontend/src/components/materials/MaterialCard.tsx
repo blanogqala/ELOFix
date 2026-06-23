@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from 'react';
-import { ChevronDown, ShoppingCart } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ShoppingCart } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { RefundSummaryLine } from '@/components/payments/RefundSummaryLine';
 
-export type MaterialCardStatus = 'draft' | 'pending' | 'paid' | 'suggested' | 'approved';
+export type MaterialCardStatus = 'draft' | 'pending' | 'paid' | 'suggested' | 'approved' | 'refunded';
 
 export interface MaterialCardItemRow {
   rowKey: string;
@@ -29,12 +30,15 @@ const STATUS_LABEL: Record<MaterialCardStatus, string> = {
   paid: 'Paid',
   suggested: 'Suggested',
   approved: 'Approved',
+  refunded: 'Cancelled',
 };
 
 function statusBadgeClass(status: MaterialCardStatus): string {
   switch (status) {
     case 'paid':
       return 'bg-green-700 text-white hover:bg-green-700';
+    case 'refunded':
+      return 'bg-destructive/90 text-destructive-foreground hover:bg-destructive/90';
     case 'pending':
       return 'bg-amber-500/90 text-amber-950 hover:bg-amber-500 border-amber-600/80';
     case 'draft':
@@ -68,6 +72,12 @@ export interface MaterialCardProps {
   /** Primary pickup or delivery location — shown in the summary when collapsible. */
   deliveryLocation?: ReactNode;
   defaultExpanded?: boolean;
+  /** Shown when status is refunded (cancelled before dispatch). */
+  refundAmount?: number;
+  refundStatus?: string;
+  cancellationNote?: string;
+  /** Amber reminder when store delivery fee is approved but not yet paid. */
+  deliveryPaymentReminder?: string;
 }
 
 export function MaterialCard({
@@ -84,16 +94,24 @@ export function MaterialCard({
   collapsible = false,
   deliveryLocation,
   defaultExpanded = false,
+  refundAmount,
+  refundStatus,
+  cancellationNote,
+  deliveryPaymentReminder,
 }: MaterialCardProps) {
   const isPaid = status === 'paid';
-  const isCollapsiblePaid = collapsible && isPaid;
+  const isRefunded = status === 'refunded';
+  const isCollapsiblePaid = collapsible && (isPaid || isRefunded);
   const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
 
   return (
     <div
       className={cn(
         'rounded-lg border p-4 flex flex-col h-full min-w-0 shadow-sm transition-shadow',
-        isPaid ? 'border-green-500/60 bg-gradient-to-b from-green-500/[0.06] to-transparent' : 'border-primary/60 bg-background',
+        isPaid ? 'border-green-500/60 bg-gradient-to-b from-green-500/[0.06] to-transparent' : '',
+        isPaid && deliveryPaymentReminder ? 'border-amber-500/55 ring-1 ring-amber-500/25' : '',
+        isRefunded ? 'border-destructive/40 bg-gradient-to-b from-destructive/[0.06] to-transparent' : '',
+        !isPaid && !isRefunded ? 'border-primary/60 bg-background' : '',
         status === 'draft' && 'border-muted-foreground/30 bg-muted/20',
         className
       )}
@@ -117,6 +135,16 @@ export function MaterialCard({
         {isCollapsiblePaid && deliveryLocation ? (
           <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-sm leading-snug text-foreground [&_svg]:shrink-0">
             {deliveryLocation}
+          </div>
+        ) : null}
+
+        {deliveryPaymentReminder ? (
+          <div
+            className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs leading-snug text-amber-950 dark:text-amber-100"
+            role="status"
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" aria-hidden />
+            <span>{deliveryPaymentReminder}</span>
           </div>
         ) : null}
 
@@ -153,8 +181,18 @@ export function MaterialCard({
 
         <div className="border-t border-border/80 mt-1 pt-2.5 flex justify-between items-baseline gap-2 text-sm font-semibold">
           <span className="text-muted-foreground font-medium">Subtotal</span>
-          <span className="tabular-nums text-base">{formatCurrency(subtotal, { decimals: 2 })}</span>
+          <span className={cn('tabular-nums text-base', isRefunded && 'text-muted-foreground line-through')}>
+            {formatCurrency(subtotal, { decimals: 2 })}
+          </span>
         </div>
+
+        {isRefunded && refundAmount != null && refundAmount > 0 && (
+          <RefundSummaryLine refundAmount={refundAmount} refundStatus={refundStatus || 'processed'} />
+        )}
+
+        {isRefunded && cancellationNote ? (
+          <p className="text-xs text-muted-foreground leading-snug">{cancellationNote}</p>
+        ) : null}
 
         {isCollapsiblePaid ? (
           <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>

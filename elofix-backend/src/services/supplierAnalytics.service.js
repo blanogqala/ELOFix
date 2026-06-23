@@ -20,22 +20,30 @@ async function getSupplierOverview(supplierOrgId) {
     where: { supplierId: sid },
     select: {
       supplierEarning: true,
+      platformCommission: true,
       fulfillmentStatus: true,
     },
   });
 
   let sumNetEarnings = 0;
+  let sumPlatformCommission = 0;
   let totalPendingOrders = 0;
   for (const o of orders) {
     const st = String(o.fulfillmentStatus || "").toUpperCase();
     if (st === "PENDING") totalPendingOrders += 1;
     if (st === "CANCELLED") continue;
     sumNetEarnings += moneyNum(o.supplierEarning);
+    sumPlatformCommission += moneyNum(o.platformCommission);
   }
+
+  const sumNet = Math.round(sumNetEarnings * 100) / 100;
+  const sumCommission = Math.round(sumPlatformCommission * 100) / 100;
 
   return {
     totalBranches,
-    sumNetEarningsAllBranches: Math.round(sumNetEarnings * 100) / 100,
+    sumNetEarningsAllBranches: sumNet,
+    sumPlatformCommissionAllBranches: sumCommission,
+    sumGrossRevenueAllBranches: Math.round((sumNet + sumCommission) * 100) / 100,
     totalOrders: orders.length,
     totalPendingOrders,
   };
@@ -59,22 +67,30 @@ async function getBranchStaffOverview(supplierOrgId, branchId) {
     where: { supplierId: sid, branchId: bid },
     select: {
       supplierEarning: true,
+      platformCommission: true,
       fulfillmentStatus: true,
     },
   });
 
   let sumNetEarnings = 0;
+  let sumPlatformCommission = 0;
   let totalPendingOrders = 0;
   for (const o of orders) {
     const st = String(o.fulfillmentStatus || "").toUpperCase();
     if (st === "PENDING") totalPendingOrders += 1;
     if (st === "CANCELLED") continue;
     sumNetEarnings += moneyNum(o.supplierEarning);
+    sumPlatformCommission += moneyNum(o.platformCommission);
   }
+
+  const sumNet = Math.round(sumNetEarnings * 100) / 100;
+  const sumCommission = Math.round(sumPlatformCommission * 100) / 100;
 
   return {
     totalBranches: 1,
-    sumNetEarningsAllBranches: Math.round(sumNetEarnings * 100) / 100,
+    sumNetEarningsAllBranches: sumNet,
+    sumPlatformCommissionAllBranches: sumCommission,
+    sumGrossRevenueAllBranches: Math.round((sumNet + sumCommission) * 100) / 100,
     totalOrders: orders.length,
     totalPendingOrders,
   };
@@ -125,6 +141,7 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
       branchId: true,
       fulfillmentStatus: true,
       supplierEarning: true,
+      platformCommission: true,
       createdAt: true,
     },
   });
@@ -133,13 +150,16 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
   for (const o of orders) {
     const bid = String(o.branchId || "");
     if (!agg.has(bid)) {
-      agg.set(bid, { total: 0, pending: 0, net: 0 });
+      agg.set(bid, { total: 0, pending: 0, net: 0, commission: 0 });
     }
     const a = agg.get(bid);
     a.total += 1;
     const st = String(o.fulfillmentStatus || "").toUpperCase();
     if (st === "PENDING") a.pending += 1;
-    if (st !== "CANCELLED") a.net += moneyNum(o.supplierEarning);
+    if (st !== "CANCELLED") {
+      a.net += moneyNum(o.supplierEarning);
+      a.commission += moneyNum(o.platformCommission);
+    }
   }
 
   const out = [];
@@ -160,7 +180,9 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
       }
       if (!hay.includes(q) && !managerMatch) continue;
     }
-    const s = agg.get(b.id) || { total: 0, pending: 0, net: 0 };
+    const s = agg.get(b.id) || { total: 0, pending: 0, net: 0, commission: 0 };
+    const netEarnings = Math.round(s.net * 100) / 100;
+    const platformCommission = Math.round(s.commission * 100) / 100;
     out.push({
       branchId: b.id,
       name: b.name,
@@ -170,7 +192,9 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
       isActive: b.isActive,
       totalOrders: s.total,
       pendingOrders: s.pending,
-      netEarnings: Math.round(s.net * 100) / 100,
+      netEarnings,
+      platformCommission,
+      grossRevenue: Math.round((netEarnings + platformCommission) * 100) / 100,
       managerEmails: (b.branchUsers || []).map((u) => u.email).filter(Boolean),
     });
   }

@@ -27,13 +27,23 @@ export interface ProviderEarningJobRow {
   remainingAmount?: number;
   /** Optional: may appear on list payload or only on single-job earnings fetch */
   customerName?: string;
-}
-
-export interface ProviderEarningsSummary {
-  totalReleased: number;
-  withdrawn: number;
-  pendingWithdrawals: number;
-  available: number;
+  /** Frontend workflow status from job meta (e.g. DISPUTED, IN_PROGRESS) */
+  workflowStatus?: string;
+  refundAmount?: number;
+  refundStatus?: string;
+  refundDetails?: {
+    customerNet?: number;
+    materialsNet?: number;
+    escrowApplied?: number;
+    clawbackApplied?: number;
+    providerDebtAdded?: number;
+    cumulativeCustomerNet?: number;
+    processedAt?: string | null;
+  };
+  providerRefundDebt?: number;
+  clawbackFromReleased?: number;
+  escrowReversed?: number;
+  netReleasedAfterRefund?: number;
 }
 
 export interface ProviderEarningsResponse {
@@ -57,6 +67,17 @@ export interface ProviderBalanceSnapshot {
   available: number;
   pending: number;
   withdrawn: number;
+  refundDebtOwed?: number;
+  totalClawback?: number;
+}
+
+export interface ProviderEarningsSummary {
+  totalReleased: number;
+  withdrawn: number;
+  pendingWithdrawals: number;
+  available: number;
+  refundDebtOwed?: number;
+  totalClawback?: number;
 }
 
 export interface ProviderWithdrawalRow {
@@ -64,6 +85,17 @@ export interface ProviderWithdrawalRow {
   amount: number;
   status: string;
   createdAt: string;
+}
+
+export interface ProviderTransactionRow {
+  id: string;
+  kind: 'withdrawal' | 'refund_clawback' | 'refund_debt' | 'debt_recovery';
+  amount: number;
+  status?: string | null;
+  jobId?: string | null;
+  jobTitle?: string | null;
+  createdAt: string;
+  description: string;
 }
 
 export async function getProviderBalance(): Promise<{ success: boolean } & ProviderBalanceSnapshot> {
@@ -104,6 +136,16 @@ export async function requestWithdrawal(amount: number): Promise<{
   withdrawal: { id: string; amount: number; status: string; createdAt: string };
 }> {
   const { data } = await apiClient.post('/provider/withdraw', { amount }, { headers: idempotencyHeaders() });
+  return data;
+}
+
+export async function getProviderTransactions(): Promise<{
+  success: boolean;
+  transactions: ProviderTransactionRow[];
+}> {
+  const { data } = await apiClient.get<{ success: boolean; transactions: ProviderTransactionRow[] }>(
+    '/provider/transactions'
+  );
   return data;
 }
 

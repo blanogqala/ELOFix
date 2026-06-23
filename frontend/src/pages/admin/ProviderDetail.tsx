@@ -519,11 +519,12 @@ export default function AdminProviderDetail() {
           <div className="space-y-6 border-b border-border px-6 py-6">
             <div>
               <h2 className="mb-4 text-lg font-semibold">Job activity</h2>
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
                 {[
                   { label: 'Completed', value: analytics?.jobCounts.completed },
                   { label: 'Pending', value: analytics?.jobCounts.pending },
                   { label: 'Active', value: analytics?.jobCounts.active },
+                  { label: 'Disputed', value: analytics?.jobCounts.disputed },
                   { label: 'Cancelled', value: analytics?.jobCounts.cancelled },
                 ].map((stat) => (
                   <div key={stat.label} className="card-elevated p-4">
@@ -572,12 +573,12 @@ export default function AdminProviderDetail() {
                     isMoney: true,
                   },
                 ].map((stat) => (
-                  <div key={stat.label} className="card-elevated p-4">
+                  <div key={stat.label} className="card-elevated min-w-0 p-4">
                     <p className="text-xs text-muted-foreground">{stat.label}</p>
                     <p
                       className={cn(
-                        'mt-1 font-semibold tabular-nums',
-                        stat.isMoney && 'text-lg',
+                        'mt-1 font-semibold leading-tight tabular-nums truncate',
+                        stat.isMoney && 'text-base sm:text-lg lg:text-xl',
                       )}
                     >
                       {stat.value}

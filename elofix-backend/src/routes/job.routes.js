@@ -3,7 +3,7 @@ const jobController = require("../controllers/job.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate } = require("../middleware/auth.middleware");
 const financialIdem = require("../middleware/financialIdempotency.middleware");
-const { uploadJobImage, uploadJobQuotation } = require("../middleware/upload.middleware");
+const { uploadJobImage, uploadJobQuotation, uploadJobCompletionMedia } = require("../middleware/upload.middleware");
 
 const router = express.Router();
 
@@ -141,6 +141,14 @@ router.patch(
 
 router.post("/:id/cancel", authenticate, asyncHandler(jobController.cancelJob));
 router.post("/:id/confirm-completion", authenticate, asyncHandler(jobController.confirmJobCompletion));
+router.post("/:id/disputes", authenticate, asyncHandler(jobController.openJobDispute));
+router.get("/:id/completion-evidence", authenticate, asyncHandler(jobController.getJobCompletionEvidence));
+router.post(
+  "/:id/completion-evidence/upload",
+  authenticate,
+  uploadJobCompletionMedia.single("file"),
+  asyncHandler(jobController.uploadCompletionEvidence)
+);
 
 router.patch(
   "/:id/store-orders/:storeId/delivery-option",

@@ -30,6 +30,11 @@ async function getWithdrawals(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function getTransactions(req, res) {
+  const data = await providerAccountService.listProviderTransactions(req.user.userId);
+  res.json({ success: true, ...data });
+}
+
 async function postWithdraw(req, res) {
   const data = await providerAccountService.requestWithdrawal(
     req.user.userId,
@@ -41,6 +46,26 @@ async function postWithdraw(req, res) {
   res.status(201).json({ success: true, ...data });
 }
 
+async function getTrustScore(req, res) {
+  const providerTrustScore = require("../services/providerTrustScore.service");
+  const prisma = require("../config/prisma");
+  const provider = await prisma.provider.findUnique({
+    where: { userId: req.user.userId },
+    select: {
+      id: true,
+      documents: true,
+      bankVerifiedAt: true,
+      fraudReviewStatus: true,
+      withdrawalProfile: { select: { id: true } },
+    },
+  });
+  if (!provider) {
+    return res.status(404).json({ success: false, message: "Provider profile not found" });
+  }
+  const trustScore = await providerTrustScore.getTrustScoreForProviderProfile(provider.id, provider);
+  res.json({ success: true, trustScore });
+}
+
 module.exports = {
   getBalance,
   getEarnings,
@@ -48,5 +73,7 @@ module.exports = {
   getWithdrawalProfile,
   putWithdrawalProfile,
   getWithdrawals,
+  getTransactions,
   postWithdraw,
+  getTrustScore,
 };

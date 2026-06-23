@@ -152,7 +152,7 @@ export default function AdminAnalytics() {
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">Total commission</p>
             <p className="text-2xl font-bold text-accent">{formatCurrency(summary.totalCommission ?? 0)}</p>
-            <p className="text-xs text-muted-foreground mt-1">Labor (7%) + material orders (7%)</p>
+            <p className="text-xs text-muted-foreground mt-1">Labor + material (7%, all paid)</p>
           </div>
           <div className="card-elevated p-4">
             <p className="text-sm text-muted-foreground">New provider signups</p>

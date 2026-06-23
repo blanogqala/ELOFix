@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
 import { countAdminJobsByStatus, isAdminJobWorkflowCompleted } from '@/lib/adminJobStatus';
-import { getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
+import { formatAdminCommissionBreakdown, getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -32,7 +32,11 @@ export default function AdminDashboard() {
   const [pendingProviders, setPendingProviders] = useState<Provider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
-  const [totalCommissionEarned, setTotalCommissionEarned] = useState(0);
+  const [commissionBreakdown, setCommissionBreakdown] = useState({
+    labor: 0,
+    material: 0,
+    total: 0,
+  });
 
   useEffect(() => {
     loadData();
@@ -53,10 +57,21 @@ export default function AdminDashboard() {
       setPendingProviders(pending);
       try {
         const comm = await getAdminCommissions({ from: '2000-01-01', to: toStr(end) });
-        const v = comm?.totalCommission;
-        setTotalCommissionEarned(typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        const labor =
+          typeof comm?.totalLaborCommission === 'number' && Number.isFinite(comm.totalLaborCommission)
+            ? comm.totalLaborCommission
+            : 0;
+        const material =
+          typeof comm?.totalMaterialCommission === 'number' && Number.isFinite(comm.totalMaterialCommission)
+            ? comm.totalMaterialCommission
+            : 0;
+        const total =
+          typeof comm?.totalCommission === 'number' && Number.isFinite(comm.totalCommission)
+            ? comm.totalCommission
+            : labor + material;
+        setCommissionBreakdown({ labor, material, total });
       } catch {
-        setTotalCommissionEarned(0);
+        setCommissionBreakdown({ labor: 0, material: 0, total: 0 });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
@@ -81,7 +96,7 @@ export default function AdminDashboard() {
     totalRevenue: jobs
       .filter((j) => isAdminJobWorkflowCompleted(j))
       .reduce((sum, j) => sum + getAdminJobDisplayTotal(j), 0),
-    totalCommissionEarned,
+    totalCommissionEarned: commissionBreakdown.total,
   };
 
   const getStatusBadge = (job: Job) => (
@@ -175,9 +190,16 @@ export default function AdminDashboard() {
               <div className="h-12 w-12 rounded-lg bg-accent/10 flex items-center justify-center">
                 <DollarSign className="h-6 w-6 text-accent" />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{formatCurrency(stats.totalCommissionEarned)}</p>
+              <div className="min-w-0">
+                <p className="text-base sm:text-lg font-bold tabular-nums leading-snug">
+                  {formatAdminCommissionBreakdown(
+                    commissionBreakdown.labor,
+                    commissionBreakdown.material,
+                    commissionBreakdown.total
+                  )}
+                </p>
                 <p className="text-sm text-muted-foreground">Total commission earned</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Labor + material (7%, all paid)</p>
               </div>
             </div>
           </div>

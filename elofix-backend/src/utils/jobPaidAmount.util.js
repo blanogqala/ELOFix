@@ -44,6 +44,31 @@ function paidLaborAmountFromMeta(meta, jobRow = null) {
   return 0;
 }
 
+/** Customer refund total recorded on job meta (labor and/or materials net returned). */
+function refundAmountFromMeta(meta) {
+  if (!meta || typeof meta !== "object") return 0;
+  const r = meta.refund;
+  if (!r || typeof r !== "object") return 0;
+  if (r.cumulativeCustomerNet != null) {
+    const cumulative = Number(r.cumulativeCustomerNet);
+    if (Number.isFinite(cumulative) && cumulative > 0) return cumulative;
+  }
+  const amt = Number(r.amount);
+  return Number.isFinite(amt) && amt > 0 ? amt : 0;
+}
+
+/** Net labor paid by customer after refunds (gross labor − meta refund). */
+function netLaborPaidFromMeta(meta, jobRow = null) {
+  const gross = paidLaborAmountFromMeta(meta, jobRow);
+  const refund = refundAmountFromMeta(meta);
+  return roundMoney(Math.max(0, gross - refund));
+}
+
+function netLaborPaidFromJob(jobRow) {
+  const meta = jobMeta.normalizeMeta(jobRow?.meta);
+  return netLaborPaidFromMeta(meta, jobRow);
+}
+
 /** Total customer-paid amount for one job (labor + materials). */
 function paidAmountFromJob(jobRow) {
   const meta = jobMeta.normalizeMeta(jobRow?.meta);
@@ -110,6 +135,9 @@ module.exports = {
   roundMoney,
   paidMaterialAmountFromMeta,
   paidLaborAmountFromMeta,
+  refundAmountFromMeta,
+  netLaborPaidFromMeta,
+  netLaborPaidFromJob,
   paidAmountFromJob,
   laborPaidAtFromJob,
   aggregateRevenueFromJobs,

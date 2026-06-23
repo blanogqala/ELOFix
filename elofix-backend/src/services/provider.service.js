@@ -1,6 +1,11 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const notificationEvents = require("./notificationEvents.service");
+const fraudDetection = require("./fraudDetection.service");
+const providerTrustScore = require("./providerTrustScore.service");
+const { getTrustLevel } = require("../utils/trustLevel.util");
+const { sha256File } = require("../utils/identityHash.util");
+const fs = require("fs");
 const { randomUUID } = require("crypto");
 const { countJobsByStatus } = require("../utils/jobStatusCounts.util");
 const {
@@ -195,6 +200,8 @@ function checkProviderProfileCompletion(profile, user) {
       : null;
 
   if (!phone) return false;
+  if (!profile.saIdNumberHash) return false;
+  if (!profile.companyRegistrationHash) return false;
   if (bio.length < 20) return false;
   if (serviceAreas.length < 1) return false;
   if (skills.length < 1) return false;
@@ -284,6 +291,19 @@ async function aggregateCompletedLaborByCategoryForProviders(userIds) {
   return out;
 }
 
+function buildVerificationSummary(profile, trustSummary) {
+  const docs = normalizeDocuments(profile.documents);
+  return {
+    verifiedId: docs.idDoc?.status === "approved",
+    verifiedCompany: docs.companyReg?.status === "approved",
+    verifiedBankAccount: Boolean(profile.bankVerifiedAt),
+    trustScore: trustSummary?.trustScore ?? 100,
+    trustLevel: trustSummary?.trustLevel ?? getTrustLevel(100),
+    jobsCompleted: trustSummary?.completedJobs ?? 0,
+    customerSatisfaction: profile.rating ?? 0,
+  };
+}
+
 function toProviderResponse(
   profile,
   user,
@@ -296,6 +316,8 @@ function toProviderResponse(
     completedLaborByCategory = undefined,
     ratingBreakdown = undefined,
     includeLaborHistory = false,
+    trustSummary = undefined,
+    verificationSummary = undefined,
   } = {}
 ) {
   const documents = normalizeDocuments(profile.documents);
@@ -338,6 +360,9 @@ function toProviderResponse(
     responseTime: "N/A",
     bio: profile.bio || "",
     businessName: profile.businessName || "",
+    hasSaIdNumber: Boolean(profile.saIdNumberHash),
+    companyRegistrationNumber: profile.companyRegistrationNumber || undefined,
+    fraudReviewStatus: profile.fraudReviewStatus || "NONE",
     vehicleType: profile.vehicleType || undefined,
     numberPlate: profile.numberPlate || undefined,
     certifications: [],
@@ -355,6 +380,8 @@ function toProviderResponse(
     ...(ratingBreakdown && typeof ratingBreakdown === "object"
       ? { ratingBreakdown }
       : {}),
+    ...(trustSummary ? { trustScore: trustSummary.trustScore, trustLevel: trustSummary.trustLevel } : {}),
+    ...(verificationSummary ? { verificationSummary } : {}),
     createdAt: user.createdAt,
     rejectionReason: profile.rejectionReason || undefined,
     rejectedAt: profile.rejectedAt ? profile.rejectedAt.toISOString() : undefined,
@@ -619,13 +646,40 @@ async function updateProviderForUser(requestUserId, body) {
   const data = body && typeof body === "object" ? body : {};
 
   if (data.phone !== undefined) {
+    const phone = data.phone != null ? String(data.phone).trim() : null;
+    const phoneNormalized = phone
+      ? await fraudDetection.assertPhoneAvailable(phone, requestUserId, {
+          attemptUserId: requestUserId,
+          providerId: profileRowId,
+        })
+      : null;
     await prisma.user.update({
       where: { id: requestUserId },
-      data: { phone: data.phone != null ? String(data.phone).trim() : null },
+      data: { phone, phoneNormalized },
     });
   }
 
   const providerUpdate = {};
+  if (data.saIdNumber !== undefined) {
+    const { hash, encrypted } = await fraudDetection.assertSaIdAvailable(
+      data.saIdNumber,
+      profileRowId,
+      profileRowId
+    );
+    providerUpdate.saIdNumber = encrypted;
+    providerUpdate.saIdNumberHash = hash;
+  }
+  if (data.companyRegistrationNumber !== undefined) {
+    const result = await fraudDetection.checkCompanyRegistration(
+      data.companyRegistrationNumber,
+      profileRowId
+    );
+    providerUpdate.companyRegistrationNumber = result.normalized;
+    providerUpdate.companyRegistrationHash = result.hash;
+    if (result.duplicate) {
+      notificationEvents.notifyProviderFraudReview(requestUserId).catch(() => {});
+    }
+  }
   if (data.businessName !== undefined) {
     providerUpdate.businessName = data.businessName != null ? String(data.businessName).trim() : null;
   }
@@ -727,6 +781,26 @@ async function saveDocumentFromUpload(requestUserId, docType, file) {
     throw new AppError("Provider profile not found", 404);
   }
 
+  if (!prof.saIdNumberHash || !prof.companyRegistrationHash) {
+    throw new AppError(
+      "SA ID number and company registration number are required before uploading documents",
+      400
+    );
+  }
+
+  let fileHash = null;
+  try {
+    const buf = fs.readFileSync(file.path);
+    fileHash = sha256File(buf);
+    const isDuplicate = await fraudDetection.checkDocumentHashDuplicate(fileHash, prof.id);
+    if (isDuplicate) {
+      throw new AppError("This document matches an existing verified provider document", 409);
+    }
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    console.warn("[provider] document hash check failed", err?.message);
+  }
+
   const stored = await registerUploadedFile(file, {
     ownerUserId: requestUserId,
     type: docType,
@@ -740,6 +814,7 @@ async function saveDocumentFromUpload(requestUserId, docType, file) {
       originalName: stored.originalName,
       type: docType,
       status: "pending",
+      ...(fileHash ? { fileHash } : {}),
     },
   };
 
@@ -909,8 +984,10 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
 }
 
 /**
- * Admin-only: per-provider labor job stats for completed + paid jobs.
- * netRevenue = sum(job.providerAmount); grossRevenue = sum(job.totalPrice).
+ * Admin-only: per-provider labor job stats.
+ * grossRevenue = provider received + 7% commission per job (released + commission for
+ * active/cancelled-partial; full total for completed).
+ * platformCommission = sum(job.commissionAmount) on the same job set.
  */
 async function listProviderNetRevenues() {
   const providers = await prisma.provider.findMany({
@@ -921,50 +998,104 @@ async function listProviderNetRevenues() {
   const ids = [...new Set((providers || []).map((p) => String(p.userId || '').trim()).filter(Boolean))];
   if (!ids.length) return [];
 
-  const grouped = await prisma.job.groupBy({
+  const jobs = await prisma.job.findMany({
+    where: {
+      providerId: { in: ids },
+      laborPaid: true,
+      providerAmount: { not: null },
+      OR: [
+        { status: { not: 'CANCELLED' } },
+        { AND: [{ status: 'CANCELLED' }, { releasedAmount: { gt: 0 } }] },
+      ],
+    },
+    select: {
+      providerId: true,
+      status: true,
+      totalPrice: true,
+      providerAmount: true,
+      commissionAmount: true,
+      releasedAmount: true,
+    },
+  });
+
+  const statsByProviderId = new Map();
+
+  const mergeStats = (providerId, patch) => {
+    const key = String(providerId);
+    const cur = statsByProviderId.get(key) || {
+      netRevenue: 0,
+      grossRevenue: 0,
+      platformCommission: 0,
+      paidJobCount: 0,
+    };
+    statsByProviderId.set(key, {
+      netRevenue: cur.netRevenue + patch.netRevenue,
+      grossRevenue: cur.grossRevenue + patch.grossRevenue,
+      platformCommission: cur.platformCommission + patch.platformCommission,
+      paidJobCount: cur.paidJobCount + patch.paidJobCount,
+    });
+  };
+
+  for (const job of jobs) {
+    const providerId = job.providerId;
+    if (!providerId) continue;
+
+    const commission = prismaDecimalToNumber(job.commissionAmount);
+    const providerAmt = prismaDecimalToNumber(job.providerAmount);
+    const total = prismaDecimalToNumber(job.totalPrice);
+    const released = prismaDecimalToNumber(job.releasedAmount);
+    const comm = Number.isFinite(commission) ? commission : 0;
+    const statusU = String(job.status || '').toUpperCase();
+
+    let net;
+    let gross;
+    if (statusU === 'COMPLETED') {
+      net = Number.isFinite(providerAmt) ? providerAmt : 0;
+      gross = Number.isFinite(total) && total > 0 ? total : net + comm;
+    } else {
+      net = Number.isFinite(released) && released > 0 ? released : 0;
+      gross = net + comm;
+    }
+
+    mergeStats(providerId, {
+      netRevenue: net,
+      grossRevenue: gross,
+      platformCommission: comm,
+      paidJobCount: 1,
+    });
+  }
+
+  const completedGrouped = await prisma.job.groupBy({
     by: ['providerId'],
     where: {
       providerId: { in: ids },
-      status: 'COMPLETED',
       laborPaid: true,
       providerAmount: { not: null },
-    },
-    _sum: {
-      providerAmount: true,
-      totalPrice: true,
-      commissionAmount: true,
+      status: 'COMPLETED',
     },
     _count: { _all: true },
   });
 
-  const statsByProviderId = new Map();
-  for (const row of grouped) {
-    const providerId = row.providerId;
-    if (!providerId) continue;
-    const netRevenue = prismaDecimalToNumber(row._sum?.providerAmount);
-    const grossFromTotal = prismaDecimalToNumber(row._sum?.totalPrice);
-    const platformCommission = prismaDecimalToNumber(row._sum?.commissionAmount);
-    const grossRevenue =
-      Number.isFinite(grossFromTotal) && grossFromTotal > 0
-        ? grossFromTotal
-        : (Number.isFinite(netRevenue) ? netRevenue : 0) +
-          (Number.isFinite(platformCommission) ? platformCommission : 0);
-    statsByProviderId.set(String(providerId), {
-      netRevenue: Number.isFinite(netRevenue) ? netRevenue : 0,
-      grossRevenue: Number.isFinite(grossRevenue) ? grossRevenue : 0,
-      platformCommission: Number.isFinite(platformCommission) ? platformCommission : 0,
-      completedJobCount: row._count?._all ?? 0,
-    });
+  const completedCountByProviderId = new Map();
+  for (const row of completedGrouped) {
+    if (!row.providerId) continue;
+    completedCountByProviderId.set(String(row.providerId), row._count?._all ?? 0);
   }
 
   return ids.map((id) => {
     const stats = statsByProviderId.get(id);
+    const grossRevenue = stats?.grossRevenue ?? 0;
+    const netRevenue = stats?.netRevenue ?? 0;
+    const platformCommission = stats?.platformCommission ?? 0;
     return {
       providerId: id,
-      netRevenue: stats?.netRevenue ?? 0,
-      grossRevenue: stats?.grossRevenue ?? 0,
-      platformCommission: stats?.platformCommission ?? 0,
-      completedJobCount: stats?.completedJobCount ?? 0,
+      netRevenue,
+      grossRevenue,
+      // Keep commission aligned with gross − provider received on the same job set.
+      platformCommission:
+        platformCommission > 0 ? platformCommission : Math.max(0, grossRevenue - netRevenue),
+      completedJobCount: completedCountByProviderId.get(id) ?? 0,
+      paidJobCount: stats?.paidJobCount ?? 0,
     };
   });
 }
@@ -1000,6 +1131,12 @@ async function getProviderById(id) {
   const { aggregateRatingBreakdown } = require("./providerReview.service");
   const ratingBreakdown = await aggregateRatingBreakdown(profile.id);
 
+  const trustRow = await providerTrustScore.getTrustScoreForProviderProfile(profile.id, profile);
+  const trustSummary = trustRow
+    ? { trustScore: trustRow.score, trustLevel: trustRow.trustLevel, completedJobs: trustRow.completedJobs }
+    : { trustScore: 100, trustLevel: getTrustLevel(100), completedJobs: completedJobs };
+  const verificationSummary = buildVerificationSummary(profile, trustSummary);
+
   const pendingSuggestions = await prisma.categorySuggestion.findMany({
     where: { providerId: profile.id, status: "PENDING" },
     orderBy: { createdAt: "asc" },
@@ -1020,6 +1157,8 @@ async function getProviderById(id) {
       createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     })),
     ratingBreakdown,
+    trustSummary,
+    verificationSummary,
   });
 }
 
@@ -1063,6 +1202,12 @@ async function approveProviderDocumentByUserId(targetUserId, docType) {
   if (!existing || !hasDocUrl(existing)) {
     throw new AppError("No document uploaded for this type", 400);
   }
+  if (docType === "idDoc" && profile.saIdNumberHash) {
+    const dup = await fraudDetection.findProviderBySaIdHash(profile.saIdNumberHash, profile.id);
+    if (dup) {
+      throw new AppError("Cannot approve: duplicate SA ID on another verified provider", 400);
+    }
+  }
   const next = {
     ...prev,
     [docType]: {
@@ -1076,6 +1221,8 @@ async function approveProviderDocumentByUserId(targetUserId, docType) {
     data: { documents: next },
   });
   await persistProfileCompleted(profile.id);
+  if (docType === "idDoc") await providerTrustScore.onVerifiedId(profile.id);
+  if (docType === "companyReg") await providerTrustScore.onVerifiedCompany(profile.id);
   return getProviderById(targetUserId);
 }
 
@@ -1114,6 +1261,7 @@ async function approveProviderByUserId(targetUserId) {
     throw new AppError("Provider not found", 404);
   }
   assertRequiredDocsForApproval(profile);
+  await fraudDetection.assertProviderApprovalAllowed(profile);
 
   await persistProfileCompleted(profile.id);
   const refreshed = await prisma.provider.findUnique({ where: { id: profile.id } });

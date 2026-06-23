@@ -27,6 +27,7 @@ import ServiceRequest from "./pages/user/ServiceRequest";
 import UserProviderProfile from "./pages/user/ProviderProfile";
 import UserJobs from "./pages/user/Jobs";
 import JobDetail from "./pages/user/JobDetail";
+import UserDisputeDetail from "./pages/user/DisputeDetail";
 import UserProfile from "./pages/user/Profile";
 import UserPayments from "./pages/user/Payments";
 import UserNotifications from "./pages/user/Notifications";
@@ -44,6 +45,7 @@ import ProviderRequests from "./pages/provider/Requests";
 import ProviderRequestDetail from "./pages/provider/RequestDetail";
 import ProviderActiveJobs from "./pages/provider/ActiveJobs";
 import ProviderJobDetail from "./pages/provider/JobDetail";
+import ProviderDisputeDetail from "./pages/provider/DisputeDetail";
 import ProviderJobBrowseMaterials from "./pages/provider/ProviderJobBrowseMaterials";
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderProfile from "./pages/provider/Profile";
@@ -62,7 +64,12 @@ import AdminSupplierCatalogPage from "./pages/admin/AdminSupplierCatalogPage";
 import AdminSupplierBranchCatalogPage from "./pages/admin/AdminSupplierBranchCatalogPage";
 import AdminCategories from "./pages/admin/Categories.tsx";
 import AdminAnalytics from "./pages/admin/Analytics";
+import FraudCenter from "./pages/admin/FraudCenter";
+import FraudAlerts from "./pages/admin/FraudAlerts";
+import FraudAlertDetail from "./pages/admin/FraudAlertDetail";
+import FraudDeviceDetail from "./pages/admin/FraudDeviceDetail";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
+import AdminDisputeDetail from "./pages/admin/DisputeDetail";
 import AdminCustomers from "./pages/admin/Customers";
 import AdminCustomerDetail from "./pages/admin/CustomerDetail";
 
@@ -119,6 +126,8 @@ const App = () => (
             <Route path="/user/payments" element={<AuthGuard allowedRoles={['user']}><UserPayments /></AuthGuard>} />
             <Route path="/payments/return" element={<AuthGuard allowedRoles={['user']}><PaymentReturn /></AuthGuard>} />
             <Route path="/payments/cancel" element={<AuthGuard allowedRoles={['user']}><PaymentCancel /></AuthGuard>} />
+            <Route path="/user/disputes" element={<Navigate to="/user/jobs?view=disputes" replace />} />
+            <Route path="/user/disputes/:id" element={<AuthGuard allowedRoles={['user']}><UserDisputeDetail /></AuthGuard>} />
             <Route path="/user/profile" element={<AuthGuard allowedRoles={['user']}><UserProfile /></AuthGuard>} />
             <Route path="/user/notifications" element={<AuthGuard allowedRoles={['user']}><UserNotifications /></AuthGuard>} />
             <Route path="/provider/notifications" element={<AuthGuard allowedRoles={['provider']}><UserNotifications /></AuthGuard>} />
@@ -147,6 +156,8 @@ const App = () => (
             <Route path="/provider/jobs/:id/materials/browse" element={<AuthGuard allowedRoles={['provider']}><ProviderJobBrowseMaterials /></AuthGuard>} />
             <Route path="/provider/jobs/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderJobDetail /></AuthGuard>} />
             <Route path="/provider/earnings" element={<AuthGuard allowedRoles={['provider']}><ProviderEarnings /></AuthGuard>} />
+            <Route path="/provider/disputes" element={<Navigate to="/provider/jobs?view=disputes" replace />} />
+            <Route path="/provider/disputes/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderDisputeDetail /></AuthGuard>} />
             <Route path="/provider/profile" element={<AuthGuard allowedRoles={['provider']}><ProviderProfile /></AuthGuard>} />
             <Route path="/provider/documents" element={<AuthGuard allowedRoles={['provider']}><ProviderDocuments /></AuthGuard>} />
             <Route
@@ -177,6 +188,10 @@ const App = () => (
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
             <Route path="/admin/dashboard" element={<AuthGuard allowedRoles={['admin']}><AdminDashboard /></AuthGuard>} />
             <Route path="/admin/analytics" element={<AuthGuard allowedRoles={['admin']}><AdminAnalytics /></AuthGuard>} />
+            <Route path="/admin/fraud-center" element={<AuthGuard allowedRoles={['admin']}><FraudCenter /></AuthGuard>} />
+            <Route path="/admin/fraud-center/alerts" element={<AuthGuard allowedRoles={['admin']}><FraudAlerts /></AuthGuard>} />
+            <Route path="/admin/fraud-center/alerts/:id" element={<AuthGuard allowedRoles={['admin']}><FraudAlertDetail /></AuthGuard>} />
+            <Route path="/admin/fraud-center/devices/:id" element={<AuthGuard allowedRoles={['admin']}><FraudDeviceDetail /></AuthGuard>} />
             <Route path="/admin/customers" element={<AuthGuard allowedRoles={['admin']}><AdminCustomers /></AuthGuard>} />
             <Route path="/admin/customers/:id" element={<AuthGuard allowedRoles={['admin']}><AdminCustomerDetail /></AuthGuard>} />
             <Route path="/admin/providers" element={<AuthGuard allowedRoles={['admin']}><AdminProviders /></AuthGuard>} />
@@ -197,6 +212,8 @@ const App = () => (
             <Route path="/admin/payments" element={<AuthGuard allowedRoles={['admin']}><AdminPayments /></AuthGuard>} />
             <Route path="/admin/payments/:jobId" element={<AuthGuard allowedRoles={['admin']}><AdminPaymentDetail /></AuthGuard>} />
             <Route path="/admin/withdrawals" element={<AuthGuard allowedRoles={['admin']}><AdminWithdrawals /></AuthGuard>} />
+            <Route path="/admin/disputes" element={<Navigate to="/admin/jobs?view=dispatched" replace />} />
+            <Route path="/admin/disputes/:id" element={<AuthGuard allowedRoles={['admin']}><AdminDisputeDetail /></AuthGuard>} />
 
             {/* Catch-all */}
             <Route path="*" element={<NotFound />} />

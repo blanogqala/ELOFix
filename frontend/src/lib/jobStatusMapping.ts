@@ -22,6 +22,7 @@ export const ACTIVE_WORKFLOW_JOB_STATUSES: JobStatus[] = [
   'MATERIALS_PAID',
   'IN_PROGRESS',
   'AWAITING_CONFIRMATION',
+  'DISPUTED',
 ];
 
 export function isActiveWorkflowStatus(status: JobStatus): boolean {
@@ -47,6 +48,7 @@ export function getUnifiedTimelineStepIndex(status: JobStatus): number {
     case 'IN_PROGRESS':
       return 3;
     case 'AWAITING_CONFIRMATION':
+    case 'DISPUTED':
       return 4;
     case 'COMPLETED':
       return 5;
@@ -88,6 +90,8 @@ export function getStandardizedStatusLabel(status: JobStatus): string {
       return 'Cancelled';
     case 'REJECTED':
       return 'Rejected';
+    case 'DISPUTED':
+      return 'Disputed';
     default:
       return getJobStatusLabelFromProgressStep(getUnifiedTimelineStepIndex(status));
   }
@@ -99,6 +103,8 @@ export function getUserStatusBadgeClass(status: JobStatus): string {
     case 'CANCELLED':
       return 'status-cancelled';
     case 'REJECTED':
+      return 'status-cancelled';
+    case 'DISPUTED':
       return 'status-cancelled';
     default: {
       const idx = getUnifiedTimelineStepIndex(status);
@@ -126,6 +132,7 @@ export const ADMIN_JOB_STATUS_FILTER_LABELS: Record<string, string> = {
   SERVICE_MATERIAL_PAID: 'Awaiting Payment',
   IN_PROGRESS: 'In Progress',
   AWAITING_CONFIRMATION: 'Awaiting Confirmation',
+  DISPUTED: 'Disputed',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
   REJECTED: 'Rejected',
@@ -144,6 +151,7 @@ export const ADMIN_JOB_STATUS_FILTER_GROUPS: Record<string, JobStatus[] | null> 
   ],
   IN_PROGRESS: ['IN_PROGRESS'],
   AWAITING_CONFIRMATION: ['AWAITING_CONFIRMATION'],
+  DISPUTED: ['DISPUTED'],
   COMPLETED: ['COMPLETED'],
   CANCELLED: ['CANCELLED'],
   REJECTED: ['REJECTED'],
@@ -158,6 +166,8 @@ export function jobMatchesAdminStatusFilter(status: JobStatus, filterKey: string
 
 export function getProviderStatusBadgeVariant(status: JobStatus): ProviderBadgeVariant {
   switch (status) {
+    case 'DISPUTED':
+      return 'destructive';
     case 'CANCELLED':
     case 'REJECTED':
       return 'destructive';

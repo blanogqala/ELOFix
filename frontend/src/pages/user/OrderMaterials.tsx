@@ -32,6 +32,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
+import { buildOrderFinanceFromParts } from '@/lib/orderFinance';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { getDeliveryProviders } from '@/lib/api/specials';
 import { reverseGeocode } from '@/lib/api/geocode';
@@ -291,11 +293,9 @@ export default function OrderMaterials() {
   };
 
   const subtotal = cart.reduce((sum, c) => sum + c.product.price * c.qty, 0);
-  const deliveryFee = deliveryType === 'STORE_DELIVERY'
-    ? (selectedSupplier?.deliveryFee || 0)
-    : deliveryType === 'DELIVERY_PROVIDER'
-      ? (deliveryProviders.find(d => d.id === selectedDeliveryProvider)?.baseRate || 0)
-      : 0;
+  const deliveryFee = deliveryType === 'DELIVERY_PROVIDER'
+    ? (deliveryProviders.find(d => d.id === selectedDeliveryProvider)?.baseRate || 0)
+    : 0;
   // Materials payment only; delivery fee paid later when approved (Store/Provider)
   const materialsTotal = subtotal;
   const total = materialsTotal;
@@ -326,7 +326,7 @@ export default function OrderMaterials() {
           type: deliveryTypeMap,
           status: deliveryStatus,
           providerId: deliveryType === 'DELIVERY_PROVIDER' ? selectedDeliveryProvider : undefined,
-          fee: deliveryFee,
+          fee: deliveryType === 'STORE_DELIVERY' ? 0 : deliveryFee,
           address: deliveryAddress.trim(),
           city: deliveryCity.trim(),
           area: deliveryArea.trim() || undefined,
@@ -532,7 +532,7 @@ export default function OrderMaterials() {
                               </span>
                               {sup.hasDelivery && (
                                 <span className="inline-flex items-center gap-1">
-                                  Fee: {formatCurrency(sup.deliveryFee || 0)}
+                                  Store delivery available
                                 </span>
                               )}
                               <span>· {sup.products.length} products</span>
@@ -675,9 +675,10 @@ export default function OrderMaterials() {
                         <div className="flex justify-between">
                           <div>
                             <p className="font-medium">Store Delivery</p>
-                            <p className="text-sm text-muted-foreground">Delivered by {selectedSupplier.displayName || selectedSupplier.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              Delivered by {selectedSupplier.displayName || selectedSupplier.name} — price confirmed by the branch after your request
+                            </p>
                           </div>
-                          <p className="font-medium">{formatCurrency(selectedSupplier.deliveryFee)}</p>
                         </div>
                       </Label>
                     </div>
@@ -763,19 +764,25 @@ export default function OrderMaterials() {
                     <span>{formatCurrency(c.product.price * c.qty, { decimals: 2 })}</span>
                   </div>
                 ))}
-                <div className="border-t border-border pt-2 mt-2 space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Materials</span>
-                    <span>{formatCurrency(subtotal, { decimals: 2 })}</span>
-                  </div>
-                  {deliveryFee > 0 && (
-                    <div className="flex justify-between text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1"><Truck className="h-3 w-3" /> Delivery (pay after approval)</span>
-                      <span>{formatCurrency(deliveryFee, { decimals: 2 })}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between font-bold text-lg pt-1 border-t border-border">
-                    <span>Pay now</span>
+                <div className="border-t border-border pt-2 mt-2">
+                  <OrderFinanceBreakdown
+                    finance={buildOrderFinanceFromParts({
+                      materialsSubtotal: subtotal,
+                      deliveryFee: 0,
+                      deliveryType: deliveryType === 'STORE_DELIVERY' ? 'STORE_DELIVERY' : deliveryType === 'DELIVERY_PROVIDER' ? 'DELIVERY_PROVIDER' : 'SELF',
+                    })}
+                    compact
+                    showSupplierNet={false}
+                    deliveryNote={
+                      deliveryType === 'STORE_DELIVERY'
+                        ? 'Materials are charged now. Delivery fee is set by the branch after your request.'
+                        : deliveryType === 'DELIVERY_PROVIDER'
+                          ? 'Courier delivery is quoted and paid separately after approval.'
+                          : undefined
+                    }
+                  />
+                  <div className="flex justify-between font-bold text-lg pt-2 mt-2 border-t border-border">
+                    <span>Pay now (materials)</span>
                     <span className="text-primary">{formatCurrency(total, { decimals: 2 })}</span>
                   </div>
                 </div>

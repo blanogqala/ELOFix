@@ -86,6 +86,15 @@ function DocumentUploadCard({
     e.target.value = '';
     if (!file || !provider) return;
 
+    if (!provider.hasSaIdNumber || !provider.companyRegistrationNumber) {
+      toast({
+        title: 'Identity details required',
+        description: 'Save your SA ID number and company registration in Profile Info before uploading documents.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const validationError = validateProviderDocumentFile(file);
     if (validationError) {
       toast({ title: 'Invalid file', description: validationError, variant: 'destructive' });

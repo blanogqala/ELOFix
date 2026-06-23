@@ -112,12 +112,75 @@ enum ProviderPayoutStatus {
   COMPLETE
 }
 
+enum DisputeStatus {
+  OPEN
+  UNDER_INVESTIGATION
+  RESOLVED
+  CLOSED
+}
+
+enum DisputeRequestedResolution {
+  PROVIDER_RETURN_FIX
+  PARTIAL_REFUND
+  FULL_REFUND
+  REFUND
+  OTHER
+}
+
+enum DisputeResolutionAction {
+  RELEASE_FUNDS
+  PARTIAL_REFUND
+  FULL_REFUND
+  RETURN_PROVIDER
+  CLOSE_CASE
+}
+
+enum DisputeSenderRole {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum FraudAlertType {
+  DUPLICATE_PHONE
+  DUPLICATE_SA_ID
+  DUPLICATE_COMPANY_REG
+  DUPLICATE_BANK_ACCOUNT
+  SUSPICIOUS_DEVICE
+  HIGH_RISK_PROVIDER
+  FLAGGED_CUSTOMER
+  SUSPICIOUS_LOGIN
+  FAKE_DOCUMENTATION
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FraudAlertStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum ProviderFraudReviewStatus {
+  NONE
+  PENDING_REVIEW
+  CLEARED
+  REJECTED
+}
+
 model User {
   id                  String               @id @default(uuid())
   email               String               @unique
   password            String?
   name                String
   phone               String?
+  phoneNormalized     String?
   profileImage        String?
   authProvider        AuthProvider         @default(LOCAL)
   googleId            String?              @unique
@@ -147,6 +210,10 @@ model User {
   auditLogs           AuditLog[]
   supplierProfile     Supplier?
   providerReviews     ProviderReview[] @relation("CustomerProviderReviews")
+  fraudAlerts         FraudAlert[]     @relation("UserFraudAlerts")
+  deviceLinks         DeviceUserLink[]
+
+  @@index([phoneNormalized])
 }
 
 model Provider {
@@ -184,6 +251,12 @@ model Provider {
   rejectedAt        DateTime?
   deletedAt         DateTime?
   reviewSubmittedAt DateTime?
+  saIdNumber               String?
+  saIdNumberHash           String?                  @unique
+  companyRegistrationNumber String?
+  companyRegistrationHash  String?
+  fraudReviewStatus        ProviderFraudReviewStatus @default(NONE)
+  bankVerifiedAt           DateTime?
 
   workPosts              WorkPost[]
   withdrawalProfile      ProviderWithdrawalProfile?
@@ -192,6 +265,10 @@ model Provider {
   earnings               Earning[]
   materialOrderRatings   MaterialOrderRating[]
   providerReviews        ProviderReview[]
+  trustScore             ProviderTrustScore?
+  fraudAlerts            FraudAlert[]           @relation("ProviderFraudAlerts")
+
+  @@index([companyRegistrationHash])
 }
 
 model WorkPost {
@@ -274,6 +351,8 @@ model Job {
   paymentIntents                   PaymentIntent[]
   materialRequests                 MaterialRequest[]
   purchaseMaterialOrders           MaterialOrder[] @relation("JobMaterialOrders")
+  completionEvidence               JobCompletionEvidence?
+  dispute                          JobDispute?
 }
 
 model MaterialRequest {
@@ -500,7 +579,10 @@ model ProviderWithdrawalProfile {
   accountNumber  String
   accountHolder  String
   branchCode     String
+  bankAccountHash String?
   updatedAt      DateTime @updatedAt
+
+  @@index([bankAccountHash])
 }
 
 model WithdrawalRequest {
@@ -516,6 +598,176 @@ model WithdrawalRequest {
   @@index([providerId])
   @@index([status])
   @@index([createdAt])
+}
+
+model JobCompletionEvidence {
+  id                String    @id @default(uuid())
+  jobId             String    @unique
+  job               Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  customerId        String
+  providerId        String
+  rating            Int?
+  review            String?
+  images            String[]  @default([])
+  videos            String[]  @default([])
+  verified          Boolean   @default(true)
+  autoCompleted     Boolean   @default(false)
+  jobCategory       String    @default("GENERAL")
+  confirmedAt       DateTime  @default(now())
+  paymentReleasedAt DateTime?
+
+  @@index([providerId])
+  @@index([customerId])
+  @@index([confirmedAt])
+}
+
+model JobDispute {
+  id                  String                     @id @default(uuid())
+  jobId               String                     @unique
+  job                 Job                        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  customerId          String
+  providerId          String
+  status              DisputeStatus              @default(OPEN)
+  requestedResolution DisputeRequestedResolution
+  customerComment     String
+  otherResolutionDetail String?
+  customerImages      String[]                   @default([])
+  customerVideos      String[]                   @default([])
+  providerComment     String?
+  providerImages      String[]                   @default([])
+  providerVideos      String[]                   @default([])
+  adminNotes          String?
+  openedAt            DateTime                   @default(now())
+  resolvedAt          DateTime?
+  messages            DisputeMessage[]
+  resolutionLogs      DisputeResolutionLog[]
+  rounds              JobDisputeRound[]
+
+  @@index([status])
+  @@index([providerId])
+  @@index([customerId])
+  @@index([openedAt])
+}
+
+model JobDisputeRound {
+  id                    String                     @id @default(uuid())
+  disputeId             String
+  dispute               JobDispute                 @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  roundNumber           Int
+  status                DisputeStatus              @default(OPEN)
+  requestedResolution   DisputeRequestedResolution
+  customerComment       String
+  otherResolutionDetail String?
+  customerImages        String[]                   @default([])
+  customerVideos        String[]                   @default([])
+  providerComment       String?
+  providerImages        String[]                   @default([])
+  providerVideos        String[]                   @default([])
+  resolutionAction      DisputeResolutionAction?
+  resolutionNotes       String?
+  openedAt              DateTime                   @default(now())
+  resolvedAt            DateTime?
+
+  @@unique([disputeId, roundNumber])
+  @@index([disputeId, openedAt])
+}
+
+model DisputeMessage {
+  id          String            @id @default(uuid())
+  disputeId   String
+  dispute     JobDispute        @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  senderId    String
+  senderRole  DisputeSenderRole
+  body        String
+  attachments String[]          @default([])
+  createdAt   DateTime          @default(now())
+
+  @@index([disputeId, createdAt])
+}
+
+model DisputeResolutionLog {
+  id        String                  @id @default(uuid())
+  disputeId String
+  dispute   JobDispute              @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  adminId   String
+  action    DisputeResolutionAction
+  amount    Decimal?                @db.Decimal(12, 2)
+  notes     String?
+  createdAt DateTime                @default(now())
+
+  @@index([disputeId])
+  @@index([adminId])
+  @@index([createdAt])
+}
+
+model ProviderTrustScore {
+  id               String   @id @default(uuid())
+  providerId       String   @unique
+  provider         Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  score            Int      @default(100)
+  disputeCount     Int      @default(0)
+  refundCount      Int      @default(0)
+  completedJobs    Int      @default(0)
+  positiveReviews  Int      @default(0)
+  lastCalculatedAt DateTime @default(now())
+  history          Json     @default("[]")
+
+  @@index([score])
+}
+
+model FraudAlert {
+  id          String           @id @default(uuid())
+  userId      String?
+  user        User?            @relation("UserFraudAlerts", fields: [userId], references: [id], onDelete: SetNull)
+  providerId  String?
+  provider    Provider?        @relation("ProviderFraudAlerts", fields: [providerId], references: [id], onDelete: SetNull)
+  alertType   FraudAlertType
+  severity    FraudSeverity    @default(MEDIUM)
+  status      FraudAlertStatus @default(OPEN)
+  description String
+  metadata    Json?
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([alertType])
+  @@index([severity])
+  @@index([status])
+  @@index([userId])
+  @@index([providerId])
+  @@index([createdAt])
+}
+
+model DeviceProfile {
+  id                 String           @id @default(uuid())
+  browserFingerprint String?
+  deviceFingerprint  String           @unique
+  ipAddress          String?
+  os                 String?
+  country            String?
+  city               String?
+  userAgent          String?
+  firstSeenAt        DateTime         @default(now())
+  lastSeenAt         DateTime         @default(now())
+  userLinks          DeviceUserLink[]
+
+  @@index([lastSeenAt])
+}
+
+model DeviceUserLink {
+  id              String        @id @default(uuid())
+  deviceProfileId String
+  deviceProfile   DeviceProfile @relation(fields: [deviceProfileId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role            Role
+  firstLoginAt    DateTime      @default(now())
+  lastLoginAt     DateTime      @default(now())
+  loginCount      Int           @default(1)
+
+  @@unique([deviceProfileId, userId])
+  @@index([userId])
+  @@index([deviceProfileId])
 }
 
 model AuditLog {

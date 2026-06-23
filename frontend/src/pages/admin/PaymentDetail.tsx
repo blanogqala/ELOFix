@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getJobById, releaseEscrowPayment } from '@/lib/api/jobs';
 import { getLaborInvoiceByJobId } from '@/lib/api/jobs';
-import { createRefundInvoice } from '@/lib/api/payments';
+import { processAdminJobRefund } from '@/lib/api/payments';
+import { getAdminEscrowV2Breakdown } from '@/lib/adminJobFinancial';
 import { Job } from '@/types';
 import {
   ArrowLeft,
@@ -19,7 +20,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPaymentBreakdownCard';
-import { buildAdminJobTransactionHistory } from '@/lib/adminJobFinancial';
+import { buildAdminJobTransactionHistory, canAdminManualReleaseEscrow } from '@/lib/adminJobFinancial';
 import { getAdminPaymentStatusDisplay } from '@/lib/adminJobStatus';
 import {
   Dialog,
@@ -43,7 +44,6 @@ export default function AdminPaymentDetail() {
   const [isReleasing, setIsReleasing] = useState(false);
   const [refundLabor, setRefundLabor] = useState('');
   const [refundMaterials, setRefundMaterials] = useState('');
-  const [refundCardLast4, setRefundCardLast4] = useState('');
   const [refundBusy, setRefundBusy] = useState(false);
 
   const loadJob = useCallback(async () => {
@@ -75,10 +75,10 @@ export default function AdminPaymentDetail() {
     return job.escrow.heldAmount || 0;
   };
 
-  const handleRecordRefundInvoice = async () => {
+  const handleProcessRefund = async () => {
     if (!job) return;
     const labor = parseFloat(refundLabor);
-    const materials = parseFloat(refundMaterials);
+    const materials = parseFloat(refundMaterials || '0');
     if (Number.isNaN(labor) || labor < 0 || Number.isNaN(materials) || materials < 0) {
       toast({ title: 'Enter valid refund amounts', variant: 'destructive' });
       return;
@@ -87,28 +87,48 @@ export default function AdminPaymentDetail() {
       toast({ title: 'At least one amount must be greater than zero', variant: 'destructive' });
       return;
     }
-    const last4 = refundCardLast4.replace(/\D/g, '').slice(-4);
-    if (last4.length !== 4) {
-      toast({ title: 'Enter card last 4 digits', variant: 'destructive' });
-      return;
-    }
     setRefundBusy(true);
     try {
-      await createRefundInvoice(job.userId, job.id, labor, materials, last4);
-      toast({ title: 'Refund invoice recorded', description: 'Visible on the customer invoices list.' });
+      const updated = await processAdminJobRefund(job.id, {
+        laborRefundNet: labor,
+        materialsRefundNet: materials,
+      });
+      setJob(updated);
+      toast({
+        title: 'Refund processed',
+        description: 'Customer refund recorded and provider clawback applied.',
+      });
       setRefundLabor('');
       setRefundMaterials('');
-      setRefundCardLast4('');
     } catch (err: unknown) {
       toast({
         title: 'Error',
-        description: err instanceof Error ? err.message : 'Failed to record refund.',
+        description: err instanceof Error ? err.message : 'Failed to process refund.',
         variant: 'destructive',
       });
     } finally {
       setRefundBusy(false);
     }
   };
+
+  const laborGross =
+    job?.totalPrice != null && Number(job.totalPrice) > 0
+      ? Number(job.totalPrice)
+      : Number(job?.servicePrice?.amount ?? 0);
+  const priorRefunded = Number(job?.refundAmount ?? 0) || 0;
+  const maxNetLabor = Math.max(0, Math.round(laborGross * 0.93 * 100) / 100 - priorRefunded);
+  const laborPreview = parseFloat(refundLabor);
+  const finBreakdown = job ? getAdminEscrowV2Breakdown(job) : null;
+  const previewEscrow =
+    finBreakdown && Number.isFinite(laborPreview) && laborPreview > 0
+      ? Math.min(laborPreview, finBreakdown.remaining)
+      : 0;
+  const previewClawback =
+    Number.isFinite(laborPreview) && laborPreview > 0
+      ? Math.max(0, laborPreview - previewEscrow)
+      : 0;
+  const paymentMethodHint =
+    job?.servicePayment?.maskedPaymentMethod?.replace(/\D/g, '').slice(-4) || 'from payment record';
 
   const handleReleasePayment = async () => {
     if (!job) return;
@@ -166,6 +186,7 @@ export default function AdminPaymentDetail() {
 
   const paymentStatus = getPaymentStatus();
   const maxReleasable = getMaxReleasable();
+  const canReleaseEscrow = canAdminManualReleaseEscrow(job);
 
   const transactionHistory = buildAdminJobTransactionHistory(job);
 
@@ -221,7 +242,7 @@ export default function AdminPaymentDetail() {
                 <span className="text-muted-foreground">Escrow / workflow status</span>
                 <span className={cn('font-medium', paymentStatus.class)}>{paymentStatus.label}</span>
               </div>
-              {maxReleasable > 0 && (
+              {maxReleasable > 0 && canReleaseEscrow && (
                 <Button
                   className="w-full sm:w-auto"
                   onClick={() => {
@@ -232,55 +253,72 @@ export default function AdminPaymentDetail() {
                   Release remaining funds
                 </Button>
               )}
+              {maxReleasable > 0 && !canReleaseEscrow && (
+                <p className="text-sm text-muted-foreground">
+                  Courier delivery funds are held until the customer confirms delivery.
+                </p>
+              )}
             </div>
           }
         />
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Record refund invoice</CardTitle>
+            <CardTitle className="text-lg">Process refund</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Creates a refund line item record for the customer (e.g. after a partial cancellation). Totals should match your finance process.
+              Enter the net amount to send the customer (max 93% of labor gross). Platform keeps 7%
+              commission. Provider funds the refund from escrow, available balance, then future earnings.
             </p>
+            {priorRefunded > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Already refunded: {formatCurrency(priorRefunded)} · Remaining max: {formatCurrency(maxNetLabor)}
+              </p>
+            )}
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-1">
-                <Label htmlFor="refund-labor">Labor refund (R)</Label>
+                <Label htmlFor="refund-labor">Labor refund net (R)</Label>
                 <Input
                   id="refund-labor"
                   type="number"
                   min={0}
-                  step={1}
+                  max={maxNetLabor}
+                  step={0.01}
                   value={refundLabor}
                   onChange={(e) => setRefundLabor(e.target.value)}
+                  placeholder={maxNetLabor > 0 ? String(maxNetLabor) : '0'}
                 />
+                <p className="text-xs text-muted-foreground">Max net: {formatCurrency(maxNetLabor)}</p>
               </div>
               <div className="space-y-1">
-                <Label htmlFor="refund-mat">Materials refund (R)</Label>
+                <Label htmlFor="refund-mat">Materials refund net (R)</Label>
                 <Input
                   id="refund-mat"
                   type="number"
                   min={0}
-                  step={1}
+                  step={0.01}
                   value={refundMaterials}
                   onChange={(e) => setRefundMaterials(e.target.value)}
                 />
               </div>
             </div>
-            <div className="space-y-1 max-w-xs">
-              <Label htmlFor="refund-card">Card last 4</Label>
-              <Input
-                id="refund-card"
-                inputMode="numeric"
-                maxLength={4}
-                value={refundCardLast4}
-                onChange={(e) => setRefundCardLast4(e.target.value)}
-                placeholder="4242"
-              />
-            </div>
-            <Button onClick={() => void handleRecordRefundInvoice()} disabled={refundBusy}>
-              {refundBusy ? 'Saving…' : 'Save refund invoice'}
+            {Number.isFinite(laborPreview) && laborPreview > 0 && (
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+                <p className="font-medium">Preview</p>
+                <p className="text-muted-foreground">
+                  From escrow held: {formatCurrency(previewEscrow)}
+                </p>
+                <p className="text-muted-foreground">
+                  Provider clawback (available first, then debt): {formatCurrency(previewClawback)}
+                </p>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Payment method: card ···{paymentMethodHint} · Gateway refund attempted when configured
+            </p>
+            <Button onClick={() => void handleProcessRefund()} disabled={refundBusy || !job.laborPaid}>
+              {refundBusy ? 'Processing…' : 'Process refund'}
             </Button>
           </CardContent>
         </Card>

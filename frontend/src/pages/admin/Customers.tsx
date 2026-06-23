@@ -18,7 +18,7 @@ export default function AdminCustomers() {
   const [cityFilter, setCityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, isError } = useQuery({
     queryKey: ['admin', 'customers'],
     queryFn: () => getAdminCustomers(),
   });
@@ -74,7 +74,8 @@ export default function AdminCustomers() {
     if (key === 'city') setCityFilter('all');
   };
 
-  const listError = error instanceof Error ? error.message : null;
+  const listError =
+    isError && !data?.customers?.length && error instanceof Error ? error.message : null;
 
   return (
     <DashboardLayout>
@@ -217,7 +218,7 @@ export default function AdminCustomers() {
                   <th className="table-header px-6 py-4 text-left">Services</th>
                   <th className="table-header px-6 py-4 text-left">Completed</th>
                   <th className="table-header px-6 py-4 text-left">Active</th>
-                  <th className="table-header px-6 py-4 text-left">Open</th>
+                  <th className="table-header px-6 py-4 text-left">Disputed</th>
                   <th className="table-header px-6 py-4 text-left">Rejected</th>
                   <th className="table-header px-6 py-4 text-left">Revenue</th>
                   <th className="table-header px-6 py-4 text-left">Registered</th>
@@ -269,7 +270,7 @@ export default function AdminCustomers() {
                         </td>
                         <td className="px-6 py-4 text-sm tabular-nums">{customer.jobCounts.completed}</td>
                         <td className="px-6 py-4 text-sm tabular-nums">{customer.jobCounts.active}</td>
-                        <td className="px-6 py-4 text-sm tabular-nums">{customer.jobCounts.open}</td>
+                        <td className="px-6 py-4 text-sm tabular-nums">{customer.jobCounts.disputed}</td>
                         <td className="px-6 py-4 text-sm tabular-nums">{customer.jobCounts.rejected}</td>
                         <td className="px-6 py-4 text-sm font-medium">
                           {formatCurrency(customer.totalPaid)}

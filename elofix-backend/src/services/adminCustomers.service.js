@@ -1,7 +1,12 @@
 const prisma = require("../config/prisma");
 const jobMeta = require("./jobMeta.service");
 const AppError = require("../utils/AppError");
-const { paidAmountFromJob, roundMoney } = require("../utils/jobPaidAmount.util");
+const {
+  netLaborPaidFromMeta,
+  paidMaterialAmountFromMeta,
+  refundAmountFromMeta,
+  roundMoney,
+} = require("../utils/jobPaidAmount.util");
 const { effectiveFrontendStatus, countJobsByStatus } = require("../utils/jobStatusCounts.util");
 
 function cityFromJobRow(job) {
@@ -34,6 +39,31 @@ function supplierDisplayName(supplier) {
     supplier.name ||
     "Unknown supplier"
   );
+}
+
+/** Customer total paid = net job labour (after refunds) + paid, non-cancelled material orders. */
+function computeCustomerTotalPaid(jobs, materialOrders) {
+  let laborTotal = 0;
+  (Array.isArray(jobs) ? jobs : []).forEach((j) => {
+    const meta = jobMeta.normalizeMeta(j.meta);
+    laborTotal += netLaborPaidFromMeta(meta, j);
+  });
+
+  let materialTotal = 0;
+  if (Array.isArray(materialOrders) && materialOrders.length > 0) {
+    materialOrders.forEach((o) => {
+      if (String(o.paymentStatus || "") !== "paid") return;
+      if (String(o.fulfillmentStatus || "") === "CANCELLED") return;
+      materialTotal += Number(o.materialsSubtotal) || 0;
+    });
+  } else {
+    (Array.isArray(jobs) ? jobs : []).forEach((j) => {
+      if (String(j.status || "").toUpperCase() === "CANCELLED") return;
+      materialTotal += paidMaterialAmountFromMeta(jobMeta.normalizeMeta(j.meta));
+    });
+  }
+
+  return roundMoney(laborTotal + materialTotal);
 }
 
 function buildMaterialStoreStats(orders) {
@@ -90,18 +120,23 @@ async function loadProviderSummaries(providerUserIds) {
   );
 }
 
-function mapCustomerRow(user, jobs, categoryNameById) {
-  const jobCounts = countJobsByStatus(jobs);
+function mapCustomerRow(user, jobs, categoryNameById, materialOrders) {
+  const rawCounts = countJobsByStatus(jobs);
+  const jobCounts = {
+    total: rawCounts.total,
+    completed: rawCounts.completed,
+    active: rawCounts.active,
+    disputed: rawCounts.disputed,
+    rejected: rawCounts.rejected,
+    cancelled: rawCounts.cancelled,
+  };
   const serviceIds = new Set();
   jobs.forEach((j) => {
     const slug = String(j.category || "").trim();
     if (slug) serviceIds.add(slug);
   });
   const servicesRequested = [...serviceIds].map((id) => categoryNameById.get(id) || id);
-  let totalPaid = 0;
-  jobs.forEach((j) => {
-    totalPaid += paidAmountFromJob(j);
-  });
+  const totalPaid = computeCustomerTotalPaid(jobs, materialOrders);
 
   return {
     id: user.id,
@@ -116,7 +151,7 @@ function mapCustomerRow(user, jobs, categoryNameById) {
     registeredAt: user.createdAt,
     jobCounts,
     servicesRequested,
-    totalPaid: roundMoney(totalPaid),
+    totalPaid,
   };
 }
 
@@ -138,7 +173,7 @@ async function listCustomers(query = {}) {
   const cityFilter = String(query.city || "").trim();
   const statusFilter = String(query.status || "all").trim();
 
-  const [users, allJobs, categoryNameById] = await Promise.all([
+  const [users, allJobs, categoryNameById, allMaterialOrders] = await Promise.all([
     prisma.user.findMany({
       where: { role: "CUSTOMER", deletedAt: null },
       select: {
@@ -171,6 +206,14 @@ async function listCustomers(query = {}) {
       },
     }),
     loadCategoryNameMap(),
+    prisma.materialOrder.findMany({
+      select: {
+        userId: true,
+        paymentStatus: true,
+        fulfillmentStatus: true,
+        materialsSubtotal: true,
+      },
+    }),
   ]);
 
   const jobsByCustomer = new Map();
@@ -180,14 +223,29 @@ async function listCustomers(query = {}) {
     jobsByCustomer.set(job.customerId, list);
   });
 
+  const ordersByCustomer = new Map();
+  allMaterialOrders.forEach((order) => {
+    const list = ordersByCustomer.get(order.userId) || [];
+    list.push(order);
+    ordersByCustomer.set(order.userId, list);
+  });
+
   let totalRevenue = 0;
-  allJobs.forEach((row) => {
-    totalRevenue += paidAmountFromJob(row);
+  users.forEach((user) => {
+    totalRevenue += computeCustomerTotalPaid(
+      jobsByCustomer.get(user.id) || [],
+      ordersByCustomer.get(user.id) || [],
+    );
   });
   totalRevenue = roundMoney(totalRevenue);
 
   let customers = users.map((user) =>
-    mapCustomerRow(user, jobsByCustomer.get(user.id) || [], categoryNameById)
+    mapCustomerRow(
+      user,
+      jobsByCustomer.get(user.id) || [],
+      categoryNameById,
+      ordersByCustomer.get(user.id) || [],
+    )
   );
 
   if (search) {
@@ -266,10 +324,12 @@ async function getCustomerById(userId) {
   const providerById = await loadProviderSummaries(jobs.map((j) => j.providerId));
 
   const { materialStores, topMaterialStore } = buildMaterialStoreStats(materialOrders);
-  const profile = mapCustomerRow(user, jobs, categoryNameById);
+  const profile = mapCustomerRow(user, jobs, categoryNameById, materialOrders);
   const jobRows = jobs.map((job) => {
     const st = effectiveFrontendStatus(job);
     const categoryId = String(job.category || "").trim();
+    const meta = jobMeta.normalizeMeta(job.meta);
+    const refundAmount = refundAmountFromMeta(meta);
     return {
       id: job.id,
       title: job.title,
@@ -287,7 +347,8 @@ async function getCustomerById(userId) {
         if (l && String(l).trim() !== "UNKNOWN") return String(l).trim();
         return "";
       })(),
-      totalPaid: roundMoney(paidAmountFromJob(job)),
+      totalPaid: netLaborPaidFromMeta(meta, job),
+      refundAmount: refundAmount > 0 ? roundMoney(refundAmount) : undefined,
       providerId: job.providerId,
       provider: job.providerId ? providerById.get(job.providerId) || null : null,
     };

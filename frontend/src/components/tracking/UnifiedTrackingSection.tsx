@@ -150,9 +150,17 @@ function deriveStatusBanner(
   mode: UnifiedDeliveryMode,
   fulfillmentStatus: string | undefined,
   proximity: { near: boolean; arriving: boolean } | null,
-  awaitingCustomerConfirmation: boolean
+  awaitingCustomerConfirmation: boolean,
+  deliveryPaid = true
 ): StatusBannerSpec | null {
   const u = fulfillmentUpper(fulfillmentStatus);
+  if (
+    mode === 'store_delivery' &&
+    deliveryPaid === false &&
+    ['OUT_FOR_DELIVERY', 'DELAYED'].includes(u)
+  ) {
+    return null;
+  }
   if (u === 'FAILED' || u === 'CANCELLED') {
     return {
       className: 'border-destructive/40 bg-destructive/10 text-destructive',
@@ -314,6 +322,8 @@ export interface UnifiedTrackingSectionProps {
 
   /** After customer confirms — hide live map & block further actions. */
   trackingLocked?: boolean;
+  /** Store delivery: suppress dispatch banners until customer pays delivery fee. */
+  deliveryPaid?: boolean;
   showDeliverySuccessHighlight?: boolean;
   onDismissDeliverySuccess?: () => void;
 }
@@ -350,6 +360,7 @@ export function UnifiedTrackingSection({
   highlightConfirmSection = false,
   fullTrackingHref,
   trackingLocked = false,
+  deliveryPaid = true,
   showDeliverySuccessHighlight = false,
   onDismissDeliverySuccess,
 }: UnifiedTrackingSectionProps) {
@@ -376,7 +387,7 @@ export function UnifiedTrackingSection({
   const locked = Boolean(trackingLocked) && fulfillmentU === 'COMPLETED';
   const mapActive = Boolean(showLiveMap) && !locked && variant !== 'embedded';
 
-  const banner = deriveStatusBanner(mode, fulfillmentStatus, proximity, showConfirmDelivery);
+  const banner = deriveStatusBanner(mode, fulfillmentStatus, proximity, showConfirmDelivery, deliveryPaid);
   const cue = !locked ? actionCueLine(mode, fulfillmentStatus, showConfirmDelivery) : null;
 
   const hasLiveCoords =

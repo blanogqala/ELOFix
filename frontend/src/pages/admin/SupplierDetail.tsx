@@ -119,7 +119,7 @@ export default function AdminSupplierDetail() {
         <div>
           <h2 className="mb-4 text-lg font-semibold">Performance</h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Revenue and commission below reflect completed, paid material orders only ({commissionPct}% commission rate).
+            Revenue and commission below reflect all paid material orders ({commissionPct}% commission rate).
           </p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="border-border/80 border-2 border-primary shadow-sm">

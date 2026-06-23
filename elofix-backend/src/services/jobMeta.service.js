@@ -155,12 +155,18 @@ function toFrontendStatus(dbStatus, meta) {
   if (String(dbStatus) === "COMPLETED" || safe.completionConfirmedByUser === true) {
     return "COMPLETED";
   }
+  if (safe.statusOverride === "DISPUTED") return "DISPUTED";
   if (safe.statusOverride) return safe.statusOverride;
   if (dbStatus === "ACCEPTED") return "ASSIGNED";
   return dbStatus;
 }
 
 function resolvePaymentSettlementStatus(job, safeMeta) {
+  const refundStatus = String(safeMeta.refund?.status || "").toLowerCase();
+  if (refundStatus === "processed" || refundStatus === "partial" || refundStatus === "gateway_failed") {
+    return "refund";
+  }
+  if (safeMeta.paymentSettlementStatus === "refund") return "refund";
   const held = Number(safeMeta.escrow?.heldAmount) || 0;
   const paymentReleased = typeof job.paymentReleased === "boolean" ? job.paymentReleased : false;
   const isFullyReleased = typeof job.isFullyReleased === "boolean" ? job.isFullyReleased : false;
@@ -182,7 +188,11 @@ function enrichJob(job, meta) {
   let remainingAmount = 0;
   if (provNum != null && !Number.isNaN(provNum)) {
     const r = relToProvider != null && !Number.isNaN(relToProvider) ? relToProvider : 0;
-    remainingAmount = Math.max(0, provNum - r);
+    if (safeMeta.escrow && safeMeta.escrow.heldAmount != null && Number.isFinite(Number(safeMeta.escrow.heldAmount))) {
+      remainingAmount = Math.max(0, Number(safeMeta.escrow.heldAmount));
+    } else {
+      remainingAmount = Math.max(0, provNum - r);
+    }
   }
   const { paidAmountFromJob } = require("../utils/jobPaidAmount.util");
   const customerPaidTotal = paidAmountFromJob({ ...job, meta: safeMeta });
@@ -228,6 +238,31 @@ function enrichJob(job, meta) {
     cancellationDetails: safeMeta.cancellationDetails,
     cancellationSource: safeMeta.cancellationSource || null,
     cancelledAt: safeMeta.cancelledAt,
+    refundAmount:
+      safeMeta.refund?.cumulativeCustomerNet != null &&
+      Number.isFinite(Number(safeMeta.refund.cumulativeCustomerNet))
+        ? Number(safeMeta.refund.cumulativeCustomerNet)
+        : safeMeta.refund?.amount != null && Number.isFinite(Number(safeMeta.refund.amount))
+          ? Number(safeMeta.refund.amount)
+          : undefined,
+    refundStatus: safeMeta.refund?.status || safeMeta.refund?.kind || undefined,
+    providerRefundDebt:
+      safeMeta.refund?.providerDebtAdded != null &&
+      Number.isFinite(Number(safeMeta.refund.providerDebtAdded))
+        ? Number(safeMeta.refund.providerDebtAdded)
+        : undefined,
+    refundDetails:
+      safeMeta.refund && typeof safeMeta.refund === "object"
+        ? {
+            customerNet: Number(safeMeta.refund.customerNet) || 0,
+            materialsNet: Number(safeMeta.refund.materialsNet) || 0,
+            escrowApplied: Number(safeMeta.refund.escrowApplied) || 0,
+            clawbackApplied: Number(safeMeta.refund.clawbackApplied) || 0,
+            providerDebtAdded: Number(safeMeta.refund.providerDebtAdded) || 0,
+            cumulativeCustomerNet: Number(safeMeta.refund.cumulativeCustomerNet) || 0,
+            processedAt: safeMeta.refund.processedAt || null,
+          }
+        : undefined,
     rejectionReason: safeMeta.rejectionReason,
     rejectionDetails: safeMeta.rejectionDetails,
     rejectedAt: safeMeta.rejectedAt,
@@ -235,6 +270,9 @@ function enrichJob(job, meta) {
     progressStep: Number(safeMeta.progressStep) || 0,
     hasStarted: resolveJobHasStarted(meta, job),
     paymentSettlementStatus: resolvePaymentSettlementStatus(job, safeMeta),
+    confirmationDeadlineAt: safeMeta.confirmationDeadlineAt || null,
+    markedCompleteAt: safeMeta.markedCompleteAt || null,
+    disputeId: safeMeta.disputeId || null,
   };
 }
 

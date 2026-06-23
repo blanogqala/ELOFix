@@ -1,6 +1,7 @@
 import apiClient from '@/api/client';
 import type { Supplier } from '@/types';
-import type { SupplierOrdersExportRow } from '@/lib/api/supplierPortal';
+import type { SupplierOrdersExportRow, SupplierOrdersExportSummary } from '@/lib/api/supplierPortal';
+import { EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY } from '@/lib/api/supplierPortal';
 
 export interface AnalyticsDayPoint {
   date: string;
@@ -35,12 +36,17 @@ export interface AdminCommissionsResponse {
   success: boolean;
   from: string;
   to: string;
+  /** Labor commission from all paid jobs (matches Providers tab). */
+  totalLaborCommission?: number;
+  /** Material commission from all paid orders (matches Suppliers tab). */
+  totalMaterialCommission?: number;
+  /** totalLaborCommission + totalMaterialCommission */
   totalCommission: number;
   transactionCount: number;
   byDay: { date: string; amount: number }[];
 }
 
-/** Platform commission (ledger) for the date range — same source as per-job `commissionAmount` at settlement. */
+/** Platform commission: labor (completed jobs) + materials (completed orders). */
 export async function getAdminCommissions(params?: { from?: string; to?: string }): Promise<AdminCommissionsResponse> {
   const { data } = await apiClient.get<AdminCommissionsResponse>('/admin/commissions', { params });
   return data;
@@ -50,12 +56,14 @@ export interface AdminProviderRevenueSummaryRow {
   providerId: string;
   /** Provider share of completed + paid labor jobs (sum(job.providerAmount)). */
   netRevenue: number;
-  /** Gross labor total including platform commission (sum(job.totalPrice)). */
+  /** Gross labor: active + completed paid, plus provider released + 7% on partial cancelled. */
   grossRevenue: number;
-  /** Platform commission from completed + paid labor jobs (sum(job.commissionAmount)). */
+  /** Platform commission on the same job set (full 7% kept when provider had a release). */
   platformCommission: number;
   /** Count of completed + paid labor jobs. */
   completedJobCount: number;
+  /** Count of all labor-paid jobs except cancelled (active + completed). */
+  paidJobCount: number;
 }
 
 export interface AdminProviderRevenueSummaryResponse {
@@ -76,6 +84,7 @@ export interface AdminProviderAnalytics {
     active: number;
     pending: number;
     cancelled: number;
+    disputed: number;
   };
   financial: {
     totalEarnings: number;
@@ -202,24 +211,12 @@ export async function getAdminSupplierOrdersExport(
   filters?: { from?: string; to?: string; branchId?: string }
 ): Promise<{
   rows: SupplierOrdersExportRow[];
-  summary: {
-    orderCount: number;
-    cancelledCount: number;
-    totalRevenueImpact: number;
-    totalCommissionImpact: number;
-    totalNetImpact: number;
-  };
+  summary: SupplierOrdersExportSummary;
 }> {
   const { data } = await apiClient.get<{
     success: boolean;
     rows: SupplierOrdersExportRow[];
-    summary: {
-      orderCount: number;
-      cancelledCount: number;
-      totalRevenueImpact: number;
-      totalCommissionImpact: number;
-      totalNetImpact: number;
-    };
+    summary: SupplierOrdersExportSummary;
   }>(`/admin/suppliers/${supplierId}/orders/export`, {
     params: {
       ...(filters?.from ? { from: filters.from } : {}),
@@ -229,13 +226,7 @@ export async function getAdminSupplierOrdersExport(
   });
   return {
     rows: Array.isArray(data?.rows) ? data.rows : [],
-    summary: data?.summary || {
-      orderCount: 0,
-      cancelledCount: 0,
-      totalRevenueImpact: 0,
-      totalCommissionImpact: 0,
-      totalNetImpact: 0,
-    },
+    summary: data?.summary || { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
   };
 }
 

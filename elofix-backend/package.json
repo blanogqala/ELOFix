@@ -17,8 +17,9 @@
     "backfill:escrow-v2": "node scripts/backfill-escrow-v2.js",
     "backfill:earnings": "node scripts/backfill-earnings.js",
     "migrate:bank-encrypt": "node scripts/migrate-bank-encrypt.js",
-    "test": "node tests/payments.intent.test.js",
-    "test:payments": "node tests/payments.intent.test.js"
+    "test": "node tests/payments.intent.test.js && node tests/fraud.test.js",
+    "test:payments": "node tests/payments.intent.test.js",
+    "test:fraud": "node tests/fraud.test.js"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +28,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
+    "archiver": "^8.0.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "crypto-js": "^4.2.0",

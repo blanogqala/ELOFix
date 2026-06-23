@@ -10,8 +10,10 @@ import type { Provider, ProviderRatingBreakdown, ProviderReview } from '@/types'
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { ProviderReputationSummary } from '@/components/providers/ProviderReputationSummary';
 import { ProviderVerificationBadges } from '@/components/providers/ProviderVerificationBadges';
+import { TrustLevelBadge } from '@/components/fraud/TrustLevelBadge';
 import { RatingBreakdownChart } from '@/components/providers/RatingBreakdownChart';
 import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
+import { VerifiedCompletedWorkSection } from '@/components/providers/VerifiedCompletedWorkSection';
 import { isNewProvider } from '@/lib/providerReputation';
 
 const emptyBreakdown = (): ProviderRatingBreakdown => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
@@ -170,8 +172,17 @@ export default function UserProviderProfile() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Trust & verification</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
+                  {provider.verificationSummary?.trustLevel && (
+                    <TrustLevelBadge
+                      level={provider.verificationSummary.trustLevel as { id: 'elite'; label: string }}
+                      score={provider.verificationSummary.trustScore}
+                    />
+                  )}
                   <ProviderVerificationBadges provider={provider} />
+                  <p className="text-xs text-muted-foreground">
+                    Customer satisfaction: {(provider.verificationSummary?.customerSatisfaction ?? provider.rating).toFixed(1)} / 5
+                  </p>
                 </CardContent>
               </Card>
             </div>
@@ -253,6 +264,8 @@ export default function UserProviderProfile() {
                 )}
               </CardContent>
             </Card>
+
+            {id && <VerifiedCompletedWorkSection providerId={id} title="Completed Projects" />}
 
             <Card>
               <CardHeader>

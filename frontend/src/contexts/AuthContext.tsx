@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { useQueryClient } from '@tanstack/react-query';
 import { AuthUser, UserRole } from '@/types';
 import * as authApi from '@/lib/api/auth';
+import { collectDeviceFingerprints } from '@/hooks/useDeviceFingerprint';
+import { reportDeviceContext } from '@/lib/api/fraud';
 import type { LegalAcceptancePayload } from '@/lib/legal/versions';
 import { queryKeys } from '@/lib/queryKeys';
 import { firebaseEnabled, firebaseOnAuthStateChanged, auth as firebaseAuth } from '@/lib/firebase';
@@ -117,12 +119,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.id]);
 
+  const reportDeviceAfterAuth = () => {
+    void (async () => {
+      try {
+        const fp = await collectDeviceFingerprints();
+        await reportDeviceContext({
+          ...fp,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+        });
+      } catch {
+        /* non-blocking */
+      }
+    })();
+  };
+
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
       const session = await authApi.login(email, password);
       setUser(session.user);
       invalidateJobQueries();
+      reportDeviceAfterAuth();
       return session.user;
     } finally {
       setIsLoading(false);
@@ -142,6 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await authApi.register(name, email, phone, password, role, legalAcceptance);
       setUser(session.user);
       invalidateJobQueries();
+      reportDeviceAfterAuth();
       return session.user;
     } finally {
       setIsLoading(false);
@@ -161,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await authApi.exchangeGoogleAuth(exchangeToken);
       setUser(session.user);
       invalidateJobQueries();
+      reportDeviceAfterAuth();
       return session.user;
     } finally {
       setIsLoading(false);

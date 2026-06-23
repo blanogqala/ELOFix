@@ -31,12 +31,15 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
+import { buildOrderFinanceFromParts } from '@/lib/orderFinance';
 import {
   fulfillmentStatusBadgeLabel,
+  isMaterialOrderRefunded,
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
-import { getStoreOrderDeliveryLine } from '@/lib/jobQuoteDisplay';
+import { getStoreOrderDeliveryLine, isStoreDeliveryPaymentPending } from '@/lib/jobQuoteDisplay';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 
 interface MaterialPaymentSectionProps {
@@ -275,6 +278,9 @@ export function MaterialPaymentSection({
           payment: { materialsPaid: isStorePaid(storeId), deliveryPaid: false },
         }));
   const paidCards = displayStoreOrders.filter((card) => isJobStoreOrderMaterialsPaid(card));
+  const hasRefundedMaterial = paidCards.some((card) =>
+    isMaterialOrderRefunded(resolveMaterialOrderForStoreOrder(job, card))
+  );
   const pendingCards = displayStoreOrders.filter(
     (card) => !isJobStoreOrderMaterialsPaid(card) && !card.sourceUserSuggestionId
   );
@@ -330,7 +336,8 @@ export function MaterialPaymentSection({
       const storeOrder = selectedStore.orderId ? getStoreOrder(selectedStore.orderId) : undefined;
 
       const deliveryType = storeOrder?.deliveryType || (supplier?.hasDelivery ? 'STORE' : 'SELF');
-      const deliveryFee = storeOrder?.deliveryFee || supplier?.deliveryFee || 0;
+      const deliveryFee =
+        deliveryType === 'STORE' ? 0 : storeOrder?.deliveryFee || supplier?.deliveryFee || 0;
       const deliveryProviderId = storeOrder?.deliveryProviderId;
 
       await onPayForStore(
@@ -416,7 +423,7 @@ export function MaterialPaymentSection({
     const supplier = getSupplierMeta(purchaseFlowStore.id);
     let fee = 0;
     if (selectedDeliveryType === 'STORE') {
-      fee = supplier?.deliveryFee || purchaseFlowStore.deliveryFee || 0;
+      fee = 0;
     } else if (selectedDeliveryType === 'PROVIDER') {
       const provider = deliveryProviders.find(p => p.id === selectedProviderId);
       fee = provider?.baseRate || 0;
@@ -443,7 +450,7 @@ export function MaterialPaymentSection({
     const supplier = getSupplierMeta(purchaseFlowStore.id);
     let fee = 0;
     if (selectedDeliveryType === 'STORE') {
-      fee = supplier?.deliveryFee || 0;
+      fee = 0;
     } else if (selectedDeliveryType === 'PROVIDER') {
       const provider = deliveryProviders.find(p => p.id === selectedProviderId);
       fee = provider?.baseRate || 0;
@@ -486,7 +493,7 @@ export function MaterialPaymentSection({
     let fee = 0;
 
     if (selectedDeliveryType === 'STORE') {
-      fee = supplier?.deliveryFee || 0;
+      fee = 0;
     } else if (selectedDeliveryType === 'PROVIDER') {
       const provider = deliveryProviders.find(p => p.id === selectedProviderId);
       fee = provider?.baseRate || 0;
@@ -593,10 +600,15 @@ export function MaterialPaymentSection({
               Order Materials
             </span>
             <div className="flex items-center gap-2">
-              {allStoresPaid && (
+              {allStoresPaid && !hasRefundedMaterial && (
                 <Badge className="bg-success text-success-foreground">
                   <CheckCircle className="h-3 w-3 mr-1" />
                   All Paid
+                </Badge>
+              )}
+              {hasRefundedMaterial && (
+                <Badge variant="destructive" className="text-xs">
+                  Refund issued
                 </Badge>
               )}
               {onSuggestAlternatives && (
@@ -623,15 +635,21 @@ export function MaterialPaymentSection({
 
           {paidCards.length > 0 && (
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-muted-foreground">Paid materials</h4>
+              <h4 className="text-sm font-semibold text-muted-foreground">
+                {hasRefundedMaterial ? 'Material orders' : 'Paid materials'}
+              </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:grid-cols-2">
                 {paidCards.map((storeOrder) => {
                   const storeId = storeOrder.storeId;
                   const storeName = storeOrder.storeName || materialsByStore[storeId]?.name || 'Store';
                   const itemsTotal = storeOrder.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
                   const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
+                  const isRefunded = isMaterialOrderRefunded(mo);
                   const deliveryLine = getStoreOrderDeliveryLine(storeOrder, mo);
-                  const cardSubtotal = itemsTotal + (deliveryLine?.includeInSubtotal ? deliveryLine.amount : 0);
+                  const deliveryPayPending = isStoreDeliveryPaymentPending(storeOrder, mo);
+                  const cardSubtotal =
+                    itemsTotal +
+                    (deliveryLine?.includeInSubtotal && !deliveryLine.struck ? deliveryLine.amount : 0);
                   const materialOrderKey = mo?.id ? String(mo.id) : storeOrder.orderId;
                   const batch = resolveMaterialBatchFromSnapshot(mo);
                   const summaryIsPickup =
@@ -683,12 +701,26 @@ export function MaterialPaymentSection({
                   return (
                     <MaterialCard
                       key={materialOrderKey}
-                      status="paid"
+                      status={isRefunded ? 'refunded' : 'paid'}
                       collapsible
+                      refundAmount={isRefunded ? mo?.refundAmount : undefined}
+                      refundStatus={isRefunded ? mo?.refundStatus : undefined}
+                      cancellationNote={
+                        isRefunded
+                          ? mo?.cancellationReason
+                            ? `Cancelled before delivery — ${mo.cancellationReason}`
+                            : 'Cancelled before delivery — refund returned to your payment method (93% net).'
+                          : undefined
+                      }
                       deliveryLocation={deliveryLocation}
                       supplierName={storeName}
                       subtotal={cardSubtotal}
                       extraLines={deliveryLine ? [deliveryLine] : undefined}
+                      deliveryPaymentReminder={
+                        deliveryPayPending
+                          ? 'Pay the delivery fee so this order can leave the store. Open order details to pay.'
+                          : undefined
+                      }
                       items={storeOrder.items.map((item) => ({
                         rowKey: `${storeOrder.orderId}-${item.productId}`,
                         name: item.name,
@@ -698,9 +730,22 @@ export function MaterialPaymentSection({
                       meta={
                         <div className="space-y-2 w-full">
                           <div className="flex flex-wrap gap-2 items-center">
-                            <Badge variant="secondary" className="text-xs">
-                              {fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
+                            <Badge
+                              variant="secondary"
+                              className={cn(
+                                'text-xs',
+                                isRefunded && 'bg-destructive/10 text-destructive border-destructive/30'
+                              )}
+                            >
+                              {isRefunded
+                                ? 'Cancelled · Refunded'
+                                : fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
                             </Badge>
+                            {deliveryPayPending ? (
+                              <Badge className="text-xs bg-amber-500/15 text-amber-900 border-amber-500/40 dark:text-amber-100">
+                                Delivery unpaid
+                              </Badge>
+                            ) : null}
                             <Badge variant="outline">
                               {storeOrder.deliveryType === 'SELF' && 'Pickup'}
                               {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
@@ -798,7 +843,10 @@ export function MaterialPaymentSection({
                       const moPending = resolveMaterialOrderForStoreOrder(job, storeOrder);
                       const pendingDeliveryLine = getStoreOrderDeliveryLine(storeOrder, moPending);
                       const pendingSubtotal =
-                        itemsTotal + (pendingDeliveryLine?.includeInSubtotal ? pendingDeliveryLine.amount : 0);
+                        itemsTotal +
+                        (pendingDeliveryLine?.includeInSubtotal && !pendingDeliveryLine.struck
+                          ? pendingDeliveryLine.amount
+                          : 0);
                       const canPay =
                         !isPaid &&
                         !batchResolution &&
@@ -867,7 +915,9 @@ export function MaterialPaymentSection({
                                 </Badge>
                                 {storeOrder.deliveryStatus === 'PendingApproval' ? (
                                   <Badge variant="outline" className="text-xs">
-                                    Awaiting delivery provider approval
+                                    {storeOrder.deliveryType === 'STORE'
+                                      ? 'Awaiting store delivery quote'
+                                      : 'Awaiting delivery provider approval'}
                                   </Badge>
                                 ) : null}
                               </div>
@@ -1160,15 +1210,10 @@ export function MaterialPaymentSection({
                   <div className="flex items-center space-x-3">
                     <RadioGroupItem value="STORE" id="store-delivery" />
                     <Label htmlFor="store-delivery" className="cursor-pointer flex-1">
-                      <div className="flex justify-between">
-                        <div>
-                          <p className="font-medium">Use Store Delivery</p>
-                          <p className="text-sm text-muted-foreground">
-                            Delivered by {getSupplierMeta(deliveryStoreId)?.name}
-                          </p>
-                        </div>
-                        <p className="font-medium">
-                          {formatCurrency(getSupplierMeta(deliveryStoreId)?.deliveryFee || 0)}
+                      <div>
+                        <p className="font-medium">Use Store Delivery</p>
+                        <p className="text-sm text-muted-foreground">
+                          Delivered by {getSupplierMeta(deliveryStoreId)?.name} — price confirmed by the branch after your request
                         </p>
                       </div>
                     </Label>
@@ -1317,16 +1362,7 @@ export function MaterialPaymentSection({
               </div>
             )}
 
-            {/* Delivery fee display - pay after approval */}
-            {selectedStore?.hasDelivery && selectedStore.deliveryFee && selectedStore.deliveryFee > 0 && (
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Truck className="h-4 w-4" />
-                  Delivery (pay after approval)
-                </span>
-                <span>{formatCurrency(selectedStore.deliveryFee, { decimals: 2 })}</span>
-              </div>
-            )}
+            {/* Store delivery fee is quoted by the branch after request — not shown at checkout */}
 
             {/* Card Selection */}
             <div>
@@ -1455,12 +1491,11 @@ export function MaterialPaymentSection({
                       <div className="flex items-center space-x-3">
                         <RadioGroupItem value="STORE" id="purchase-store" />
                         <Label htmlFor="purchase-store" className="cursor-pointer flex-1">
-                          <div className="flex justify-between">
-                            <div>
-                              <p className="font-medium">Use Store Delivery</p>
-                              <p className="text-sm text-muted-foreground">Delivered by {purchaseFlowStore.name}</p>
-                            </div>
-                            <p className="font-medium">{formatCurrency(purchaseFlowStore.deliveryFee || 0)}</p>
+                          <div>
+                            <p className="font-medium">Use Store Delivery</p>
+                            <p className="text-sm text-muted-foreground">
+                              Delivered by {purchaseFlowStore.name} — price confirmed by the branch after your request
+                            </p>
                           </div>
                         </Label>
                       </div>
@@ -1552,17 +1587,31 @@ export function MaterialPaymentSection({
                     ))}
                   </div>
                   <div className="border-t border-border pt-1 mt-2">
-                    <div className="flex justify-between font-medium">
-                      <span>Subtotal</span>
-                      <span>{formatCurrency(purchaseFlowStore.materials.reduce((s, m) => s + m.qty * m.unitPrice, 0), { decimals: 2 })}</span>
-                    </div>
+                    <OrderFinanceBreakdown
+                      finance={buildOrderFinanceFromParts({
+                        materialsSubtotal: purchaseFlowStore.materials.reduce(
+                          (s, m) => s + m.qty * m.unitPrice,
+                          0
+                        ),
+                        deliveryFee: 0,
+                        deliveryType:
+                          selectedDeliveryType === 'STORE'
+                            ? 'STORE_DELIVERY'
+                            : selectedDeliveryType === 'PROVIDER'
+                              ? 'DELIVERY_PROVIDER'
+                              : 'SELF',
+                      })}
+                      compact
+                      showSupplierNet={false}
+                      deliveryNote={
+                        selectedDeliveryType === 'STORE'
+                          ? 'You pay materials now. The branch will set the delivery fee after your request.'
+                          : selectedDeliveryType === 'PROVIDER'
+                            ? 'You pay materials now. Courier delivery is quoted and paid separately.'
+                            : undefined
+                      }
+                    />
                   </div>
-                  {selectedDeliveryType !== 'SELF' && selectedDeliveryType === 'STORE' && purchaseFlowStore.deliveryFee && purchaseFlowStore.deliveryFee > 0 && (
-                    <div className="flex justify-between text-sm text-muted-foreground mt-1">
-                      <span>Delivery (pay after approval)</span>
-                      <span>{formatCurrency(purchaseFlowStore.deliveryFee, { decimals: 2 })}</span>
-                    </div>
-                  )}
                   {selectedDeliveryType === 'PROVIDER' && (
                     <div className="flex justify-between text-sm text-muted-foreground mt-1">
                       <span>Delivery (pay after approval)</span>

@@ -9,6 +9,9 @@ const variantStyles = {
   identity: 'border-primary/40 bg-primary/10 text-primary',
   profile: 'border-accent/50 bg-accent/20 text-foreground',
   new: 'border-muted-foreground/30 bg-muted text-muted-foreground',
+  bank: 'border-primary/30 bg-primary/5 text-primary',
+  level: 'border-accent/40 bg-accent/15 text-foreground',
+  trust: 'border-primary/40 bg-primary/10 text-primary',
 } as const;
 
 const variantIcons = {
@@ -16,6 +19,9 @@ const variantIcons = {
   identity: BadgeCheck,
   profile: Award,
   new: Sparkles,
+  bank: ShieldCheck,
+  level: Award,
+  trust: ShieldCheck,
 } as const;
 
 interface ProviderVerificationBadgesProps {

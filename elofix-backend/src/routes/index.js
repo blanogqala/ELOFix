@@ -23,6 +23,8 @@ const providerReviewRoutes = require("./providerReview.routes");
 const branchRoutes = require("./branch.routes");
 const deliveryRequestRoutes = require("./deliveryRequest.routes");
 const legalRoutes = require("./legal.routes");
+const disputeRoutes = require("./dispute.routes");
+const fraudRoutes = require("./fraud.routes");
 
 const router = express.Router();
 
@@ -50,5 +52,7 @@ router.use("/materials", materialRoutes);
 router.use("/tracking", trackingRoutes);
 router.use("/ratings", ratingRoutes);
 router.use("/provider-reviews", providerReviewRoutes);
+router.use("/disputes", disputeRoutes);
+router.use("/fraud", fraudRoutes);
 
 module.exports = router;

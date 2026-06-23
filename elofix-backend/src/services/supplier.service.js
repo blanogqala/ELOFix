@@ -82,6 +82,99 @@ function splitMaterialsCommission(materialsSubtotal) {
   };
 }
 
+/** 7% platform commission on materials + store delivery fee combined. */
+function splitStoreDeliveryCommission(materialsSubtotal, deliveryFee) {
+  const materials = Math.max(0, Number(materialsSubtotal) || 0);
+  const delivery = Math.max(0, Number(deliveryFee) || 0);
+  const gross = roundMoney(materials + delivery);
+  const platformCommission = roundMoney(gross * PLATFORM_COMMISSION_RATE);
+  const supplierEarning = roundMoney(gross - platformCommission);
+  return {
+    materialsSubtotal: materials,
+    deliveryFee: delivery,
+    orderGross: gross,
+    platformCommission,
+    supplierEarning,
+  };
+}
+
+function normalizeDeliveryTypeKey(raw) {
+  const u = String(raw || "").toUpperCase();
+  if (u === "SELF" || u === "SELF_COLLECT") return "SELF";
+  if (u === "STORE" || u === "STORE_DELIVERY") return "STORE_DELIVERY";
+  if (u === "PROVIDER" || u === "DELIVERY_PROVIDER") return "DELIVERY_PROVIDER";
+  return u;
+}
+
+function storeDeliveryFeeCountsForCommission(order = {}) {
+  const deliveryType = normalizeDeliveryTypeKey(order.deliveryType ?? order.delivery?.type);
+  if (deliveryType !== "STORE_DELIVERY") return false;
+  const deliveryFee = Math.max(0, Number(order.deliveryFee ?? order.delivery?.fee ?? 0) || 0);
+  if (deliveryFee <= 0) return false;
+  const deliveryPaid = Boolean(order.payment?.deliveryPaid);
+  if (deliveryPaid) return true;
+  const status = String(order.delivery?.status || "").trim();
+  return ["Approved", "Processing", "InProgress", "OnTheWay", "Delivered"].includes(status);
+}
+
+/**
+ * Unified finance breakdown for material orders (API + supplier portal).
+ * Store delivery: 7% on materials + delivery only after branch sets an approved fee.
+ */
+function buildOrderFinanceBreakdown(order = {}) {
+  const materialsSubtotal = Math.max(
+    0,
+    Number(order.materialsSubtotal ?? order.subtotal ?? 0) || 0
+  );
+  const deliveryFee = Math.max(0, Number(order.deliveryFee ?? order.delivery?.fee ?? 0) || 0);
+  const deliveryType = normalizeDeliveryTypeKey(order.deliveryType ?? order.delivery?.type);
+  const deliveryPaid = Boolean(order.payment?.deliveryPaid);
+  const materialsPaid =
+    Boolean(order.payment?.materialsPaid) || String(order.paymentStatus || order.dbPaymentStatus || "").toLowerCase() === "paid";
+
+  const useCombinedCommission = storeDeliveryFeeCountsForCommission(order);
+  const commissionBasis = useCombinedCommission ? "materials_plus_delivery" : "materials_only";
+  const orderGross = useCombinedCommission
+    ? roundMoney(materialsSubtotal + deliveryFee)
+    : roundMoney(materialsSubtotal);
+
+  let platformCommission;
+  let supplierNet;
+
+  if (
+    commissionBasis === "materials_plus_delivery" &&
+    deliveryPaid &&
+    order.platformCommission != null &&
+    Number.isFinite(Number(order.platformCommission))
+  ) {
+    platformCommission = roundMoney(Number(order.platformCommission));
+    supplierNet =
+      order.supplierEarning != null && Number.isFinite(Number(order.supplierEarning))
+        ? roundMoney(Number(order.supplierEarning))
+        : roundMoney(orderGross - platformCommission);
+  } else if (commissionBasis === "materials_plus_delivery") {
+    const split = splitStoreDeliveryCommission(materialsSubtotal, deliveryFee);
+    platformCommission = split.platformCommission;
+    supplierNet = split.supplierEarning;
+  } else {
+    const split = splitMaterialsCommission(materialsSubtotal);
+    platformCommission = split.platformCommission;
+    supplierNet = split.supplierEarning;
+  }
+
+  return {
+    materialsSubtotal,
+    deliveryFee,
+    orderGross,
+    platformCommission,
+    supplierNet,
+    commissionBasis,
+    deliveryPaid,
+    materialsPaid,
+    deliveryType,
+  };
+}
+
 function normalizeProduct(product) {
   if (!product || typeof product !== "object") throw new AppError("Invalid product", 400);
   const id = String(product.id || randomUUID());
@@ -851,6 +944,9 @@ module.exports = {
   PLATFORM_COMMISSION_RATE,
   SUPPLIER_SHARE_RATE,
   splitMaterialsCommission,
+  splitStoreDeliveryCommission,
+  buildOrderFinanceBreakdown,
+  normalizeDeliveryTypeKey,
   normalizeProduct,
   normalizeSupplierSeed,
   rowToPublicApi,

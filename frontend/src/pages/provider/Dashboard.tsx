@@ -9,17 +9,16 @@ import { queryKeys } from '@/lib/queryKeys';
 import { Job } from '@/types';
 import { 
   ClipboardList, Briefcase, CheckCircle, Clock,
-  DollarSign, Star, ArrowRight, AlertCircle, MapPin, Package
+  Star, ArrowRight, AlertCircle, MapPin, Package
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
-import { formatCurrency } from '@/lib/formatCurrency';
 import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
-import { sumReleasedAmountJobs } from '@/lib/jobMoney';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
+import { ProviderTrustScoreCard } from '@/components/provider/ProviderTrustScoreCard';
 
 export default function ProviderDashboard() {
   const { user } = useAuth();
@@ -56,13 +55,11 @@ export default function ProviderDashboard() {
       : 'Failed to load provider dashboard data.'
     : null;
 
-  const amountReleasedToYou = sumReleasedAmountJobs(jobs);
-
   const stats = {
     pending: pendingJobs.length,
-    active: jobs.filter(j => isActiveWorkflowStatus(j.status)).length,
-    completed: jobs.filter(j => j.status === 'COMPLETED').length,
-    amountReleasedToYou,
+    active: jobs.filter((j) => isActiveWorkflowStatus(j.status) && j.status !== 'DISPUTED').length,
+    completed: jobs.filter((j) => j.status === 'COMPLETED').length,
+    disputed: jobs.filter((j) => j.status === 'DISPUTED').length,
   };
 
   const getStatusBadge = (job: Job) => (
@@ -141,14 +138,14 @@ export default function ProviderDashboard() {
         )}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-          <div className="card-elevated p-4 sm:p-6">
+        <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
-                <ClipboardList className="h-4 w-4 text-warning sm:h-5 sm:w-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-4 w-4 text-success sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">{stats.pending}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Pending</p>
+                <p className="text-xl font-bold sm:text-2xl">{stats.completed}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Completed</p>
               </div>
             </div>
           </div>
@@ -165,29 +162,69 @@ export default function ProviderDashboard() {
           </div>
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
-                <CheckCircle className="h-4 w-4 text-success sm:h-5 sm:w-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 sm:h-12 sm:w-12">
+                <ClipboardList className="h-4 w-4 text-warning sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">{stats.completed}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Completed</p>
+                <p className="text-xl font-bold sm:text-2xl">{stats.pending}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Pending</p>
               </div>
             </div>
           </div>
-          <div className="card-elevated p-4 sm:p-6">
+          <div
+            className="card-elevated cursor-pointer p-4 transition-colors hover:border-destructive/30 sm:p-6"
+            onClick={() => navigate('/provider/jobs?view=disputes')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/provider/jobs?view=disputes');
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
             <div className="flex items-center gap-3 sm:gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
-                <DollarSign className="h-4 w-4 text-accent sm:h-5 sm:w-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10 sm:h-12 sm:w-12">
+                <AlertCircle className="h-4 w-4 text-destructive sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl tabular-nums">
-                  {formatCurrency(stats.amountReleasedToYou)}
-                </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Amount released to you</p>
+                <p className="text-xl font-bold sm:text-2xl">{stats.disputed}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Flagged Jobs</p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* <button
+          type="button"
+          onClick={() => navigate('/provider/jobs?view=disputes')}
+          className="card-elevated p-4 sm:p-6 w-full text-left hover:shadow-md transition-shadow"
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10 sm:h-12 sm:w-12">
+              <AlertCircle className="h-4 w-4 text-destructive sm:h-5 sm:w-5" />
+            </div>
+            <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <p className="text-lg font-bold">{disputeStats?.totalFlagged ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Total flagged</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold">{disputeStats?.openDisputes ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Open disputes</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold">{disputeStats?.resolvedDisputes ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Resolved</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold">{disputeStats?.trustScoreImpact ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Trust impact</p>
+              </div>
+            </div>
+            <span className="text-sm font-medium text-primary shrink-0">Flagged Jobs →</span>
+          </div>
+        </button> */}
 
         {/* Provider Profile Card */}
         {provider && (
@@ -224,6 +261,8 @@ export default function ProviderDashboard() {
             </div>
           </div>
         )}
+
+        <ProviderTrustScoreCard />
 
         {/* Two-Column Grid: Pending Requests + Recent Jobs */}
         <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">

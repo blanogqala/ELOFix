@@ -482,7 +482,7 @@ async function syncMaterialOrderFulfillmentFromDeliveryRequest(deliveryRequestRo
 
 /**
  * After customer confirms receipt and submits a rating on a linked material order,
- * complete the courier child job and stamp provider-facing completion metadata.
+ * complete the courier child job, release held escrow, and stamp completion metadata.
  */
 async function syncCourierDeliveryCustomerCompletion(materialOrderId) {
   const mid = String(materialOrderId || "").trim();
@@ -505,12 +505,19 @@ async function syncCourierDeliveryCustomerCompletion(materialOrderId) {
   if (!dr?.jobId) return null;
 
   const { getJobMeta, mutateJobMetaInTransaction } = require("./jobMeta.service");
+  const paymentService = require("./payment.service");
+  const escrowSettlement = require("./payments/escrowSettlement.service");
   const meta = await getJobMeta(dr.jobId);
   if (!meta?.courierFlow) return null;
 
   const job = await prisma.job.findUnique({ where: { id: dr.jobId } });
   if (!job) return null;
-  if (String(job.status) === "COMPLETED" && meta.completionConfirmedByUser === true) {
+
+  const alreadyCompleted =
+    String(job.status) === "COMPLETED" && meta.completionConfirmedByUser === true;
+  const alreadyFullyReleased = Boolean(job.paymentReleased && job.isFullyReleased);
+
+  if (alreadyCompleted && alreadyFullyReleased) {
     return { jobId: dr.jobId, alreadyCompleted: true };
   }
 
@@ -518,33 +525,56 @@ async function syncCourierDeliveryCustomerCompletion(materialOrderId) {
     pload.deliveryConfirmedAt || order.materialRating.createdAt.toISOString();
   const ratedAt = order.materialRating.createdAt.toISOString();
 
-  await prisma.$transaction(async (tx) => {
-    await tx.job.update({
-      where: { id: dr.jobId },
-      data: { status: "COMPLETED" },
-    });
-    await mutateJobMetaInTransaction(tx, dr.jobId, (m) => ({
-      ...m,
-      statusOverride: "COMPLETED",
-      completionConfirmedByUser: true,
-      progressStep: Math.max(Number(m.progressStep) || 0, 5),
-      customerConfirmedAt: confirmedAt,
-      deliveryRating: order.materialRating.rating,
-      deliveryReview: order.materialRating.comment || null,
-    }));
+  await prisma.$transaction(
+    async (tx) => {
+      if (!alreadyCompleted) {
+        await tx.job.update({
+          where: { id: dr.jobId },
+          data: { status: "COMPLETED" },
+        });
+        await mutateJobMetaInTransaction(tx, dr.jobId, (m) => ({
+          ...m,
+          statusOverride: "COMPLETED",
+          completionConfirmedByUser: true,
+          progressStep: Math.max(Number(m.progressStep) || 0, 5),
+          customerConfirmedAt: confirmedAt,
+          deliveryRating: order.materialRating.rating,
+          deliveryReview: order.materialRating.comment || null,
+        }));
 
-    const drPayload = dr.payload && typeof dr.payload === "object" ? { ...dr.payload } : {};
-    drPayload.customerCompletion = {
-      confirmedAt,
-      ratedAt,
-      rating: order.materialRating.rating,
-      comment: order.materialRating.comment || null,
-    };
-    await tx.deliveryRequest.update({
-      where: { id: dr.id },
-      data: { payload: drPayload },
-    });
-  });
+        const drPayload = dr.payload && typeof dr.payload === "object" ? { ...dr.payload } : {};
+        drPayload.customerCompletion = {
+          confirmedAt,
+          ratedAt,
+          rating: order.materialRating.rating,
+          comment: order.materialRating.comment || null,
+        };
+        await tx.deliveryRequest.update({
+          where: { id: dr.id },
+          data: { payload: drPayload },
+        });
+      }
+
+      if (job.providerId && !alreadyFullyReleased) {
+        const providerRow = await tx.provider.findUnique({
+          where: { userId: job.providerId },
+          select: { id: true },
+        });
+        if (providerRow) {
+          const j0 = await tx.job.findUnique({ where: { id: dr.jobId } });
+          if (j0 && !(j0.escrowSecondReleaseDone && j0.paymentReleased)) {
+            await paymentService.runSecondTrancheInTransaction(tx, {
+              job: j0,
+              providerProfileId: providerRow.id,
+              jobId: dr.jobId,
+            });
+            await escrowSettlement.markLaborEscrowFullyReleased(dr.jobId);
+          }
+        }
+      }
+    },
+    { maxWait: 5000, timeout: 20000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+  );
 
   try {
     const notificationService = require("./notification.service");
@@ -1243,106 +1273,6 @@ async function ensureMaterialCourierJobRequest(params) {
   }
 
   return { courierJobId, deliveryRequestId };
-}
-
-/**
- * After customer confirms receipt and submits a rating on a linked material order,
- * complete the courier child job and persist provider-facing completion summary.
- */
-async function syncCourierDeliveryCustomerCompletion(materialOrderId) {
-  const mid = String(materialOrderId || "").trim();
-  if (!mid) return null;
-
-  const order = await prisma.materialOrder.findUnique({
-    where: { id: mid },
-    include: { materialRating: true },
-  });
-  if (!order) return null;
-
-  const pload = order.payload && typeof order.payload === "object" ? order.payload : {};
-  if (String(order.fulfillmentStatus || "") !== "COMPLETED") return null;
-  if (!pload.deliveryConfirmed) return null;
-  if (!order.materialRating) return null;
-
-  const dr = await prisma.deliveryRequest.findFirst({
-    where: { materialOrderId: mid },
-  });
-  if (!dr?.jobId) return null;
-
-  const { getJobMeta, mutateJobMetaInTransaction } = require("./jobMeta.service");
-  const meta = await getJobMeta(dr.jobId);
-  if (!meta?.courierFlow) return null;
-
-  const job = await prisma.job.findUnique({ where: { id: dr.jobId } });
-  if (!job) return null;
-  if (String(job.status) === "COMPLETED" && meta.completionConfirmedByUser === true) {
-    return { jobId: dr.jobId, alreadyCompleted: true };
-  }
-
-  const confirmedAt =
-    pload.deliveryConfirmedAt ||
-    order.materialRating.createdAt?.toISOString?.() ||
-    new Date().toISOString();
-  const ratedAt =
-    order.materialRating.createdAt?.toISOString?.() || new Date().toISOString();
-
-  await prisma.$transaction(async (tx) => {
-    await tx.job.update({
-      where: { id: dr.jobId },
-      data: { status: "COMPLETED" },
-    });
-    await mutateJobMetaInTransaction(tx, dr.jobId, (m) => ({
-      ...m,
-      statusOverride: "COMPLETED",
-      completionConfirmedByUser: true,
-      progressStep: Math.max(Number(m.progressStep) || 0, 5),
-      customerConfirmedAt: confirmedAt,
-      deliveryRating: order.materialRating.rating,
-      deliveryReview: order.materialRating.comment || null,
-    }));
-
-    const drPayload = dr.payload && typeof dr.payload === "object" ? { ...dr.payload } : {};
-    drPayload.customerCompletion = {
-      confirmedAt,
-      ratedAt,
-      rating: order.materialRating.rating,
-      comment: order.materialRating.comment || null,
-    };
-    await tx.deliveryRequest.update({
-      where: { id: dr.id },
-      data: { payload: drPayload },
-    });
-  });
-
-  try {
-    const notificationService = require("./notification.service");
-    if (dr.courierId) {
-      await notificationService.addNotification({
-        userId: dr.courierId,
-        jobId: dr.jobId,
-        type: "delivery_completed",
-        title: "Delivery confirmed",
-        message: `Customer confirmed delivery and left a ${order.materialRating.rating}-star rating.`,
-      });
-    }
-  } catch (e) {
-    console.error("syncCourierDeliveryCustomerCompletion notify", e);
-  }
-
-  try {
-    if (global.io && dr.courierId) {
-      global.io.to(String(dr.courierId)).emit("delivery:customer_completed", {
-        jobId: dr.jobId,
-        deliveryRequestId: dr.id,
-        materialOrderId: mid,
-        rating: order.materialRating.rating,
-      });
-    }
-  } catch (e) {
-    console.error("syncCourierDeliveryCustomerCompletion socket", e);
-  }
-
-  return { jobId: dr.jobId, completed: true };
 }
 
 module.exports = {

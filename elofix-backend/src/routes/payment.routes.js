@@ -38,6 +38,10 @@ router.patch("/cards/:cardId/default", asyncHandler(paymentController.setDefault
 router.get("/invoices", asyncHandler(paymentController.getInvoices));
 router.get("/invoices/:invoiceId", asyncHandler(paymentController.getInvoice));
 router.post("/invoices", asyncHandler(paymentController.createInvoice));
-router.post("/invoices/refund", asyncHandler(paymentController.createRefundInvoice));
+router.post(
+  "/invoices/refund",
+  authorizeRoles(["ADMIN"]),
+  asyncHandler(paymentController.createRefundInvoice)
+);
 
 module.exports = router;

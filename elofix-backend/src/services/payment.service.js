@@ -5,22 +5,110 @@ const prisma = require("../config/prisma");
 const earningService = require("./earning.service");
 const { mutateJobMetaInTransaction, getJobMeta } = require("./jobMeta.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
+const {
+  detectBrand,
+  parseMaskedLast4,
+  isValidCardLast4,
+  parsePaymentCardFromGatewayPayload,
+} = require("../utils/paymentCard.util");
 
 function maskLast4(number) {
   const digits = String(number || "").replace(/\D/g, "");
   return digits.slice(-4) || "0000";
 }
 
-function detectBrand(number) {
-  const n = String(number || "");
-  if (n.startsWith("34") || n.startsWith("37")) return "amex";
-  if (n.startsWith("5")) return "mastercard";
-  return "visa";
+/**
+ * Persist a card used for a successful payment when it is not already on file.
+ * @param {import("@prisma/client").Prisma.TransactionClient|typeof prisma} tx
+ */
+async function ensureSavedCardFromPayment(userId, cardDetails, tx = prisma) {
+  const uid = String(userId);
+  if (!cardDetails || !isValidCardLast4(cardDetails.last4)) return null;
+
+  const last4 = String(cardDetails.last4).slice(-4);
+  const existing = await tx.savedCard.findFirst({
+    where: { userId: uid, last4 },
+  });
+  if (existing) return existing;
+
+  const count = await tx.savedCard.count({ where: { userId: uid } });
+  return tx.savedCard.create({
+    data: {
+      id: randomUUID(),
+      userId: uid,
+      last4,
+      brand: cardDetails.brand || detectBrand(last4),
+      expiryMonth: Number(cardDetails.expiryMonth) || 12,
+      expiryYear: Number(cardDetails.expiryYear) || new Date().getFullYear() + 2,
+      isDefault: count === 0,
+    },
+  });
+}
+
+/**
+ * Backfill SavedCard rows from paid PaymentIntents and settled job service payments.
+ */
+async function syncSavedCardsFromPaymentHistory(userId) {
+  const uid = String(userId);
+  const existing = await prisma.savedCard.findMany({
+    where: { userId: uid },
+    select: { last4: true },
+  });
+  const knownLast4 = new Set(existing.map((c) => c.last4));
+  const pending = [];
+
+  const intents = await prisma.paymentIntent.findMany({
+    where: { userId: uid, state: "PAID" },
+    select: { gatewayPayload: true, provider: true },
+  });
+  for (const intent of intents) {
+    const payload =
+      intent.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
+        ? intent.gatewayPayload
+        : {};
+    const details = parsePaymentCardFromGatewayPayload(payload, intent.provider);
+    if (details && !knownLast4.has(details.last4)) {
+      pending.push(details);
+      knownLast4.add(details.last4);
+    }
+  }
+
+  const jobs = await prisma.job.findMany({
+    where: { customerId: uid, laborPaid: true },
+    select: { id: true },
+  });
+  for (const job of jobs) {
+    const meta = await getJobMeta(job.id);
+    const last4 = parseMaskedLast4(meta?.servicePayment?.maskedPaymentMethod);
+    if (isValidCardLast4(last4) && !knownLast4.has(last4)) {
+      pending.push({
+        last4,
+        brand: detectBrand(last4),
+        expiryMonth: 12,
+        expiryYear: new Date().getFullYear() + 2,
+      });
+      knownLast4.add(last4);
+    }
+  }
+
+  if (pending.length === 0) return;
+
+  await prisma.$transaction(async (tx) => {
+    for (const details of pending) {
+      await ensureSavedCardFromPayment(uid, details, tx);
+    }
+  });
 }
 
 async function getSavedCards(userId) {
+  const uid = String(userId);
+  try {
+    await syncSavedCardsFromPaymentHistory(uid);
+  } catch (e) {
+    console.error("[getSavedCards] syncSavedCardsFromPaymentHistory", uid, e);
+  }
   const rows = await prisma.savedCard.findMany({
-    where: { userId: String(userId) },
+    where: { userId: uid },
     orderBy: { id: "asc" },
   });
   return rows.map((c) => ({
@@ -417,6 +505,15 @@ async function runSettleLaborInTransaction(
     idempotencyKey: t1Key,
   });
 
+  await ensureSavedCardFromPayment(
+    customerUserId,
+    {
+      last4: cardLast4,
+      brand: detectBrand(cardLast4),
+    },
+    tx
+  );
+
   return { jobRow, meta, commissionAmount, providerAmount, firstTranche, secondTranche };
 }
 
@@ -432,7 +529,6 @@ async function backfillCourierDeliveryEscrowInTransaction(tx, { job, jobId, prov
 
   const jobIdStr = String(jobId);
   const providerAmt = toPrismaDecimal(job.providerAmount);
-  const { firstTranche, secondTranche } = splitProviderTranches(providerAmt);
   let released = toPrismaDecimal(job.releasedAmount || 0);
   let jobRow = job;
 
@@ -463,6 +559,7 @@ async function backfillCourierDeliveryEscrowInTransaction(tx, { job, jobId, prov
     where: { jobId: jobIdStr, providerId: providerProfileId, idempotencyKey: t1Key },
   });
 
+  // Courier/delivery/mover: hold 100% until customer confirms delivery (no tranche-1 on payment).
   if (released.lte(0) && !t1Released) {
     if (!pending) {
       await earningService.createLaborCreditPending(tx, {
@@ -470,39 +567,31 @@ async function backfillCourierDeliveryEscrowInTransaction(tx, { job, jobId, prov
         jobId: jobIdStr,
         amount: Number(providerAmt),
       });
+      pending = await tx.earning.findFirst({
+        where: { jobId: jobIdStr, providerId: providerProfileId, type: "credit", status: "pending" },
+      });
     }
-    await earningService.applyReleaseToLedger(tx, {
-      providerId: providerProfileId,
-      jobId: jobIdStr,
-      releaseAmount: Number(firstTranche),
-      idempotencyKey: t1Key,
-    });
-    released = firstTranche;
     await mutateJobMetaInTransaction(tx, jobIdStr, (m) => ({
       ...m,
       escrow: {
-        heldAmount: Number(secondTranche),
-        releasedAmount: Number(firstTranche),
+        heldAmount: Number(providerAmt),
+        releasedAmount: 0,
       },
     }));
     jobRow = await tx.job.update({
       where: { id: jobIdStr },
-      data: { releasedAmount: firstTranche },
+      data: { releasedAmount: new Prisma.Decimal(0) },
     });
-    pending = await tx.earning.findFirst({
-      where: { jobId: jobIdStr, providerId: providerProfileId, type: "credit", status: "pending" },
-    });
+    released = new Prisma.Decimal(0);
   }
 
-  if (!pending) {
-    const remaining = providerAmt.sub(released);
-    if (remaining.gt(0)) {
-      await earningService.syncPendingCreditToHeld(tx, {
-        providerId: providerProfileId,
-        jobId: jobIdStr,
-        heldAmount: Number(remaining),
-      });
-    }
+  const remaining = providerAmt.sub(released);
+  if (remaining.gt(0)) {
+    await earningService.syncPendingCreditToHeld(tx, {
+      providerId: providerProfileId,
+      jobId: jobIdStr,
+      heldAmount: Number(remaining),
+    });
   }
 
   return { didWork: true, job: jobRow };
@@ -966,6 +1055,9 @@ async function processPaystackWebhookBuffer(rawBuffer, signatureHeader) {
 
 module.exports = {
   getSavedCards,
+  parsePaymentCardFromGatewayPayload,
+  ensureSavedCardFromPayment,
+  syncSavedCardsFromPaymentHistory,
   addCard,
   deleteCard,
   setDefaultCard,

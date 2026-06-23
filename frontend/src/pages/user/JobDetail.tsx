@@ -14,6 +14,7 @@ import {
   addChatMessage, 
   cancelJob,
   confirmJobCompletion,
+  openJobDispute,
   payForStoreMaterials,
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
@@ -30,7 +31,9 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { getStores } from '@/lib/api/stores';
 import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
-import { JobCompletionDialog } from '@/components/jobs/JobCompletionDialog';
+import { JobCompletionEvidenceDialog } from '@/components/jobs/JobCompletionEvidenceDialog';
+import { JobDisputeDialog } from '@/components/jobs/JobDisputeDialog';
+import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
 import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
@@ -57,7 +60,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
+import { getUserLaborGross, getQuoteMaterialsTotal, getQuoteMaterialsRefundTotal, jobHasRefundedMaterials } from '@/lib/jobUtils';
+import { RefundSummaryLine, isJobRefunded } from '@/components/payments/RefundSummaryLine';
 import { JobDeliveryRequirementsBlock } from '@/components/jobs/JobDeliveryRequirementsBlock';
 import { JobCustomerRequirementsBlock } from '@/components/jobs/JobCustomerRequirementsBlock';
 import { isDeliveryOrMovingJob } from '@/lib/courierCategories';
@@ -150,7 +154,8 @@ export default function JobDetail() {
   const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
   const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
-  const [completionDialogOpen, setCompletionDialogOpen] = useState(false);
+  const [evidenceDialogOpen, setEvidenceDialogOpen] = useState(false);
+  const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [provider, setProvider] = useState<Provider | null>(null);
   const [addMaterialsOpen, setAddMaterialsOpen] = useState(false);
@@ -343,13 +348,18 @@ export default function JobDetail() {
     }
   };
 
-  const handleConfirmCompletion = async (rating: number, review: string) => {
+  const handleConfirmCompletion = async (
+    rating: number,
+    review: string,
+    images: string[] = [],
+    videos: string[] = []
+  ) => {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      await confirmJobCompletion(job.id, rating, review);
+      await confirmJobCompletion(job.id, rating, review, { images, videos });
       await syncJobsAfterMutation();
-      setCompletionDialogOpen(false);
+      setEvidenceDialogOpen(false);
       const isCourier = Boolean(job.courierFlow);
       if (isCourier) {
         const materialOrderId =
@@ -371,6 +381,35 @@ export default function JobDetail() {
       toast({
         title: 'Error',
         description: 'Failed to complete job.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleOpenDispute = async (payload: {
+    comment: string;
+    requestedResolution: string;
+    otherResolutionDetail?: string;
+    images: string[];
+    videos: string[];
+  }) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      await openJobDispute(job.id, payload);
+      await syncJobsAfterMutation();
+      setDisputeDialogOpen(false);
+      toast({
+        title: 'Dispute opened',
+        description: 'Our team will review your case and contact you with updates.',
+        variant: 'destructive',
+      });
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to open dispute.',
         variant: 'destructive',
       });
     } finally {
@@ -612,6 +651,8 @@ export default function JobDetail() {
   }
 
   const materialsTotal = getQuoteMaterialsTotal(job);
+  const materialsRefundTotal = getQuoteMaterialsRefundTotal(job);
+  const hasRefundedMaterials = jobHasRefundedMaterials(job);
   const laborTotal = job.laborPaid
     ? getUserLaborGross(job)
     : job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? getUserLaborGross(job);
@@ -641,6 +682,7 @@ export default function JobDetail() {
     (job.cancellationReason && job.cancellationReason.trim()) ||
     'No reason provided';
   const awaitingUserConfirmation = job.status === 'AWAITING_CONFIRMATION';
+  const jobDisputed = job.status === 'DISPUTED';
 
   const isCourierJob = Boolean(job.courierFlow);
   const linkedJobDelivery =
@@ -885,11 +927,18 @@ export default function JobDetail() {
                 uploadedAt={job.quotationUploadedAt}
                 serviceNote={job.servicePrice?.note}
               />
+              {job.refundAmount != null && job.refundAmount > 0 && (
+                <RefundSummaryLine refundAmount={job.refundAmount} refundStatus={job.refundStatus} />
+              )}
               <div className="flex items-center justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
                   View invoice
                 </Button>
-                <Badge className="bg-success text-success-foreground">Paid</Badge>
+                {job.refundStatus === 'processed' || job.refundStatus === 'partial' ? (
+                  <Badge variant="destructive">Refunded</Badge>
+                ) : (
+                  <Badge className="bg-success text-success-foreground">Paid</Badge>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1067,32 +1116,43 @@ export default function JobDetail() {
                     </div>
                   </div>
 
-                    {awaitingUserConfirmation && (
+                    {(awaitingUserConfirmation || jobDisputed) && (
                       <div className="space-y-3 border-t pt-4">
-                        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                          <Clock className="h-5 w-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
-                          <div>
-                            <p className="font-medium text-sm">Waiting for your confirmation</p>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {isCourierJob
-                                ? `${job.providerName} has marked this delivery as complete. Rate the courier, then confirm your materials with the store on your order page.`
-                                : `${job.providerName} has marked this job as complete. Confirm when you are satisfied with the work.`}
-                            </p>
+                        {jobDisputed ? (
+                          <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                            <Clock className="h-5 w-5 shrink-0 text-destructive mt-0.5" aria-hidden />
+                            <div>
+                              <p className="font-medium text-sm text-destructive">Dispute opened</p>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                EloFix is reviewing this case. View updates in your Dispute Center.
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="mt-2"
+                                onClick={() => {
+                                  if (job.disputeId) {
+                                    navigate(`/user/disputes/${job.disputeId}`);
+                                  } else {
+                                    navigate('/user/jobs?view=disputes');
+                                  }
+                                }}
+                              >
+                                View in Dispute Center
+                              </Button>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <>
+                        <ConfirmationCountdown deadlineAt={job.confirmationDeadlineAt} />
                         <div className="flex flex-col gap-2 sm:flex-row">
                           <Button
                             type="button"
                             variant="outline"
                             className="flex-1"
                             disabled={isActionPending}
-                            onClick={() => {
-                              setActiveTab('messages');
-                              toast({
-                                title: 'Message your provider',
-                                description: 'Use Messages to discuss any outstanding work before confirming completion.',
-                              });
-                            }}
+                            onClick={() => setDisputeDialogOpen(true)}
                           >
                             No, work not complete
                           </Button>
@@ -1100,12 +1160,14 @@ export default function JobDetail() {
                             type="button"
                             className="btn-accent flex-1"
                             disabled={isActionPending}
-                            onClick={() => setCompletionDialogOpen(true)}
+                            onClick={() => setEvidenceDialogOpen(true)}
                           >
                             <CheckCircle className="mr-2 h-4 w-4" />
                             Yes, work completed
                           </Button>
                         </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </>
@@ -1178,7 +1240,9 @@ export default function JobDetail() {
               </CardHeader>
               <CardContent className="min-w-0 space-y-2 text-sm">
                 <p className="text-xs text-muted-foreground">
-                  Materials total includes all paid purchases on this job; cancelled store orders are excluded.
+                  {hasRefundedMaterials
+                    ? 'Cancelled material orders are excluded from the total; refunds show below (93% net to you).'
+                    : 'Materials total includes all paid purchases on this job; cancelled store orders are excluded.'}
                 </p>
                 <div className="flex justify-between gap-3 min-w-0">
                   <span className="shrink-0 text-muted-foreground">Materials</span>
@@ -1186,6 +1250,13 @@ export default function JobDetail() {
                     {formatCurrency(materialsTotal, { decimals: 2 })}
                   </span>
                 </div>
+                {materialsRefundTotal > 0 && (
+                  <RefundSummaryLine
+                    refundAmount={materialsRefundTotal}
+                    refundStatus="processed"
+                    className="text-xs"
+                  />
+                )}
                 {quoteDeliveryLine ? (
                   <div className="flex justify-between gap-3 min-w-0">
                     <span className="shrink-0 text-muted-foreground">{quoteDeliveryLine.label}</span>
@@ -1210,6 +1281,14 @@ export default function JobDetail() {
                     ) : null}
                   </div>
                 ) : null}
+                {(job.refundAmount ?? 0) > 0 && (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex justify-between gap-3 min-w-0">
+                      <span className="shrink-0 text-muted-foreground">Service refund</span>
+                    </div>
+                    <RefundSummaryLine refundAmount={job.refundAmount} refundStatus={job.refundStatus} />
+                  </div>
+                )}
                 <div className="border-t border-border pt-2">
                   <div className="flex justify-between font-bold">
                     <span>Total</span>
@@ -1219,9 +1298,21 @@ export default function JobDetail() {
                   </div>
                 </div>
                 {job.laborPaid && (
-                  <p className="text-xs text-success mt-2">
-                    {hasMaterialsPaid ? 'Service & Materials Paid' : 'Service Paid'}
-                  </p>
+                  <div className="mt-2 space-y-1">
+                    {hasRefundedMaterials || isJobRefunded(job) ? (
+                      <p className="text-xs text-destructive">
+                        {hasRefundedMaterials && isJobRefunded(job)
+                          ? 'Material and service refunds processed'
+                          : hasRefundedMaterials
+                            ? 'Material order cancelled — refund processed'
+                            : 'Service refund processed'}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-success">
+                        {hasMaterialsPaid ? 'Service & Materials Paid' : 'Service Paid'}
+                      </p>
+                    )}
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1334,11 +1425,22 @@ export default function JobDetail() {
         cancelPreview={cancelPreview}
       />
 
-      <JobCompletionDialog
-        open={completionDialogOpen}
-        onOpenChange={setCompletionDialogOpen}
-        onConfirm={handleConfirmCompletion}
-        providerName={job.providerName || 'Provider'}
+      <JobCompletionEvidenceDialog
+        open={evidenceDialogOpen}
+        onOpenChange={setEvidenceDialogOpen}
+        jobId={job.id}
+        loading={isActionPending}
+        onSubmit={(rating, review, images, videos) =>
+          void handleConfirmCompletion(rating, review, images, videos)
+        }
+      />
+
+      <JobDisputeDialog
+        open={disputeDialogOpen}
+        onOpenChange={setDisputeDialogOpen}
+        jobId={job.id}
+        loading={isActionPending}
+        onSubmit={(payload) => void handleOpenDispute(payload)}
       />
 
       {provider && (

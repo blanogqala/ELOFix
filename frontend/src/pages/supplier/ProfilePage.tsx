@@ -62,7 +62,7 @@ export default function SupplierProfilePage() {
       address: profile.address ?? '',
       phone: profile.phone ?? '',
       contactName: user.name ?? '',
-      accountPhone: user.phone ?? '',
+      accountPhone: profile.accountPhone ?? ('phone' in user ? user.phone ?? '' : ''),
       accountEmail: profile.accountEmail ?? user.email ?? '',
       logoPreview: profile.logo ?? '',
       hasDelivery: profile.hasDelivery ?? true,
@@ -196,7 +196,7 @@ export default function SupplierProfilePage() {
 
   return (
     <DashboardLayout>
-      <div className="animate-fade-in mx-auto max-w-xl space-y-8">
+      <div className="animate-fade-in mx-auto max-w-4xl space-y-8">
         <div>
           <h1 className="text-xl font-semibold sm:text-2xl">Profile</h1>
           <p className="text-sm text-muted-foreground">Business details, email, and security.</p>

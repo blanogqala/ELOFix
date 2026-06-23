@@ -1,14 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getJobs } from '@/lib/api/jobs';
+import { listAdminDisputes, type AdminDisputeRow } from '@/lib/api/adminDisputes';
+import { formatRequestedResolution } from '@/lib/disputeLabels';
 import { getCategories } from '@/lib/api/categories';
 import { Category, Job } from '@/types';
-import { Search, Briefcase, ArrowRight, X, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Search, Briefcase, ArrowRight, X, CheckCircle, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatCurrency } from '@/lib/formatCurrency';
 import { getStandardizedStatusLabel, getUserStatusBadgeClass, jobMatchesAdminStatusFilter, ADMIN_JOB_STATUS_FILTER_LABELS } from '@/lib/jobStatusMapping';
 import { countAdminJobsByStatus } from '@/lib/adminJobStatus';
 import {
@@ -19,14 +20,18 @@ import {
   jobMatchesCityFilter,
 } from '@/lib/adminJobFilters';
 import { groupJobsForList } from '@/lib/jobListGrouping';
-import { getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
+import { AdminJobQuoteBreakdown } from '@/components/admin/AdminJobQuoteBreakdown';
 import { JobListRowVariant } from '@/components/jobs/JobListGroup';
 
 type SortKey = 'newest' | 'oldest' | 'status' | 'category';
+type JobsView = 'list' | 'dispatched';
 
 export default function AdminJobs() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const jobsView: JobsView = searchParams.get('view') === 'dispatched' ? 'dispatched' : 'list';
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [disputes, setDisputes] = useState<AdminDisputeRow[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,7 +45,18 @@ export default function AdminJobs() {
   useEffect(() => {
     void loadJobs();
     void loadCategories();
+    void loadDisputes();
   }, []);
+
+  const loadDisputes = async () => {
+    try {
+      const data = await listAdminDisputes({ status: 'OPEN' });
+      setDisputes(data.disputes);
+    } catch (e) {
+      console.error('Failed to load disputes:', e);
+      setDisputes([]);
+    }
+  };
 
   const loadJobs = async () => {
     try { setJobs(await getJobs()); }
@@ -94,6 +110,24 @@ export default function AdminJobs() {
     return result;
   }, [jobs, searchQuery, statusFilter, categoryFilter, cityFilter, sortBy]);
 
+  const disputeByJobId = useMemo(() => {
+    const map = new Map<string, AdminDisputeRow>();
+    disputes.forEach((d) => map.set(d.jobId, d));
+    return map;
+  }, [disputes]);
+
+  const viewJobs = useMemo(() => {
+    if (jobsView === 'dispatched') {
+      return filteredJobs.filter((job) => job.status === 'DISPUTED');
+    }
+    return filteredJobs.filter((job) => job.status !== 'DISPUTED');
+  }, [filteredJobs, jobsView]);
+
+  const dispatchedCount = useMemo(
+    () => jobs.filter((job) => job.status === 'DISPUTED').length,
+    [jobs]
+  );
+
   const stats = useMemo(() => {
     const buckets = countAdminJobsByStatus(jobs);
     return {
@@ -111,7 +145,17 @@ export default function AdminJobs() {
     </span>
   );
 
-  const groupedEntries = groupJobsForList(filteredJobs);
+  const groupedEntries = groupJobsForList(viewJobs);
+
+  const setJobsView = (view: JobsView) => {
+    if (view === 'list') {
+      searchParams.delete('view');
+      setSearchParams(searchParams, { replace: true });
+    } else {
+      searchParams.set('view', 'dispatched');
+      setSearchParams(searchParams, { replace: true });
+    }
+  };
 
   const renderAdminJobCells = (job: Job, variant: JobListRowVariant) => {
     const cat = categories.find((c) => c.id === job.category);
@@ -132,7 +176,9 @@ export default function AdminJobs() {
         <td className="px-6 py-4 text-sm">{job.userName}</td>
         <td className="px-6 py-4 text-sm">{job.providerName || '—'}</td>
         <td className="px-6 py-4">{getStatusBadge(job)}</td>
-        <td className="px-6 py-4 text-sm font-medium">{formatCurrency(getAdminJobDisplayTotal(job))}</td>
+        <td className="px-6 py-4 text-xs font-medium tabular-nums">
+          <AdminJobQuoteBreakdown job={job} />
+        </td>
         <td className="px-6 py-4 text-sm text-muted-foreground">
           {new Date(job.createdAt).toLocaleDateString()}
         </td>
@@ -143,12 +189,33 @@ export default function AdminJobs() {
     );
   };
 
+  const renderDispatchedNote = (job: Job) => {
+    const dispute = disputeByJobId.get(job.id);
+    if (!dispute) return null;
+    return (
+      <tr key={`${job.id}-dispute`} className="bg-destructive/5">
+        <td colSpan={8} className="px-6 py-3 text-sm border-b border-destructive/20">
+          <div className="flex flex-wrap items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-destructive">Customer flagged work as not complete</p>
+              <p className="text-muted-foreground mt-0.5">
+                Requested: {formatRequestedResolution(dispute.requestedResolution, dispute.otherResolutionDetail)}
+              </p>
+              <p className="text-muted-foreground line-clamp-2 mt-1">{dispute.customerComment}</p>
+            </div>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
         <div>
-          <h1 className="text-2xl font-bold">All Jobs</h1>
-          <p className="text-muted-foreground">Monitor and manage platform jobs</p>
+          <h1 className="text-2xl font-bold">Jobs</h1>
+          <p className="text-muted-foreground">Monitor active jobs and dispatched dispute cases</p>
         </div>
 
         {/* Jobs overview stats (scoped to current filters) */}
@@ -292,6 +359,27 @@ export default function AdminJobs() {
           )}
         </div>
 
+        <div className="space-y-2">
+          <Tabs value={jobsView} onValueChange={(v) => setJobsView(v as JobsView)}>
+            <TabsList>
+              <TabsTrigger value="list">List of Jobs</TabsTrigger>
+              <TabsTrigger value="dispatched" className="gap-2">
+                Dispatched Jobs
+                {dispatchedCount > 0 && (
+                  <span className="rounded-full bg-destructive px-2 py-0.5 text-xs text-destructive-foreground">
+                    {dispatchedCount}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {jobsView === 'dispatched' && (
+            <p className="text-sm text-muted-foreground">
+              Jobs flagged by customers as not complete. They stay here until the dispute is resolved and the job moves forward.
+            </p>
+          )}
+
         {/* Jobs Table */}
         <div className="card-elevated overflow-hidden">
           <div className="overflow-x-auto">
@@ -303,7 +391,7 @@ export default function AdminJobs() {
                   <th className="table-header px-6 py-4 text-left">Customer</th>
                   <th className="table-header px-6 py-4 text-left">Provider</th>
                   <th className="table-header px-6 py-4 text-left">Status</th>
-                  <th className="table-header px-6 py-4 text-left">Total</th>
+                  <th className="table-header px-6 py-4 text-left">Quote = Labor + material</th>
                   <th className="table-header px-6 py-4 text-left">Date</th>
                   <th className="table-header px-6 py-4"></th>
                 </tr>
@@ -317,27 +405,37 @@ export default function AdminJobs() {
                       </td>
                     </tr>
                   ))
-                ) : filteredJobs.length > 0 ? (
+                ) : viewJobs.length > 0 ? (
                   groupedEntries.flatMap((entry) => {
                     if (entry.kind === 'standalone') {
-                      return (
+                      const rowClass =
+                        jobsView === 'dispatched'
+                          ? 'cursor-pointer transition-colors bg-destructive/5 hover:bg-destructive/10 border-l-4 border-destructive'
+                          : 'cursor-pointer transition-colors hover:bg-muted/50';
+                      return [
                         <tr
                           key={entry.job.id}
-                          className="cursor-pointer transition-colors hover:bg-muted/50"
+                          className={rowClass}
                           onClick={() => navigate(`/admin/jobs/${entry.job.id}`)}
                         >
                           {renderAdminJobCells(entry.job, 'parent')}
-                        </tr>
-                      );
+                        </tr>,
+                        jobsView === 'dispatched' ? renderDispatchedNote(entry.job) : null,
+                      ].filter(Boolean);
                     }
+                    const parentRowClass =
+                      jobsView === 'dispatched'
+                        ? 'cursor-pointer transition-colors bg-destructive/5 hover:bg-destructive/10 border-l-4 border-destructive'
+                        : 'cursor-pointer transition-colors hover:bg-muted/50';
                     return [
                       <tr
                         key={entry.parent.id}
-                        className="cursor-pointer transition-colors hover:bg-muted/50"
+                        className={parentRowClass}
                         onClick={() => navigate(`/admin/jobs/${entry.parent.id}`)}
                       >
                         {renderAdminJobCells(entry.parent, 'parent')}
                       </tr>,
+                      jobsView === 'dispatched' ? renderDispatchedNote(entry.parent) : null,
                       ...entry.children.map((child) => (
                         <tr
                           key={child.id}
@@ -355,11 +453,15 @@ export default function AdminJobs() {
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
                         <Briefcase className="h-6 w-6 text-muted-foreground" />
                       </div>
-                      <p className="font-medium">No jobs found</p>
+                      <p className="font-medium">
+                        {jobsView === 'dispatched' ? 'No dispatched jobs' : 'No jobs found'}
+                      </p>
                       <p className="text-sm text-muted-foreground">
-                        {activeFilters.length > 0 || searchQuery
-                          ? 'Try adjusting your filters'
-                          : 'No jobs have been created yet'}
+                        {jobsView === 'dispatched'
+                          ? 'When a customer flags work as not complete, the job appears here.'
+                          : activeFilters.length > 0 || searchQuery
+                            ? 'Try adjusting your filters'
+                            : 'No jobs have been created yet'}
                       </p>
                     </td>
                   </tr>
@@ -370,6 +472,7 @@ export default function AdminJobs() {
           <div className="px-6 py-3 border-t border-border text-sm text-muted-foreground">
             {filteredJobs.length} of {jobs.length} jobs
           </div>
+        </div>
         </div>
       </div>
     </DashboardLayout>

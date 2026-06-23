@@ -1,4 +1,5 @@
 import type { Job, JobMaterialOrderSnapshot, MaterialLine } from '@/types';
+import { isMaterialOrderRefunded } from '@/lib/materialBatchTracking';
 import { formatCurrency } from './formatCurrency';
 
 function round2(n: number): number {
@@ -53,6 +54,22 @@ export function getQuoteMaterialsTotal(job: Job): number {
   return round2(sumMaterialLines(job.materials ?? []));
 }
 
+/** Sum of net refunds (93%) from cancelled material orders on this job. */
+export function getQuoteMaterialsRefundTotal(job: Job): number {
+  const orders = job.jobMaterialOrders ?? [];
+  return round2(
+    orders.reduce((s, o) => {
+      if (!isMaterialOrderRefunded(o)) return s;
+      const amt = Number(o.refundAmount ?? 0);
+      return s + (Number.isFinite(amt) ? amt : 0);
+    }, 0)
+  );
+}
+
+export function jobHasRefundedMaterials(job: Job): boolean {
+  return getQuoteMaterialsRefundTotal(job) > 0;
+}
+
 /**
  * Gross labor amount for the customer (what they pay). Uses settled `totalPrice` when present.
  * Does not expose commission or provider split.
@@ -73,18 +90,34 @@ export function getProviderJobPriceDisplay(job: Job): { text: string; isPaid?: b
   return getJobPriceDisplay(job);
 }
 
-export function getJobPriceDisplay(job: Job): { text: string; isPaid?: boolean } {
+export function getJobPriceDisplay(job: Job): {
+  text: string;
+  isPaid?: boolean;
+  refundAmount?: number;
+  refundStatus?: string;
+  refundLabel?: string;
+} {
+  const refundAmount =
+    job.refundAmount != null && Number.isFinite(Number(job.refundAmount)) ? Number(job.refundAmount) : undefined;
+  const refundStatus = job.refundStatus;
+
   const settled = job.totalPrice != null && Number.isFinite(Number(job.totalPrice)) ? Number(job.totalPrice) : null;
   if (settled != null && settled > 0) {
     return {
       text: formatCurrency(settled, { decimals: 2 }),
       isPaid: job.laborPaid ?? false,
+      refundAmount,
+      refundStatus,
+      refundLabel: refundAmount && refundAmount > 0 ? 'Refunded' : undefined,
     };
   }
   if (job.servicePrice?.amount != null) {
     return {
       text: formatCurrency(job.servicePrice.amount, { decimals: 2 }),
       isPaid: job.laborPaid ?? false,
+      refundAmount,
+      refundStatus,
+      refundLabel: refundAmount && refundAmount > 0 ? 'Refunded' : undefined,
     };
   }
   if (job.courierFlow && job.deliverySummary?.quotedFee != null) {
@@ -93,8 +126,10 @@ export function getJobPriceDisplay(job: Job): { text: string; isPaid?: boolean }
       return {
         text: formatCurrency(fee, { decimals: 2 }),
         isPaid: Boolean(job.deliverySummary.deliveryPaid),
+        refundAmount,
+        refundStatus,
       };
     }
   }
-  return { text: 'Price pending inspection' };
+  return { text: 'Price pending inspection', refundAmount, refundStatus };
 }

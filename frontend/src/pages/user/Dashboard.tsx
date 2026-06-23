@@ -14,7 +14,8 @@ import {
   CheckCircle, 
   Clock,
   Plus,
-  ArrowRight
+  ArrowRight,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
@@ -33,9 +34,10 @@ export default function UserDashboard() {
   });
 
   const stats = {
-    active: jobs.filter(j => isActiveWorkflowStatus(j.status)).length,
-    completed: jobs.filter(j => j.status === 'COMPLETED').length,
-    pending: jobs.filter(j => j.status === 'PENDING').length,
+    active: jobs.filter((j) => isActiveWorkflowStatus(j.status) && j.status !== 'DISPUTED').length,
+    completed: jobs.filter((j) => j.status === 'COMPLETED').length,
+    pending: jobs.filter((j) => j.status === 'PENDING').length,
+    disputed: jobs.filter((j) => j.status === 'DISPUTED').length,
   };
 
   const recentJobs = [...jobs]
@@ -100,7 +102,20 @@ export default function UserDashboard() {
         <SpecialsCarousel />
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 sm:gap-4">
+
+        <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-4 w-4 text-success sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xl font-bold sm:text-2xl">{stats.completed}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Completed</p>
+              </div>
+            </div>
+          </div>
+
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
@@ -124,15 +139,26 @@ export default function UserDashboard() {
               </div>
             </div>
           </div>
-          
-          <div className="card-elevated p-4 sm:p-6">
+
+          <div
+            className="card-elevated cursor-pointer p-4 transition-colors hover:border-destructive/30 sm:p-6"
+            onClick={() => navigate('/user/jobs?view=disputes')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/user/jobs?view=disputes');
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
             <div className="flex items-center gap-3 sm:gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
-                <CheckCircle className="h-4 w-4 text-success sm:h-5 sm:w-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10 sm:h-12 sm:w-12">
+                <AlertCircle className="h-4 w-4 text-destructive sm:h-5 sm:w-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-bold sm:text-2xl">{stats.completed}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Completed</p>
+                <p className="text-xl font-bold sm:text-2xl">{stats.disputed}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Disputed Jobs</p>
               </div>
             </div>
           </div>
@@ -222,8 +248,22 @@ export default function UserDashboard() {
               </div>
             </div>
           </div>
+          <div
+          className="card-elevated cursor-pointer p-4 transition-colors hover:border-destructive/30 sm:p-6"
+          onClick={() => navigate('/user/jobs?view=disputes')}
+        >
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
+              <AlertCircle className="h-4 w-4 text-destructive" />
+            </div>
+            <div>
+              <p className="font-medium">Dispute Center</p>
+              <p className="text-sm text-muted-foreground">Open cases, refunds, and admin decisions</p>
+            </div>
+          </div>
+        </div>
           
-          <div 
+          {/* <div 
             className="card-elevated cursor-pointer p-4 transition-colors hover:border-primary/30 sm:p-6"
             onClick={() => navigate('/user/profile')}
           >
@@ -236,7 +276,7 @@ export default function UserDashboard() {
                 <p className="text-sm text-muted-foreground">Update your information</p>
               </div>
             </div>
-          </div>
+          </div> */}
         </div>
       </div>
     </DashboardLayout>

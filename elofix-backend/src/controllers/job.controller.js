@@ -277,9 +277,32 @@ async function confirmJobCompletion(req, res) {
     req.params.id,
     req.body?.rating,
     req.body?.review,
-    req.user.userId
+    req.user.userId,
+    {
+      images: req.body?.images,
+      videos: req.body?.videos,
+    }
   );
   res.json({ success: true, job });
+}
+
+async function openJobDispute(req, res) {
+  const jobDisputeService = require("../services/jobDispute.service");
+  const dispute = await jobDisputeService.openDispute(req.params.id, req.user.userId, req.body || {});
+  res.json({ success: true, dispute });
+}
+
+async function uploadCompletionEvidence(req, res) {
+  if (!req.file) throw new AppError("File is required", 400);
+  const url = filePathToPublicUrl(req.file.path);
+  const kind = req.file.mimetype && req.file.mimetype.startsWith("video/") ? "video" : "image";
+  res.json({ success: true, url, kind });
+}
+
+async function getJobCompletionEvidence(req, res) {
+  const jobCompletionEvidence = require("../services/jobCompletionEvidence.service");
+  const evidence = await jobCompletionEvidence.getEvidenceByJobId(req.params.id);
+  res.json({ success: true, evidence });
 }
 
 async function setStoreDeliveryOption(req, res) {
@@ -472,6 +495,9 @@ module.exports = {
   acceptProposedPrice,
   cancelJob,
   confirmJobCompletion,
+  openJobDispute,
+  uploadCompletionEvidence,
+  getJobCompletionEvidence,
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
   updateStoreOrderDeliveryStatus,
