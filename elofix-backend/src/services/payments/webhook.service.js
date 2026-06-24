@@ -113,8 +113,10 @@ async function processWebhookResult(providerKey, verifyResult) {
 
           const fresh = await tx.paymentIntent.findUnique({ where: { id: intent.id } });
 
+          let settledAudit = null;
           if (fresh.kind === "LABOR") {
-            await escrowSettlement.settleLaborFromIntent(tx, fresh, verifyResult.raw);
+            const laborResult = await escrowSettlement.settleLaborFromIntent(tx, fresh, verifyResult.raw);
+            settledAudit = laborResult.settledAudit || null;
           } else if (fresh.kind === "MATERIAL_ORDER") {
             await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
           } else if (fresh.kind === "JOB_STORE_ORDER" && fresh.materialOrderId) {
@@ -145,6 +147,7 @@ async function processWebhookResult(providerKey, verifyResult) {
             state: "PAID",
             postSettleJobStore,
             postSettleDeliveryFee,
+            settledAudit,
           };
         }
 
@@ -228,6 +231,17 @@ async function processWebhookResult(providerKey, verifyResult) {
           result,
         };
       }
+    }
+    if (result?.settledAudit) {
+      const { logAudit } = require("../auditLog.service");
+      const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../../constants/auditActions");
+      const sa = result.settledAudit;
+      await logAudit(AUDIT_ACTIONS.PAYMENT_ESCROW_SETTLED, {
+        userId: sa.userId,
+        entityType: ENTITY_TYPES.PAYMENT,
+        entityId: sa.intentId,
+        newValue: { jobId: sa.jobId, amount: sa.amount, kind: "LABOR" },
+      });
     }
     return { httpStatus: 200, result };
   } catch (e) {

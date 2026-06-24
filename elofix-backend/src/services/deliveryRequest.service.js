@@ -568,7 +568,7 @@ async function syncCourierDeliveryCustomerCompletion(materialOrderId) {
               providerProfileId: providerRow.id,
               jobId: dr.jobId,
             });
-            await escrowSettlement.markLaborEscrowFullyReleased(dr.jobId);
+            await escrowSettlement.markLaborEscrowFullyReleased(dr.jobId, tx);
           }
         }
       }

@@ -1,6 +1,7 @@
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const { logAudit } = require("../services/auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
 const TEN_MIN_MS = 10 * 60 * 1000;
 const STALE_AFTER_MS = 30 * 60 * 1000;
@@ -59,10 +60,11 @@ async function failStalePendingWithdrawals() {
           }
         );
 
-        await logAudit("withdrawal.auto_failed_stale", {
-          userId: null,
-          metadata: {
-            withdrawalId: wr.id,
+        await logAudit(AUDIT_ACTIONS.WITHDRAWAL_AUTO_FAILED_STALE, {
+          actorType: ACTOR_TYPES.SYSTEM,
+          entityType: ENTITY_TYPES.WITHDRAWAL,
+          entityId: wr.id,
+          newValue: {
             providerId: wr.providerId,
             amount: Number(wr.amount),
           },

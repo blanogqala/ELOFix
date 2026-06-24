@@ -2,6 +2,12 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const {
+  normalizeTimelineEvents,
+  hasTimelineEventType,
+  appendTimelineEventIfAbsent,
+} = require("../utils/jobTimeline.util");
+const { toFrontendStatus } = require("../utils/jobStatus.util");
 
 function createDefaultJobMeta() {
   return {
@@ -31,6 +37,7 @@ function createDefaultJobMeta() {
     progressStep: 0,
     /** Once true (first service or material batch paid), timeline never returns to payment step. */
     hasStarted: false,
+    timelineEvents: [],
   };
 }
 
@@ -68,6 +75,7 @@ function normalizeMeta(meta) {
   if (!Number.isFinite(ps) || ps < 0) ps = 0;
   merged.progressStep = ps;
   merged.hasStarted = merged.hasStarted === true;
+  merged.timelineEvents = normalizeTimelineEvents(merged.timelineEvents);
   return merged;
 }
 
@@ -148,17 +156,6 @@ function isTerminalJobState(meta, jobRow) {
   if (safe.completionConfirmedByUser === true) return true;
   if (safe.statusOverride === "COMPLETED") return true;
   return false;
-}
-
-function toFrontendStatus(dbStatus, meta) {
-  const safe = normalizeMeta(meta);
-  if (String(dbStatus) === "COMPLETED" || safe.completionConfirmedByUser === true) {
-    return "COMPLETED";
-  }
-  if (safe.statusOverride === "DISPUTED") return "DISPUTED";
-  if (safe.statusOverride) return safe.statusOverride;
-  if (dbStatus === "ACCEPTED") return "ASSIGNED";
-  return dbStatus;
 }
 
 function resolvePaymentSettlementStatus(job, safeMeta) {
@@ -273,6 +270,7 @@ function enrichJob(job, meta) {
     confirmationDeadlineAt: safeMeta.confirmationDeadlineAt || null,
     markedCompleteAt: safeMeta.markedCompleteAt || null,
     disputeId: safeMeta.disputeId || null,
+    timelineEvents: safeMeta.timelineEvents,
   };
 }
 
@@ -322,4 +320,7 @@ module.exports = {
   mapFrontendRole,
   normalizeMeta,
   stripJobForApi,
+  normalizeTimelineEvents,
+  hasTimelineEventType,
+  appendTimelineEventIfAbsent,
 };

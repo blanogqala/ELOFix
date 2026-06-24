@@ -13,6 +13,9 @@ const adminCustomersService = require("../services/adminCustomers.service");
 const adminProviderService = require("../services/adminProvider.service");
 const prisma = require("../config/prisma");
 const refundJobService = require("../services/refundJob.service");
+const { getAdminAuditContext } = require("../utils/auditContext.util");
+const { logAudit } = require("../services/auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
 async function processAdminJobRefund(req, res) {
   const jobId = String(req.params.jobId || "").trim();
@@ -63,38 +66,60 @@ async function getCustomerById(req, res) {
 }
 
 async function blockCustomer(req, res) {
-  const customer = await adminCustomersService.blockCustomerByUserId(req.params.userId);
+  const customer = await adminCustomersService.blockCustomerByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, customer });
 }
 
 async function unblockCustomer(req, res) {
-  const customer = await adminCustomersService.unblockCustomerByUserId(req.params.userId);
+  const customer = await adminCustomersService.unblockCustomerByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, customer });
 }
 
 async function deleteCustomer(req, res) {
-  const customer = await adminCustomersService.softDeleteCustomerByUserId(req.params.userId);
+  const customer = await adminCustomersService.softDeleteCustomerByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, customer });
 }
 
 async function approveProvider(req, res) {
-  const provider = await providerService.approveProviderByUserId(req.params.userId);
+  const provider = await providerService.approveProviderByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, provider });
 }
 
 async function rejectProvider(req, res) {
   const reason = req.body?.reason || req.body?.rejectionReason;
-  const provider = await providerService.rejectProviderByUserId(req.params.userId, reason);
+  const provider = await providerService.rejectProviderByUserId(
+    req.params.userId,
+    reason,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, provider });
 }
 
 async function blockProvider(req, res) {
-  const provider = await providerService.blockProviderByUserId(req.params.userId);
+  const provider = await providerService.blockProviderByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, provider });
 }
 
 async function unblockProvider(req, res) {
-  const provider = await providerService.unblockProviderByUserId(req.params.userId);
+  const provider = await providerService.unblockProviderByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, provider });
 }
 
@@ -105,7 +130,11 @@ async function deleteProvider(req, res) {
 
 async function approveProviderDocument(req, res) {
   const docType = String(req.params.docType || "").trim();
-  const provider = await providerService.approveProviderDocumentByUserId(req.params.userId, docType);
+  const provider = await providerService.approveProviderDocumentByUserId(
+    req.params.userId,
+    docType,
+    getAdminAuditContext(req)
+  );
   res.json({ success: true, provider });
 }
 
@@ -120,7 +149,8 @@ async function rejectProviderDocument(req, res) {
   const provider = await providerService.rejectProviderDocumentByUserId(
     req.params.userId,
     docType,
-    feedback
+    feedback,
+    getAdminAuditContext(req)
   );
   res.json({ success: true, provider });
 }
@@ -463,6 +493,24 @@ async function patchProviderFraudReview(req, res) {
   res.json({ success: true, provider });
 }
 
+const auditLogAdminService = require("../services/auditLogAdmin.service");
+
+async function listAuditLogs(req, res) {
+  const data = await auditLogAdminService.listAuditLogs(req.query || {});
+  res.json({ success: true, ...data });
+}
+
+async function exportAuditLogs(req, res) {
+  const { csv, truncated, rowCount } = await auditLogAdminService.exportAuditLogsCsv(req.query || {});
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="audit-logs.csv"');
+  if (truncated) {
+    res.setHeader("X-Export-Truncated", "true");
+    res.setHeader("X-Export-Row-Count", String(rowCount));
+  }
+  res.send(csv);
+}
+
 module.exports = {
   listProviders,
   listProviderNetRevenues,
@@ -517,5 +565,7 @@ module.exports = {
   getFraudFlaggedCustomers,
   getFraudDeviceDetail,
   patchProviderFraudReview,
+  listAuditLogs,
+  exportAuditLogs,
   processAdminJobRefund,
 };

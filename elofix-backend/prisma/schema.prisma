@@ -189,15 +189,19 @@ model User {
   blocked             Boolean              @default(false)
   deletedAt           DateTime?
   createdAt           DateTime             @default(now())
-  acceptedTerms              Boolean   @default(false)
-  acceptedPrivacy            Boolean   @default(false)
-  acceptedProviderAgreement  Boolean   @default(false)
-  acceptedRefundPolicy       Boolean   @default(false)
-  acceptedAt                 DateTime?
-  termsVersion               String?
-  privacyVersion             String?
-  providerAgreementVersion   String?
-  refundPolicyVersion        String?
+  acceptedTerms                        Boolean   @default(false)
+  acceptedPrivacy                      Boolean   @default(false)
+  acceptedProviderAgreement            Boolean   @default(false)
+  acceptedRefundPolicy                 Boolean   @default(false)
+  acceptedSupplierAgreement            Boolean   @default(false)
+  acceptedSupplierParticipationPolicy  Boolean   @default(false)
+  acceptedAt                           DateTime?
+  termsVersion                         String?
+  privacyVersion                       String?
+  providerAgreementVersion             String?
+  refundPolicyVersion                  String?
+  supplierAgreementVersion             String?
+  supplierParticipationPolicyVersion   String?
   providerProfile     Provider?
   jobsAsCustomer      Job[]                @relation("JobCustomer")
   jobsAsProvider      Job[]                @relation("JobProvider")
@@ -212,8 +216,24 @@ model User {
   providerReviews     ProviderReview[] @relation("CustomerProviderReviews")
   fraudAlerts         FraudAlert[]     @relation("UserFraudAlerts")
   deviceLinks         DeviceUserLink[]
+  passwordResetTokens PasswordResetToken[]
 
   @@index([phoneNormalized])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
 }
 
 model Provider {
@@ -771,16 +791,25 @@ model DeviceUserLink {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  action    String
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  metadata  Json?
-  createdAt DateTime @default(now())
+  id                String   @id @default(uuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  actorType         String   @default("USER")
+  action            String
+  entityType        String?
+  entityId          String?
+  oldValue          Json?
+  newValue          Json?
+  ipAddress         String?
+  deviceFingerprint String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
 
   @@index([userId])
   @@index([action])
   @@index([createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
 }
 
 model IdempotencyRecord {
@@ -879,14 +908,23 @@ model Branch {
 }
 
 model BranchUser {
-  id        String         @id @default(uuid())
-  branchId  String
-  branch    Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  email     String         @unique
-  password  String
-  role      BranchUserRole @default(STAFF)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  id                                  String         @id @default(uuid())
+  branchId                            String
+  branch                              Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  email                               String         @unique
+  password                            String
+  role                                BranchUserRole @default(STAFF)
+  acceptedTerms                       Boolean        @default(false)
+  acceptedPrivacy                     Boolean        @default(false)
+  acceptedSupplierAgreement           Boolean        @default(false)
+  acceptedSupplierParticipationPolicy Boolean        @default(false)
+  acceptedAt                          DateTime?
+  termsVersion                        String?
+  privacyVersion                      String?
+  supplierAgreementVersion            String?
+  supplierParticipationPolicyVersion  String?
+  createdAt                           DateTime       @default(now())
+  updatedAt                           DateTime       @updatedAt
 
   branchStaffNotifications BranchStaffNotification[]
 

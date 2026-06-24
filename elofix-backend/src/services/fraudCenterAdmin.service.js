@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const { getTrustLevel } = require("../utils/trustLevel.util");
 const deviceIntelligence = require("./deviceIntelligence.service");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 
 async function getDuplicatePhones() {
   const users = await prisma.user.findMany({
@@ -172,11 +174,22 @@ async function updateProviderFraudReview(userId, { status, adminId }) {
   const next = String(status || "").toUpperCase();
   if (!valid.includes(next)) throw new Error("Invalid fraud review status");
 
-  return prisma.provider.update({
+  const updated = await prisma.provider.update({
     where: { id: profile.id },
     data: { fraudReviewStatus: next },
     include: { user: { select: { id: true, name: true, email: true } } },
   });
+
+  await logAudit(AUDIT_ACTIONS.ADMIN_FRAUD_REVIEWED, {
+    userId: adminId || null,
+    actorType: "ADMIN",
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { fraudReviewStatus: profile.fraudReviewStatus },
+    newValue: { fraudReviewStatus: next },
+  });
+
+  return updated;
 }
 
 module.exports = {

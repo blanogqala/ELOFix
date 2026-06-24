@@ -1,6 +1,8 @@
 const prisma = require("../../config/prisma");
 const { getGateway } = require("./gatewayRegistry");
 const escrowSettlement = require("./escrowSettlement.service");
+const { logAudit } = require("../auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
 
 /**
  * Request gateway refund when provider supports it (best-effort).
@@ -23,6 +25,16 @@ async function requestGatewayRefund(intentId, amount) {
         data: {
           state: amount != null && Number(amount) < Number(intent.amount) ? "PARTIALLY_REFUNDED" : "REFUNDED",
           refundedAt: new Date(),
+        },
+      });
+      await logAudit(AUDIT_ACTIONS.PAYMENT_REFUND, {
+        entityType: ENTITY_TYPES.PAYMENT,
+        entityId: intent.id,
+        newValue: {
+          amount: amount ?? Number(intent.amount),
+          kind: intent.kind,
+          jobId: intent.jobId,
+          materialOrderId: intent.materialOrderId,
         },
       });
       if (intent.kind === "LABOR" && intent.jobId) {

@@ -152,11 +152,20 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
 
           <footer className="mt-12 border-t border-border pt-6">
             <div className="flex flex-wrap gap-3 text-sm">
+              <Link to="/legal" className="text-primary hover:underline">
+                All Policies
+              </Link>
               <Link to="/terms" className="text-primary hover:underline">
                 Terms
               </Link>
               <Link to="/privacy" className="text-primary hover:underline">
                 Privacy
+              </Link>
+              <Link to="/escrow-policy" className="text-primary hover:underline">
+                Escrow
+              </Link>
+              <Link to="/dispute-resolution" className="text-primary hover:underline">
+                Disputes
               </Link>
               <Link to="/provider-agreement" className="text-primary hover:underline">
                 Provider Agreement

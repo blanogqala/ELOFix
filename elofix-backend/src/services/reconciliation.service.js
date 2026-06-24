@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
 const EPS = 0.01;
 
@@ -64,9 +65,12 @@ async function reconcileProvider(providerId, actingUserId = null) {
   };
 
   if (!ok) {
-    await logAudit("reconcile.mismatch", {
+    await logAudit(AUDIT_ACTIONS.RECONCILE_MISMATCH, {
       userId: actingUserId,
-      metadata: details,
+      actorType: ACTOR_TYPES.ADMIN,
+      entityType: ENTITY_TYPES.PROVIDER,
+      entityId: pid,
+      newValue: details,
     });
   }
 

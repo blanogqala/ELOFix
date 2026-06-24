@@ -1,6 +1,8 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const { getTrustLevel, isHighRisk } = require("../utils/trustLevel.util");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
 const SCORE_MIN = 0;
 const SCORE_MAX = 100;
@@ -84,10 +86,20 @@ async function applyDelta(providerProfileId, reason, delta, metadata = {}) {
     updates.positiveReviews = { increment: 1 };
   }
 
-  return prisma.providerTrustScore.update({
+  const updated = await prisma.providerTrustScore.update({
     where: { providerId: pid },
     data: updates,
   });
+
+  await logAudit(AUDIT_ACTIONS.TRUST_SCORE_CHANGED, {
+    actorType: ACTOR_TYPES.SYSTEM,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: pid,
+    oldValue: { score: prev },
+    newValue: { score: next, reason, delta },
+  });
+
+  return updated;
 }
 
 async function onDuplicateRegistration(providerProfileId) {

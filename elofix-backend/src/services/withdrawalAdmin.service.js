@@ -2,6 +2,7 @@ const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
 function withdrawalStatus(s) {
   return String(s || "").toLowerCase();
@@ -76,9 +77,12 @@ async function approveWithdrawal(adminUserId, withdrawalId) {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
   );
-  await logAudit("withdrawal.approve", {
+  await logAudit(AUDIT_ACTIONS.WITHDRAWAL_APPROVE, {
     userId: adminUserId,
-    metadata: { withdrawalId: id, providerId: row.providerId, amount: Number(row.amount) },
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.WITHDRAWAL,
+    entityId: id,
+    newValue: { providerId: row.providerId, amount: Number(row.amount) },
   });
   return { withdrawal: toWithdrawalDto(row) };
 }
@@ -125,9 +129,12 @@ async function markWithdrawalPaid(adminUserId, withdrawalId) {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
   );
-  await logAudit("withdrawal.mark_paid", {
+  await logAudit(AUDIT_ACTIONS.WITHDRAWAL_MARK_PAID, {
     userId: adminUserId,
-    metadata: { withdrawalId: id, providerId: row.providerId, amount: Number(row.amount) },
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.WITHDRAWAL,
+    entityId: id,
+    newValue: { providerId: row.providerId, amount: Number(row.amount) },
   });
   return { withdrawal: toWithdrawalDto(row) };
 }
@@ -172,10 +179,12 @@ async function markWithdrawalFailed(adminUserId, withdrawalId, reason) {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
   );
-  await logAudit("withdrawal.mark_failed", {
+  await logAudit(AUDIT_ACTIONS.WITHDRAWAL_MARK_FAILED, {
     userId: adminUserId,
-    metadata: {
-      withdrawalId: id,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.WITHDRAWAL,
+    entityId: id,
+    newValue: {
       providerId: wr.providerId,
       amount: Number(wr.amount),
       reason: note,

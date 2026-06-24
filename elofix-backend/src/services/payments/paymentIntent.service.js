@@ -14,6 +14,8 @@ const {
 } = require("./paymentConfig");
 const escrowSettlement = require("./escrowSettlement.service");
 const webhookService = require("./webhook.service");
+const { logAudit } = require("../auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
 
 function serializeIntent(row) {
   if (!row) return null;
@@ -407,6 +409,13 @@ async function adminForceSettle(intentId, adminUserId) {
 
   const out = await webhookService.processWebhookResult(intent.provider, verifyResult);
   const fresh = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
+  await logAudit(AUDIT_ACTIONS.ADMIN_PAYMENT_FORCE_SETTLE, {
+    userId: adminUserId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: intentId,
+    newValue: { state: fresh?.state, webhook: out?.result?.state },
+  });
   return { intent: serializeIntent(fresh), webhook: out };
 }
 

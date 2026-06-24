@@ -1,0 +1,22 @@
+import { createLegalPage } from './LegalDocumentPage';
+
+export const TermsPage = createLegalPage('terms');
+export const PrivacyPage = createLegalPage('privacy');
+export const ProviderAgreementPage = createLegalPage('provider-agreement');
+export const RefundPolicyPage = createLegalPage('refund-policy');
+export const JobCompletionVerificationPage = createLegalPage('job-completion-verification');
+export const EscrowPolicyPage = createLegalPage('escrow-policy');
+export const DisputeResolutionPage = createLegalPage('dispute-resolution');
+export const AdminInvestigationPage = createLegalPage('admin-investigation');
+export const CorrectiveWorkPage = createLegalPage('corrective-work');
+export const PortfolioContentRightsPage = createLegalPage('portfolio-content-rights');
+export const ProviderVerificationPage = createLegalPage('provider-verification');
+export const FraudPreventionPage = createLegalPage('fraud-prevention');
+export const DeviceSecurityPage = createLegalPage('device-security');
+export const ProviderReputationPage = createLegalPage('provider-reputation');
+export const SupplierAgreementPage = createLegalPage('supplier-agreement');
+export const SupplierParticipationPage = createLegalPage('supplier-participation');
+export const DataProcessingPage = createLegalPage('data-processing');
+export const CommunityStandardsPage = createLegalPage('community-standards');
+export const CookiePolicyPage = createLegalPage('cookie-policy');
+export const PlatformActivityRecordsPage = createLegalPage('platform-activity-records');

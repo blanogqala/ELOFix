@@ -1,13 +1,6 @@
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
-const LEGAL_LINKS = [
-  { to: '/terms', label: 'Terms of Service' },
-  { to: '/privacy', label: 'Privacy Policy' },
-  { to: '/provider-agreement', label: 'Provider Agreement' },
-  { to: '/refund-policy', label: 'Refund Policy' },
-] as const;
-
 interface LegalFooterLinksProps {
   className?: string;
   variant?: 'default' | 'muted' | 'inverse';
@@ -26,14 +19,27 @@ export function LegalFooterLinks({
     variant === 'default' && 'text-muted-foreground hover:text-primary'
   );
 
+  const links = (
+    <>
+      <Link to="/legal" className={linkClass}>
+        All Legal Policies
+      </Link>
+      <Link to="/terms" className={linkClass}>
+        Terms
+      </Link>
+      <Link to="/privacy" className={linkClass}>
+        Privacy
+      </Link>
+      <Link to="/refund-policy" className={linkClass}>
+        Refunds
+      </Link>
+    </>
+  );
+
   if (layout === 'stack') {
     return (
       <nav className={cn('flex flex-col gap-2 text-sm', className)} aria-label="Legal">
-        {LEGAL_LINKS.map((link) => (
-          <Link key={link.to} to={link.to} className={linkClass}>
-            {link.label}
-          </Link>
-        ))}
+        {links}
       </nav>
     );
   }
@@ -43,26 +49,14 @@ export function LegalFooterLinks({
       className={cn('flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs sm:text-sm', className)}
       aria-label="Legal"
     >
-      {LEGAL_LINKS.map((link, index) => (
-        <span key={link.to} className="inline-flex items-center gap-3">
-          {index > 0 && (
-            <span
-              className={cn(
-                'hidden sm:inline',
-                variant === 'inverse' ? 'text-primary-foreground/30' : 'text-border'
-              )}
-              aria-hidden
-            >
-              ·
-            </span>
-          )}
-          <Link to={link.to} className={linkClass}>
-            {link.label}
-          </Link>
-        </span>
-      ))}
+      <span className="inline-flex items-center gap-3">{links}</span>
     </nav>
   );
 }
 
-export { LEGAL_LINKS };
+export const LEGAL_LINKS = [
+  { to: '/legal', label: 'All Legal Policies' },
+  { to: '/terms', label: 'Terms of Service' },
+  { to: '/privacy', label: 'Privacy Policy' },
+  { to: '/refund-policy', label: 'Refund Policy' },
+] as const;

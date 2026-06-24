@@ -309,7 +309,7 @@ async function handleGoogleCallback(query = {}) {
   }
 }
 
-async function exchangeGoogleSession(exchangeToken) {
+async function exchangeGoogleSession(exchangeToken, auditContext = {}) {
   const payload = verifyExchangeToken(exchangeToken);
 
   const user = await prisma.user.findUnique({
@@ -322,6 +322,19 @@ async function exchangeGoogleSession(exchangeToken) {
   }
 
   const token = authService.signToken(user);
+
+  const { logAudit } = require("./auditLog.service");
+  const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
+  await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_SUCCESS, {
+    userId: user.id,
+    actorUser: { role: user.role },
+    entityType: ENTITY_TYPES.USER,
+    entityId: user.id,
+    newValue: { role: user.role, method: "google" },
+    ipAddress: auditContext.ipAddress || null,
+    deviceFingerprint: auditContext.deviceFingerprint || null,
+  });
+
   return { user, token };
 }
 

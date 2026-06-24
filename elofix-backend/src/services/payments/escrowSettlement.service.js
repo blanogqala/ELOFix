@@ -71,7 +71,7 @@ async function settleLaborFromIntent(tx, intent, gatewayPayload) {
   });
 
   const updated = await tx.job.findUnique({ where: { id: jobId } });
-  return { alreadySettled: false, job: updated };
+  return { alreadySettled: false, job: updated, settledAudit: { intentId: intent.id, userId: intent.userId, jobId, amount: Number(intent.amount) } };
 }
 
 /**
@@ -183,9 +183,12 @@ async function settleJobStoreOrderFromIntent(intent) {
 
 /**
  * After job second tranche, sync PaymentIntent escrow flags.
+ * @param {string} jobId
+ * @param {import("@prisma/client").Prisma.TransactionClient} [tx]
  */
-async function markLaborEscrowFullyReleased(jobId) {
-  await prisma.paymentIntent.updateMany({
+async function markLaborEscrowFullyReleased(jobId, tx) {
+  const client = tx || prisma;
+  await client.paymentIntent.updateMany({
     where: {
       jobId: String(jobId),
       kind: "LABOR",

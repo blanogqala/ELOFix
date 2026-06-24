@@ -1,4 +1,13 @@
-const PUBLIC_OR_INVALID_PATHS = ['/', '/login', '/register', '/unauthorized', '/auth/google/callback'];
+const PUBLIC_OR_INVALID_PATHS = [
+  '/',
+  '/login',
+  '/register',
+  '/unauthorized',
+  '/auth/google/callback',
+  '/forgot-password',
+  '/reset-password',
+  '/auth/success',
+];
 
 /** Detail routes should not be restored after login — the resource may no longer exist. */
 function isEntityDetailPath(role: string, path: string): boolean {

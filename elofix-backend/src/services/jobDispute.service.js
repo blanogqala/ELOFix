@@ -10,6 +10,7 @@ const {
   enrichJob,
 } = require("./jobMeta.service");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const notificationEvents = require("./notificationEvents.service");
 const providerTrustScore = require("./providerTrustScore.service");
 const jobCompletionEvidence = require("./jobCompletionEvidence.service");
@@ -222,9 +223,11 @@ async function openDispute(jobId, customerUserId, payload) {
     console.warn("[jobDispute] markIntentDisputed failed", e?.message || e);
   }
 
-  await logAudit(reopening ? "dispute.reopened" : "dispute.opened", {
+  await logAudit(reopening ? AUDIT_ACTIONS.DISPUTE_REOPENED : AUDIT_ACTIONS.DISPUTE_OPENED, {
     userId: customerUserId,
-    metadata: { jobId, disputeId: dispute.id, requestedResolution, reopened: reopening },
+    entityType: ENTITY_TYPES.DISPUTE,
+    entityId: dispute.id,
+    newValue: { jobId, requestedResolution, reopened: reopening },
   });
 
   await notificationEvents.notifyDisputeOpened({

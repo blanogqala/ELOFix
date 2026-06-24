@@ -6,6 +6,7 @@ const supplierService = require("./supplier.service");
 const notificationService = require("./notification.service");
 const trackingService = require("./tracking.service");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const paymentService = require("./payment.service");
 const branchService = require("./branch.service");
 const branchStaffNotificationService = require("./branchStaffNotification.service");
@@ -2453,9 +2454,11 @@ async function reportDeliveryIssue(orderId, customerUserId, { reason, details } 
     console.error("reportDeliveryIssue notify", e);
   }
 
-  await logAudit("material_order.delivery_issue", {
+  await logAudit(AUDIT_ACTIONS.MATERIAL_ORDER_DELIVERY_ISSUE, {
     userId: customerUserId,
-    metadata: { orderId: oid, reason: reasonKey },
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: oid,
+    newValue: { reason: reasonKey },
   });
 
   return enrichOrderFromDbRow({ ...row, payload: nextPayload }, nextPayload);
@@ -2764,10 +2767,11 @@ async function cancelMaterialOrderAsSupplier(orderId, supplierId, supplierUserId
   } catch (e) {
     console.error("notifySupplierCancelMaterialOrder", e);
   }
-  await logAudit("material_order.cancel.supplier", {
+  await logAudit(AUDIT_ACTIONS.MATERIAL_ORDER_CANCEL_SUPPLIER, {
     userId: supplierUserId,
-    metadata: {
-      orderId,
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: String(orderId),
+    newValue: {
       supplierId,
       reason: reason || null,
       refundAmount: outcome.refund.amount,
@@ -2815,10 +2819,11 @@ async function cancelMaterialOrderAsCustomer(orderId, customerUserId, reason) {
   } catch (e) {
     console.error("notifyCustomerCancelMaterialOrder", e);
   }
-  await logAudit("material_order.cancel.customer", {
+  await logAudit(AUDIT_ACTIONS.MATERIAL_ORDER_CANCEL_CUSTOMER, {
     userId: customerUserId,
-    metadata: {
-      orderId,
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: String(orderId),
+    newValue: {
       reason: reason || null,
       refundAmount: outcome.refund.amount,
       refundStatus: outcome.refund.status,

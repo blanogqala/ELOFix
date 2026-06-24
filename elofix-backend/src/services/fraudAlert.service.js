@@ -1,6 +1,7 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const notificationEvents = require("./notificationEvents.service");
 const providerTrustScore = require("./providerTrustScore.service");
 
@@ -47,16 +48,16 @@ async function createAlert({
     }
   }
 
-  try {
-    await logAudit("fraud_alert_created", userId, {
-      alertId: row.id,
+  await logAudit(AUDIT_ACTIONS.FRAUD_ALERT_CREATED, {
+    userId: userId || null,
+    entityType: ENTITY_TYPES.FRAUD_ALERT,
+    entityId: row.id,
+    newValue: {
       alertType: type,
       providerId,
       severity: row.severity,
-    });
-  } catch (_) {
-    /* audit optional */
-  }
+    },
+  });
 
   notificationEvents.notifyAdminFraudAlert(row).catch(() => {});
 
@@ -70,19 +71,21 @@ async function updateAlertStatus(alertId, { status, reviewedBy, notes }) {
     throw new Error(`Invalid fraud alert status: ${status}`);
   }
 
+  const existing = await prisma.fraudAlert.findUnique({ where: { id: alertId } });
+  if (!existing) throw new Error("Fraud alert not found");
+
   const data = {
     status: nextStatus,
     reviewedBy: reviewedBy || null,
     reviewedAt: reviewedBy ? new Date() : undefined,
   };
   if (notes != null) {
-    const existing = await prisma.fraudAlert.findUnique({ where: { id: alertId } });
     const meta = existing?.metadata && typeof existing.metadata === "object" ? { ...existing.metadata } : {};
     meta.reviewNotes = String(notes);
     data.metadata = meta;
   }
 
-  return prisma.fraudAlert.update({
+  const updated = await prisma.fraudAlert.update({
     where: { id: alertId },
     data,
     include: {
@@ -97,6 +100,16 @@ async function updateAlertStatus(alertId, { status, reviewedBy, notes }) {
       },
     },
   });
+
+  await logAudit(AUDIT_ACTIONS.FRAUD_ALERT_UPDATED, {
+    userId: reviewedBy || null,
+    entityType: ENTITY_TYPES.FRAUD_ALERT,
+    entityId: alertId,
+    oldValue: { status: existing.status },
+    newValue: { status: nextStatus, notes: notes != null ? String(notes) : undefined },
+  });
+
+  return updated;
 }
 
 async function getAlertById(alertId) {

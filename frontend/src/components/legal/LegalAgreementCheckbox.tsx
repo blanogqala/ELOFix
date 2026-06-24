@@ -8,7 +8,7 @@ import {
 } from '@/lib/legal/versions';
 
 interface LegalAgreementCheckboxProps {
-  role: 'user' | 'provider';
+  role: 'user' | 'provider' | 'supplier';
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
@@ -46,6 +46,17 @@ export function LegalAgreementCheckbox({
     </>
   );
 
+  const supplierLabel = (
+    <>
+      I agree to the {renderDocLink('terms')}, {renderDocLink('privacy')},{' '}
+      {renderDocLink('supplier-agreement', 'Supplier Agreement')}, and{' '}
+      {renderDocLink('supplier-participation', 'Supplier Participation Policy')}
+    </>
+  );
+
+  const label =
+    role === 'provider' ? providerLabel : role === 'supplier' ? supplierLabel : customerLabel;
+
   return (
     <div className="flex items-start gap-3">
       <Checkbox
@@ -62,7 +73,7 @@ export function LegalAgreementCheckbox({
           disabled ? 'text-muted-foreground/70 cursor-not-allowed' : 'text-muted-foreground cursor-pointer'
         )}
       >
-        {role === 'provider' ? providerLabel : customerLabel}
+        {label}
       </label>
     </div>
   );

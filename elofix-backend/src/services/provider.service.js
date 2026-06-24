@@ -3,6 +3,8 @@ const AppError = require("../utils/AppError");
 const notificationEvents = require("./notificationEvents.service");
 const fraudDetection = require("./fraudDetection.service");
 const providerTrustScore = require("./providerTrustScore.service");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const { getTrustLevel } = require("../utils/trustLevel.util");
 const { sha256File } = require("../utils/identityHash.util");
 const fs = require("fs");
@@ -1189,7 +1191,7 @@ function assertRequiredDocsForApproval(profile) {
   }
 }
 
-async function approveProviderDocumentByUserId(targetUserId, docType) {
+async function approveProviderDocumentByUserId(targetUserId, docType, auditOpts = {}) {
   if (!DOCUMENT_TYPES.includes(docType)) {
     throw new AppError("Invalid document type", 400);
   }
@@ -1223,10 +1225,20 @@ async function approveProviderDocumentByUserId(targetUserId, docType) {
   await persistProfileCompleted(profile.id);
   if (docType === "idDoc") await providerTrustScore.onVerifiedId(profile.id);
   if (docType === "companyReg") await providerTrustScore.onVerifiedCompany(profile.id);
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_DOC_APPROVED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { docType, status: existing?.status || null },
+    newValue: { docType, status: "approved" },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
   return getProviderById(targetUserId);
 }
 
-async function rejectProviderDocumentByUserId(targetUserId, docType, feedback) {
+async function rejectProviderDocumentByUserId(targetUserId, docType, feedback, auditOpts = {}) {
   if (!DOCUMENT_TYPES.includes(docType)) {
     throw new AppError("Invalid document type", 400);
   }
@@ -1252,10 +1264,20 @@ async function rejectProviderDocumentByUserId(targetUserId, docType, feedback) {
     data: { documents: next },
   });
   await persistProfileCompleted(profile.id);
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_DOC_REJECTED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { docType, status: existing?.status || null },
+    newValue: { docType, status: "rejected", feedback: String(feedback || "").trim() || null },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
   return getProviderById(targetUserId);
 }
 
-async function approveProviderByUserId(targetUserId) {
+async function approveProviderByUserId(targetUserId, auditOpts = {}) {
   const profile = await loadProviderBundleByUserId(targetUserId);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -1276,10 +1298,21 @@ async function approveProviderByUserId(targetUserId) {
 
   await notificationEvents.notifyProviderApproved(targetUserId);
 
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_APPROVED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { approved: profile.approved },
+    newValue: { approved: true },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
+
   return getProviderById(targetUserId);
 }
 
-async function rejectProviderByUserId(targetUserId, reason) {
+async function rejectProviderByUserId(targetUserId, reason, auditOpts = {}) {
   const profile = await loadProviderBundleByUserId(targetUserId);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -1294,10 +1327,21 @@ async function rejectProviderByUserId(targetUserId, reason) {
     },
   });
 
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_REJECTED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { approved: profile.approved },
+    newValue: { approved: false, rejectionReason: String(reason || "").trim() || null },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
+
   return getProviderById(targetUserId);
 }
 
-async function blockProviderByUserId(targetUserId) {
+async function blockProviderByUserId(targetUserId, auditOpts = {}) {
   const profile = await loadProviderBundleByUserId(targetUserId);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -1308,10 +1352,21 @@ async function blockProviderByUserId(targetUserId) {
     data: { blocked: true },
   });
 
+  await logAudit(AUDIT_ACTIONS.ADMIN_PROVIDER_BLOCKED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { blocked: profile.blocked },
+    newValue: { blocked: true },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
+
   return getProviderById(targetUserId);
 }
 
-async function unblockProviderByUserId(targetUserId) {
+async function unblockProviderByUserId(targetUserId, auditOpts = {}) {
   const profile = await loadProviderBundleByUserId(targetUserId);
   if (!profile) {
     throw new AppError("Provider not found", 404);
@@ -1320,6 +1375,17 @@ async function unblockProviderByUserId(targetUserId) {
   await prisma.provider.update({
     where: { id: profile.id },
     data: { blocked: false },
+  });
+
+  await logAudit(AUDIT_ACTIONS.ADMIN_PROVIDER_UNBLOCKED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: { blocked: profile.blocked },
+    newValue: { blocked: false },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
   });
 
   return getProviderById(targetUserId);

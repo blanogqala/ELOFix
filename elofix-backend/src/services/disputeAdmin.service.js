@@ -6,6 +6,7 @@ const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const {
   getJobMeta,
   mutateJobMetaInTransaction,
@@ -153,6 +154,12 @@ async function updateDisputeStatus(adminUserId, disputeId, status, adminNotes) {
   const st = String(status || "").trim().toUpperCase();
   if (!valid.includes(st)) throw new AppError("Invalid status", 400);
 
+  const before = await prisma.jobDispute.findUnique({
+    where: { id: String(disputeId) },
+    select: { id: true, status: true },
+  });
+  if (!before) throw new AppError("Dispute not found", 404);
+
   const row = await prisma.jobDispute.update({
     where: { id: String(disputeId) },
     data: {
@@ -171,9 +178,13 @@ async function updateDisputeStatus(adminUserId, disputeId, status, adminNotes) {
     });
   }
 
-  await logAudit("dispute.status_update", {
+  await logAudit(AUDIT_ACTIONS.DISPUTE_STATUS_UPDATE, {
     userId: adminUserId,
-    metadata: { disputeId: row.id, status: st },
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.DISPUTE,
+    entityId: row.id,
+    oldValue: { status: before.status },
+    newValue: { status: st, adminNotes: adminNotes != null ? String(adminNotes) : undefined },
   });
 
   return getDisputeDetail(row.id);
@@ -222,7 +233,7 @@ async function resolveDispute(adminUserId, disputeId, payload) {
             jobId: job.id,
           });
           const escrowSettlement = require("./payments/escrowSettlement.service");
-          await escrowSettlement.markLaborEscrowFullyReleased(job.id);
+          await escrowSettlement.markLaborEscrowFullyReleased(job.id, tx);
         }
         await tx.job.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
         await mutateJobMetaInTransaction(tx, job.id, (m) => {
@@ -343,9 +354,12 @@ async function resolveDispute(adminUserId, disputeId, payload) {
     }
   }
 
-  await logAudit("dispute.resolved", {
+  await logAudit(AUDIT_ACTIONS.DISPUTE_RESOLVED, {
     userId: adminUserId,
-    metadata: { disputeId: dispute.id, action, amount },
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.DISPUTE,
+    entityId: dispute.id,
+    newValue: { action, amount },
   });
 
   return getDisputeDetail(dispute.id);

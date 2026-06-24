@@ -14,11 +14,13 @@ const {
   normalizeMeta,
   toFrontendStatus,
   isTerminalJobState,
+  appendTimelineEventIfAbsent,
 } = require("./jobMeta.service");
 const earningService = require("./earning.service");
 const paymentService = require("./payment.service");
 const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
@@ -1428,9 +1430,11 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
 
   const { jobRow, meta } = txResult;
   const enriched = await finalizeJob(jobRow, meta);
-  await logAudit("payment.pay_labor", {
+  await logAudit(AUDIT_ACTIONS.PAYMENT_PAY_LABOR, {
     userId,
-    metadata: { jobId, amount, providerId: providerRow.id },
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: jobId,
+    newValue: { jobId, amount, providerId: providerRow.id },
   });
   if (job.providerId) {
     await notificationEvents.notifyPaymentMade(
@@ -1951,19 +1955,23 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
       if (!j0) {
         throw new AppError("Job not found", 404);
       }
-      const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) =>
-        withStatusAndProgress(
-          {
-            ...m,
-            completionConfirmedByUser: true,
-            userRating: roundedRating,
-            userReview: review,
-            confirmationDeadlineAt: null,
-          },
-          "COMPLETED",
-          updated0
-        )
-      );
+      const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) => {
+        let patched = {
+          ...m,
+          completionConfirmedByUser: true,
+          userRating: roundedRating,
+          userReview: review,
+          confirmationDeadlineAt: null,
+        };
+        if (autoCompleted) {
+          patched = appendTimelineEventIfAbsent(patched, {
+            type: "AUTO_ACCEPTED",
+            at: paymentReleasedAt.toISOString(),
+            source: "completion_deadline_cron",
+          });
+        }
+        return withStatusAndProgress(patched, "COMPLETED", updated0);
+      });
       if (job.providerId) {
         await jobCompletionEvidence.createEvidenceInTransaction(tx, {
           jobId,
@@ -2006,7 +2014,7 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
             jobId,
           });
           const escrowSettlement = require("./payments/escrowSettlement.service");
-          await escrowSettlement.markLaborEscrowFullyReleased(jobId);
+          await escrowSettlement.markLaborEscrowFullyReleased(jobId, tx);
         }
       }
       return { updated: updated0, meta: meta0 };
@@ -2019,9 +2027,11 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
   );
 
   if (!autoCompleted) {
-    await logAudit("review.upsert", {
+    await logAudit(AUDIT_ACTIONS.REVIEW_UPSERT, {
       userId: job.customerId,
-      metadata: { jobId, rating: roundedRating },
+      entityType: ENTITY_TYPES.JOB,
+      entityId: jobId,
+      newValue: { rating: roundedRating },
     });
   }
 
@@ -2061,6 +2071,7 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
 async function autoCompleteJobAfterDeadline(jobId) {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return null;
+  if (job.escrowSecondReleaseDone) return null;
   const meta = await getJobMeta(jobId);
   const { toFrontendStatus } = require("./jobMeta.service");
   if (toFrontendStatus(job.status, meta) !== "AWAITING_CONFIRMATION") return null;
@@ -2075,6 +2086,20 @@ async function autoCompleteJobAfterDeadline(jobId) {
     images: [],
     videos: [],
     autoCompleted: true,
+  });
+
+  if (!result) return null;
+
+  await logAudit(AUDIT_ACTIONS.JOB_AUTO_ACCEPTED, {
+    actorType: "SYSTEM",
+    entityType: ENTITY_TYPES.JOB,
+    entityId: jobId,
+    newValue: {
+      customerId: job.customerId,
+      providerId: job.providerId,
+      confirmationDeadlineAt: meta.confirmationDeadlineAt,
+      escrowSecondReleaseDone: true,
+    },
   });
 
   if (job.customerId) {
@@ -2865,9 +2890,11 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
   }
 
   const { jobRow, meta, release } = txResult;
-  await logAudit("payment.release_escrow", {
+  await logAudit(AUDIT_ACTIONS.PAYMENT_RELEASE_ESCROW, {
     userId: actingUserId != null ? String(actingUserId) : null,
-    metadata: { jobId, amount: release, providerId: providerRow.id },
+    entityType: ENTITY_TYPES.JOB,
+    entityId: jobId,
+    newValue: { jobId, amount: release, providerId: providerRow.id },
   });
 
   return finalizeJob(jobRow, meta);

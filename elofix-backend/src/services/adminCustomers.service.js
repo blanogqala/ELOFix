@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const jobMeta = require("./jobMeta.service");
 const AppError = require("../utils/AppError");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const {
   netLaborPaidFromMeta,
   paidMaterialAmountFromMeta,
@@ -376,29 +378,59 @@ async function loadCustomerUser(userId) {
   return user;
 }
 
-async function blockCustomerByUserId(userId) {
-  await loadCustomerUser(userId);
+async function blockCustomerByUserId(userId, auditOpts = {}) {
+  const user = await loadCustomerUser(userId);
   await prisma.user.update({
     where: { id: userId },
     data: { blocked: true },
   });
-  return getCustomerById(userId);
-}
-
-async function unblockCustomerByUserId(userId) {
-  await loadCustomerUser(userId);
-  await prisma.user.update({
-    where: { id: userId },
-    data: { blocked: false },
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_CUSTOMER_BLOCKED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.USER,
+    entityId: userId,
+    oldValue: { blocked: user.blocked },
+    newValue: { blocked: true },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
   });
   return getCustomerById(userId);
 }
 
-async function softDeleteCustomerByUserId(userId) {
-  await loadCustomerUser(userId);
+async function unblockCustomerByUserId(userId, auditOpts = {}) {
+  const user = await loadCustomerUser(userId);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { blocked: false },
+  });
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_CUSTOMER_UNBLOCKED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.USER,
+    entityId: userId,
+    oldValue: { blocked: user.blocked },
+    newValue: { blocked: false },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
+  return getCustomerById(userId);
+}
+
+async function softDeleteCustomerByUserId(userId, auditOpts = {}) {
+  const user = await loadCustomerUser(userId);
   await prisma.user.update({
     where: { id: userId },
     data: { deletedAt: new Date(), blocked: true },
+  });
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_CUSTOMER_DELETED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.USER,
+    entityId: userId,
+    oldValue: { deletedAt: user.deletedAt, blocked: user.blocked },
+    newValue: { deletedAt: new Date().toISOString(), blocked: true },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
   });
   return getCustomerById(userId);
 }

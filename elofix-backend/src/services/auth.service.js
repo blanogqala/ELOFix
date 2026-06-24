@@ -8,6 +8,14 @@ const branchUserService = require("./branchUser.service");
 const { validateLegalAcceptance } = require("./legalAcceptance.service");
 const fraudDetection = require("./fraudDetection.service");
 const { normalizePhone } = require("../utils/phoneNormalization.util");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
+
+function emailDomainOnly(email) {
+  const normalized = String(email || "").toLowerCase().trim();
+  const at = normalized.indexOf("@");
+  return at > 0 ? normalized.slice(at + 1) : null;
+}
 
 const VALID_ROLES = ["CUSTOMER", "PROVIDER", "ADMIN"];
 
@@ -137,8 +145,12 @@ async function register(body) {
   }
 }
 
-async function login(body) {
+async function login(body, auditContext = {}) {
   const { email, password } = body;
+  const auditBase = {
+    ipAddress: auditContext.ipAddress || null,
+    deviceFingerprint: auditContext.deviceFingerprint || null,
+  };
 
   if (!email || !password) {
     throw new AppError("Email and password are required");
@@ -157,13 +169,31 @@ async function login(body) {
       include: { branch: { select: { supplierId: true } } },
     });
     if (!branchUser) {
+      await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_FAILED, {
+        ...auditBase,
+        entityType: ENTITY_TYPES.USER,
+        newValue: { reason: "invalid_credentials", emailDomain: emailDomainOnly(normalizedEmail) },
+      });
       throw new AppError("Invalid email or password", 401);
     }
     const matchBu = await bcrypt.compare(password, branchUser.password);
     if (!matchBu) {
+      await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_FAILED, {
+        ...auditBase,
+        entityType: ENTITY_TYPES.USER,
+        newValue: { reason: "invalid_credentials", emailDomain: emailDomainOnly(normalizedEmail) },
+      });
       throw new AppError("Invalid email or password", 401);
     }
     const token = signBranchStaffToken(branchUser, branchUser.branch.supplierId);
+    await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_SUCCESS, {
+      ...auditBase,
+      userId: branchUser.id,
+      actorType: ACTOR_TYPES.BRANCH_STAFF,
+      entityType: ENTITY_TYPES.USER,
+      entityId: branchUser.id,
+      newValue: { role: "BRANCH_STAFF", branchId: branchUser.branchId },
+    });
     return {
       user: {
         id: branchUser.id,
@@ -181,18 +211,52 @@ async function login(body) {
   }
 
   if (!user.password) {
+    await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_FAILED, {
+      ...auditBase,
+      userId: user.id,
+      entityType: ENTITY_TYPES.USER,
+      entityId: user.id,
+      newValue: { reason: "google_only" },
+    });
     throw new AppError("This account uses Google sign-in. Please continue with Google.", 401);
   }
 
   const match = await bcrypt.compare(password, user.password);
   if (!match) {
+    await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_FAILED, {
+      ...auditBase,
+      userId: user.id,
+      entityType: ENTITY_TYPES.USER,
+      entityId: user.id,
+      newValue: { reason: "invalid_credentials", emailDomain: emailDomainOnly(normalizedEmail) },
+    });
     throw new AppError("Invalid email or password", 401);
   }
 
-  assertCustomerAccountActive(user);
+  try {
+    assertCustomerAccountActive(user);
+  } catch (err) {
+    await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_FAILED, {
+      ...auditBase,
+      userId: user.id,
+      entityType: ENTITY_TYPES.USER,
+      entityId: user.id,
+      newValue: { reason: user.deletedAt ? "deleted" : "blocked" },
+    });
+    throw err;
+  }
 
   const { password: _p, ...safe } = user;
   const token = signToken(user);
+
+  await logAudit(AUDIT_ACTIONS.AUTH_LOGIN_SUCCESS, {
+    ...auditBase,
+    userId: user.id,
+    actorUser: { role: user.role },
+    entityType: ENTITY_TYPES.USER,
+    entityId: user.id,
+    newValue: { role: user.role },
+  });
 
   return { user: safe, token };
 }
@@ -258,7 +322,19 @@ async function getMe(ctx) {
   return { user: safe };
 }
 
-async function changePassword(ctx, body = {}) {
+async function logout(ctx, auditContext = {}) {
+  await logAudit(AUDIT_ACTIONS.AUTH_LOGOUT, {
+    userId: ctx.userId,
+    actorUser: { role: ctx.role },
+    entityType: ENTITY_TYPES.USER,
+    entityId: ctx.userId,
+    ipAddress: auditContext.ipAddress || null,
+    deviceFingerprint: auditContext.deviceFingerprint || null,
+  });
+  return true;
+}
+
+async function changePassword(ctx, body = {}, auditContext = {}) {
   if (ctx.role === "BRANCH_STAFF") {
     return branchUserService.updateBranchStaffPassword(ctx.userId, body);
   }
@@ -285,12 +361,21 @@ async function changePassword(ctx, body = {}) {
     where: { id: ctx.userId },
     data: { password: await bcrypt.hash(String(newPassword), 12) },
   });
+  await logAudit(AUDIT_ACTIONS.AUTH_PASSWORD_CHANGED, {
+    userId: ctx.userId,
+    actorUser: { role: ctx.role },
+    entityType: ENTITY_TYPES.USER,
+    entityId: ctx.userId,
+    ipAddress: auditContext.ipAddress || null,
+    deviceFingerprint: auditContext.deviceFingerprint || null,
+  });
   return true;
 }
 
 module.exports = {
   register,
   login,
+  logout,
   getMe,
   changePassword,
   signToken,

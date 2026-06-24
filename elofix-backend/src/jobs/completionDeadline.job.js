@@ -1,39 +1,62 @@
 const prisma = require("../config/prisma");
-const { getJobMeta, toFrontendStatus } = require("../services/jobMeta.service");
+const { getJobMeta } = require("../services/jobMeta.service");
+const { isEligibleForAutoAccept } = require("../utils/completionDeadline.util");
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const BATCH_SIZE = 200;
+const MAX_BATCHES = 5;
 
 async function processStaleConfirmations() {
-  let jobs;
-  try {
-    jobs = await prisma.job.findMany({
-      where: {
-        status: { in: ["IN_PROGRESS", "ACCEPTED"] },
-        laborPaid: true,
-      },
-      select: { id: true, status: true, meta: true, customerId: true, providerId: true, title: true },
-      take: 200,
-    });
-  } catch (e) {
-    console.warn("[completionDeadline] query failed", e?.message || e);
-    return;
-  }
-
+  const stats = { scanned: 0, autoAccepted: 0, skipped: 0, errors: 0 };
   const jobService = require("../services/job.service");
   const now = Date.now();
+  let cursor = undefined;
 
-  for (const job of jobs) {
+  for (let batch = 0; batch < MAX_BATCHES; batch++) {
+    let jobs;
     try {
-      const meta = await getJobMeta(job.id);
-      const status = toFrontendStatus(job.status, meta);
-      if (status !== "AWAITING_CONFIRMATION") continue;
-      const deadline = meta.confirmationDeadlineAt ? new Date(meta.confirmationDeadlineAt).getTime() : 0;
-      if (!deadline || deadline > now) continue;
-      await jobService.autoCompleteJobAfterDeadline(job.id);
+      jobs = await prisma.job.findMany({
+        where: {
+          status: { in: ["IN_PROGRESS", "ACCEPTED"] },
+          laborPaid: true,
+        },
+        select: { id: true, status: true, meta: true, customerId: true, providerId: true, title: true },
+        orderBy: { createdAt: "asc" },
+        take: BATCH_SIZE,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      });
     } catch (e) {
-      console.error("[completionDeadline] failed for job", job.id, e?.message || e);
+      console.warn("[completionDeadline] query failed", e?.message || e);
+      return stats;
     }
+
+    if (jobs.length === 0) break;
+    cursor = jobs[jobs.length - 1].id;
+
+    for (const job of jobs) {
+      stats.scanned++;
+      try {
+        const meta = await getJobMeta(job.id);
+        if (!isEligibleForAutoAccept(job, meta, now)) {
+          stats.skipped++;
+          continue;
+        }
+        const result = await jobService.autoCompleteJobAfterDeadline(job.id);
+        if (result) stats.autoAccepted++;
+        else stats.skipped++;
+      } catch (e) {
+        stats.errors++;
+        console.error("[completionDeadline] failed for job", job.id, e?.message || e);
+      }
+    }
+
+    if (jobs.length < BATCH_SIZE) break;
   }
+
+  if (stats.autoAccepted > 0 || stats.errors > 0) {
+    console.log("[completionDeadline] tick summary", stats);
+  }
+  return stats;
 }
 
 function startCompletionDeadlineJob() {
@@ -55,4 +78,7 @@ function startCompletionDeadlineJob() {
   return () => clearInterval(id);
 }
 
-module.exports = { startCompletionDeadlineJob, processStaleConfirmations };
+module.exports = {
+  startCompletionDeadlineJob,
+  processStaleConfirmations,
+};

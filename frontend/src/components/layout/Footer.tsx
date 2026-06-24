@@ -14,6 +14,7 @@ const FOOTER_LINKS = {
     { to: '/login', label: 'Supplier Login' },
   ],
   legal: [
+    { to: '/legal', label: 'All Legal Policies' },
     { to: '/privacy', label: 'Privacy Policy' },
     { to: '/terms', label: 'Terms of Service' },
     { to: '/provider-agreement', label: 'Provider Agreement' },

@@ -12,13 +12,35 @@ import Landing from "./pages/Landing";
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
 import GoogleCallback from "./pages/auth/GoogleCallback";
+import ForgotPassword from "./pages/auth/ForgotPassword";
+import ResetPassword from "./pages/auth/ResetPassword";
+import AuthSuccess from "./pages/auth/AuthSuccess";
 import NotFound from "./pages/NotFound";
 import Unauthorized from "./pages/Unauthorized";
 import TrackDelivery from "./pages/TrackDelivery";
-import TermsPage from "./pages/legal/Terms";
-import PrivacyPage from "./pages/legal/Privacy";
-import ProviderAgreementPage from "./pages/legal/ProviderAgreement";
-import RefundPolicyPage from "./pages/legal/RefundPolicy";
+import LegalIndexPage from "./pages/legal/LegalIndex";
+import {
+  TermsPage,
+  PrivacyPage,
+  ProviderAgreementPage,
+  RefundPolicyPage,
+  JobCompletionVerificationPage,
+  EscrowPolicyPage,
+  DisputeResolutionPage,
+  AdminInvestigationPage,
+  CorrectiveWorkPage,
+  PortfolioContentRightsPage,
+  ProviderVerificationPage,
+  FraudPreventionPage,
+  DeviceSecurityPage,
+  ProviderReputationPage,
+  SupplierAgreementPage,
+  SupplierParticipationPage,
+  DataProcessingPage,
+  CommunityStandardsPage,
+  CookiePolicyPage,
+  PlatformActivityRecordsPage,
+} from "./pages/legal/pages";
 
 // User pages
 import UserDashboard from "./pages/user/Dashboard";
@@ -107,12 +129,32 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/auth/google/callback" element={<GoogleCallback />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/auth/success" element={<AuthSuccess />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
             <Route path="/track/:trackingId" element={<TrackDelivery />} />
+            <Route path="/legal" element={<LegalIndexPage />} />
             <Route path="/terms" element={<TermsPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/provider-agreement" element={<ProviderAgreementPage />} />
             <Route path="/refund-policy" element={<RefundPolicyPage />} />
+            <Route path="/job-completion-verification" element={<JobCompletionVerificationPage />} />
+            <Route path="/escrow-policy" element={<EscrowPolicyPage />} />
+            <Route path="/dispute-resolution" element={<DisputeResolutionPage />} />
+            <Route path="/admin-investigation" element={<AdminInvestigationPage />} />
+            <Route path="/corrective-work" element={<CorrectiveWorkPage />} />
+            <Route path="/portfolio-content-rights" element={<PortfolioContentRightsPage />} />
+            <Route path="/provider-verification" element={<ProviderVerificationPage />} />
+            <Route path="/fraud-prevention" element={<FraudPreventionPage />} />
+            <Route path="/device-security" element={<DeviceSecurityPage />} />
+            <Route path="/provider-reputation" element={<ProviderReputationPage />} />
+            <Route path="/supplier-agreement" element={<SupplierAgreementPage />} />
+            <Route path="/supplier-participation" element={<SupplierParticipationPage />} />
+            <Route path="/data-processing" element={<DataProcessingPage />} />
+            <Route path="/community-standards" element={<CommunityStandardsPage />} />
+            <Route path="/cookie-policy" element={<CookiePolicyPage />} />
+            <Route path="/platform-activity-records" element={<PlatformActivityRecordsPage />} />
 
             {/* User Routes */}
             <Route path="/user/dashboard" element={<AuthGuard allowedRoles={['user']}><UserDashboard /></AuthGuard>} />

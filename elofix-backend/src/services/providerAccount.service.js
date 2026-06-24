@@ -7,6 +7,7 @@ const bankCrypto = require("../utils/bankCrypto");
 const fraudDetection = require("./fraudDetection.service");
 const providerTrustScore = require("./providerTrustScore.service");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { enrichJob, normalizeMeta } = require("./jobMeta.service");
 
@@ -357,9 +358,11 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
   }
 
   const row = txResult.withdrawal;
-  await logAudit("withdrawal.request", {
+  await logAudit(AUDIT_ACTIONS.WITHDRAWAL_REQUEST, {
     userId,
-    metadata: { withdrawalId: row.id, providerId: provider.id, amount, autoPaid: true },
+    entityType: ENTITY_TYPES.WITHDRAWAL,
+    entityId: row.id,
+    newValue: { providerId: provider.id, amount, autoPaid: true },
   });
 
   return {

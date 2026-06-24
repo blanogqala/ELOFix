@@ -299,6 +299,14 @@ export async function changePassword(currentPassword: string, newPassword: strin
   await apiClient.post('/auth/change-password', { currentPassword, newPassword });
 }
 
+export async function requestPasswordReset(email: string): Promise<void> {
+  await apiClient.post('/auth/forgot-password', { email });
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await apiClient.post('/auth/reset-password', { token, newPassword });
+}
+
 function getApiBaseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 }
@@ -367,6 +375,12 @@ export function getCurrentSession(): AuthSession | null {
 }
 
 export function logout(): void {
+  const session = getFromStorage<AuthSession | null>(STORAGE_KEYS.AUTH, null);
+  if (session?.token) {
+    void apiClient.post('/auth/logout').catch(() => {
+      /* best-effort audit on sign-out */
+    });
+  }
   removeFromStorage(STORAGE_KEYS.AUTH);
 }
 

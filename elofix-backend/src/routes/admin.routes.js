@@ -92,4 +92,7 @@ router.patch(
   asyncHandler(adminController.patchProviderFraudReview)
 );
 
+router.get("/audit-logs", asyncHandler(adminController.listAuditLogs));
+router.get("/audit-logs/export", asyncHandler(adminController.exportAuditLogs));
+
 module.exports = router;

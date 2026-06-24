@@ -38,7 +38,12 @@ const apiClient = axios.create({
 
 function isAuthAttemptUrl(url) {
   const path = String(url || '');
-  return path.includes('/auth/login') || path.includes('/auth/register');
+  return (
+    path.includes('/auth/login') ||
+    path.includes('/auth/register') ||
+    path.includes('/auth/forgot-password') ||
+    path.includes('/auth/reset-password')
+  );
 }
 
 apiClient.interceptors.request.use(

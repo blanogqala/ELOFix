@@ -3,6 +3,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const {
   EPS,
   roundMoney,
@@ -97,10 +98,12 @@ async function processAdminJobRefund({
 
   const gatewayResult = await processGatewayRefundForJob(jobId, processedLaborNet);
 
-  await logAudit("admin.job_refund", {
+  await logAudit(AUDIT_ACTIONS.ADMIN_JOB_REFUND, {
     userId: adminUserId,
-    metadata: {
-      jobId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.JOB,
+    entityId: jobId,
+    newValue: {
       laborNet: processedLaborNet,
       materialsNet: processedMaterialsNet,
       escrowApplied,
