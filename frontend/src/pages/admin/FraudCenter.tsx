@@ -11,6 +11,7 @@ import {
   Users,
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { NotificationSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { FraudStatCard } from '@/components/fraud/FraudStatCard';
 import { FraudAlertBadge, formatAlertType } from '@/components/fraud/FraudAlertBadge';
@@ -86,7 +87,7 @@ export default function FraudCenter() {
         <div className="card-elevated p-6">
           <h2 className="font-semibold mb-4">Recent fraud alerts</h2>
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <NotificationSkeleton count={4} />
           ) : alerts.length === 0 ? (
             <p className="text-sm text-muted-foreground">No open alerts.</p>
           ) : (

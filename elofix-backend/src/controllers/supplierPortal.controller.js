@@ -1,5 +1,6 @@
 const AppError = require("../utils/AppError");
 const { registerUploadedFile } = require("../services/fileStorage.service");
+const { validateUploadedImageFile } = require("../utils/uploadSecurity.util");
 const supplierService = require("../services/supplier.service");
 const materialOrderService = require("../services/materialOrder.service");
 const supplierAnalyticsService = require("../services/supplierAnalytics.service");
@@ -254,6 +255,7 @@ async function uploadProductImage(req, res) {
   if (!req.file) {
     throw new AppError("File is required", 400);
   }
+  await validateUploadedImageFile(req.file);
   const stored = await registerUploadedFile(req.file, {
     ownerUserId: req.user.userId,
     type: "supplier_product",
@@ -265,6 +267,7 @@ async function uploadLogo(req, res) {
   if (!req.file) {
     throw new AppError("File is required", 400);
   }
+  await validateUploadedImageFile(req.file);
   const stored = await registerUploadedFile(req.file, {
     ownerUserId: req.user.userId,
     type: "supplier_logo",

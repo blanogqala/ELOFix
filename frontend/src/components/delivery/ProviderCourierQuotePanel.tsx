@@ -95,6 +95,35 @@ export function ProviderCourierQuotePanel({ deliveryRequest, onUpdated }: Provid
     );
   }
 
+  if (status === 'quoted') {
+    return (
+      <div className="card-elevated border border-primary/25 p-4 sm:p-6 space-y-3">
+        <div>
+          <h2 className="font-semibold text-lg">Delivery quote</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Quote sent — waiting for customer acceptance.
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm space-y-1">
+          <p>
+            Your fee: <strong>{formatCurrency(deliveryRequest.quotedFee || 0)}</strong>
+          </p>
+          {deliveryRequest.quoteNote ? (
+            <p className="text-muted-foreground text-xs">{deliveryRequest.quoteNote}</p>
+          ) : null}
+        </div>
+        <Button
+          variant="outline"
+          className="border-destructive/40 text-destructive"
+          disabled={busy}
+          onClick={() => void handleDecline()}
+        >
+          Decline
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="card-elevated border border-primary/25 p-4 sm:p-6 space-y-4">
       <div>

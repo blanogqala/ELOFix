@@ -124,8 +124,10 @@ export async function rejectProvider(userId: string, reason: string): Promise<Pr
   return data.provider;
 }
 
-export async function blockProvider(userId: string): Promise<Provider> {
-  const { data } = await apiClient.patch<ProviderResponse>(`/admin/providers/${userId}/block`);
+export async function blockProvider(userId: string, reason: string): Promise<Provider> {
+  const { data } = await apiClient.patch<ProviderResponse>(`/admin/providers/${userId}/block`, {
+    reason,
+  });
   if (!data?.provider) throw new Error('Failed to block provider');
   return data.provider;
 }
@@ -184,7 +186,8 @@ export async function updateProviderPortfolio(id: string, portfolioImages: strin
 export function recommendProviders(
   category: string,
   providers: Provider[],
-  measurements: Record<string, number>
+  measurements: Record<string, number>,
+  customerCity?: string
 ): Provider[] {
   void measurements;
   const eligible = providers.filter(
@@ -197,7 +200,17 @@ export function recommendProviders(
       provider.skills.includes(category)
   );
 
-  return [...eligible].sort((a, b) => {
+  const needle = (customerCity || '').trim().toLowerCase();
+  const areaFiltered = needle
+    ? eligible.filter((p) => {
+        const areas = [p.city, ...(p.serviceAreas ?? [])]
+          .filter(Boolean)
+          .map((a) => String(a).toLowerCase());
+        return areas.some((a) => a.includes(needle) || needle.includes(a));
+      })
+    : eligible;
+
+  return [...areaFiltered].sort((a, b) => {
     const reviewsA = a.totalReviews ?? a.reviews?.length ?? 0;
     const reviewsB = b.totalReviews ?? b.reviews?.length ?? 0;
     const scoreA = a.rating * 25 + reviewsA * 2 + a.completedJobs * 0.5;

@@ -57,7 +57,10 @@ export function breakdownTotal(breakdown: ProviderRatingBreakdown): number {
   return Object.values(breakdown).reduce((sum, n) => sum + (Number(n) || 0), 0);
 }
 
-export function breakdownPercent(breakdown: ProviderRatingBreakdown, star: 1 | 2 | 3 | 4 | 5): number {
+export function breakdownPercent(
+  breakdown: ProviderRatingBreakdown,
+  star: 0 | 1 | 2 | 3 | 4 | 5
+): number {
   const total = breakdownTotal(breakdown);
   if (total <= 0) return 0;
   return Math.round(((Number(breakdown[star]) || 0) / total) * 100);

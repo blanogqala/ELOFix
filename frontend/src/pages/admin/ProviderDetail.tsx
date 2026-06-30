@@ -18,7 +18,9 @@ import {
 } from '@/lib/api/providers';
 import { getCategories } from '@/lib/api/categories';
 import { getAdminProviderAnalytics, type AdminProviderAnalytics } from '@/lib/api/admin';
-import { Category, Provider } from '@/types';
+import { getProviderReviews } from '@/lib/api/providerReviews';
+import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
+import { Category, Provider, ProviderReview } from '@/types';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
@@ -38,6 +40,8 @@ import {
   ExternalLink,
   Images,
   Plus,
+  MessageSquare,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -163,9 +167,14 @@ export default function AdminProviderDetail() {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [blockReason, setBlockReason] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [reviewsDialogOpen, setReviewsDialogOpen] = useState(false);
+  const [customerReviews, setCustomerReviews] = useState<ProviderReview[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsSummary, setReviewsSummary] = useState({ averageRating: 0, totalReviews: 0 });
   const [docRejectTarget, setDocRejectTarget] = useState<AdminDocType | null>(null);
   const [docRejectFeedback, setDocRejectFeedback] = useState('');
 
@@ -216,6 +225,30 @@ export default function AdminProviderDetail() {
     }
     void loadCategories();
   }, [id, loadCategories, loadProvider, loadAnalytics]);
+
+  const openCustomerReviewsDialog = useCallback(async () => {
+    if (!provider?.id) return;
+    setReviewsDialogOpen(true);
+    setReviewsLoading(true);
+    try {
+      const res = await getProviderReviews(provider.id, { limit: 50 });
+      setCustomerReviews(res.reviews);
+      setReviewsSummary({
+        averageRating: res.averageRating,
+        totalReviews: res.totalReviews,
+      });
+    } catch (error) {
+      console.error('Failed to load customer reviews:', error);
+      setCustomerReviews([]);
+      toast({
+        title: 'Error',
+        description: 'Failed to load customer reviews.',
+        variant: 'destructive',
+      });
+    } finally {
+      setReviewsLoading(false);
+    }
+  }, [provider?.id, toast]);
 
   const getCategoryNames = (skills: string[]) =>
     skills
@@ -311,11 +344,19 @@ export default function AdminProviderDetail() {
 
   const handleBlock = async () => {
     if (!provider || isMutating) return;
+    if (!blockReason.trim()) {
+      toast({ title: 'Reason required', description: 'Please provide a reason for blocking this provider.', variant: 'destructive' });
+      return;
+    }
     try {
       setIsMutating(true);
-      await blockProvider(provider.id);
-      toast({ title: 'Provider blocked', description: 'The provider cannot accept jobs or request withdrawals.' });
+      await blockProvider(provider.id, blockReason.trim());
+      toast({
+        title: 'Provider blocked',
+        description: 'They can still sign in and view history, but cannot accept jobs or withdraw.',
+      });
       setBlockModalOpen(false);
+      setBlockReason('');
       await loadProvider();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to block provider.';
@@ -464,7 +505,7 @@ export default function AdminProviderDetail() {
                         : undefined
                     }
                   >
-                    <Check className="mr-1 h-3 w-3" />
+                    {isMutating ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Check className="mr-1 h-3 w-3" />}
                     Approve
                   </Button>
                 )}
@@ -488,6 +529,7 @@ export default function AdminProviderDetail() {
                     onClick={() => void handleUnblock()}
                     disabled={isMutating}
                   >
+                    {isMutating ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                     Unblock
                   </Button>
                 ) : (
@@ -662,15 +704,21 @@ export default function AdminProviderDetail() {
                   {provider.rating > 0 ? `${provider.rating.toFixed(1)} / 5` : 'N/A'}{' '}
                   ({provider.completedJobs} completed jobs)
                 </p>
-                {provider.reviews && provider.reviews.length > 0 && (
-                  <div className="mt-2 space-y-2">
-                    {provider.reviews.slice(0, 3).map(r => (
-                      <div key={r.id} className="p-2 bg-muted/50 rounded text-xs">
-                        <p className="font-medium">{r.userName} — {r.rating}★</p>
-                        <p className="text-muted-foreground">{r.comment}</p>
-                      </div>
-                    ))}
-                  </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {(provider.totalReviews ?? provider.reviews?.length ?? 0).toLocaleString()} review
+                  {(provider.totalReviews ?? provider.reviews?.length ?? 0) === 1 ? '' : 's'}
+                </p>
+                {(provider.totalReviews ?? provider.reviews?.length ?? 0) > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void openCustomerReviewsDialog()}
+                  >
+                    <MessageSquare className="mr-2 h-4 w-4" />
+                    View customer reviews
+                  </Button>
                 )}
               </div>
             </div>
@@ -820,6 +868,25 @@ export default function AdminProviderDetail() {
         </div>
 
         <Dialog
+          open={reviewsDialogOpen}
+          onOpenChange={setReviewsDialogOpen}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Customer reviews — {provider.name}</DialogTitle>
+              <DialogDescription>
+                {reviewsSummary.totalReviews > 0
+                  ? `${reviewsSummary.averageRating.toFixed(1)} avg · ${reviewsSummary.totalReviews} review${reviewsSummary.totalReviews === 1 ? '' : 's'}`
+                  : 'Reviews from customers after job confirmation or reported issues.'}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[70vh] overflow-y-auto pr-1">
+              <ProviderReviewList reviews={customerReviews} loading={reviewsLoading} />
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
           open={!!imagePreviewUrl}
           onOpenChange={(open) => {
             if (!open) setImagePreviewUrl(null);
@@ -901,6 +968,7 @@ export default function AdminProviderDetail() {
                 disabled={isMutating}
                 onClick={() => void handleRejectDocumentSubmit()}
               >
+                {isMutating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Reject document
               </Button>
             </DialogFooter>
@@ -934,6 +1002,7 @@ export default function AdminProviderDetail() {
                 Cancel
               </Button>
               <Button variant="destructive" onClick={() => void handleReject()} disabled={!rejectReason.trim() || isMutating}>
+                {isMutating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Reject Provider
               </Button>
             </DialogFooter>
@@ -946,14 +1015,26 @@ export default function AdminProviderDetail() {
             <DialogHeader>
               <DialogTitle>Block Provider</DialogTitle>
               <DialogDescription>
-                Blocked providers cannot log in, accept jobs, or interact with the system. You can unblock them later.
+                Blocked providers can still sign in and view history, but cannot receive new requests or
+                withdraw funds until unblocked.
               </DialogDescription>
             </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="provider-block-reason">Reason (required)</Label>
+              <Textarea
+                id="provider-block-reason"
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                placeholder="Explain why this provider is being blocked…"
+                rows={4}
+              />
+            </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setBlockModalOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={() => void handleBlock()} disabled={isMutating}>
+              <Button variant="destructive" onClick={() => void handleBlock()} disabled={!blockReason.trim() || isMutating}>
+                {isMutating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Block Provider
               </Button>
             </DialogFooter>
@@ -974,6 +1055,7 @@ export default function AdminProviderDetail() {
                 Cancel
               </Button>
               <Button variant="destructive" onClick={() => void handleDelete()} disabled={isMutating}>
+                {isMutating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Delete Provider
               </Button>
             </DialogFooter>

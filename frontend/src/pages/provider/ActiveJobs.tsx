@@ -17,7 +17,11 @@ import { useToast } from '@/hooks/use-toast';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { getJobDisplayStatusLabel, getProviderJobBadgeVariantForJob } from '@/lib/jobProgressDisplay';
 import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
-import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  RefundSummaryLine,
+  hasRefundDisplay,
+  isJobRefunded,
+} from '@/components/payments/RefundSummaryLine';
 import { ACTIVE_WORKFLOW_JOB_STATUSES, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
@@ -164,19 +168,25 @@ export default function ProviderActiveJobs() {
         )}
         {(() => {
           const { text, isPaid, refundAmount, refundStatus } = getProviderJobPriceDisplay(job);
-          const refunded =
-            refundAmount != null &&
-            refundAmount > 0 &&
-            ['processed', 'partial', 'gateway_failed'].includes(String(refundStatus || '').toLowerCase());
+          const showRefund = hasRefundDisplay({ refundAmount, refundStatus });
+          const processedRefund = isJobRefunded({ refundAmount, refundStatus });
           return (
             <>
               <p className="font-semibold tabular-nums">
                 {text}
-                {isPaid && !refunded ? <span className="ml-1 text-xs text-success">(Paid)</span> : null}
-                {isPaid && refunded ? <span className="ml-1 text-xs text-destructive">(Refunded)</span> : null}
+                {isPaid && !processedRefund ? <span className="ml-1 text-xs text-success">(Paid)</span> : null}
+                {isPaid && processedRefund ? (
+                  <span className="ml-1 text-xs text-destructive">(Refunded)</span>
+                ) : null}
               </p>
-              {refunded && (
-                <p className="text-xs text-destructive tabular-nums">−{formatCurrency(refundAmount!)} refund</p>
+              {showRefund && (
+                <p className="text-xs">
+                  <RefundSummaryLine
+                    refundAmount={refundAmount}
+                    refundStatus={refundStatus}
+                    variant="inline"
+                  />
+                </p>
               )}
             </>
           );

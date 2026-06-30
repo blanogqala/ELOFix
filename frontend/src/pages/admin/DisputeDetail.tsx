@@ -19,7 +19,7 @@ import {
 } from '@/lib/api/adminDisputes';
 import { addDisputeMessage } from '@/lib/api/disputes';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 
 function isDisputeOpen(status: string): boolean {
   return ['OPEN', 'UNDER_INVESTIGATION'].includes(String(status || '').toUpperCase());
@@ -118,10 +118,6 @@ export default function AdminDisputeDetail() {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => navigate(`/admin/jobs/${dispute.jobId}`)}>
             <ArrowLeft className="mr-2 h-4 w-4" /> Back to job details
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate(`/admin/jobs/${dispute.jobId}`)}>
-            <ExternalLink className="mr-2 h-4 w-4" />
-            Job details
           </Button>
         </div>
 

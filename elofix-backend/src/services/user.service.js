@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { registerUploadedFile } = require("./fileStorage.service");
+const { validateUploadedImageFile } = require("../utils/uploadSecurity.util");
 const fraudDetection = require("./fraudDetection.service");
 const { normalizePhone } = require("../utils/phoneNormalization.util");
 
@@ -80,6 +81,8 @@ async function saveAvatarFromUpload(userId, file) {
   if (!existing) {
     throw new AppError("User not found", 404);
   }
+
+  await validateUploadedImageFile(file);
 
   const stored = await registerUploadedFile(file, {
     ownerUserId: userId,

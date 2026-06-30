@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Briefcase, ChevronLeft, ChevronRight, Image, Loader2 } from 'lucide-react';
+import { ArrowLeft, Briefcase, ChevronLeft, ChevronRight, Image, Loader2, Star } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { ProviderProfileSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getProviderById } from '@/lib/api/providers';
@@ -13,10 +14,9 @@ import { ProviderVerificationBadges } from '@/components/providers/ProviderVerif
 import { TrustLevelBadge } from '@/components/fraud/TrustLevelBadge';
 import { RatingBreakdownChart } from '@/components/providers/RatingBreakdownChart';
 import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
-import { VerifiedCompletedWorkSection } from '@/components/providers/VerifiedCompletedWorkSection';
 import { isNewProvider } from '@/lib/providerReputation';
 
-const emptyBreakdown = (): ProviderRatingBreakdown => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
+const emptyBreakdown = (): ProviderRatingBreakdown => ({ 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
 
 type ProviderProfileLocationState = {
   fromServiceRequest?: boolean;
@@ -31,6 +31,8 @@ export default function UserProviderProfile() {
   const [reviews, setReviews] = useState<ProviderReview[]>([]);
   const [breakdown, setBreakdown] = useState<ProviderRatingBreakdown>(emptyBreakdown());
   const [completedJobs, setCompletedJobs] = useState(0);
+  const [averageRating, setAverageRating] = useState(0);
+  const [totalReviews, setTotalReviews] = useState(0);
   const [loading, setLoading] = useState(true);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +77,8 @@ export default function UserProviderProfile() {
         setReviews(res.reviews);
         setBreakdown(res.ratingBreakdown);
         setCompletedJobs(res.completedJobs);
+        setAverageRating(res.averageRating);
+        setTotalReviews(res.totalReviews);
       })
       .catch(() => {
         if (!cancelled) setReviews([]);
@@ -111,9 +115,7 @@ export default function UserProviderProfile() {
         </Button>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
+          <ProviderProfileSkeleton />
         ) : error || !provider ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
@@ -265,11 +267,23 @@ export default function UserProviderProfile() {
               </CardContent>
             </Card>
 
-            {id && <VerifiedCompletedWorkSection providerId={id} title="Completed Projects" />}
-
             <Card>
               <CardHeader>
-                <CardTitle>Customer reviews</CardTitle>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle>Customer reviews</CardTitle>
+                  {totalReviews > 0 && (
+                    <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Star className="h-4 w-4 fill-accent text-accent" />
+                        {averageRating.toFixed(1)} avg
+                      </span>
+                      <span>
+                        {totalReviews} review{totalReviews === 1 ? '' : 's'}
+                      </span>
+                      {completedJobs > 0 && <span>{completedJobs} completed</span>}
+                    </div>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 <ProviderReviewList reviews={reviews} loading={reviewsLoading} />

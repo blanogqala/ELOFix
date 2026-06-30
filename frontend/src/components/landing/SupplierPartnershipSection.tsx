@@ -100,7 +100,7 @@ export function SupplierPartnershipSection() {
 
                 >
 
-                  <a href="mailto:partnerships@elofix.com">
+                  <a href="mailto:partnerships@elofix.co.za">
 
                     <Mail className="mr-2 h-5 w-5" />
 

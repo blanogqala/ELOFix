@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { JobCardSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -189,7 +190,7 @@ export default function AdminSuppliers() {
           />
         </div>
 
-        {isLoading && <p className="text-muted-foreground">Loading…</p>}
+        {isLoading && <JobCardSkeleton count={5} className="py-2" />}
 
         <div className="rounded-lg border-2 border-primary overflow-hidden bg-card">
           <Table>

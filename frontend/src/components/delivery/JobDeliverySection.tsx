@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,8 +14,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useToast } from '@/hooks/use-toast';
 import { useOrderLocationSocket } from '@/hooks/useOrderLocationSocket';
+import { useCourierProviderGeolocation } from '@/hooks/useCourierProviderGeolocation';
 import { cn } from '@/lib/utils';
 import { getCourierJobDisplayStatusLabel } from '@/lib/courierJobTimeline';
+import {
+  courierMapShowsDestination,
+  getCourierMapRoutePhase,
+  getCustomerCourierTrackingBanner,
+} from '@/lib/customerCourierTracking';
+import { ensureSocketAuthAndConnect, socket } from '@/lib/socket';
 
 function resolveCollectionPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
   if (dr.collectionPoint?.address?.trim()) return dr.collectionPoint;
@@ -36,62 +43,14 @@ function resolveDestinationPoint(job: Job, dr: DeliveryRequestRecord): DeliveryG
   return { address: '—' };
 }
 
-const LIVE_TRACKING_FS = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
-
-function customerTrackingHeadline(
-  fs: string,
-  job: Job,
-  dr: DeliveryRequestRecord
-): { title: string; description: string; tone: string } {
-  const fullyComplete =
-    job.status === 'COMPLETED' ||
-    job.completionConfirmedByUser === true ||
-    (dr.deliveryConfirmed === true && dr.customerRating != null);
-
-  if (fullyComplete) {
-    return {
-      title: 'Delivery completed',
-      description: 'Thank you — your delivery has been confirmed and closed.',
-      tone: 'border-emerald-500/30 bg-emerald-500/10',
-    };
-  }
-  if (dr.deliveryConfirmed === true && !dr.customerRating) {
-    return {
-      title: 'Receipt confirmed — share feedback',
-      description: 'Open your order details to rate the delivery when you have a moment.',
-      tone: 'border-amber-500/30 bg-amber-500/10',
-    };
-  }
-  if (fs === 'COLLECTING' || fs === 'COLLECTED') {
-    return {
-      title: 'Courier is collecting your items',
-      description: 'Your provider is at or heading to the pickup location. Live location updates below.',
-      tone: 'border-primary/30 bg-primary/5',
-    };
-  }
-  if (fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION') {
-    return {
-      title: 'On the way to you',
-      description:
-        fs === 'AT_DESTINATION'
-          ? 'Your courier has arrived — they will complete delivery shortly.'
-          : 'Follow live movement on the map as your delivery approaches.',
-      tone: 'border-accent/40 bg-accent/10',
-    };
-  }
-  if (fs === 'COMPLETED') {
-    return {
-      title: 'Delivered — please confirm',
-      description: 'Confirm receipt when everything looks good to close this job.',
-      tone: 'border-success/30 bg-success/5',
-    };
-  }
-  return {
-    title: 'Delivery',
-    description: 'Live tracking starts once your courier begins the trip.',
-    tone: 'border-border bg-muted/20',
-  };
+function formatDeliveryPointLabel(point: DeliveryGeoPoint): string {
+  const address = point.address?.trim();
+  if (!address) return '—';
+  const locality = [point.suburb, point.area, point.city].filter(Boolean).join(', ');
+  return locality ? `${address}, ${locality}` : address;
 }
+
+const LIVE_TRACKING_FS = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
 
 interface JobDeliverySectionProps {
   job: Job;
@@ -126,18 +85,24 @@ export function JobDeliverySection({
     ['paid', 'in_transit', 'completed'].includes(drStatus) ||
     deliveryRequest.payment?.deliveryPaid === true;
 
-  const liveTrackingEnabled =
-    variant === 'user' && paid && LIVE_TRACKING_FS.has(fs);
+  const activeFulfillment = LIVE_TRACKING_FS.has(fs);
+  const customerLiveTracking = variant === 'user' && paid && activeFulfillment;
+  const providerLiveTracking = variant === 'provider' && paid && activeFulfillment;
 
   const { liveLat, liveLng, pollFailed, isSocketReconnecting } = useOrderLocationSocket({
     orderId: deliveryRequest.id,
-    enabled: liveTrackingEnabled,
+    enabled: customerLiveTracking,
   });
 
-  const driverLat =
+  const { geoError: providerGeoError } = useCourierProviderGeolocation({
+    enabled: providerLiveTracking,
+    deliveryRequestId: deliveryRequest.id,
+  });
+
+  const customerDriverLat =
     liveLat ??
     (deliveryRequest.driverLocation?.lat != null ? Number(deliveryRequest.driverLocation.lat) : null);
-  const driverLng =
+  const customerDriverLng =
     liveLng ??
     (deliveryRequest.driverLocation?.lng != null ? Number(deliveryRequest.driverLocation.lng) : null);
 
@@ -146,11 +111,11 @@ export function JobDeliverySection({
     job.completionConfirmedByUser === true ||
     (deliveryRequest.deliveryConfirmed === true && deliveryRequest.customerRating != null);
 
-  const headingToCustomer = fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION';
   const mapCompletedMode = fullyComplete || (fs === 'COMPLETED' && deliveryRequest.deliveryConfirmed === true);
+  const headingToCustomer = courierMapShowsDestination(fs, mapCompletedMode);
 
   const mapDestCoords = useMemo(() => {
-    const point = mapCompletedMode || headingToCustomer ? destination : collection;
+    const point = headingToCustomer ? destination : collection;
     if (point.coordinates?.lat != null && point.coordinates?.lng != null) {
       return { lat: point.coordinates.lat, lng: point.coordinates.lng };
     }
@@ -164,10 +129,10 @@ export function JobDeliverySection({
     destination.coordinates?.lng,
   ]);
 
-  const mapDestinationLabel =
-    mapCompletedMode || headingToCustomer ? destination.address : collection.address;
-  const mapRoutePhase =
-    mapCompletedMode || headingToCustomer ? ('to_destination' as const) : ('to_collection' as const);
+  const mapDestinationLabel = headingToCustomer
+    ? formatDeliveryPointLabel(destination)
+    : formatDeliveryPointLabel(collection);
+  const mapRoutePhase = getCourierMapRoutePhase(fs, deliveryRequest, mapCompletedMode);
 
   const showQuotePanel =
     variant === 'provider' &&
@@ -188,17 +153,50 @@ export function JobDeliverySection({
         [];
 
   const statusLabel = getCourierJobDisplayStatusLabel(job, deliveryRequest);
-  const customerBanner = customerTrackingHeadline(fs, job, deliveryRequest);
+  const customerBanner = getCustomerCourierTrackingBanner(fs, job, deliveryRequest);
 
   const wrapperClass = embedded
     ? cn('card-elevated border border-primary/25 p-4 sm:p-6 space-y-4', className)
     : cn('card-elevated p-4 sm:p-6 space-y-4', className);
 
-  const refresh = (updated: DeliveryRequestRecord | null) => {
-    onDeliveryUpdated?.(updated);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(job.id) });
-    void queryClient.invalidateQueries({ queryKey: ['delivery-request-by-job', job.id] });
-  };
+  const refresh = useCallback(
+    (updated: DeliveryRequestRecord | null) => {
+      onDeliveryUpdated?.(updated);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(job.id) });
+      void queryClient.invalidateQueries({ queryKey: ['delivery-request-by-job', job.id] });
+    },
+    [job.id, onDeliveryUpdated, queryClient]
+  );
+
+  useEffect(() => {
+    if (variant !== 'user' || !paid || !deliveryRequest.id) return;
+
+    const deliveryRequestId = String(deliveryRequest.id);
+
+    const joinRoom = () => {
+      ensureSocketAuthAndConnect();
+      if (socket.connected) {
+        socket.emit('order:join', deliveryRequestId);
+      }
+    };
+
+    const onFulfillmentUpdated = (data: { deliveryRequestId?: string }) => {
+      if (String(data?.deliveryRequestId || '') !== deliveryRequestId) return;
+      refresh(null);
+    };
+
+    const onConnect = () => joinRoom();
+
+    ensureSocketAuthAndConnect();
+    joinRoom();
+    socket.on('connect', onConnect);
+    socket.on('delivery-request:updated', onFulfillmentUpdated);
+
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('delivery-request:updated', onFulfillmentUpdated);
+    };
+  }, [variant, paid, deliveryRequest.id, refresh]);
 
   return (
     <div className={wrapperClass}>
@@ -217,32 +215,47 @@ export function JobDeliverySection({
         </div>
       ) : null}
 
-      {(variant === 'user' && paid) || variant === 'provider' ? (
+      {variant === 'provider' ? (
+        <div className="rounded-lg border border-border bg-muted/20 px-3 py-3 text-sm space-y-2">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">Collection address</p>
+            <p className="text-foreground">{formatDeliveryPointLabel(collection)}</p>
+          </div>
+          <div className="border-t border-border pt-2">
+            <p className="text-xs font-medium text-muted-foreground">Delivery address</p>
+            <p className="text-foreground">{formatDeliveryPointLabel(destination)}</p>
+          </div>
+        </div>
+      ) : null}
+
+      {variant === 'user' && paid ? (
         <div className="overflow-hidden rounded-lg border border-border">
           <DeliveryMap
             className="w-full border-0 shadow-sm"
             mapContainerClassName="h-56 w-full sm:h-72"
-            lat={liveTrackingEnabled && !mapCompletedMode ? driverLat : null}
-            lng={liveTrackingEnabled && !mapCompletedMode ? driverLng : null}
+            lat={!mapCompletedMode && activeFulfillment ? customerDriverLat : null}
+            lng={!mapCompletedMode && activeFulfillment ? customerDriverLng : null}
             destination={mapDestinationLabel}
             destinationCoords={mapDestCoords}
             routePhase={mapRoutePhase}
             completedMode={mapCompletedMode}
             showWaitingBanner={
               !mapCompletedMode &&
-              liveTrackingEnabled &&
-              driverLat == null &&
+              customerLiveTracking &&
+              customerDriverLat == null &&
               !pollFailed &&
               !isSocketReconnecting
             }
-            trackingEnded={!mapCompletedMode && pollFailed && driverLat == null}
+            trackingEnded={
+              !mapCompletedMode && customerLiveTracking && pollFailed && customerDriverLat == null
+            }
           />
-          {variant === 'user' && liveTrackingEnabled && isSocketReconnecting ? (
+          {customerLiveTracking && isSocketReconnecting ? (
             <p className="text-xs text-muted-foreground px-3 py-2 border-t border-border">
               Reconnecting to live tracking…
             </p>
           ) : null}
-          {variant === 'user' && liveTrackingEnabled && pollFailed && driverLat == null ? (
+          {customerLiveTracking && pollFailed && customerDriverLat == null ? (
             <p className="text-xs text-amber-700 dark:text-amber-200 px-3 py-2 border-t border-border">
               Waiting for courier location — it will appear when they start sharing GPS.
             </p>
@@ -319,6 +332,7 @@ export function JobDeliverySection({
           deliveryConfirmed={deliveryRequest.deliveryConfirmed}
           deliveryConfirmedAt={deliveryRequest.deliveryConfirmedAt}
           customerRating={deliveryRequest.customerRating}
+          geoError={providerGeoError}
           onUpdated={(updated) => refresh(updated)}
         />
       ) : null}

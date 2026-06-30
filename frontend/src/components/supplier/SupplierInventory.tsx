@@ -38,7 +38,8 @@ import {
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
-import { Plus, Trash2, Pencil, ChevronDown, Search, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, Pencil, ChevronDown, Search, ArrowLeft, Loader2 } from 'lucide-react';
+import { ProductCardSkeleton } from '@/components/common/loading';
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -439,7 +440,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
   );
 
   if (isLoading || !profile) {
-    return <p className="text-sm text-muted-foreground">Loading inventory…</p>;
+    return <ProductCardSkeleton count={8} />;
   }
 
   if (!branches.length || !selectedBranchId) {
@@ -736,6 +737,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
               disabled={isSaving}
               onClick={() => void handleSubmit()}
             >
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isSaving ? 'Saving…' : editId ? 'Save changes' : 'Add item'}
             </Button>
           </div>

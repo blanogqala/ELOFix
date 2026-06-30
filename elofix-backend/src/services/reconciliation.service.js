@@ -6,32 +6,51 @@ const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/audit
 const EPS = 0.01;
 
 async function ledgerAggregates(providerId) {
-  const [pendingSum, availSum, debitWithdrawnSum, debitPendingSum] = await Promise.all([
-    prisma.earning.aggregate({
-      where: { providerId, type: "credit", status: "pending" },
-      _sum: { amount: true },
-    }),
-    prisma.earning.aggregate({
-      where: { providerId, type: "credit", status: "available" },
-      _sum: { amount: true },
-    }),
-    prisma.earning.aggregate({
-      where: { providerId, type: "debit", status: "withdrawn" },
-      _sum: { amount: true },
-    }),
-    prisma.earning.aggregate({
-      where: { providerId, type: "debit", status: "pending" },
-      _sum: { amount: true },
-    }),
-  ]);
+  const [pendingSum, availSum, debitWithdrawnSum, debitPendingSum, clawbackSum, refundDebtSum] =
+    await Promise.all([
+      prisma.earning.aggregate({
+        where: { providerId, type: "credit", status: "pending" },
+        _sum: { amount: true },
+      }),
+      prisma.earning.aggregate({
+        where: { providerId, type: "credit", status: "available" },
+        _sum: { amount: true },
+      }),
+      prisma.earning.aggregate({
+        where: { providerId, type: "debit", status: "withdrawn" },
+        _sum: { amount: true },
+      }),
+      prisma.earning.aggregate({
+        where: { providerId, type: "debit", status: "pending" },
+        _sum: { amount: true },
+      }),
+      prisma.earning.aggregate({
+        where: { providerId, type: "debit", status: "clawback" },
+        _sum: { amount: true },
+      }),
+      prisma.earning.aggregate({
+        where: { providerId, type: "debit", status: "refund_debt" },
+        _sum: { amount: true },
+      }),
+    ]);
 
   const pending = Number(pendingSum._sum.amount) || 0;
   const creditsAvailable = Number(availSum._sum.amount) || 0;
   const withdrawn = Number(debitWithdrawnSum._sum.amount) || 0;
   const reservedPending = Number(debitPendingSum._sum.amount) || 0;
-  const available = Math.max(0, creditsAvailable - withdrawn - reservedPending);
+  const clawback = Number(clawbackSum._sum.amount) || 0;
+  const refundDebtOwed = Number(refundDebtSum._sum.amount) || 0;
+  const available = Math.max(0, creditsAvailable - withdrawn - reservedPending - clawback);
 
-  return { pending, creditsAvailable, withdrawn, reservedPending, available };
+  return {
+    pending,
+    creditsAvailable,
+    withdrawn,
+    reservedPending,
+    clawback,
+    refundDebtOwed,
+    available,
+  };
 }
 
 /**
@@ -47,7 +66,8 @@ async function reconcileProvider(providerId, actingUserId = null) {
   const s = await ledgerAggregates(pid);
 
   const totalCredits = s.pending + s.creditsAvailable;
-  const netProvider = totalCredits - s.withdrawn - s.reservedPending;
+  const netProvider =
+    totalCredits - s.withdrawn - s.reservedPending - s.clawback - s.refundDebtOwed;
   const sumPendingPlusAvailable = s.pending + s.available;
 
   const ok = Math.abs(netProvider - sumPendingPlusAvailable) < EPS;
@@ -58,6 +78,8 @@ async function reconcileProvider(providerId, actingUserId = null) {
     creditsAvailable: s.creditsAvailable,
     withdrawn: s.withdrawn,
     reservedPending: s.reservedPending,
+    clawback: s.clawback,
+    refundDebtOwed: s.refundDebtOwed,
     available: s.available,
     totalCredits,
     netProvider,

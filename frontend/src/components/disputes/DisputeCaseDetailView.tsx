@@ -4,7 +4,9 @@ import type { JobDispute, JobDisputeRound } from '@/types';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   formatAdminResolutionAction,
+  formatDisputeOpenedAt,
   formatDisputeStatus,
+  formatMessageSenderLabel,
   formatRequestedResolution,
 } from '@/lib/disputeLabels';
 import { cn } from '@/lib/utils';
@@ -111,6 +113,9 @@ export function DisputeCaseDetailView({
       : logs[0];
   const isResolved = ['RESOLVED', 'CLOSED'].includes(String(view.status || '').toUpperCase());
   const hasMultipleRounds = rounds.length > 1;
+  const customerDisplayName = dispute.customerName?.trim() || 'Customer';
+  const providerDisplayName = dispute.providerName?.trim() || 'Provider';
+  const openedAtLabel = formatDisputeOpenedAt(view.openedAt);
 
   return (
     <div className="space-y-6">
@@ -225,7 +230,12 @@ export function DisputeCaseDetailView({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="card-elevated space-y-3 p-5 sm:p-6">
-          <h2 className="font-semibold">Customer evidence</h2>
+          <div className="space-y-1">
+            <h2 className="font-semibold">Customer evidence</h2>
+            <p className="text-xs text-muted-foreground">
+              {customerDisplayName} · Opened {openedAtLabel}
+            </p>
+          </div>
           <p className="text-sm font-medium">Requested outcome: {requestLabel}</p>
           {view.requestedResolution === 'OTHER' && view.otherResolutionDetail && (
             <p className="border-l-2 border-muted pl-3 text-sm text-muted-foreground">
@@ -237,7 +247,12 @@ export function DisputeCaseDetailView({
         </div>
 
         <div className="card-elevated space-y-3 p-5 sm:p-6">
-          <h2 className="font-semibold">Provider response</h2>
+          <div className="space-y-1">
+            <h2 className="font-semibold">Provider response</h2>
+            <p className="text-xs text-muted-foreground">
+              {providerDisplayName} · Opened {openedAtLabel}
+            </p>
+          </div>
           {view.providerComment ? (
             <p className="text-sm">{view.providerComment}</p>
           ) : (
@@ -264,8 +279,13 @@ export function DisputeCaseDetailView({
                 )}
               >
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-semibold uppercase tracking-wide text-foreground/80">
-                    {m.senderRole}
+                  <span className="font-semibold text-foreground/80">
+                    {formatMessageSenderLabel({
+                      senderRole: m.senderRole,
+                      senderName: m.senderName,
+                      customerName: dispute.customerName,
+                      providerName: dispute.providerName,
+                    })}
                   </span>
                   <span>{new Date(m.createdAt).toLocaleString()}</span>
                 </div>

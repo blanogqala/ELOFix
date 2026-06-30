@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getAllMaterialOrdersForUser } from '@/lib/api/materialOrders';
 import { Package, ShoppingCart } from 'lucide-react';
 import { OrderCard, OrderCardViewModel } from '@/components/orders/OrderCard';
+import { MaterialOrderCardSkeleton } from '@/components/common/loading';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 
 function OrdersPanel(props: {
@@ -23,17 +24,7 @@ function OrdersPanel(props: {
   return (
     <div className="card-elevated overflow-hidden p-4 md:p-6">
       {isLoading ? (
-        <div className="space-y-4">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="animate-pulse flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-muted" />
-              <div className="flex-1 space-y-2">
-                <div className="h-4 w-32 bg-muted rounded" />
-                <div className="h-3 w-48 bg-muted rounded" />
-              </div>
-            </div>
-          ))}
-        </div>
+        <MaterialOrderCardSkeleton count={3} />
       ) : orders.length > 0 ? (
         <div className="grid gap-4">
           {orders.map((order) => (

@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { JobDetailPageSkeleton, LoadingOverlay } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
@@ -188,12 +189,7 @@ export default function AdminJobDetail() {
   if (isLoading) {
     return (
       <DashboardLayout>
-        <div className="space-y-6 animate-fade-in">
-          <div className="animate-pulse space-y-4">
-            <div className="h-8 w-48 bg-muted rounded" />
-            <div className="h-64 bg-muted rounded" />
-          </div>
-        </div>
+        <JobDetailPageSkeleton />
       </DashboardLayout>
     );
   }
@@ -748,6 +744,7 @@ export default function AdminJobDetail() {
             </div>
           </DialogContent>
         </Dialog>
+        <LoadingOverlay open={isReleasing} message="Releasing escrow…" />
       </div>
     </DashboardLayout>
   );

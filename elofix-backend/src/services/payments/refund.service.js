@@ -9,7 +9,8 @@ const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/au
  */
 async function requestGatewayRefund(intentId, amount) {
   const intent = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
-  if (!intent || intent.state !== "PAID") {
+  const refundableStates = new Set(["PAID", "PARTIALLY_REFUNDED", "DISPUTED"]);
+  if (!intent || !refundableStates.has(intent.state)) {
     return { ok: false, reason: "no_paid_intent" };
   }
   const providerKey = intent.provider;

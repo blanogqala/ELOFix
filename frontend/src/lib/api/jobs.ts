@@ -25,6 +25,7 @@ interface BackendJobUser {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
   role: string;
 }
 
@@ -161,6 +162,8 @@ function toFrontendJob(job: BackendJob): Job {
     categoryName: categoryDisplayName,
     userId: job.customerId,
     userName: job.customer?.name ?? '',
+    userEmail: job.customer?.email?.trim() || undefined,
+    userPhone: job.customer?.phone?.trim() || undefined,
     providerId: job.providerId ?? undefined,
     providerName: job.provider?.name ?? undefined,
     description: String(job.description || ''),

@@ -177,7 +177,8 @@ export default function AdminWithdrawals() {
                                 disabled={actingId === w.id}
                                 onClick={() => void runFail(w.id)}
                               >
-                                Fail
+                                {actingId === w.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                                {actingId === w.id ? 'Failing…' : 'Fail'}
                               </Button>
                             ) : (
                               <span className="text-xs text-muted-foreground">—</span>

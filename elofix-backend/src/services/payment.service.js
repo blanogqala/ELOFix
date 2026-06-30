@@ -3,7 +3,7 @@ const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const earningService = require("./earning.service");
-const { mutateJobMetaInTransaction, getJobMeta } = require("./jobMeta.service");
+const { mutateJobMetaInTransaction, getJobMeta, normalizeMeta } = require("./jobMeta.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const {
   detectBrand,
@@ -652,10 +652,25 @@ async function finalizeCourierDeliveryEscrowAfterPayment(jobId) {
 }
 
 /**
+ * Block escrow release while a job dispute is open.
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx
+ * @param {string} jobId
+ */
+async function assertEscrowNotFrozen(tx, jobId) {
+  const row = await tx.job.findUnique({ where: { id: String(jobId) }, select: { meta: true } });
+  if (!row) return;
+  const meta = normalizeMeta(row.meta);
+  if (meta.statusOverride === "DISPUTED" || meta.escrowFrozen === true) {
+    throw new AppError("Escrow is frozen while a dispute is open", 400);
+  }
+}
+
+/**
  * Second 50% of provider funds after user confirm-completion.
  * @param {import("@prisma/client").Prisma.TransactionClient} tx
  */
 async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId }) {
+  await assertEscrowNotFrozen(tx, jobId);
   if (!job.laborPaid) {
     return { skipped: true, jobRow: null };
   }
@@ -707,7 +722,7 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
 
   const r2Key = `escrow-2nd:${jobId}`;
 
-  await earningService.applyReleaseToLedger(tx, {
+  const { stagedPayouts } = await earningService.applyReleaseToLedger(tx, {
     providerId: providerProfileId,
     jobId,
     releaseAmount: Number(remaining),
@@ -730,7 +745,7 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
     },
   });
 
-  return { skipped: false, jobRow, meta2 };
+  return { skipped: false, jobRow, meta2, stagedPayouts: stagedPayouts || [] };
 }
 
 /**
@@ -1075,6 +1090,7 @@ module.exports = {
   verifyPaystackSignature,
   fetchPaystackTransactionVerify,
   runSettleLaborInTransaction,
+  assertEscrowNotFrozen,
   runSecondTrancheInTransaction,
   backfillCourierDeliveryEscrowInTransaction,
   backfillCourierServicePaymentIfMissing,

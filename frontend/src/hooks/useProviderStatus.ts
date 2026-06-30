@@ -10,16 +10,22 @@ export function useProviderStatus() {
         isApproved: true,
         isProfileComplete: true,
         isActiveProvider: true,
+        isBlocked: false,
+        canWorkAsProvider: true,
       };
     }
 
     const isApproved = Boolean(user.approved);
     const isProfileComplete = Boolean(user.profileCompleted);
+    const isBlocked = Boolean(user.blocked);
+    const isActiveProvider = isApproved && isProfileComplete;
 
     return {
       isApproved,
       isProfileComplete,
-      isActiveProvider: isApproved && isProfileComplete && !user.blocked,
+      isActiveProvider,
+      isBlocked,
+      canWorkAsProvider: isActiveProvider && !isBlocked,
     };
   }, [user]);
 }

@@ -10,6 +10,7 @@ const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const paymentService = require("./payment.service");
 const branchService = require("./branch.service");
 const branchStaffNotificationService = require("./branchStaffNotification.service");
+const { assertCustomerNotBlocked } = require("./accountStatus.service");
 
 async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
   const org = String(supplierOrgId || "").trim();
@@ -254,54 +255,68 @@ async function notifyCustomerFulfillmentStep(row, next) {
   const customerId = row.userId;
   if (!customerId) return;
   const jobId = row.jobId || undefined;
+  const orderId = row.id ? String(row.id) : null;
+  const dedupeKey = orderId ? `material_order:${orderId}:step:${next}` : null;
   try {
     if (next === "READY") {
       await notificationService.addNotification({
         userId: customerId,
         jobId,
+        materialOrderId: orderId || undefined,
         type: "material_tracking",
         title: "Materials update",
         message: "Your materials are ready for pickup",
+        dedupeKey,
       });
     } else if (next === "OUT_FOR_DELIVERY") {
       await notificationService.addNotification({
         userId: customerId,
         jobId,
+        materialOrderId: orderId || undefined,
         type: "material_tracking",
         title: "Materials update",
         message: "Your materials are on the way",
+        dedupeKey,
       });
     } else if (next === "COMPLETED") {
       await notificationService.addNotification({
         userId: customerId,
         jobId,
+        materialOrderId: orderId || undefined,
         type: "material_tracking",
         title: "Materials update",
         message: "Materials delivered successfully",
+        dedupeKey,
       });
     } else if (next === "FAILED") {
       await notificationService.addNotification({
         userId: customerId,
         jobId,
+        materialOrderId: orderId || undefined,
         type: "material_tracking",
         title: "Delivery issue",
         message: "Your materials delivery could not be completed",
+        dedupeKey,
       });
     } else if (next === "DELAYED") {
       await notificationService.addNotification({
         userId: customerId,
         jobId,
+        materialOrderId: orderId || undefined,
         type: "material_tracking",
         title: "Delivery delayed",
         message: "Your materials delivery has been delayed",
+        dedupeKey,
       });
     } else if (next === "CANCELLED") {
       await notificationService.addNotification({
         userId: customerId,
         jobId,
+        materialOrderId: orderId || undefined,
         type: "material_tracking",
         title: "Delivery cancelled",
         message: "Your materials delivery was cancelled",
+        dedupeKey,
       });
     }
   } catch (e) {
@@ -355,6 +370,12 @@ function enrichOrderFromDbRow(row, payload) {
   if (row.refundProcessedAt != null) p.refundProcessedAt = row.refundProcessedAt instanceof Date ? row.refundProcessedAt.toISOString() : String(row.refundProcessedAt);
   if (row.refundReference != null) p.refundReference = String(row.refundReference);
   if (row.commissionReversed != null) p.commissionReversed = Number(row.commissionReversed);
+  const materialsPaidFromStatus = String(row.paymentStatus || "").toLowerCase() === "paid";
+  p.payment = {
+    ...(p.payment || {}),
+    materialsPaid: p.payment?.materialsPaid === true || materialsPaidFromStatus,
+    deliveryPaid: p.payment?.deliveryPaid === true,
+  };
   p.finance = supplierService.buildOrderFinanceBreakdown({
     ...p,
     paymentStatus: row.paymentStatus,
@@ -616,6 +637,14 @@ function normalizeOrder(input) {
 async function createMaterialOrder(params) {
   const clean = stripClientTrackingFromOrderInput(params || {});
   const { prismaRow, order } = normalizeOrder(clean);
+
+  if (prismaRow.userId) {
+    const customer = await prisma.user.findUnique({
+      where: { id: String(prismaRow.userId) },
+      select: { blocked: true },
+    });
+    assertCustomerNotBlocked(customer);
+  }
 
   if (clean.paymentIntentId) {
     const intent = await prisma.paymentIntent.findUnique({
@@ -961,12 +990,28 @@ async function getMaterialOrderById(orderId) {
   if (fs === "OUT_FOR_DELIVERY") {
     const track = await prisma.trackingSession.findFirst({
       where: { orderId: String(orderId), isActive: true },
-      select: { trackingId: true, accessToken: true },
+      select: { trackingId: true, accessToken: true, lastLat: true, lastLng: true, lastPingAt: true },
     });
     if (track?.trackingId) {
       base.activeTrackingId = track.trackingId;
       if (track.accessToken) {
         base.activeTrackingToken = track.accessToken;
+      }
+      if (track.lastLat != null && track.lastLng != null) {
+        const lat = Number(track.lastLat);
+        const lng = Number(track.lastLng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          base.driverLocation = {
+            lat,
+            lng,
+            updatedAt:
+              track.lastPingAt instanceof Date
+                ? track.lastPingAt.toISOString()
+                : track.lastPingAt
+                  ? String(track.lastPingAt)
+                  : new Date().toISOString(),
+          };
+        }
       }
     }
   }
@@ -1623,6 +1668,12 @@ async function acceptDeliveryQuote(orderId, customerUserId) {
     where: { id: orderId },
     data: { payload: nextPayload },
   });
+  try {
+    const deliveryRequestService = require("./deliveryRequest.service");
+    await deliveryRequestService.syncDeliveryRequestApprovedFromMaterialOrder(orderId, quotedFee);
+  } catch (e) {
+    console.error("acceptDeliveryQuote sync delivery request", orderId, e);
+  }
   return enrichOrderFromDbRow(row, nextPayload);
 }
 
@@ -1700,15 +1751,8 @@ async function markMaterialOrderDeliveryPaid(orderId, paymentExtras = {}) {
         deliveryInvoiceId:
           paymentExtras.invoiceId || current.deliveryInvoiceId || `INV-DEL-${Date.now()}`,
       };
-      const fulfillmentStatus = (() => {
-        const current = String(row.fulfillmentStatus || "PENDING").toUpperCase();
-        const postDispatch = ["OUT_FOR_DELIVERY", "COMPLETED"];
-        if (deliveryType === "DELIVERY_PROVIDER" || deliveryType === "STORE_DELIVERY") {
-          if (postDispatch.includes(current)) return current;
-          return "READY";
-        }
-        return row.fulfillmentStatus || "PENDING";
-      })();
+      // Preserve supplier-driven fulfillment; branch dashboard advances PENDING → ACCEPTED → PREPARING → READY.
+      const fulfillmentStatus = row.fulfillmentStatus || "PENDING";
       const dbData = { payload: updated, fulfillmentStatus };
       if (deliveryType === "STORE_DELIVERY") {
         const materialsSubtotal = Number(row.materialsSubtotal ?? current.materialsSubtotal ?? 0);

@@ -6,7 +6,11 @@ const providerService = require("./provider.service");
 const supplierService = require("./supplier.service");
 const branchUserService = require("./branchUser.service");
 const { validateLegalAcceptance } = require("./legalAcceptance.service");
-const fraudDetection = require("./fraudDetection.service");
+const {
+  assertAccountNotDeleted,
+  resolveAccountStatus,
+  getBlockInfo,
+} = require("./accountStatus.service");
 const { normalizePhone } = require("../utils/phoneNormalization.util");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
@@ -28,18 +32,15 @@ const userPublicSelect = {
   authProvider: true,
   role: true,
   blocked: true,
+  blockedReason: true,
+  blockedAt: true,
   deletedAt: true,
   createdAt: true,
 };
 
 function assertCustomerAccountActive(user) {
   if (user.role !== "CUSTOMER") return;
-  if (user.deletedAt) {
-    throw new AppError("This account has been removed", 403);
-  }
-  if (user.blocked) {
-    throw new AppError("This account has been suspended. Contact support.", 403);
-  }
+  assertAccountNotDeleted(resolveAccountStatus(user));
 }
 
 function parseRole(role) {
@@ -241,7 +242,7 @@ async function login(body, auditContext = {}) {
       userId: user.id,
       entityType: ENTITY_TYPES.USER,
       entityId: user.id,
-      newValue: { reason: user.deletedAt ? "deleted" : "blocked" },
+      newValue: { reason: "deleted" },
     });
     throw err;
   }
@@ -319,7 +320,13 @@ async function getMe(ctx) {
   assertCustomerAccountActive(user);
 
   const { password: _p, ...safe } = user;
-  return { user: safe };
+  const blockInfo = getBlockInfo(user);
+  return {
+    user: {
+      ...safe,
+      accountStatus: blockInfo.accountStatus,
+    },
+  };
 }
 
 async function logout(ctx, auditContext = {}) {

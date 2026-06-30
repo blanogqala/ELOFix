@@ -38,6 +38,7 @@ import {
   type Point2D,
   type Segment2D,
 } from '@/lib/measurements';
+import { CAMERA_ASSIST_MEASUREMENT_ENABLED } from '@/lib/featureFlags';
 export interface Step3DynamicInputProps {
   category: Category;
   measurements: Measurements;
@@ -84,7 +85,8 @@ function MeasurementsStepContent({
   );
   const realPrimaryInputRef = useRef<HTMLInputElement>(null);
 
-  const hasCameraAssist = measurements.cameraAssist?.source === 'camera';
+  const hasCameraAssist =
+    CAMERA_ASSIST_MEASUREMENT_ENABLED && measurements.cameraAssist?.source === 'camera';
   const primaryName = primaryDimensionLabel(dimMode);
 
   const measureStep: MeasureStep = deriveMeasureStep(primarySeg, calibratedPrimaryM, widthSeg);
@@ -594,7 +596,7 @@ function MeasurementsStepContent({
         <p className="text-muted-foreground">Enter or estimate the measurements for your task</p>
       </div>
 
-      {!hasCameraAssist && (
+      {CAMERA_ASSIST_MEASUREMENT_ENABLED && !hasCameraAssist && (
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <div className="flex flex-1 items-center gap-4 rounded-lg bg-muted/50 p-4">
             <Camera className="h-5 w-5 shrink-0 text-accent" />
@@ -620,6 +622,7 @@ function MeasurementsStepContent({
         />
       )}
 
+      {CAMERA_ASSIST_MEASUREMENT_ENABLED && (
       <Dialog
         open={cameraOpen}
         onOpenChange={(open) => {
@@ -882,6 +885,7 @@ function MeasurementsStepContent({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      )}
 
       {!hasCameraAssist && (
         <div className="grid gap-4 sm:grid-cols-2">

@@ -30,12 +30,13 @@ const APPLIED_ONCE_REASONS = new Set([
   "verified_bank",
 ]);
 
-async function getOrCreateTrustScore(providerProfileId) {
+async function getOrCreateTrustScore(providerProfileId, tx = null) {
+  const db = tx || prisma;
   const pid = String(providerProfileId || "").trim();
   if (!pid) return null;
-  let row = await prisma.providerTrustScore.findUnique({ where: { providerId: pid } });
+  let row = await db.providerTrustScore.findUnique({ where: { providerId: pid } });
   if (!row) {
-    row = await prisma.providerTrustScore.create({
+    row = await db.providerTrustScore.create({
       data: { id: randomUUID(), providerId: pid, score: 100, history: [] },
     });
   }
@@ -50,11 +51,12 @@ function hasAppliedOnce(history, reason) {
   return Array.isArray(history) && history.some((e) => e.reason === reason);
 }
 
-async function applyDelta(providerProfileId, reason, delta, metadata = {}) {
+async function applyDelta(providerProfileId, reason, delta, metadata = {}, tx = null) {
+  const db = tx || prisma;
   const pid = String(providerProfileId || "").trim();
   if (!pid || !Number.isFinite(delta) || delta === 0) return null;
 
-  const row = await getOrCreateTrustScore(pid);
+  const row = await getOrCreateTrustScore(pid, tx);
   if (APPLIED_ONCE_REASONS.has(reason) && hasAppliedOnce(row.history, reason)) {
     return row;
   }
@@ -86,18 +88,20 @@ async function applyDelta(providerProfileId, reason, delta, metadata = {}) {
     updates.positiveReviews = { increment: 1 };
   }
 
-  const updated = await prisma.providerTrustScore.update({
+  const updated = await db.providerTrustScore.update({
     where: { providerId: pid },
     data: updates,
   });
 
-  await logAudit(AUDIT_ACTIONS.TRUST_SCORE_CHANGED, {
-    actorType: ACTOR_TYPES.SYSTEM,
-    entityType: ENTITY_TYPES.PROVIDER,
-    entityId: pid,
-    oldValue: { score: prev },
-    newValue: { score: next, reason, delta },
-  });
+  if (!tx) {
+    await logAudit(AUDIT_ACTIONS.TRUST_SCORE_CHANGED, {
+      actorType: ACTOR_TYPES.SYSTEM,
+      entityType: ENTITY_TYPES.PROVIDER,
+      entityId: pid,
+      oldValue: { score: prev },
+      newValue: { score: next, reason, delta },
+    });
+  }
 
   return updated;
 }
@@ -134,14 +138,56 @@ async function onMonthWithoutComplaints(providerProfileId) {
   return applyDelta(providerProfileId, "month_no_complaints", DELTAS.MONTH_NO_COMPLAINTS);
 }
 
-async function onDisputeLost(providerProfileId) {
-  return applyDelta(providerProfileId, "dispute_lost", DELTAS.DISPUTE_LOST);
+async function onDisputeLost(providerProfileId, tx = null) {
+  return applyDelta(providerProfileId, "dispute_lost", DELTAS.DISPUTE_LOST, {}, tx);
 }
 
-async function onRefundResolved(providerProfileId, kind) {
+async function onRefundResolved(providerProfileId, kind, tx = null) {
   const delta = kind === "FULL_REFUND" ? DELTAS.FULL_REFUND : DELTAS.REFUND_REQUEST;
   const reason = kind === "FULL_REFUND" ? "full_refund" : "refund_request";
-  return applyDelta(providerProfileId, reason, delta);
+  return applyDelta(providerProfileId, reason, delta, {}, tx);
+}
+
+/** Single trust adjustment when a dispute is resolved with a refund (no double penalty). */
+async function onDisputeRefundResolved(providerProfileId, kind, tx = null) {
+  const delta = kind === "FULL_REFUND" ? DELTAS.FULL_REFUND : DELTAS.REFUND_REQUEST;
+  const reason = kind === "FULL_REFUND" ? "full_refund" : "refund_request";
+  const db = tx || prisma;
+  const pid = String(providerProfileId || "").trim();
+  if (!pid) return null;
+  const row = await getOrCreateTrustScore(pid, tx);
+  const prev = row.score;
+  const next = clampScore(prev + delta);
+  const entry = {
+    id: randomUUID(),
+    reason,
+    delta,
+    scoreBefore: prev,
+    scoreAfter: next,
+    at: new Date().toISOString(),
+    disputeResolution: true,
+  };
+  const history = Array.isArray(row.history) ? [...row.history, entry] : [entry];
+  const updated = await db.providerTrustScore.update({
+    where: { providerId: pid },
+    data: {
+      score: next,
+      lastCalculatedAt: new Date(),
+      history,
+      disputeCount: { increment: 1 },
+      refundCount: { increment: 1 },
+    },
+  });
+  if (!tx) {
+    await logAudit(AUDIT_ACTIONS.TRUST_SCORE_CHANGED, {
+      actorType: ACTOR_TYPES.SYSTEM,
+      entityType: ENTITY_TYPES.PROVIDER,
+      entityId: pid,
+      oldValue: { score: prev },
+      newValue: { score: next, reason, delta, disputeResolution: true },
+    });
+  }
+  return updated;
 }
 
 async function onJobCompleted(providerProfileId, rating) {
@@ -278,6 +324,7 @@ module.exports = {
   onMonthWithoutComplaints,
   onDisputeLost,
   onRefundResolved,
+  onDisputeRefundResolved,
   onJobCompleted,
   buildRecommendations,
   isHighRisk,

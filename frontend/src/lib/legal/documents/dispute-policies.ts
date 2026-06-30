@@ -62,8 +62,8 @@ export const disputeResolution: LegalDocument = {
       title: '6. Possible Outcomes',
       content: [
         'Release Funds: The remaining escrow tranche is released to the Provider. The Job is marked Completed and the dispute is closed.',
-        'Partial Refund: A specified amount is refunded to the Customer. Provider clawback is applied from escrow or earnings. The Job may be cancelled.',
-        'Full Refund: The full labor gross amount is refunded to the Customer. Provider clawback is applied. The Job is cancelled.',
+        'Partial Refund: A specified net amount (up to 93% of gross labor) is refunded to the Customer. Provider clawback is applied from escrow or earnings. The Job may be cancelled.',
+        'Full Refund: The maximum net labor refund (93% of gross) is approved for the Customer. Provider clawback is applied. The Job is cancelled.',
         'Return Provider (Corrective Work): The Provider is instructed to return and fix the work. The Job reopens to In Progress. See the Corrective Work Policy.',
         'Close Case: The dispute is resolved without fund release or refund adjustment, based on administrator determination.',
       ],
@@ -72,8 +72,10 @@ export const disputeResolution: LegalDocument = {
       id: 'refund-processing',
       title: '7. Refund Processing',
       content: [
-        'Approved refunds are processed to the original payment method where possible, typically within 5–10 business days.',
-        'Customer refunds are calculated on the gross labor amount. Provider clawback is calculated on the net provider share (93% of labor).',
+        'Approved refunds are processed to the original payment method where possible, typically within 5–10 business days for the immediately available portion.',
+        'Customer refunds are calculated on net labor (93% of gross labor; platform commission is retained). Provider clawback is calculated on the provider share.',
+        'Staged payout: Funds still in escrow or immediately clawed back from the Provider are refunded to the Customer at once. Any shortfall is recovered from the Provider within 30 days (bank transfer and/or future job earnings) and paid to the Customer as recovery completes.',
+        'Providers who fail to settle refund debt within 30 days may have accounts blocked and may be referred for legal recovery.',
         'Trust score adjustments may apply following dispute outcomes.',
       ],
     },

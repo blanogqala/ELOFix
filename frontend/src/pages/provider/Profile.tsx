@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { ProviderProfileSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,11 +31,14 @@ import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
 import {
   Save, Plus, X, Upload, AlertCircle,
   Banknote, Image, Trash2, Pencil,
-  Bell, CalendarClock, Camera, Clock
+  Bell, CalendarClock, Camera, Clock, MessageSquare
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
 import { ProviderVerificationDocuments } from '@/components/provider/ProviderVerificationDocuments';
-import { VerifiedCompletedWorkSection } from '@/components/providers/VerifiedCompletedWorkSection';
+import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
+import { getProviderReviews } from '@/lib/api/providerReviews';
+import type { ProviderReview } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { socket } from '@/lib/socket';
@@ -79,7 +83,7 @@ const ONBOARDING_KEY = 'provider_onboarding_seen';
 
 export default function ProviderProfile() {
   const { user, refreshProfile } = useAuth();
-  const { isApproved, isProfileComplete } = useProviderStatus();
+  const { isApproved, isProfileComplete, isBlocked } = useProviderStatus();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const workPostImageInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -87,6 +91,15 @@ export default function ProviderProfile() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  /**
+   * True while the form holds edits the user has not saved yet. Background
+   * refreshes (30s poll / window focus / socket) must not overwrite the
+   * editable fields while this is set, otherwise typed input is wiped.
+   */
+  const isDirtyRef = useRef(false);
+  const markDirty = useCallback(() => {
+    isDirtyRef.current = true;
+  }, []);
 
   // Profile info state
   const [phone, setPhone] = useState('');
@@ -114,6 +127,10 @@ export default function ProviderProfile() {
   const [postCategory, setPostCategory] = useState('');
   const [postFilterCategory, setPostFilterCategory] = useState<string>('all');
   const [postImages, setPostImages] = useState<string[]>([]);
+
+  // Customer reviews (read-only feed from completed jobs / disputes)
+  const [customerReviews, setCustomerReviews] = useState<ProviderReview[]>([]);
+  const [customerReviewsLoading, setCustomerReviewsLoading] = useState(false);
 
   const [serviceAreaOptions, setServiceAreaOptions] = useState<string[]>([]);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -175,35 +192,43 @@ export default function ProviderProfile() {
     }
   }, []);
 
-  const loadProvider = useCallback(async () => {
+  const loadProvider = useCallback(async (opts?: { force?: boolean }) => {
     if (!user) return;
     try {
       const data = await getProviderById(user.id);
       if (data) {
         setProvider(data);
-        const phoneFromApi = (data.phone && String(data.phone).trim()) || '';
-        const phoneFromSession =
-          user.role === 'provider' && 'phone' in user && user.phone
-            ? String(user.phone).trim()
-            : '';
-        setPhone(phoneFromApi || phoneFromSession);
-        setBusinessName(data.businessName || '');
-        setCompanyRegistrationNumber(data.companyRegistrationNumber || '');
-        if (!data.hasSaIdNumber) setSaIdNumber('');
-        setBio(data.bio || '');
-        setServiceAreas(data.serviceAreas || []);
-        setSelectedSkills(data.skills);
-        setPricing(data.laborPricing);
+        // Always keep workPosts in sync (managed via modals, not free-typed),
+        // but only hydrate the editable form fields when the user has no
+        // unsaved edits (or a save/initial load explicitly forces it).
         setWorkPosts(data.workPosts || []);
-        const set = data.settings || defaultSettings;
-        setSettings(set);
-        setDeliveryKmInput(
-          set.deliveryRatePerKm != null && Number.isFinite(set.deliveryRatePerKm)
-            ? String(set.deliveryRatePerKm)
-            : ''
-        );
-        setVehicleTypeInput(data.vehicleType || '');
-        setNumberPlateInput(data.numberPlate || '');
+        const shouldHydrateEdits = opts?.force || !isDirtyRef.current;
+        if (shouldHydrateEdits) {
+          const phoneFromApi = (data.phone && String(data.phone).trim()) || '';
+          const phoneFromSession =
+            user.role === 'provider' && 'phone' in user && user.phone
+              ? String(user.phone).trim()
+              : '';
+          setPhone(phoneFromApi || phoneFromSession);
+          setBusinessName(data.businessName || '');
+          setCompanyRegistrationNumber(data.companyRegistrationNumber || '');
+          if (!data.hasSaIdNumber) setSaIdNumber('');
+          setBio(data.bio || '');
+          setServiceAreas(data.serviceAreas || []);
+          setSelectedSkills(data.skills);
+          setPricing(data.laborPricing);
+          const set = data.settings || defaultSettings;
+          setSettings(set);
+          setDeliveryKmInput(
+            set.deliveryRatePerKm != null && Number.isFinite(set.deliveryRatePerKm)
+              ? String(set.deliveryRatePerKm)
+              : ''
+          );
+          setVehicleTypeInput(data.vehicleType || '');
+          setNumberPlateInput(data.numberPlate || '');
+          // Form now mirrors the server; clear the unsaved-edits flag.
+          isDirtyRef.current = false;
+        }
       }
     } catch (error) {
       toast({
@@ -271,6 +296,25 @@ export default function ProviderProfile() {
     };
   }, [user, loadMySuggestions, loadProvider, loadCategories, toast]);
 
+  const loadCustomerReviews = useCallback(async () => {
+    if (!user?.id) return;
+    setCustomerReviewsLoading(true);
+    try {
+      const res = await getProviderReviews(user.id, { limit: 50 });
+      setCustomerReviews(res.reviews);
+    } catch {
+      setCustomerReviews([]);
+    } finally {
+      setCustomerReviewsLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      void loadCustomerReviews();
+    }
+  }, [user?.id, loadCustomerReviews]);
+
   // ── Profile Info Save ──
   const handleSaveProfile = async () => {
     if (!user) return;
@@ -304,8 +348,9 @@ export default function ProviderProfile() {
         companyRegistrationNumber: companyRegistrationNumber.trim(),
       } as Partial<Provider>);
       setProvider(updated);
+      isDirtyRef.current = false;
       await refreshProfile();
-      await loadProvider();
+      await loadProvider({ force: true });
       const refreshed = evaluateProviderCoreSections(updated, {
         phone,
         bio,
@@ -331,6 +376,7 @@ export default function ProviderProfile() {
 
   // ── Skills & Pricing ──
   const handleToggleSkill = (skillId: string) => {
+    markDirty();
     if (selectedSkills.includes(skillId)) {
       setSelectedSkills(prev => prev.filter(s => s !== skillId));
       const p = { ...pricing };
@@ -382,6 +428,7 @@ export default function ProviderProfile() {
         numberPlate: selectedSkills.includes('delivery') ? numberPlateInput.trim() || null : null,
       });
       setProvider(next);
+      isDirtyRef.current = false;
       const savedSet = next.settings ?? settingsOut;
       setSettings(savedSet);
       setDeliveryKmInput(
@@ -556,6 +603,7 @@ export default function ProviderProfile() {
   const addManualServiceArea = () => {
     const v = manualAreaInput.trim();
     if (!v) return;
+    markDirty();
     setServiceAreas((prev) => (prev.includes(v) ? prev : [...prev, v]));
     if (errors.serviceAreas) setErrors((prev) => ({ ...prev, serviceAreas: false }));
     setManualAreaInput('');
@@ -603,8 +651,9 @@ export default function ProviderProfile() {
     try {
       const updated = await submitProviderForReview(user.id);
       setProvider(updated);
+      isDirtyRef.current = false;
       await refreshProfile();
-      await loadProvider();
+      await loadProvider({ force: true });
       toast({ title: 'Submitted for review', description: 'An admin will review your profile.' });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Complete your profile first, then try again.';
@@ -618,8 +667,15 @@ export default function ProviderProfile() {
     }
   };
 
-  /** Badge priority: incomplete → pending approval → active */
+  /** Badge priority: blocked → incomplete → pending approval → active */
   const renderStatusBadge = () => {
+    if (isBlocked) {
+      return (
+        <Badge className="shrink-0 border-destructive/40 bg-destructive/15 text-destructive">
+          Blocked
+        </Badge>
+      );
+    }
     if (isApproved && isProfileComplete) {
       return (
         <Badge className="shrink-0 border-emerald-500/40 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200">
@@ -655,10 +711,7 @@ export default function ProviderProfile() {
   if (isLoading) {
     return (
       <DashboardLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 w-48 bg-muted rounded" />
-          <div className="h-64 bg-muted rounded-lg" />
-        </div>
+        <ProviderProfileSkeleton />
       </DashboardLayout>
     );
   }
@@ -683,7 +736,7 @@ export default function ProviderProfile() {
         </div>
 
         <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-6">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 ">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
             <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm ">
               Profile {coreSections.profileInfo ? '✅' : '⚠️'}
             </TabsTrigger>
@@ -693,22 +746,23 @@ export default function ProviderProfile() {
             <TabsTrigger value="docs" className="gap-1.5 text-xs sm:text-sm">
               Documents {coreSections.documents ? '✅' : '⚠️'}
             </TabsTrigger>
+            <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm col-span-2 sm:col-span-1">
+              Settings {coreSections.settings ? '✅' : '⚠️'}
+            </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
               <span className="truncate">Work Posts</span>
             </TabsTrigger>
-            <TabsTrigger value="verified" className="gap-1.5 text-xs sm:text-sm">
-              <span className="truncate">Verified Work</span>
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm col-span-2 sm:col-span-1">
-              Settings {coreSections.settings ? '✅' : '⚠️'}
+            <TabsTrigger value="customer-reviews" className="gap-1.5 text-xs sm:text-sm">
+              <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Customer Reviews</span>
             </TabsTrigger>
           </TabsList>
 
           {/* ═══ PROFILE INFO ═══ */}
           <TabsContent value="info" className="space-y-6">
             <div className="card-elevated space-y-6 p-4 sm:p-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6 lg:flex-none">
                   <input
                     ref={avatarInputRef}
                     type="file"
@@ -744,6 +798,18 @@ export default function ProviderProfile() {
                     <p className="mt-1 text-sm text-muted-foreground break-all">{provider?.email}</p>
                   </div>
                 </div>
+                {user && user.role === 'provider' && user.blocked ? (
+                  <BlockedProfileBanner
+                    blockedReason={user.blockedReason}
+                    supportHref="/provider/notifications"
+                    payBalanceHref="/provider/earnings"
+                    showPayBalance={
+                      Boolean(user.refundDebtBlockedAt) ||
+                      /refund debt/i.test(user.blockedReason || '')
+                    }
+                    className="min-w-0 flex-1 lg:max-w-xl"
+                  />
+                ) : null}
                 <div className="shrink-0 sm:pt-1">{renderStatusBadge()}</div>
               </div>
 
@@ -756,6 +822,7 @@ export default function ProviderProfile() {
                   <Input
                     value={phone}
                     onChange={(e) => {
+                      markDirty();
                       setPhone(e.target.value);
                       if (errors.phone) setErrors((prev) => ({ ...prev, phone: false }));
                     }}
@@ -770,7 +837,10 @@ export default function ProviderProfile() {
                   </div>
                   <Input
                     value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
+                    onChange={(e) => {
+                      markDirty();
+                      setBusinessName(e.target.value);
+                    }}
                     placeholder="Your business name (optional)"
                   />
                 </div>
@@ -788,6 +858,7 @@ export default function ProviderProfile() {
                   <Input
                     value={saIdNumber}
                     onChange={(e) => {
+                      markDirty();
                       setSaIdNumber(e.target.value.replace(/\D/g, '').slice(0, 13));
                       if (errors.saIdNumber) setErrors((prev) => ({ ...prev, saIdNumber: false }));
                     }}
@@ -804,6 +875,7 @@ export default function ProviderProfile() {
                   <Input
                     value={companyRegistrationNumber}
                     onChange={(e) => {
+                      markDirty();
                       setCompanyRegistrationNumber(e.target.value);
                       if (errors.companyRegistrationNumber) {
                         setErrors((prev) => ({ ...prev, companyRegistrationNumber: false }));
@@ -828,6 +900,7 @@ export default function ProviderProfile() {
                 <Textarea
                   value={bio}
                   onChange={(e) => {
+                    markDirty();
                     setBio(e.target.value);
                     if (errors.bio) setErrors((prev) => ({ ...prev, bio: false }));
                   }}
@@ -842,39 +915,11 @@ export default function ProviderProfile() {
                   <Label>Service Areas</Label>
                   <FieldRequirementBadge required />
                 </div>
-                {serviceAreaOptions.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Area list could not be loaded. Add your own areas below — you can still save your profile.
-                  </p>
-                )}
-                {serviceAreaOptions.length > 0 && (
-                  <div className={cn('flex flex-wrap gap-2 rounded-md p-1', errors.serviceAreas && 'border border-destructive')}>
-                    {serviceAreaOptions.map((area) => (
-                      <button
-                        key={area}
-                        type="button"
-                        onClick={() => {
-                          setServiceAreas((prev) =>
-                            prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
-                          );
-                          if (errors.serviceAreas) setErrors((prev) => ({ ...prev, serviceAreas: false }));
-                        }}
-                        className={cn(
-                          'rounded-full border px-3 py-1.5 text-sm transition-colors',
-                          serviceAreas.includes(area)
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border hover:border-primary/30'
-                        )}
-                      >
-                        {area}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <p className="text-sm text-muted-foreground">Add as many areas as you serve.</p>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                   <div className="flex-1 space-y-2">
-                    <Label htmlFor="manual-area" className="text-xs text-muted-foreground">
-                      Add area manually
+                    <Label htmlFor="manual-area">
+                      Type your service area (any town/suburb)
                     </Label>
                     <Input
                       id="manual-area"
@@ -887,6 +932,7 @@ export default function ProviderProfile() {
                         }
                       }}
                       placeholder="e.g. Sandton, Southern Suburbs"
+                      className={errors.serviceAreas ? 'border-destructive focus-visible:ring-destructive' : ''}
                     />
                   </div>
                   <Button type="button" variant="secondary" onClick={addManualServiceArea}>
@@ -894,7 +940,7 @@ export default function ProviderProfile() {
                   </Button>
                 </div>
                 {errors.serviceAreas && (
-                  <p className="text-xs text-destructive">Please select at least one service area.</p>
+                  <p className="text-xs text-destructive">Please add at least one service area.</p>
                 )}
                 {serviceAreas.some((a) => !serviceAreaOptions.includes(a)) && (
                   <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border p-3">
@@ -906,6 +952,7 @@ export default function ProviderProfile() {
                           key={area}
                           type="button"
                           onClick={() => {
+                            markDirty();
                             setServiceAreas((prev) => prev.filter((a) => a !== area));
                             if (errors.serviceAreas) setErrors((prev) => ({ ...prev, serviceAreas: false }));
                           }}
@@ -914,6 +961,39 @@ export default function ProviderProfile() {
                           {area} ×
                         </button>
                       ))}
+                  </div>
+                )}
+                {serviceAreaOptions.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Quick-pick list could not be loaded. You can still add any area above and save your profile.
+                  </p>
+                )}
+                {serviceAreaOptions.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Quick add common cities</Label>
+                    <div className={cn('flex flex-wrap gap-2 rounded-md p-1', errors.serviceAreas && 'border border-destructive')}>
+                      {serviceAreaOptions.map((area) => (
+                        <button
+                          key={area}
+                          type="button"
+                          onClick={() => {
+                            markDirty();
+                            setServiceAreas((prev) =>
+                              prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
+                            );
+                            if (errors.serviceAreas) setErrors((prev) => ({ ...prev, serviceAreas: false }));
+                          }}
+                          className={cn(
+                            'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                            serviceAreas.includes(area)
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border hover:border-primary/30'
+                          )}
+                        >
+                          {area}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1012,6 +1092,7 @@ export default function ProviderProfile() {
                                 step={50}
                                 value={sp.jobFeeLow ?? ''}
                                 onChange={(e) => {
+                                  markDirty();
                                   const raw = e.target.value;
                                   setPricing((prev) => ({
                                     ...prev,
@@ -1035,6 +1116,7 @@ export default function ProviderProfile() {
                                 step={50}
                                 value={sp.jobFeeHigh ?? ''}
                                 onChange={(e) => {
+                                  markDirty();
                                   const raw = e.target.value;
                                   setPricing((prev) => ({
                                     ...prev,
@@ -1074,7 +1156,10 @@ export default function ProviderProfile() {
                     min={0}
                     step={1}
                     value={deliveryKmInput}
-                    onChange={(e) => setDeliveryKmInput(e.target.value)}
+                    onChange={(e) => {
+                      markDirty();
+                      setDeliveryKmInput(e.target.value);
+                    }}
                     placeholder="e.g. 12"
                   />
                 </div>
@@ -1084,7 +1169,10 @@ export default function ProviderProfile() {
                     <Input
                       id="vehicle-type"
                       value={vehicleTypeInput}
-                      onChange={(e) => setVehicleTypeInput(e.target.value)}
+                      onChange={(e) => {
+                        markDirty();
+                        setVehicleTypeInput(e.target.value);
+                      }}
                       placeholder="e.g. Bakkie, Van"
                     />
                   </div>
@@ -1093,7 +1181,10 @@ export default function ProviderProfile() {
                     <Input
                       id="number-plate"
                       value={numberPlateInput}
-                      onChange={(e) => setNumberPlateInput(e.target.value)}
+                      onChange={(e) => {
+                        markDirty();
+                        setNumberPlateInput(e.target.value);
+                      }}
                       placeholder="e.g. CA 123-456"
                     />
                   </div>
@@ -1227,12 +1318,6 @@ export default function ProviderProfile() {
             </Button>
           </TabsContent>
 
-          <TabsContent value="verified" className="space-y-6">
-            {user?.id ? (
-              <VerifiedCompletedWorkSection providerId={user.id} title="Verified Completed Work" />
-            ) : null}
-          </TabsContent>
-
           {/* ═══ SETTINGS ═══ */}
           <TabsContent value="settings" className="space-y-6">
             {/* Availability */}
@@ -1250,7 +1335,10 @@ export default function ProviderProfile() {
                 </div>
                 <Switch
                   checked={settings.availability}
-                  onCheckedChange={(checked) => setSettings(s => ({ ...s, availability: checked }))}
+                  onCheckedChange={(checked) => {
+                    markDirty();
+                    setSettings(s => ({ ...s, availability: checked }));
+                  }}
                 />
               </div>
             </div>
@@ -1274,10 +1362,13 @@ export default function ProviderProfile() {
                     </div>
                     <Switch
                       checked={settings.notifications[item.key]}
-                      onCheckedChange={(checked) => setSettings(s => ({
-                        ...s,
-                        notifications: { ...s.notifications, [item.key]: checked },
-                      }))}
+                      onCheckedChange={(checked) => {
+                        markDirty();
+                        setSettings(s => ({
+                          ...s,
+                          notifications: { ...s.notifications, [item.key]: checked },
+                        }));
+                      }}
                     />
                   </div>
                 ))}
@@ -1304,6 +1395,7 @@ export default function ProviderProfile() {
                     <Switch
                       checked={hours.enabled}
                       onCheckedChange={(checked) => {
+                        markDirty();
                         setSettingsHoursError(false);
                         setSettings(s => ({
                           ...s,
@@ -1317,20 +1409,26 @@ export default function ProviderProfile() {
                         <Input
                           type="time"
                           value={hours.open}
-                          onChange={e => setSettings(s => ({
-                            ...s,
-                            businessHours: { ...s.businessHours, [day]: { ...hours, open: e.target.value } },
-                          }))}
+                          onChange={e => {
+                            markDirty();
+                            setSettings(s => ({
+                              ...s,
+                              businessHours: { ...s.businessHours, [day]: { ...hours, open: e.target.value } },
+                            }));
+                          }}
                           className="w-28 h-8 sm:col-span-0 col-span-1"
                         />
                         <span className="text-muted-foreground sm:ml-6">to</span>
                         <Input
                           type="time"
                           value={hours.close}
-                          onChange={e => setSettings(s => ({
-                            ...s,
-                            businessHours: { ...s.businessHours, [day]: { ...hours, close: e.target.value } },
-                          }))}
+                          onChange={e => {
+                            markDirty();
+                            setSettings(s => ({
+                              ...s,
+                              businessHours: { ...s.businessHours, [day]: { ...hours, close: e.target.value } },
+                            }));
+                          }}
                           className="w-28 h-8 sm:ml-[-48px]"
                         />
                       </div>
@@ -1364,8 +1462,9 @@ export default function ProviderProfile() {
                   type="button"
                   variant="outline"
                   onClick={async () => {
+                    isDirtyRef.current = false;
                     await refreshProfile();
-                    await loadProvider();
+                    await loadProvider({ force: true });
                     toast({ title: 'Status refreshed' });
                   }}
                 >
@@ -1391,8 +1490,9 @@ export default function ProviderProfile() {
                 try {
                   const updated = await updateProvider(user.id, { settings });
                   setProvider(updated);
+                  isDirtyRef.current = false;
                   await refreshProfile();
-                  await loadProvider();
+                  await loadProvider({ force: true });
                   const savedSettings = updated.settings ?? settings;
                   setSettings(savedSettings);
                   const refreshed = evaluateProviderCoreSections(updated, {
@@ -1423,7 +1523,20 @@ export default function ProviderProfile() {
               {isSaving ? 'Saving...' : 'Save Settings'}
             </Button>
           </TabsContent>
-
+          
+            {/* ═══ CUSTOMER REVIEWS ═══ */}
+          <TabsContent value="customer-reviews" className="space-y-6">
+            <div>
+              <h3 className="font-semibold">Customer Reviews</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Reviews from customers after job confirmation or when they report an issue. These are
+                visible on your public profile.
+              </p>
+            </div>
+            <div className="card-elevated p-4 sm:p-6">
+              <ProviderReviewList reviews={customerReviews} loading={customerReviewsLoading} />
+            </div>
+          </TabsContent>
         </Tabs>
       </div>
 

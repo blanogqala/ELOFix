@@ -9,7 +9,9 @@ function assertSelfOrAdmin(req, targetUserId) {
 }
 
 async function getUserById(req, res) {
-  const user = await userService.getUserById(req.params.id);
+  const userId = String(req.params.id || "").trim();
+  assertSelfOrAdmin(req, userId);
+  const user = await userService.getUserById(userId);
   if (!user) throw new AppError("User not found", 404);
   res.json({ success: true, user });
 }

@@ -17,6 +17,8 @@ router.put("/withdrawal-profile", asyncHandler(providerAccountController.putWith
 router.get("/withdrawals", asyncHandler(providerAccountController.getWithdrawals));
 router.get("/transactions", asyncHandler(providerAccountController.getTransactions));
 router.get("/trust-score", asyncHandler(providerAccountController.getTrustScore));
+router.get("/refund-debt", asyncHandler(providerAccountController.getRefundDebt));
+router.post("/refund-debt/repayments", asyncHandler(providerAccountController.postRefundRepayment));
 router.post(
   "/withdraw",
   financialIdem.attachFinancialRequestFingerprint,

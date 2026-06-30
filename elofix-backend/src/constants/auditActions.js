@@ -40,6 +40,11 @@ const AUDIT_ACTIONS = {
   FRAUD_ALERT_UPDATED: "fraud.alert.updated",
   ADMIN_FRAUD_REVIEWED: "admin.fraud.reviewed",
 
+  // Uploads
+  UPLOAD_RECORDED: "upload.recorded",
+  UPLOAD_RATE_LIMITED: "upload.rate_limited",
+  UPLOAD_RATE_VIOLATION: "upload.rate_violation",
+
   // Trust score
   TRUST_SCORE_CHANGED: "trust_score.changed",
 
@@ -68,6 +73,13 @@ const AUDIT_ACTIONS = {
   // Jobs
   JOB_AUTO_ACCEPTED: "job.auto_accepted",
   REVIEW_UPSERT: "review.upsert",
+
+  // Notifications
+  NOTIFICATION_CREATED: "notification.created",
+  NOTIFICATION_DEDUPED: "notification.deduped",
+  NOTIFICATION_SOCKET_SENT: "notification.socket.sent",
+  NOTIFICATION_EMAIL_SENT: "notification.email.sent",
+  NOTIFICATION_DELIVERY_FAILED: "notification.delivery.failed",
 };
 
 /** Map action prefix → category for admin filtering. */
@@ -77,8 +89,10 @@ const ACTION_CATEGORIES = {
   payments: ["payment."],
   disputes: ["dispute."],
   fraud: ["fraud.", "admin.fraud."],
+  uploads: ["upload."],
   trust_score: ["trust_score."],
   admin: ["admin.", "withdrawal.", "reconcile.", "material_order.", "job.", "review."],
+  notifications: ["notification."],
 };
 
 const ENTITY_TYPES = {
@@ -90,6 +104,7 @@ const ENTITY_TYPES = {
   WITHDRAWAL: "withdrawal",
   FRAUD_ALERT: "fraud_alert",
   TRUST_SCORE: "trust_score",
+  NOTIFICATION: "notification",
 };
 
 const ACTOR_TYPES = {

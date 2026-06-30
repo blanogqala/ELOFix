@@ -84,6 +84,8 @@ async function getAllMaterialOrdersForUser(req, res) {
       itemsCount: (order.items || []).reduce((sum, i) => sum + Number(i.qty || 0), 0),
       total: Number(order.finance?.orderGross ?? order.total ?? 0),
       deliveryFee: Number(order.finance?.deliveryFee ?? order.deliveryFee ?? 0),
+      deliveryType: order.deliveryType ? String(order.deliveryType) : undefined,
+      deliveryPaid: order.payment?.deliveryPaid === true,
       deliveryTypeLabel:
         order.deliveryType === "SELF" ? "Pickup" : order.deliveryType === "STORE_DELIVERY" ? "Store delivery" : "Courier",
       deliveryStatusLabel: legacyDeliveryLabel,

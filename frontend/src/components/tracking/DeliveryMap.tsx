@@ -15,7 +15,25 @@ import { useSmoothedLatLng } from '@/lib/map/smoothCoords';
 const DRIVER_NEAR_METERS = 500;
 const DRIVER_ARRIVING_METERS = 120;
 
-export type DeliveryRoutePhase = 'to_collection' | 'to_destination';
+export type DeliveryRoutePhase =
+  | 'to_collection'
+  | 'at_collection'
+  | 'to_destination'
+  | 'at_destination';
+
+function routePhaseSubtitle(phase: DeliveryRoutePhase): string {
+  switch (phase) {
+    case 'to_collection':
+      return 'Heading to collect at:';
+    case 'at_collection':
+      return 'Items collected at:';
+    case 'at_destination':
+      return 'Arrived at:';
+    case 'to_destination':
+    default:
+      return 'Delivering to:';
+  }
+}
 
 export type DriverProximityPayload = {
   near: boolean;
@@ -71,6 +89,7 @@ function MapBody({
 
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [geocodedDest, setGeocodedDest] = useState<google.maps.LatLngLiteral | null>(null);
+  const [geocoding, setGeocoding] = useState(false);
   const [etaText, setEtaText] = useState<string | null>(null);
 
   const rawDriverPos =
@@ -92,7 +111,8 @@ function MapBody({
     return null;
   }, [destinationCoords, geocodedDest]);
 
-  const pinKind: DestinationPinKind = routePhase === 'to_collection' ? 'collection' : 'delivery';
+  const pinKind: DestinationPinKind =
+    routePhase === 'to_collection' || routePhase === 'at_collection' ? 'collection' : 'delivery';
 
   useEffect(() => {
     if (!rawDriverPos) {
@@ -123,8 +143,10 @@ function MapBody({
     const addr = destination?.trim();
     if (!addr || destinationCoords) {
       setGeocodedDest(null);
+      setGeocoding(false);
       return;
     }
+    setGeocoding(true);
     const geo = new google.maps.Geocoder();
     geo.geocode({ address: addr }, (results, status) => {
       if (status === 'OK' && results?.[0]?.geometry?.location) {
@@ -132,6 +154,7 @@ function MapBody({
       } else {
         setGeocodedDest(null);
       }
+      setGeocoding(false);
     });
   }, [isLoaded, destination, destinationCoords]);
 
@@ -250,31 +273,17 @@ function MapBody({
     );
   }
 
-  if (!driverPos && !destForRoute) {
+  const hasDestinationHint = Boolean(destination?.trim() || destinationCoords);
+  const showMapSurface = Boolean(driverPos || destForRoute || hasDestinationHint);
+
+  if (!showMapSurface) {
     return (
       <div className={cn('overflow-hidden rounded-lg border border-border bg-muted/20', className)}>
         {trackingEnded ? (
           <p className="border-b border-border bg-destructive/10 px-3 py-2 text-xs text-destructive">Tracking session ended</p>
         ) : null}
-        {showWaitingBanner ? (
-          <p className="border-b border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            Waiting for driver location and a routable destination…
-          </p>
-        ) : null}
-        <div className="p-6 text-sm text-muted-foreground space-y-2">
-          <p className="font-medium text-foreground">Delivery map</p>
-          <p>
-            {completedMode && destination
-              ? 'Delivery completed — showing the destination address.'
-              : destination
-                ? 'Destination address is loaded; once the driver shares GPS, the route will appear here.'
-                : 'Add a delivery address or enable maps API to preview the route.'}
-          </p>
-          {destination ? (
-            <p className="text-xs border-t border-border pt-2">
-              <span className="font-medium text-foreground">Address:</span> {destination}
-            </p>
-          ) : null}
+        <div className="p-6 text-sm text-muted-foreground">
+          <p>Add a delivery address to preview the route.</p>
         </div>
       </div>
     );
@@ -289,13 +298,17 @@ function MapBody({
       ) : null}
       {showWaitingBanner && !driverPos ? (
         <p className="border-b border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          Waiting for driver location…
+          {geocoding
+            ? 'Loading route destination…'
+            : destForRoute
+              ? 'Waiting for driver location…'
+              : 'Waiting for driver location and a routable destination…'}
         </p>
       ) : null}
       {destination ? (
         <p className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">
-            {routePhase === 'to_collection' ? 'Heading to collect at:' : 'Delivering to:'}
+            {routePhaseSubtitle(routePhase)}
           </span>{' '}
           {destination}
         </p>

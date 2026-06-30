@@ -64,7 +64,12 @@ router.patch("/withdrawals/:id/mark-failed", asyncHandler(adminController.markWi
 router.get("/disputes", asyncHandler(adminController.listAdminDisputes));
 router.get("/disputes/:id", asyncHandler(adminController.getAdminDisputeDetail));
 router.patch("/disputes/:id/status", asyncHandler(adminController.updateAdminDisputeStatus));
-router.post("/disputes/:id/resolve", asyncHandler(adminController.resolveAdminDispute));
+router.post(
+  "/disputes/:id/resolve",
+  financialIdem.attachFinancialRequestFingerprint,
+  financialIdem.requireIdempotencyKey,
+  asyncHandler(adminController.resolveAdminDispute)
+);
 router.get("/jobs/:jobId/completion-evidence", asyncHandler(adminController.getAdminJobCompletionEvidence));
 router.get("/jobs/:jobId/completion-evidence/export", asyncHandler(adminController.exportJobCompletionEvidence));
 
@@ -94,5 +99,9 @@ router.patch(
 
 router.get("/audit-logs", asyncHandler(adminController.listAuditLogs));
 router.get("/audit-logs/export", asyncHandler(adminController.exportAuditLogs));
+
+router.get("/refund-repayments", asyncHandler(adminController.listRefundRepayments));
+router.post("/refund-repayments/:id/confirm", asyncHandler(adminController.confirmRefundRepayment));
+router.post("/refund-repayments/:id/reject", asyncHandler(adminController.rejectRefundRepayment));
 
 module.exports = router;

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   getAdminCustomerById,
@@ -45,6 +47,7 @@ export default function AdminCustomerDetail() {
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
   const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [blockReason, setBlockReason] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   const loadCustomer = useCallback(async () => {
@@ -66,11 +69,19 @@ export default function AdminCustomerDetail() {
 
   const handleBlock = async () => {
     if (!customer || isMutating) return;
+    if (!blockReason.trim()) {
+      toast({ title: 'Reason required', description: 'Please provide a reason for blocking this customer.', variant: 'destructive' });
+      return;
+    }
     try {
       setIsMutating(true);
-      setCustomer(await blockAdminCustomer(customer.id));
-      toast({ title: 'Customer blocked', description: 'They can no longer sign in or use the platform.' });
+      setCustomer(await blockAdminCustomer(customer.id, blockReason.trim()));
+      toast({
+        title: 'Customer blocked',
+        description: 'They can still sign in and view history, but cannot create new requests or orders.',
+      });
       setBlockModalOpen(false);
+      setBlockReason('');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to block customer.';
       toast({ title: 'Error', description: message, variant: 'destructive' });
@@ -412,15 +423,25 @@ export default function AdminCustomerDetail() {
           <DialogHeader>
             <DialogTitle>Block customer</DialogTitle>
             <DialogDescription>
-              {customer?.name} will not be able to sign in or create new requests. Existing data is
-              kept for audit purposes.
+              {customer?.name} will be restricted from new requests and material orders but can still sign in,
+              view history, and contact support.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="block-reason">Reason (required)</Label>
+            <Textarea
+              id="block-reason"
+              value={blockReason}
+              onChange={(e) => setBlockReason(e.target.value)}
+              placeholder="Explain why this customer is being blocked…"
+              rows={4}
+            />
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBlockModalOpen(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" disabled={isMutating} onClick={() => void handleBlock()}>
+            <Button variant="destructive" disabled={isMutating || !blockReason.trim()} onClick={() => void handleBlock()}>
               {isMutating ? 'Blocking…' : 'Block customer'}
             </Button>
           </DialogFooter>

@@ -34,6 +34,9 @@ interface BackendUser {
   profileImage?: string | null;
   settings?: Provider['settings'];
   blocked?: boolean;
+  blockedReason?: string;
+  blockedAt?: string;
+  refundDebtBlockedAt?: string;
   reviewSubmittedAt?: string;
   supplierProfile?: SupplierAccountProfile | null;
   completedLaborByCategory?: Provider['completedLaborByCategory'];
@@ -141,6 +144,9 @@ function toAuthUser(user: BackendUser): AuthUser {
       bio: user.bio,
       createdAt: user.createdAt ?? new Date().toISOString(),
       blocked: user.blocked,
+      blockedReason: user.blockedReason || undefined,
+      blockedAt: user.blockedAt || undefined,
+      refundDebtBlockedAt: user.refundDebtBlockedAt || undefined,
       reviewSubmittedAt: user.reviewSubmittedAt,
       ...(user.completedLaborByCategory &&
       typeof user.completedLaborByCategory === 'object' &&
@@ -184,6 +190,8 @@ function toAuthUser(user: BackendUser): AuthUser {
     role,
     profileImage: user.profileImage || undefined,
     createdAt: user.createdAt ?? new Date().toISOString(),
+    blocked: Boolean(user.blocked),
+    blockedReason: user.blockedReason || undefined,
   };
 }
 

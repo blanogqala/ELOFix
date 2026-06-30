@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { uploadProviderDocument } from '@/lib/api/providers';
+import { LoadingOverlay } from '@/components/common/loading';
 import { compressImageForUpload } from '@/lib/imageCompression';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
@@ -237,6 +238,7 @@ export function ProviderVerificationDocuments({
   const [uploading, setUploading] = useState<ProviderDocType | null>(null);
 
   return (
+    <>
     <div className={cn(className)}>
       <div className="card-elevated overflow-hidden">
         <div className="border-b border-border p-4 sm:p-6">
@@ -298,5 +300,7 @@ export function ProviderVerificationDocuments({
         </div>
       </div>
     </div>
+    <LoadingOverlay open={uploading !== null} message="Uploading verification…" />
+    </>
   );
 }

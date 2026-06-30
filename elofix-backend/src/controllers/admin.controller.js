@@ -68,7 +68,7 @@ async function getCustomerById(req, res) {
 async function blockCustomer(req, res) {
   const customer = await adminCustomersService.blockCustomerByUserId(
     req.params.userId,
-    getAdminAuditContext(req)
+    { ...getAdminAuditContext(req), reason: req.body?.reason }
   );
   res.json({ success: true, customer });
 }
@@ -110,7 +110,7 @@ async function rejectProvider(req, res) {
 async function blockProvider(req, res) {
   const provider = await providerService.blockProviderByUserId(
     req.params.userId,
-    getAdminAuditContext(req)
+    { ...getAdminAuditContext(req), reason: req.body?.reason }
   );
   res.json({ success: true, provider });
 }
@@ -367,7 +367,11 @@ async function updateAdminDisputeStatus(req, res) {
 }
 
 async function resolveAdminDispute(req, res) {
-  const data = await disputeAdminService.resolveDispute(req.user.userId, req.params.id, req.body || {});
+  const data = await disputeAdminService.resolveDispute(req.user.userId, req.params.id, req.body || {}, {
+    idempotencyKey: req.financialIdempotencyKey,
+    requestHash: req.financialRequestHash,
+    route: req.financialIdempotencyRoute,
+  });
   res.json({ success: true, ...data });
 }
 
@@ -511,6 +515,24 @@ async function exportAuditLogs(req, res) {
   res.send(csv);
 }
 
+async function listRefundRepayments(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const rows = await refundRecovery.listAdminRefundRepayments(req.query || {});
+  res.json({ success: true, repayments: rows });
+}
+
+async function confirmRefundRepayment(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const row = await refundRecovery.confirmAdminRefundRepayment(req.user.userId, req.params.id, req.body || {});
+  res.json({ success: true, repayment: row });
+}
+
+async function rejectRefundRepayment(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const row = await refundRecovery.rejectAdminRefundRepayment(req.user.userId, req.params.id, req.body || {});
+  res.json({ success: true, repayment: row });
+}
+
 module.exports = {
   listProviders,
   listProviderNetRevenues,
@@ -567,5 +589,8 @@ module.exports = {
   patchProviderFraudReview,
   listAuditLogs,
   exportAuditLogs,
+  listRefundRepayments,
+  confirmRefundRepayment,
+  rejectRefundRepayment,
   processAdminJobRefund,
 };

@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Upload, X, Loader2, AlertTriangle } from 'lucide-react';
 import { uploadCompletionEvidence } from '@/lib/api/jobs';
+import { LoadingOverlay } from '@/components/common/loading';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 
 const RESOLUTION_OPTIONS = [
@@ -89,6 +90,7 @@ export function JobDisputeDialog({
   };
 
   return (
+    <>
     <Dialog
       open={open}
       onOpenChange={(next) => {
@@ -198,5 +200,7 @@ export function JobDisputeDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <LoadingOverlay open={Boolean(loading)} message="Submitting dispute…" />
+    </>
   );
 }

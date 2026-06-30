@@ -10,6 +10,8 @@ export interface User {
   role: 'user';
   profileImage?: string;
   createdAt: string;
+  blocked?: boolean;
+  blockedReason?: string;
 }
 
 export interface WorkPost {
@@ -136,6 +138,9 @@ export interface Provider {
   reviews?: ProviderReview[];
   createdAt: string;
   blocked?: boolean;
+  blockedReason?: string;
+  blockedAt?: string;
+  refundDebtBlockedAt?: string;
   rejectionReason?: string;
   rejectedAt?: string;
   deletedAt?: string;
@@ -154,7 +159,7 @@ export interface Provider {
   completedLaborByCategory?: Record<string, { min: number; max: number; jobCount: number }>;
 }
 
-export type ProviderRatingBreakdown = Record<1 | 2 | 3 | 4 | 5, number>;
+export type ProviderRatingBreakdown = Record<0 | 1 | 2 | 3 | 4 | 5, number>;
 
 export interface ProviderReview {
   id: string;
@@ -166,6 +171,12 @@ export interface ProviderReview {
   createdAt: string;
   jobTitle?: string;
   jobCategory?: string;
+  images?: string[];
+  videos?: string[];
+  disputeImages?: string[];
+  disputeVideos?: string[];
+  wasDisputed?: boolean;
+  resolvedAfterDispute?: boolean;
 }
 
 export interface Admin {
@@ -649,6 +660,8 @@ export interface Job {
   categoryStep3Type?: Category['step3Type'];
   userId: string;
   userName: string;
+  userEmail?: string;
+  userPhone?: string;
   providerId?: string;
   providerName?: string;
   description: string;
@@ -745,13 +758,17 @@ export interface Job {
   paymentSettlementStatus?: 'released' | 'held' | 'pending' | 'refund';
   /** Refund status/kind when job was cancelled after payment */
   refundStatus?: string;
-  /** Per-refund breakdown from admin processing */
+  /** Per-refund breakdown from admin processing (includes staged refund split). */
   refundDetails?: {
     customerNet?: number;
     materialsNet?: number;
     escrowApplied?: number;
     clawbackApplied?: number;
     providerDebtAdded?: number;
+    /** Portion refunded to the customer immediately (escrow + clawback). */
+    immediateRefund?: number;
+    /** Portion still being recovered from the provider (staged payout). */
+    pendingRefund?: number;
     cumulativeCustomerNet?: number;
     processedAt?: string | null;
   };
@@ -846,7 +863,8 @@ export type AppNotificationType =
   | 'supplier_material_order_new'
   | 'supplier_material_order_cancelled'
   | 'material_order_new'
-  | 'material_order_cancelled';
+  | 'material_order_cancelled'
+  | 'account_blocked';
 
 export interface AppNotification {
   id: string;
@@ -919,10 +937,13 @@ export interface JobDispute {
   adminNotes?: string | null;
   openedAt: string;
   resolvedAt?: string | null;
+  customerName?: string;
+  providerName?: string;
   messages?: Array<{
     id: string;
     senderId: string;
     senderRole: string;
+    senderName?: string;
     body: string;
     attachments: string[];
     createdAt: string;

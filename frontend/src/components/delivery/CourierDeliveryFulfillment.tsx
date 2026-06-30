@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import {
@@ -7,9 +6,6 @@ import {
 } from '@/lib/api/deliveryRequests';
 import type { DeliveryGeoPoint, DeliveryRequestRecord } from '@/types';
 import { Navigation, Package, MapPin, Star, CheckCircle2 } from 'lucide-react';
-import { socket } from '@/lib/socket';
-import { getCurrentSession } from '@/lib/api/auth';
-import { createLocationSendState, markLocationSent, shouldSendLocation } from '@/lib/geolocationSendGate';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { ApiHttpError } from '@/api/client';
@@ -20,8 +16,6 @@ function mapsUrl(lat?: number, lng?: number, address?: string) {
   return null;
 }
 
-const LIVE_GPS_STATUSES = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
-
 interface CourierDeliveryFulfillmentProps {
   deliveryRequestId: string;
   fulfillmentStatus: string;
@@ -30,6 +24,7 @@ interface CourierDeliveryFulfillmentProps {
   deliveryConfirmed?: boolean;
   deliveryConfirmedAt?: string;
   customerRating?: DeliveryRequestRecord['customerRating'];
+  geoError?: string | null;
   onUpdated: (request: DeliveryRequestRecord | null) => void;
 }
 
@@ -51,11 +46,11 @@ export function CourierDeliveryFulfillment({
   deliveryConfirmed = false,
   deliveryConfirmedAt,
   customerRating,
+  geoError = null,
   onUpdated,
 }: CourierDeliveryFulfillmentProps) {
   const { toast } = useToast();
   const fs = String(fulfillmentStatus || 'READY').toUpperCase();
-  const [geoNote, setGeoNote] = useState<string | null>(null);
 
   const mut = useMutation({
     mutationFn: (status: CourierFulfillmentStatus) =>
@@ -74,38 +69,6 @@ export function CourierDeliveryFulfillment({
       toast({ title: 'Error', description: msg, variant: 'destructive' });
     },
   });
-
-  useEffect(() => {
-    if (!LIVE_GPS_STATUSES.has(fs) || !deliveryRequestId) return;
-
-    if (!navigator.geolocation) {
-      setGeoNote('Enable location in your browser so the customer can follow your trip.');
-      return;
-    }
-
-    const session = getCurrentSession();
-    if (session?.token) socket.auth = { token: session.token };
-    if (!socket.connected) socket.connect();
-
-    const sendState = createLocationSendState();
-    const wid = navigator.geolocation.watchPosition(
-      (pos) => {
-        const now = Date.now();
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        if (!shouldSendLocation(now, lat, lng, sendState)) return;
-        markLocationSent(now, lat, lng, sendState);
-        socket.emit('update_location', { orderId: deliveryRequestId, lat, lng });
-        setGeoNote(null);
-      },
-      () => {
-        setGeoNote('Allow location access to share live position with the customer.');
-      },
-      { enableHighAccuracy: true, maximumAge: 8000 }
-    );
-
-    return () => navigator.geolocation.clearWatch(wid);
-  }, [fs, deliveryRequestId]);
 
   const collectUrl = mapsUrl(
     collection.coordinates?.lat,
@@ -156,8 +119,8 @@ export function CourierDeliveryFulfillment({
           ) : null}
           {fs === 'COLLECTING' ? (
             <>
-              {geoNote ? (
-                <p className="text-xs text-amber-700 dark:text-amber-200">{geoNote}</p>
+              {geoError ? (
+                <p className="text-xs text-amber-700 dark:text-amber-200">{geoError}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">Sharing live location with the customer.</p>
               )}
@@ -214,8 +177,8 @@ export function CourierDeliveryFulfillment({
           ) : null}
           {fs === 'OUT_FOR_DELIVERY' ? (
             <>
-              {geoNote ? (
-                <p className="text-xs text-amber-700 dark:text-amber-200">{geoNote}</p>
+              {geoError ? (
+                <p className="text-xs text-amber-700 dark:text-amber-200">{geoError}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">Customer can see you on the way.</p>
               )}

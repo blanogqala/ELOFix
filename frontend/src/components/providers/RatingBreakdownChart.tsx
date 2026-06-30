@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 import type { ProviderRatingBreakdown } from '@/types';
 import { breakdownPercent, breakdownTotal } from '@/lib/providerReputation';
 
-const STARS: Array<1 | 2 | 3 | 4 | 5> = [5, 4, 3, 2, 1];
+const STARS: Array<0 | 1 | 2 | 3 | 4 | 5> = [5, 4, 3, 2, 1, 0];
 
 interface RatingBreakdownChartProps {
   breakdown: ProviderRatingBreakdown;
@@ -43,11 +43,12 @@ export function RatingBreakdownChart({
         {total === 0 ? (
           <p className="text-sm text-muted-foreground py-4">No ratings yet — be the first to review after a job.</p>
         ) : (
-          STARS.map((star) => {
+          STARS.filter((star) => star !== 0 || (breakdown[0] ?? 0) > 0).map((star) => {
             const pct = breakdownPercent(breakdown, star);
+            const label = star === 0 ? 'Issue' : `${star} ★`;
             return (
               <div key={star} className="flex items-center gap-2 text-sm">
-                <span className="w-8 shrink-0 tabular-nums text-muted-foreground">{star} ★</span>
+                <span className="w-10 shrink-0 tabular-nums text-muted-foreground">{label}</span>
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                   <div
                     className="h-full rounded-full bg-accent transition-all"

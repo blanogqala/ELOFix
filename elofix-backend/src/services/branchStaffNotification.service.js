@@ -1,5 +1,6 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
+const outboxService = require("./notificationDeliveryOutbox.service");
 
 function emitToUserRoom(userId, event, payload) {
   if (!userId || !global.io) return;
@@ -27,30 +28,74 @@ function toApiShape(row) {
   };
 }
 
-async function createForBranchUser(branchUserId, { category = "SYSTEM", type, title, message, materialOrderId, metadata }) {
+async function createForBranchUser(branchUserId, { category = "SYSTEM", type, title, message, materialOrderId, metadata, dedupeKey }) {
   const uid = String(branchUserId || "").trim();
   if (!uid) return null;
-  const item = await prisma.branchStaffNotification.create({
-    data: {
-      id: randomUUID(),
-      branchUserId: uid,
-      category,
-      type: String(type || "branch_event"),
-      title: String(title || "Update"),
-      message: String(message || ""),
-      materialOrderId: materialOrderId || null,
-      metadata: metadata && typeof metadata === "object" ? metadata : undefined,
-    },
-  });
+
+  const data = {
+    id: randomUUID(),
+    branchUserId: uid,
+    category,
+    type: String(type || "branch_event"),
+    title: String(title || "Update"),
+    message: String(message || ""),
+    materialOrderId: materialOrderId || null,
+    metadata: metadata && typeof metadata === "object" ? metadata : undefined,
+    dedupeKey:
+      dedupeKey != null && String(dedupeKey).trim() !== "" ? String(dedupeKey).trim() : null,
+  };
+
+  let item;
+  let deduped = false;
+
+  if (data.dedupeKey) {
+    const existing = await prisma.branchStaffNotification.findFirst({
+      where: { branchUserId: uid, dedupeKey: data.dedupeKey },
+    });
+    if (existing) {
+      item = existing;
+      deduped = true;
+    }
+  }
+
+  if (!item) {
+    try {
+      item = await prisma.branchStaffNotification.create({ data });
+    } catch (err) {
+      if (err?.code === "P2002" && data.dedupeKey) {
+        const existing = await prisma.branchStaffNotification.findFirst({
+          where: { branchUserId: uid, dedupeKey: data.dedupeKey },
+        });
+        if (!existing) throw err;
+        item = existing;
+        deduped = true;
+      } else {
+        throw err;
+      }
+    }
+  }
+
   const api = toApiShape(item);
-  emitToUserRoom(uid, "notification:new", api);
+  if (deduped) return api;
+
+  try {
+    await outboxService.enqueueSocketDelivery({
+      userId: uid,
+      event: "notification:new",
+      payload: api,
+    });
+    void outboxService.processOutboxBatch(1);
+  } catch (outboxErr) {
+    console.error("[branchStaffNotification] socket outbox enqueue failed", outboxErr);
+    emitToUserRoom(uid, "notification:new", api);
+  }
   return api;
 }
 
 /**
  * Notify every BranchUser on a branch (in-app + socket).
  */
-async function createForBranchUsers(branchId, { category = "ORDERS", type, title, message, materialOrderId, metadata }) {
+async function createForBranchUsers(branchId, { category = "ORDERS", type, title, message, materialOrderId, metadata, dedupeKey }) {
   const bid = String(branchId || "").trim();
   if (!bid) return [];
   const staff = await prisma.branchUser.findMany({
@@ -59,21 +104,20 @@ async function createForBranchUsers(branchId, { category = "ORDERS", type, title
   });
   const created = [];
   for (const s of staff) {
-    const item = await prisma.branchStaffNotification.create({
-      data: {
-        id: randomUUID(),
-        branchUserId: s.id,
-        category,
-        type: String(type || "branch_event"),
-        title: String(title || "Update"),
-        message: String(message || ""),
-        materialOrderId: materialOrderId || null,
-        metadata: metadata && typeof metadata === "object" ? metadata : undefined,
-      },
+    const staffDedupe =
+      dedupeKey != null && String(dedupeKey).trim() !== ""
+        ? `${String(dedupeKey).trim()}:staff:${s.id}`
+        : null;
+    const item = await createForBranchUser(s.id, {
+      category,
+      type,
+      title,
+      message,
+      materialOrderId,
+      metadata,
+      dedupeKey: staffDedupe,
     });
-    const api = toApiShape(item);
-    emitToUserRoom(s.id, "notification:new", api);
-    created.push(api);
+    if (item) created.push(item);
   }
   return created;
 }

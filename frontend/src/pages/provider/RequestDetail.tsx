@@ -20,6 +20,9 @@ import {
   MessageSquare, Send, Package, XCircle, Ban,
 } from 'lucide-react';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
+import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
+import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   Select,
@@ -41,9 +44,11 @@ export default function ProviderRequestDetail() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const { isProfileComplete } = useProviderStatus();
+  const { dialogProps, guardAction, openIfBlockedMessage } = useBlockedActionGuard();
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { markJobSectionRead } = useJobActivityIndicators();
   const [job, setJob] = useState<Job | null>(null);
   const [deliveryRequest, setDeliveryRequest] = useState<DeliveryRequestRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -82,7 +87,12 @@ export default function ProviderRequestDetail() {
     }
   }, [id, loadJob]);
 
-  const handleAccept = async () => {
+  useEffect(() => {
+    if (!id || !job) return;
+    void markJobSectionRead(id, 'general');
+  }, [id, job?.id, markJobSectionRead]);
+
+  const performAccept = async () => {
     if (!job || isMutating) return;
     if (!isProfileComplete) {
       toast({
@@ -106,10 +116,17 @@ export default function ProviderRequestDetail() {
       });
       navigate(job.courierFlow ? `/provider/jobs/${job.id}` : '/provider/jobs');
     } catch (e) {
-      toast({ title: 'Error', description: 'Failed to accept job.', variant: 'destructive' });
+      const message = e instanceof Error ? e.message : 'Failed to accept job.';
+      if (!openIfBlockedMessage(message)) {
+        toast({ title: 'Error', description: message, variant: 'destructive' });
+      }
     } finally {
       setIsMutating(false);
     }
+  };
+
+  const handleAccept = () => {
+    guardAction(() => void performAccept());
   };
 
   const handleReject = async () => {
@@ -477,6 +494,7 @@ export default function ProviderRequestDetail() {
         </Dialog>
 
       </div>
+      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

@@ -37,6 +37,7 @@ import {
   ChevronDown,
   UserCircle,
   ShieldAlert,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -94,8 +95,16 @@ const adminNavStructure: AdminNavEntry[] = [
       { label: 'Categories', path: '/admin/categories' },
     ],
   },
-  { type: 'link', label: 'Payments', path: '/admin/payments', icon: <CreditCard className="h-4 w-4 shrink-0" /> },
-  { type: 'link', label: 'Withdrawals', path: '/admin/withdrawals', icon: <Wallet className="h-4 w-4 shrink-0" /> },
+  {
+    type: 'group',
+    label: 'Finance',
+    icon: <DollarSign className="h-4 w-4 shrink-0" />,
+    children: [
+      { label: 'Payments', path: '/admin/payments' },
+      { label: 'Withdrawals', path: '/admin/withdrawals' },
+      { label: 'Refund repayments', path: '/admin/refund-repayments' },
+    ],
+  },
 ];
 
 function adminPathMatches(pathname: string, path: string) {
@@ -140,12 +149,13 @@ function notificationsPathForRole(role: string | undefined): string {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshProfile } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const queryClient = useQueryClient();
-  const { isActiveProvider, isApproved, isProfileComplete } = useProviderStatus();
+  const { isApproved, isProfileComplete } = useProviderStatus();
+  const isProfileBlocked = Boolean(user && 'blocked' in user && user.blocked);
 
   const notificationsHref = useMemo(() => notificationsPathForRole(user?.role), [user?.role]);
 
@@ -176,9 +186,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     staleTime: 5_000,
   });
 
-  const { hasJobsNavActivity } = useJobActivityIndicators();
+  const { hasJobsNavActivity, hasRequestsNavActivity } = useJobActivityIndicators();
   const jobsNavPath =
     user?.role === 'provider' ? '/provider/jobs' : user?.role === 'user' ? '/user/jobs' : null;
+  const requestsNavPath = user?.role === 'provider' ? '/provider/requests' : null;
 
   useEffect(() => {
     if (!user?.id) return;
@@ -186,26 +197,56 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     const refreshUnread = () => {
       void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
     };
+    const refreshAuthOnAccountChange = (notification?: { type?: string }) => {
+      refreshUnread();
+      if (
+        user.role === 'provider' &&
+        (notification?.type === 'account_unblocked' ||
+          notification?.type === 'account_blocked' ||
+          notification?.type === 'provider_approved')
+      ) {
+        void refreshProfile();
+      }
+    };
 
-    socket.on('notification:new', refreshUnread);
+    socket.on('notification:new', refreshAuthOnAccountChange);
     socket.on('message:new', refreshUnread);
     socket.on('notification:read', refreshUnread);
     socket.on('notification:read-all', refreshUnread);
     socket.on('notification:job-read', refreshUnread);
 
     return () => {
-      socket.off('notification:new', refreshUnread);
+      socket.off('notification:new', refreshAuthOnAccountChange);
       socket.off('message:new', refreshUnread);
       socket.off('notification:read', refreshUnread);
       socket.off('notification:read-all', refreshUnread);
       socket.off('notification:job-read', refreshUnread);
     };
-  }, [queryClient, user?.id]);
+  }, [queryClient, refreshProfile, user?.id, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'provider') return;
+
+    const refreshProviderProfile = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshProfile();
+      }
+    };
+
+    window.addEventListener('focus', refreshProviderProfile);
+    document.addEventListener('visibilitychange', refreshProviderProfile);
+
+    return () => {
+      window.removeEventListener('focus', refreshProviderProfile);
+      document.removeEventListener('visibilitychange', refreshProviderProfile);
+    };
+  }, [refreshProfile, user?.role]);
 
   const showInactiveProviderOverlay =
     user?.role === 'provider' &&
     location.pathname !== '/provider/profile' &&
-    !isActiveProvider;
+    !isProfileBlocked &&
+    (!isProfileComplete || !isApproved);
 
   const [adminGroupOpen, setAdminGroupOpen] = useState<Record<string, boolean>>({});
 
@@ -317,14 +358,23 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-1.5">
                     <p className="truncate font-medium text-sm">{user?.name}</p>
-                    {user.role === 'provider' && (!isProfileComplete || !isApproved) && (
+                    {user.role === 'provider' && (!isProfileComplete || !isApproved) && !isProfileBlocked && (
                       <AlertCircle
                         className="h-4 w-4 shrink-0 text-amber-600"
                         aria-label="Profile needs attention"
                       />
                     )}
+                    {isProfileBlocked && (
+                      <AlertCircle
+                        className="h-4 w-4 shrink-0 text-destructive"
+                        aria-label="Profile blocked"
+                      />
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground">{getRoleLabel()}</p>
+                  {isProfileBlocked && (
+                    <p className="text-xs font-medium text-destructive">Profile blocked</p>
+                  )}
                 </div>
               </Link>
             ) : (
@@ -405,6 +455,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                               <Package className="h-4 w-4 shrink-0" />
                             ) : child.path === '/admin/jobs' ? (
                               <Briefcase className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/categories' ? (
+                              <Tags className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/payments' ? (
+                              <CreditCard className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/withdrawals' ? (
+                              <Wallet className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/refund-repayments' ? (
+                              <RotateCcw className="h-4 w-4 shrink-0" />
                             ) : (
                               <Tags className="h-4 w-4 shrink-0" />
                             )}
@@ -434,6 +492,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   <span>{item.label}</span>
                   {jobsNavPath && item.path === jobsNavPath && hasJobsNavActivity && (
                     <ActivityDot className="ml-1" aria-label="Job activity" />
+                  )}
+                  {requestsNavPath && item.path === requestsNavPath && hasRequestsNavActivity && (
+                    <ActivityDot className="ml-1" aria-label="New requests" />
                   )}
                   {active && (
                     <ChevronRight className="ml-auto h-4 w-4" />

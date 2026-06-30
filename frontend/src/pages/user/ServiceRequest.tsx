@@ -30,6 +30,8 @@ import { areaSquareMetersFromAssist } from '@/lib/measurements';
 import { Step2Location } from '@/components/wizard/Step2Location';
 import { Step3DynamicInput } from '@/components/wizard/Step3DynamicInput';
 import { ProviderDiscoveryCard } from '@/components/providers/ProviderDiscoveryCard';
+import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
+import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 import { SmartAddressStep } from '@/components/delivery/SmartAddressStep';
 import { DeliveryItemsStep } from '@/components/delivery/DeliveryItemsStep';
 import { CourierSelectionStep } from '@/components/delivery/CourierSelectionStep';
@@ -124,6 +126,7 @@ export default function ServiceRequest() {
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   const { user } = useAuth();
+  const { dialogProps, guardAction, openIfBlockedMessage } = useBlockedActionGuard();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -158,14 +161,19 @@ export default function ServiceRequest() {
     try {
       setProvidersError(null);
       const categoryProviders = await getProvidersByCategory(selectedCategory);
-      const recommended = recommendProviders(selectedCategory, categoryProviders, measurements.values);
+      const recommended = recommendProviders(
+        selectedCategory,
+        categoryProviders,
+        measurements.values,
+        location.city
+      );
       setProviders(recommended);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load providers';
       setProviders([]);
       setProvidersError(message);
     }
-  }, [measurements.values, selectedCategory]);
+  }, [measurements.values, selectedCategory, location.city]);
 
   const loadCouriers = useCallback(async () => {
     setCouriersLoading(true);
@@ -266,7 +274,7 @@ export default function ServiceRequest() {
     if (!user || !selectedCourier) return;
     setIsSubmitting(true);
     try {
-      const request = await createDeliveryRequest({
+      await createDeliveryRequest({
         category: selectedCategory,
         description: description.trim() || undefined,
         photos: images.length > 0 ? images : undefined,
@@ -285,15 +293,18 @@ export default function ServiceRequest() {
       clearServiceRequestDraft();
       toast({
         title: 'Request sent',
-        description: 'Your courier will send a delivery quote shortly.',
+        description: 'Your moving request has been submitted. Track it in My Jobs.',
       });
-      navigate(`/user/delivery-requests/${request.id}`);
+      navigate('/user/jobs');
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Could not submit delivery request.',
-        variant: 'destructive',
-      });
+      const message = error instanceof Error ? error.message : 'Could not submit delivery request.';
+      if (!openIfBlockedMessage(message)) {
+        toast({
+          title: 'Error',
+          description: message,
+          variant: 'destructive',
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -348,19 +359,24 @@ export default function ServiceRequest() {
       });
       navigate('/user/jobs');
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create request. Please try again.',
-        variant: 'destructive',
-      });
+      const message = error instanceof Error ? error.message : 'Failed to create request. Please try again.';
+      if (!openIfBlockedMessage(message)) {
+        toast({
+          title: 'Error',
+          description: message,
+          variant: 'destructive',
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleSubmit = () => {
-    if (courierFlow) void handleSubmitCourier();
-    else void handleSubmitService();
+    guardAction(() => {
+      if (courierFlow) void handleSubmitCourier();
+      else void handleSubmitService();
+    });
   };
 
   const canProceed = () => {
@@ -695,7 +711,7 @@ export default function ServiceRequest() {
                   </div>
                 ) : providers.length === 0 ? (
                   <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
-                    No providers are available for this category yet.
+                    No approved providers serve {location.city || 'this area'} for this category yet.
                   </div>
                 ) : (
                   providers.map((provider) => (
@@ -736,6 +752,7 @@ export default function ServiceRequest() {
           </div>
         </div>
       </div>
+      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

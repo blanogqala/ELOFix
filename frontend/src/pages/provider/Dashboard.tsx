@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { JobCardSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { getJobsByProvider, getPendingRequestsForProvider } from '@/lib/api/jobs';
@@ -278,16 +279,8 @@ export default function ProviderDashboard() {
               </Button>
             </div>
             {isLoading ? (
-              <div className="p-6 space-y-4">
-                {[...Array(3)].map((_, i) => (
-                  <div key={i} className="animate-pulse flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-lg bg-muted" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 w-32 bg-muted rounded" />
-                      <div className="h-3 w-48 bg-muted rounded" />
-                    </div>
-                  </div>
-                ))}
+              <div className="p-6">
+                <JobCardSkeleton count={3} />
               </div>
             ) : pendingJobs.length > 0 ? (
               <div className="divide-y divide-border">
@@ -348,16 +341,8 @@ export default function ProviderDashboard() {
               </Button>
             </div>
             {isLoading ? (
-              <div className="p-6 space-y-4">
-                {[...Array(3)].map((_, i) => (
-                  <div key={i} className="animate-pulse flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-lg bg-muted" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 w-32 bg-muted rounded" />
-                      <div className="h-3 w-48 bg-muted rounded" />
-                    </div>
-                  </div>
-                ))}
+              <div className="p-6">
+                <JobCardSkeleton count={3} />
               </div>
             ) : groupedRecentJobs.length > 0 ? (
               <div className="divide-y divide-border">

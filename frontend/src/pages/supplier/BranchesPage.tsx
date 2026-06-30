@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { ProviderCardSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSupplierBranches, postSupplierBranch, getSupplierAnalyticsOverview } from '@/lib/api/supplierPortal';
 import type { SupplierBranchProfile } from '@/types';
@@ -311,7 +312,7 @@ export default function SupplierBranchesPage() {
         </Dialog>
 
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <ProviderCardSkeleton count={4} />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filteredBranches.map((b) => (

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { JobCardSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +12,11 @@ import { listDisputes } from '@/lib/api/disputes';
 import { formatRequestedResolution } from '@/lib/disputeLabels';
 import { queryKeys } from '@/lib/queryKeys';
 import { getJobPriceDisplay } from '@/lib/jobUtils';
-import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  RefundSummaryLine,
+  hasRefundDisplay,
+  isJobRefunded,
+} from '@/components/payments/RefundSummaryLine';
 import { Job, JobDispute, JobStatus } from '@/types';
 import { Search, Briefcase, ArrowRight, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -144,21 +149,25 @@ export default function UserJobs() {
       <div className="text-right shrink-0 hidden sm:block">
         {(() => {
           const { text, isPaid, refundAmount, refundStatus } = getJobPriceDisplay(job);
-          const refunded =
-            refundAmount != null &&
-            refundAmount > 0 &&
-            ['processed', 'partial', 'gateway_failed'].includes(String(refundStatus || '').toLowerCase());
+          const showRefund = hasRefundDisplay({ refundAmount, refundStatus });
+          const processedRefund = isJobRefunded({ refundAmount, refundStatus });
           return (
             <>
               <p className="font-medium">
                 {text}
-                {isPaid && !refunded && <span className="ml-1 text-xs text-success">(Paid)</span>}
-                {isPaid && refunded && (
+                {isPaid && !processedRefund && <span className="ml-1 text-xs text-success">(Paid)</span>}
+                {isPaid && processedRefund && (
                   <span className="ml-1 text-xs text-destructive">(Refunded)</span>
                 )}
               </p>
-              {refunded && (
-                <p className="text-xs text-destructive tabular-nums">−{formatCurrency(refundAmount!)} refund</p>
+              {showRefund && (
+                <p className="text-xs">
+                  <RefundSummaryLine
+                    refundAmount={refundAmount}
+                    refundStatus={refundStatus}
+                    variant="inline"
+                  />
+                </p>
               )}
               <p className="text-xs text-muted-foreground">
                 {new Date(job.createdAt).toLocaleDateString()}
@@ -298,16 +307,8 @@ export default function UserJobs() {
         {/* Jobs List */}
         <div className="card-elevated w-full min-w-0 max-w-full overflow-hidden">
           {isLoading ? (
-            <div className="p-6 space-y-4">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="animate-pulse flex items-center gap-4">
-                  <div className="h-12 w-12 rounded-lg bg-muted" />
-                  <div className="flex-1 space-y-2">
-                    <div className="h-4 w-32 bg-muted rounded" />
-                    <div className="h-3 w-48 bg-muted rounded" />
-                  </div>
-                </div>
-              ))}
+            <div className="p-6">
+              <JobCardSkeleton count={5} />
             </div>
           ) : loadError ? (
             <div className="p-12 text-center">

@@ -1,9 +1,11 @@
 const express = require("express");
 const jobController = require("../controllers/job.controller");
 const asyncHandler = require("../middleware/asyncHandler");
-const { authenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
 const financialIdem = require("../middleware/financialIdempotency.middleware");
 const { uploadJobImage, uploadJobQuotation, uploadJobCompletionMedia } = require("../middleware/upload.middleware");
+const { uploadRateLimit } = require("../middleware/uploadRateLimit.middleware");
+const { UPLOAD_CATEGORIES } = require("../services/uploadRateLimit.service");
 
 const router = express.Router();
 
@@ -19,6 +21,7 @@ router.post(
   "/upload-image",
   authenticate,
   uploadJobImage.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.JOB_IMAGE),
   asyncHandler(jobController.uploadJobImage)
 );
 router.get("/:id", authenticate, asyncHandler(jobController.getJobById));
@@ -67,6 +70,7 @@ router.get("/:id/invoices/labor", authenticate, asyncHandler(jobController.getLa
 router.post(
   "/:id/escrow/release",
   authenticate,
+  authorizeRoles(["ADMIN"]),
   financialIdem.attachFinancialRequestFingerprint,
   financialIdem.requireIdempotencyKey,
   asyncHandler(jobController.releaseEscrowPayment)
@@ -147,6 +151,7 @@ router.post(
   "/:id/completion-evidence/upload",
   authenticate,
   uploadJobCompletionMedia.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.COMPLETION_EVIDENCE),
   asyncHandler(jobController.uploadCompletionEvidence)
 );
 

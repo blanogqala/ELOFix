@@ -5,6 +5,7 @@ const prisma = require("../config/prisma");
 const trackingService = require("./tracking.service");
 const { createDefaultJobMeta } = require("./jobMeta.service");
 const notificationEvents = require("./notificationEvents.service");
+const { assertCustomerNotBlocked } = require("./accountStatus.service");
 
 function roundMoney2(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -119,6 +120,7 @@ async function loadMaterialOrderDeliveryContext(materialOrderId) {
   if (!order) return null;
   const pload = order.payload && typeof order.payload === "object" ? order.payload : {};
   return {
+    deliveryStatus: pload.delivery?.status ? String(pload.delivery.status) : undefined,
     deliveryConfirmed: pload.deliveryConfirmed === true,
     deliveryConfirmedAt: pload.deliveryConfirmedAt || undefined,
     customerRating: order.materialRating
@@ -131,9 +133,49 @@ async function loadMaterialOrderDeliveryContext(materialOrderId) {
   };
 }
 
+async function syncDeliveryRequestApprovedFromMaterialOrder(materialOrderId, quotedFee) {
+  const moId = String(materialOrderId || "").trim();
+  if (!moId) return null;
+  const dr = await prisma.deliveryRequest.findFirst({
+    where: { materialOrderId: moId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!dr || String(dr.status) !== "quoted") return null;
+  const fee = Number(quotedFee ?? dr.quotedFee ?? 0);
+  const payload = dr.payload && typeof dr.payload === "object" ? { ...dr.payload } : {};
+  payload.delivery = {
+    ...(payload.delivery || {}),
+    status: "Approved",
+    fee,
+  };
+  return prisma.deliveryRequest.update({
+    where: { id: dr.id },
+    data: { status: "approved", payload },
+  });
+}
+
 async function enrichDeliveryRequestAsync(row) {
-  const ctx = row?.materialOrderId ? await loadMaterialOrderDeliveryContext(row.materialOrderId) : null;
-  return enrichDeliveryRequest(row, ctx);
+  let currentRow = row;
+  if (row?.materialOrderId) {
+    const ctx = await loadMaterialOrderDeliveryContext(row.materialOrderId);
+    if (
+      ctx &&
+      String(currentRow.status) === "quoted" &&
+      String(ctx.deliveryStatus || "") === "Approved"
+    ) {
+      try {
+        const repaired = await syncDeliveryRequestApprovedFromMaterialOrder(
+          row.materialOrderId,
+          currentRow.quotedFee
+        );
+        if (repaired) currentRow = repaired;
+      } catch (e) {
+        console.error("enrichDeliveryRequestAsync self-heal approved", e);
+      }
+    }
+    return enrichDeliveryRequest(currentRow, ctx);
+  }
+  return enrichDeliveryRequest(currentRow, null);
 }
 
 /** Paid and actively being fulfilled (status moves to in_transit after collection starts). */
@@ -146,6 +188,12 @@ function isDeliveryRequestPaidForFulfillment(row) {
 }
 
 async function createDeliveryRequest(customerId, body = {}) {
+  const customer = await prisma.user.findUnique({
+    where: { id: String(customerId) },
+    select: { blocked: true },
+  });
+  assertCustomerNotBlocked(customer);
+
   const collectionPoint = buildGeoPoint(body.collectionPoint || {});
   const destinationPoint = buildGeoPoint(body.destinationPoint || {});
   if (!collectionPoint.address) throw new AppError("Collection address is required", 400);
@@ -303,6 +351,9 @@ async function assertCourier(row, courierUserId) {
 }
 
 async function submitDirectDeliveryQuote(id, courierUserId, { fee, note } = {}) {
+  const refundRecovery = require("./refundRecovery.service");
+  await refundRecovery.assertProviderUserNoOverdueRefundDebt(courierUserId);
+
   const safeFee = Math.max(0, roundMoney2(Number(fee || 0)));
   const row = await prisma.deliveryRequest.findUnique({ where: { id: String(id) } });
   await assertCourier(row, courierUserId);
@@ -833,6 +884,13 @@ async function updateDirectDeliveryFulfillment(id, courierUserId, nextStatus) {
   } catch (e) {
     console.error("syncCourierJobFromDeliveryRow", e);
   }
+  if (global.io) {
+    global.io.to(String(updated.id)).emit("delivery-request:updated", {
+      deliveryRequestId: updated.id,
+      fulfillmentStatus: next,
+      courierPhase: payload.courierPhase,
+    });
+  }
   if (next === "COMPLETED" && updated.materialOrderId) {
     try {
       const materialOrderService = require("./materialOrder.service");
@@ -1293,6 +1351,7 @@ module.exports = {
   enrichDeliveryRequest,
   enrichDeliveryRequestAsync,
   syncMaterialOrderDeliveryFromRow,
+  syncDeliveryRequestApprovedFromMaterialOrder,
   syncCourierDeliveryCustomerCompletion,
   syncCourierJobPricingFromDeliveryRow,
   resolveDeliveryFeeFromRow,

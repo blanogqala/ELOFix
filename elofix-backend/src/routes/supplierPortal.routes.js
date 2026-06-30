@@ -5,6 +5,8 @@ const supplierBranch = require("../controllers/supplierBranch.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeSupplierPortal } = require("../middleware/auth.middleware");
 const { uploadSupplierProductImage, uploadSupplierLogo } = require("../middleware/upload.middleware");
+const { uploadRateLimit } = require("../middleware/uploadRateLimit.middleware");
+const { UPLOAD_CATEGORIES } = require("../services/uploadRateLimit.service");
 
 const router = express.Router();
 
@@ -46,6 +48,7 @@ router.post("/orders/:orderId/notes", asyncHandler(portal.postOrderNote));
 router.post(
   "/products/upload-image",
   uploadSupplierProductImage.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.SUPPLIER_IMAGE),
   asyncHandler(portal.uploadProductImage)
 );
 
@@ -59,6 +62,7 @@ router.post(
   "/profile/upload-logo",
   ownerOnly,
   uploadSupplierLogo.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.SUPPLIER_IMAGE),
   asyncHandler(portal.uploadLogo)
 );
 

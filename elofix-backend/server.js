@@ -40,7 +40,9 @@ const app = require("./src/app");
 const prisma = require("./src/config/prisma");
 const { startStuckWithdrawalRecovery } = require("./src/jobs/stuckWithdrawalRecovery");
 const { startCompletionDeadlineJob } = require("./src/jobs/completionDeadline.job");
+const { startNotificationOutboxJob } = require("./src/jobs/notificationOutbox.job");
 const { startTrustScoreMonthlyBonusJob } = require("./src/jobs/trustScoreMonthlyBonus.job");
+const { startRefundDebtEnforcementJob } = require("./src/jobs/refundDebtEnforcement.job");
 const trackingService = require("./src/services/tracking.service");
 const materialOrderService = require("./src/services/materialOrder.service");
 const { ensureProviderTotalReviewsColumn } = require("./src/utils/ensureDbSchemaPatches");
@@ -165,7 +167,9 @@ io.on("connection", (socket) => {
 function startIntervalsAfterListen() {
   startStuckWithdrawalRecovery();
   startCompletionDeadlineJob();
+  startNotificationOutboxJob();
   startTrustScoreMonthlyBonusJob();
+  startRefundDebtEnforcementJob();
   void trackingService.expireOldSessions();
   setInterval(() => {
     void trackingService.expireOldSessions();

@@ -333,6 +333,14 @@ export default function AdminProviders() {
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-1 text-sm">
                             {provider.city || '—'}
+                            {provider.serviceAreas && provider.serviceAreas.length > 1 && (
+                              <span
+                                className="text-xs text-muted-foreground"
+                                title={provider.serviceAreas.join(', ')}
+                              >
+                                +{provider.serviceAreas.length - 1}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4">

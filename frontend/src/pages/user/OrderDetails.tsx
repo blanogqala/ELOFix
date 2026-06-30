@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { MaterialOrderDetailSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { resolveEffectiveDeliveryFee, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid } from '@/lib/orderFinance';
@@ -800,6 +801,10 @@ export default function OrderDetails() {
   };
 
   const handleBack = () => {
+    if (location.pathname.startsWith('/user/material-orders/')) {
+      navigate('/user/material-orders');
+      return;
+    }
     if (location.key !== 'default') {
       navigate(-1);
     } else if (isStandalone) {
@@ -881,9 +886,7 @@ export default function OrderDetails() {
         </div>
 
         {orderLoading ? (
-          <div className="card-elevated p-8 text-center text-sm text-muted-foreground animate-pulse">
-            Loading order details…
-          </div>
+          <MaterialOrderDetailSkeleton />
         ) : orderLoadError && !order ? (
           <div className="card-elevated p-8 text-center space-y-3">
             <p className="text-sm text-muted-foreground">{orderLoadError}</p>

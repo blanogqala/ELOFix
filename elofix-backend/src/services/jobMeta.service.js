@@ -172,25 +172,44 @@ function resolvePaymentSettlementStatus(job, safeMeta) {
   return "pending";
 }
 
+/**
+ * Courier/delivery pre-confirmation: customer payment is held until delivery is confirmed.
+ * Not counted as provider "remaining to you" until released.
+ */
+function isCourierPreDeliveryHold(job, meta) {
+  const safeMeta = normalizeMeta(meta);
+  const releasedAmount = Number(job.releasedAmount) || 0;
+  return Boolean(
+    safeMeta.courierFlow && !safeMeta.completionConfirmedByUser && releasedAmount <= 0
+  );
+}
+
+/** Provider-entitled unreleased share for earnings display (excludes courier pre-delivery customer escrow). */
+function computeProviderEntitledRemaining(job, meta) {
+  const safeMeta = normalizeMeta(meta);
+  if (isCourierPreDeliveryHold(job, safeMeta)) {
+    return 0;
+  }
+  const provNum = job.providerAmount != null ? Number(job.providerAmount) : null;
+  if (provNum == null || Number.isNaN(provNum)) {
+    return 0;
+  }
+  const relToProvider =
+    job.releasedAmount != null && !Number.isNaN(Number(job.releasedAmount))
+      ? Number(job.releasedAmount)
+      : 0;
+  if (safeMeta.escrow?.heldAmount != null && Number.isFinite(Number(safeMeta.escrow.heldAmount))) {
+    return Math.max(0, Number(safeMeta.escrow.heldAmount));
+  }
+  return Math.max(0, provNum - relToProvider);
+}
+
 function enrichJob(job, meta) {
   const safeMeta = normalizeMeta(meta);
   const status = toFrontendStatus(job.status, safeMeta);
   const held = safeMeta.escrow?.heldAmount ?? 0;
   const released = safeMeta.escrow?.releasedAmount ?? 0;
-  const provNum = job.providerAmount != null ? Number(job.providerAmount) : null;
-  const relToProvider =
-    job.releasedAmount != null && !Number.isNaN(Number(job.releasedAmount))
-      ? Number(job.releasedAmount)
-      : null;
-  let remainingAmount = 0;
-  if (provNum != null && !Number.isNaN(provNum)) {
-    const r = relToProvider != null && !Number.isNaN(relToProvider) ? relToProvider : 0;
-    if (safeMeta.escrow && safeMeta.escrow.heldAmount != null && Number.isFinite(Number(safeMeta.escrow.heldAmount))) {
-      remainingAmount = Math.max(0, Number(safeMeta.escrow.heldAmount));
-    } else {
-      remainingAmount = Math.max(0, provNum - r);
-    }
-  }
+  const remainingAmount = computeProviderEntitledRemaining(job, safeMeta);
   const { paidAmountFromJob } = require("../utils/jobPaidAmount.util");
   const customerPaidTotal = paidAmountFromJob({ ...job, meta: safeMeta });
   return {
@@ -256,6 +275,8 @@ function enrichJob(job, meta) {
             escrowApplied: Number(safeMeta.refund.escrowApplied) || 0,
             clawbackApplied: Number(safeMeta.refund.clawbackApplied) || 0,
             providerDebtAdded: Number(safeMeta.refund.providerDebtAdded) || 0,
+            immediateRefund: Number(safeMeta.refund.immediateRefund) || 0,
+            pendingRefund: Number(safeMeta.refund.pendingRefund) || 0,
             cumulativeCustomerNet: Number(safeMeta.refund.cumulativeCustomerNet) || 0,
             processedAt: safeMeta.refund.processedAt || null,
           }
@@ -311,6 +332,8 @@ module.exports = {
   mutateJobMeta,
   mutateJobMetaInTransaction,
   enrichJob,
+  isCourierPreDeliveryHold,
+  computeProviderEntitledRemaining,
   resolveJobHasStarted,
   toFrontendStatus,
   isTerminalJobState,

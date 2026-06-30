@@ -12,7 +12,7 @@ import {
 } from '@/lib/api/disputes';
 import type { JobDispute } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 
 function isDisputeOpen(status: string): boolean {
   return ['OPEN', 'UNDER_INVESTIGATION'].includes(String(status || '').toUpperCase());
@@ -101,12 +101,6 @@ export default function ProviderDisputeDetail() {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to job
           </Button>
-          {dispute.jobId && (
-            <Button variant="outline" size="sm" onClick={() => navigate(`/provider/jobs/${dispute.jobId}`)}>
-              <ExternalLink className="mr-2 h-4 w-4" />
-              Job details
-            </Button>
-          )}
         </div>
 
         <DisputeCaseDetailView

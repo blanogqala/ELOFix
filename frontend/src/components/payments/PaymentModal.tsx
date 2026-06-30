@@ -12,7 +12,8 @@ import { Label } from '@/components/ui/label';
 import { PaymentIntentKind, PaymentProvider, createPaymentIntent, getPaymentProviders } from '@/lib/api/payments';
 import { PaymentMethodSelector } from '@/components/payments/PaymentMethodSelector';
 import { submitCheckout } from '@/lib/paymentCheckout';
-import { Lock, AlertCircle } from 'lucide-react';
+import { LoadingOverlay } from '@/components/common/loading';
+import { Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 
@@ -96,6 +97,7 @@ export function PaymentModal({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -150,10 +152,13 @@ export function PaymentModal({
             Cancel
           </Button>
           <Button onClick={handlePayment} disabled={isProcessing || !selectedProvider} className="btn-accent">
+            {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {isProcessing ? 'Redirecting…' : `Pay ${formatCurrency(amount, { decimals: 2 })}`}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <LoadingOverlay open={isProcessing} message="Securing payment…" />
+    </>
   );
 }

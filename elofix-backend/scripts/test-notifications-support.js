@@ -112,6 +112,28 @@ async function main() {
     console.log("Branch user id available for manual UI test:", branchUser.id);
   }
 
+  const dedupeKey = `support-smoke:${Date.now()}`;
+  const dedupe1 = await api(adminToken, "POST", "/notifications", {
+    userId: customer.id,
+    type: "job_completed",
+    title: "Dedupe smoke 1",
+    message: "First",
+    dedupeKey,
+  });
+  const dedupe2 = await api(adminToken, "POST", "/notifications", {
+    userId: customer.id,
+    type: "job_completed",
+    title: "Dedupe smoke 2",
+    message: "Second",
+    dedupeKey,
+  });
+  if (dedupe1.status === 201 && dedupe2.status === 201) {
+    const sameId = dedupe1.data.notification?.id === dedupe2.data.notification?.id;
+    console.log("Dedupe smoke (admin POST): same notification id on replay:", sameId);
+  } else {
+    console.log("Dedupe smoke skipped:", dedupe1.status, dedupe2.status);
+  }
+
   await prisma.$disconnect();
   console.log("Notification support tests completed.");
 }

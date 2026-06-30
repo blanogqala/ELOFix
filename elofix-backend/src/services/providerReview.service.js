@@ -5,6 +5,7 @@ const { syncProviderAggregateRating } = require("./providerAggregateRating.servi
 
 const RATING_MIN = 1;
 const RATING_MAX = 5;
+const DISPUTE_RATING = 0;
 
 function normalizeRating(value) {
   const r = Math.round(Number(value));
@@ -14,8 +15,16 @@ function normalizeRating(value) {
   return r;
 }
 
+function normalizePublicRating(value) {
+  const r = Math.round(Number(value));
+  if (!Number.isFinite(r) || r < DISPUTE_RATING || r > RATING_MAX) {
+    throw new AppError(`rating must be between ${DISPUTE_RATING} and ${RATING_MAX}`, 400);
+  }
+  return r;
+}
+
 function emptyBreakdown() {
-  return { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  return { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 }
 
 /**
@@ -30,14 +39,35 @@ async function aggregateRatingBreakdown(providerProfileId) {
   const breakdown = emptyBreakdown();
   for (const row of rows) {
     const star = Number(row.rating);
-    if (star >= 1 && star <= 5) {
+    if (star >= 0 && star <= 5) {
       breakdown[star] = row._count.rating;
     }
   }
   return breakdown;
 }
 
-function mapReviewRow(r) {
+function mapReviewRow(r, evidenceFallback = null, disputeFallback = null) {
+  const rowImages = Array.isArray(r.images) ? r.images : [];
+  const rowVideos = Array.isArray(r.videos) ? r.videos : [];
+  const rowDisputeImages = Array.isArray(r.disputeImages) ? r.disputeImages : [];
+  const rowDisputeVideos = Array.isArray(r.disputeVideos) ? r.disputeVideos : [];
+  const fallbackImages = evidenceFallback?.images || [];
+  const fallbackVideos = evidenceFallback?.videos || [];
+  const fallbackDisputeImages = disputeFallback?.customerImages || [];
+  const fallbackDisputeVideos = disputeFallback?.customerVideos || [];
+  const resolvedAfterDispute = Boolean(r.resolvedAfterDispute);
+  const disputeImages =
+    rowDisputeImages.length > 0
+      ? rowDisputeImages
+      : resolvedAfterDispute
+        ? fallbackDisputeImages
+        : [];
+  const disputeVideos =
+    rowDisputeVideos.length > 0
+      ? rowDisputeVideos
+      : resolvedAfterDispute
+        ? fallbackDisputeVideos
+        : [];
   return {
     id: r.id,
     userId: r.customerId,
@@ -48,7 +78,62 @@ function mapReviewRow(r) {
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
     jobTitle: r.job?.title || "",
     jobCategory: r.job?.category || "",
+    images: rowImages.length > 0 ? rowImages : fallbackImages,
+    videos: rowVideos.length > 0 ? rowVideos : fallbackVideos,
+    disputeImages,
+    disputeVideos,
+    wasDisputed: Boolean(r.wasDisputed),
+    resolvedAfterDispute,
   };
+}
+
+/**
+ * Create or update a dispute review (rating 0) visible on the provider profile.
+ */
+async function upsertDisputeReviewForJob(
+  {
+    jobId,
+    customerId,
+    providerProfileId,
+    comment,
+    images = [],
+    videos = [],
+  },
+  tx = null
+) {
+  const jid = String(jobId || "").trim();
+  const cid = String(customerId || "").trim();
+  const pid = String(providerProfileId || "").trim();
+  if (!jid || !cid || !pid) {
+    throw new AppError("jobId, customerId, and providerId are required", 400);
+  }
+
+  const trimmedComment = String(comment || "").trim() || null;
+  const client = tx || prisma;
+  const imageList = Array.isArray(images) ? images.map(String) : [];
+  const videoList = Array.isArray(videos) ? videos.map(String) : [];
+  const data = {
+    rating: DISPUTE_RATING,
+    comment: trimmedComment,
+    images: imageList,
+    videos: videoList,
+    disputeImages: imageList,
+    disputeVideos: videoList,
+    wasDisputed: true,
+    resolvedAfterDispute: false,
+  };
+
+  return client.providerReview.upsert({
+    where: { jobId: jid },
+    create: {
+      id: randomUUID(),
+      jobId: jid,
+      customerId: cid,
+      providerId: pid,
+      ...data,
+    },
+    update: data,
+  });
 }
 
 /**
@@ -60,7 +145,12 @@ async function upsertProviderReviewForJob({
   providerProfileId,
   rating,
   comment,
+  images = [],
+  videos = [],
+  wasDisputed = false,
+  resolvedAfterDispute = false,
   allowEditWithinMinutes = 10,
+  allowDisputeResolutionEdit = false,
 }) {
   const jid = String(jobId || "").trim();
   const cid = String(customerId || "").trim();
@@ -74,7 +164,7 @@ async function upsertProviderReviewForJob({
     comment != null && String(comment).trim() !== "" ? String(comment).trim() : null;
 
   const existing = await prisma.providerReview.findUnique({ where: { jobId: jid } });
-  if (existing) {
+  if (existing && !allowDisputeResolutionEdit) {
     const ageMs = Date.now() - existing.createdAt.getTime();
     if (ageMs > allowEditWithinMinutes * 60 * 1000) {
       throw new AppError(
@@ -82,6 +172,10 @@ async function upsertProviderReviewForJob({
         400
       );
     }
+    if (String(existing.customerId) !== cid) {
+      throw new AppError("Forbidden", 403);
+    }
+  } else if (existing && allowDisputeResolutionEdit) {
     if (String(existing.customerId) !== cid) {
       throw new AppError("Forbidden", 403);
     }
@@ -96,10 +190,18 @@ async function upsertProviderReviewForJob({
       providerId: pid,
       rating: r,
       comment: trimmedComment,
+      images: Array.isArray(images) ? images.map(String) : [],
+      videos: Array.isArray(videos) ? videos.map(String) : [],
+      wasDisputed: Boolean(wasDisputed),
+      resolvedAfterDispute: Boolean(resolvedAfterDispute),
     },
     update: {
       rating: r,
       comment: trimmedComment,
+      images: Array.isArray(images) ? images.map(String) : [],
+      videos: Array.isArray(videos) ? videos.map(String) : [],
+      wasDisputed: Boolean(wasDisputed) || Boolean(existing?.wasDisputed),
+      resolvedAfterDispute: Boolean(resolvedAfterDispute),
     },
     include: {
       customer: { select: { name: true } },
@@ -195,6 +297,38 @@ async function listProviderReviews(providerRouteId, { limit = 20, offset = 0 } =
     }),
   ]);
 
+  const jobIdsNeedingEvidence = rows
+    .filter((r) => !(r.images?.length) && !(r.videos?.length))
+    .map((r) => r.jobId);
+  const jobIdsNeedingDisputeMedia = rows
+    .filter(
+      (r) =>
+        r.resolvedAfterDispute &&
+        !(r.disputeImages?.length) &&
+        !(r.disputeVideos?.length)
+    )
+    .map((r) => r.jobId);
+  const evidenceByJobId = new Map();
+  if (jobIdsNeedingEvidence.length > 0) {
+    const evidenceRows = await prisma.jobCompletionEvidence.findMany({
+      where: { jobId: { in: jobIdsNeedingEvidence } },
+      select: { jobId: true, images: true, videos: true },
+    });
+    for (const ev of evidenceRows) {
+      evidenceByJobId.set(ev.jobId, ev);
+    }
+  }
+  const disputeByJobId = new Map();
+  if (jobIdsNeedingDisputeMedia.length > 0) {
+    const disputeRows = await prisma.jobDispute.findMany({
+      where: { jobId: { in: jobIdsNeedingDisputeMedia } },
+      select: { jobId: true, customerImages: true, customerVideos: true },
+    });
+    for (const d of disputeRows) {
+      disputeByJobId.set(d.jobId, d);
+    }
+  }
+
   const providerUser = await prisma.provider.findUnique({
     where: { id: providerId },
     select: { userId: true },
@@ -206,7 +340,13 @@ async function listProviderReviews(providerRouteId, { limit = 20, offset = 0 } =
     : 0;
 
   return {
-    reviews: rows.map(mapReviewRow),
+    reviews: rows.map((r) =>
+      mapReviewRow(
+        r,
+        evidenceByJobId.get(r.jobId) || null,
+        disputeByJobId.get(r.jobId) || null
+      )
+    ),
     total,
     limit: take,
     offset: skip,
@@ -242,9 +382,12 @@ async function getProviderReputationSummary(providerProfileId) {
 module.exports = {
   RATING_MIN,
   RATING_MAX,
+  DISPUTE_RATING,
   normalizeRating,
+  normalizePublicRating,
   aggregateRatingBreakdown,
   upsertProviderReviewForJob,
+  upsertDisputeReviewForJob,
   createProviderReview,
   listProviderReviews,
   getProviderReputationSummary,

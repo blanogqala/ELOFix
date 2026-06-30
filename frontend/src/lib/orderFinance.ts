@@ -88,6 +88,36 @@ export function isStoreDeliveryQuotedUnpaid(order: {
   return fee > 0;
 }
 
+/** Customer order card: delivery fee quoted but not yet paid. */
+export function isCustomerDeliveryFeePaymentDue(order: {
+  deliveryType?: string | null;
+  deliveryFee?: number;
+  deliveryPaid?: boolean;
+  payment?: { deliveryPaid?: boolean };
+  fulfillmentStatus?: string;
+  isRefunded?: boolean;
+  delivery?: { type?: string; status?: string; fee?: number };
+  deliveryState?: string;
+  deliveryQuote?: { fee?: number };
+}): boolean {
+  const deliveryPaid = order.deliveryPaid ?? order.payment?.deliveryPaid ?? false;
+  if (deliveryPaid) return false;
+  if (order.isRefunded) return false;
+  const fs = String(order.fulfillmentStatus || '').toUpperCase();
+  if (fs === 'CANCELLED' || fs === 'COMPLETED') return false;
+  const dt = normalizeDeliveryType(order.deliveryType ?? order.delivery?.type);
+  if (dt === 'SELF') return false;
+  const fee = Math.max(0, Number(order.deliveryFee ?? order.delivery?.fee ?? order.deliveryQuote?.fee ?? 0) || 0);
+  if (fee <= 0) return false;
+  if (dt === 'STORE_DELIVERY') {
+    return isStoreDeliveryQuotedUnpaid(order);
+  }
+  if (dt === 'DELIVERY_PROVIDER') {
+    return fee > 0;
+  }
+  return false;
+}
+
 export function isStoreDeliveryRejected(order: {
   deliveryType?: string | null;
   delivery?: { type?: string; status?: string };

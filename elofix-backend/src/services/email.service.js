@@ -95,7 +95,53 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
   }
 }
 
+/**
+ * Generic transactional email (dispute alerts, support notifications).
+ * @param {{ to: string, subject: string, body: string, html?: string }} params
+ */
+async function sendTransactionalEmail({ to, subject, body, html }) {
+  const recipient = String(to || "").trim();
+  if (!recipient) {
+    return { error: true, errorMessage: "Missing recipient" };
+  }
+
+  const resend = getResendClient();
+  if (!resend) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[email] RESEND_API_KEY not set; skipping email to", recipient);
+      console.warn("[email] Subject:", subject);
+      console.warn("[email] Body preview:", String(body || "").slice(0, 200));
+    }
+    return { skipped: true };
+  }
+
+  const safeSubject = String(subject || "EloFix notification");
+  const text = String(body || "");
+  const htmlBody =
+    html ||
+    `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;padding:24px;"><p>${text.replace(/\n/g, "<br/>")}</p></body></html>`;
+
+  try {
+    const result = await resend.emails.send({
+      from: getFromAddress(),
+      to: [recipient],
+      subject: safeSubject,
+      html: htmlBody,
+      text,
+    });
+    if (result?.error) {
+      console.error("[email] transactional send failed", result.error);
+      return { error: true, errorMessage: String(result.error?.message || result.error) };
+    }
+    return { sent: true, id: result?.data?.id };
+  } catch (err) {
+    console.error("[email] transactional send failed", err?.message || err);
+    return { error: true, errorMessage: String(err?.message || err) };
+  }
+}
+
 module.exports = {
   sendPasswordResetEmail,
+  sendTransactionalEmail,
   getFromAddress,
 };

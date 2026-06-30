@@ -15,6 +15,9 @@ const {
   registerUploadedFile,
   resolveExistingFileReference,
 } = require("./fileStorage.service");
+const { signDocumentFields } = require("./fileAccess.service");
+const { scanUploadedFile } = require("./fileScan.service");
+const { validateUploadedImageFile, unlinkQuietly } = require("../utils/uploadSecurity.util");
 
 const {
   validateProviderDocumentFileMeta,
@@ -322,11 +325,17 @@ function toProviderResponse(
     verificationSummary = undefined,
   } = {}
 ) {
-  const documents = normalizeDocuments(profile.documents);
+  const documents = signDocumentFields(normalizeDocuments(profile.documents));
   const laborPricing =
     profile.laborPricing && typeof profile.laborPricing === "object" ? profile.laborPricing : {};
   const settings =
     profile.settings && typeof profile.settings === "object" ? profile.settings : undefined;
+
+  const areasList = Array.isArray(profile.serviceAreas)
+    ? profile.serviceAreas.map((a) => String(a).trim()).filter(Boolean)
+    : [];
+  const realLocation =
+    profile.location && profile.location !== "UNKNOWN" ? profile.location : "";
 
   const mappedPosts = (workPosts || []).map((wp) => ({
     id: wp.id,
@@ -344,8 +353,8 @@ function toProviderResponse(
     email: user.email,
     phone: user.phone || "",
     role: "provider",
-    city: profile.location === "UNKNOWN" ? "" : profile.location,
-    serviceAreas: Array.isArray(profile.serviceAreas) ? profile.serviceAreas : [],
+    city: realLocation || areasList[0] || "",
+    serviceAreas: areasList,
     skills: Array.isArray(profile.skills) ? profile.skills : [],
     laborPricing,
     documents,
@@ -356,6 +365,11 @@ function toProviderResponse(
     approved: profile.approved,
     profileCompleted: profile.profileCompleted,
     blocked: profile.blocked,
+    blockedReason: profile.blockedReason || undefined,
+    blockedAt: profile.blockedAt ? profile.blockedAt.toISOString() : undefined,
+    refundDebtBlockedAt: profile.refundDebtBlockedAt
+      ? profile.refundDebtBlockedAt.toISOString()
+      : undefined,
     rating: Number(profile.rating) || 0,
     totalReviews: Number(profile.totalReviews) || 0,
     completedJobs,
@@ -573,6 +587,10 @@ function sanitizeLaborPricing(raw) {
   return out;
 }
 
+function isProviderAvailable(settings) {
+  return !(settings && typeof settings === "object" && settings.availability === false);
+}
+
 function sanitizeSettingsPatch(prev, incoming) {
   if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
     return prev && typeof prev === "object" ? { ...prev } : {};
@@ -777,6 +795,12 @@ async function saveDocumentFromUpload(requestUserId, docType, file) {
     file.size
   );
   await assertProviderDocumentFileMagic(file.path, ext);
+  try {
+    await scanUploadedFile(file.path, { originalName: file.originalname });
+  } catch (err) {
+    await unlinkQuietly(file.path);
+    throw err;
+  }
 
   const prof = await loadProviderBundleByUserId(requestUserId);
   if (!prof) {
@@ -834,6 +858,7 @@ async function saveAvatarFromUpload(requestUserId, file) {
   if (!file || !file.path) {
     throw new AppError("File is required", 400);
   }
+  await validateUploadedImageFile(file);
   const prof = await loadProviderBundleByUserId(requestUserId);
   if (!prof) {
     throw new AppError("Provider profile not found", 404);
@@ -856,6 +881,7 @@ async function publicUrlFromUploadedFile(requestUserId, file) {
   if (!file || !file.path) {
     throw new AppError("File is required", 400);
   }
+  await validateUploadedImageFile(file);
   const stored = await registerUploadedFile(file, {
     ownerUserId: requestUserId,
     type: "workImage",
@@ -915,9 +941,15 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
     },
   });
 
-  const laborByProviderUserId = await aggregateCompletedLaborByCategoryForProviders(profiles.map((p) => p.userId));
+  const visibleProfiles = forAdmin
+    ? profiles
+    : profiles.filter((profile) => isProviderAvailable(profile.settings));
 
-  const providerUserIds = profiles.map((p) => p.userId);
+  const laborByProviderUserId = await aggregateCompletedLaborByCategoryForProviders(
+    visibleProfiles.map((p) => p.userId)
+  );
+
+  const providerUserIds = visibleProfiles.map((p) => p.userId);
   const providerJobs =
     providerUserIds.length > 0
       ? await prisma.job.findMany({
@@ -933,7 +965,7 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
   });
 
   const providers = await Promise.all(
-    profiles.map(async (profile) => {
+    visibleProfiles.map(async (profile) => {
       const providerJobRows = jobsByProviderUserId.get(String(profile.userId)) || [];
       const completedJobs = countJobsByStatus(providerJobRows).completed;
       const pendingSuggestionsCount = forAdmin
@@ -970,16 +1002,17 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
 
   if (courierCategory && nearCityTrim) {
     const needle = nearCityTrim.toLowerCase();
-    const cityMatched = providers.filter((p) => {
+    return providers.filter((p) => {
       const c = String(p.city || "")
         .trim()
         .toLowerCase();
-      if (c && c.includes(needle)) return true;
+      if (c && (c.includes(needle) || needle.includes(c))) return true;
       const areas = Array.isArray(p.serviceAreas) ? p.serviceAreas : [];
-      if (areas.some((a) => String(a).toLowerCase().includes(needle))) return true;
-      return false;
+      return areas.some((a) => {
+        const s = String(a).toLowerCase();
+        return s.includes(needle) || needle.includes(s);
+      });
     });
-    if (cityMatched.length > 0) return cityMatched;
   }
 
   return providers;
@@ -1346,10 +1379,15 @@ async function blockProviderByUserId(targetUserId, auditOpts = {}) {
   if (!profile) {
     throw new AppError("Provider not found", 404);
   }
+  const reason = String(auditOpts.reason || "").trim();
+  if (!reason) {
+    throw new AppError("Block reason is required", 400);
+  }
+  const now = new Date();
 
   await prisma.provider.update({
     where: { id: profile.id },
-    data: { blocked: true },
+    data: { blocked: true, blockedReason: reason, blockedAt: now },
   });
 
   await logAudit(AUDIT_ACTIONS.ADMIN_PROVIDER_BLOCKED, {
@@ -1357,11 +1395,14 @@ async function blockProviderByUserId(targetUserId, auditOpts = {}) {
     actorType: ACTOR_TYPES.ADMIN,
     entityType: ENTITY_TYPES.PROVIDER,
     entityId: profile.id,
-    oldValue: { blocked: profile.blocked },
-    newValue: { blocked: true },
+    oldValue: { blocked: profile.blocked, blockedReason: profile.blockedReason || null },
+    newValue: { blocked: true, blockedReason: reason },
     ipAddress: auditOpts.ipAddress,
     deviceFingerprint: auditOpts.deviceFingerprint,
   });
+
+  const notificationEvents = require("./notificationEvents.service");
+  await notificationEvents.notifyAccountBlocked(targetUserId, reason);
 
   return getProviderById(targetUserId);
 }
@@ -1374,7 +1415,12 @@ async function unblockProviderByUserId(targetUserId, auditOpts = {}) {
 
   await prisma.provider.update({
     where: { id: profile.id },
-    data: { blocked: false },
+    data: {
+      blocked: false,
+      blockedReason: null,
+      blockedAt: null,
+      refundDebtBlockedAt: null,
+    },
   });
 
   await logAudit(AUDIT_ACTIONS.ADMIN_PROVIDER_UNBLOCKED, {
@@ -1387,6 +1433,9 @@ async function unblockProviderByUserId(targetUserId, auditOpts = {}) {
     ipAddress: auditOpts.ipAddress,
     deviceFingerprint: auditOpts.deviceFingerprint,
   });
+
+  const notificationEvents = require("./notificationEvents.service");
+  await notificationEvents.notifyAccountUnblocked(targetUserId);
 
   return getProviderById(targetUserId);
 }
@@ -1433,5 +1482,6 @@ module.exports = {
   softDeleteProviderByUserId,
   persistProfileCompleted,
   isProviderActiveRow,
+  isProviderAvailable,
   expandLaborPricingFromPaidJob,
 };

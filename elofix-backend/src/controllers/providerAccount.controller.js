@@ -66,6 +66,26 @@ async function getTrustScore(req, res) {
   res.json({ success: true, trustScore });
 }
 
+async function getRefundDebt(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const prisma = require("../config/prisma");
+  const provider = await prisma.provider.findUnique({
+    where: { userId: req.user.userId },
+    select: { id: true },
+  });
+  if (!provider) {
+    return res.status(404).json({ success: false, message: "Provider profile not found" });
+  }
+  const data = await refundRecovery.getProviderRefundDebtSummary(provider.id);
+  res.json({ success: true, ...data });
+}
+
+async function postRefundRepayment(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const row = await refundRecovery.submitProviderRepayment(req.user.userId, req.body || {});
+  res.status(201).json({ success: true, repayment: row });
+}
+
 module.exports = {
   getBalance,
   getEarnings,
@@ -76,4 +96,6 @@ module.exports = {
   getTransactions,
   postWithdraw,
   getTrustScore,
+  getRefundDebt,
+  postRefundRepayment,
 };

@@ -1,6 +1,14 @@
 import apiClient from '@/api/client';
 import type { JobCompletionEvidence, JobDispute, JobDisputeRound } from '@/types';
 
+function idempotencyHeaders(): { 'Idempotency-Key': string } {
+  const uuid =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return { 'Idempotency-Key': uuid };
+}
+
 export interface AdminDisputeRow extends JobDispute {
   customerName?: string;
   providerName?: string;
@@ -53,7 +61,9 @@ export async function resolveAdminDispute(
   id: string,
   payload: { action: string; amount?: number; notes?: string }
 ) {
-  const { data } = await apiClient.post(`/admin/disputes/${id}/resolve`, payload);
+  const { data } = await apiClient.post(`/admin/disputes/${id}/resolve`, payload, {
+    headers: idempotencyHeaders(),
+  });
   return data;
 }
 

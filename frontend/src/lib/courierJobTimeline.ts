@@ -15,6 +15,8 @@ export const COURIER_TIMELINE_STEPS = [
 
 export type CourierTimelineViewState = UserTimelineViewState;
 
+export const COURIER_STATUS_WAITING_QUOTATION = 'Waiting for quotation';
+
 function deliveryPaid(dr: DeliveryRequestRecord | null | undefined): boolean {
   if (!dr) return false;
   const status = String(dr.status || '').toLowerCase();
@@ -41,6 +43,18 @@ function resolveCourierDeliveryContext(
     fulfillmentStatus: (summary.fulfillmentStatus || 'PENDING') as DeliveryRequestRecord['fulfillmentStatus'],
     payment: { deliveryPaid: Boolean(summary.deliveryPaid) },
   } as DeliveryRequestRecord;
+}
+
+export function isCourierAwaitingQuote(
+  job: Job,
+  deliveryRequest?: DeliveryRequestRecord | null
+): boolean {
+  if (job.status === 'PENDING' || job.status === 'CANCELLED' || job.status === 'REJECTED') {
+    return false;
+  }
+  const ctx = resolveCourierDeliveryContext(job, deliveryRequest);
+  if (!ctx || deliveryPaid(ctx)) return false;
+  return String(ctx.status || 'pending_quote').toLowerCase() === 'pending_quote';
 }
 
 function courierCustomerFullyComplete(
@@ -95,28 +109,31 @@ export function getCourierTimelineStepInsight(
   stepIndex: number
 ): { stepLabel: string; nextAction: string } {
   const label = COURIER_TIMELINE_STEPS[stepIndex] ?? `Step ${stepIndex + 1}`;
-  const drStatus = String(deliveryRequest?.status || 'pending_quote');
-  const fs = fulfillmentUpper(deliveryRequest);
+  const dr = resolveCourierDeliveryContext(job, deliveryRequest);
+  const drStatus = String(dr?.status || 'pending_quote').toLowerCase();
+  const fs = fulfillmentUpper(dr);
 
   const actions: Record<number, string> = {
     0: 'Review the request and accept or decline.',
     1:
-      deliveryPaid(deliveryRequest)
+      deliveryPaid(dr)
         ? 'Payment received — start collection when ready.'
         : drStatus === 'quoted'
           ? 'Waiting for the customer to accept your quote and pay.'
           : drStatus === 'approved'
             ? 'Quote accepted — waiting for customer payment.'
-            : 'Submit your delivery fee quote for the customer to pay.',
+            : drStatus === 'pending_quote'
+              ? 'Waiting for the courier to submit a delivery quote.'
+              : 'Submit your delivery fee quote for the customer to pay.',
     2: 'Collect items from the pickup address, then start delivery when ready.',
     3: 'Deliver to the destination. Share live location while en route.',
-    4: deliveryRequest?.deliveryConfirmed
+    4: dr?.deliveryConfirmed
       ? 'Customer confirmed receipt — waiting for delivery feedback.'
       : 'Waiting for the customer to confirm delivery is complete.',
     5: 'Delivery completed.',
   };
 
-  if (stepIndex === 4 && deliveryRequest?.deliveryConfirmed && !deliveryRequest?.customerRating) {
+  if (stepIndex === 4 && dr?.deliveryConfirmed && !dr?.customerRating) {
     return {
       stepLabel: label,
       nextAction: 'Customer confirmed receipt — waiting for delivery feedback.',
@@ -142,10 +159,10 @@ export function getCourierTimelineStepInsight(
     };
   }
   if (stepIndex === 4) {
-    if (deliveryRequest?.deliveryConfirmed && deliveryRequest?.customerRating) {
+    if (dr?.deliveryConfirmed && dr?.customerRating) {
       return { stepLabel: 'Completed', nextAction: 'Delivery confirmed and rated by the customer.' };
     }
-    if (deliveryRequest?.deliveryConfirmed) {
+    if (dr?.deliveryConfirmed) {
       return {
         stepLabel: label,
         nextAction: 'Customer confirmed receipt — waiting for delivery feedback.',
@@ -167,6 +184,9 @@ export function getCourierJobDisplayStatusLabel(
 ): string {
   if (job.status === 'CANCELLED') return 'Cancelled';
   if (job.status === 'REJECTED') return 'Rejected';
+  if (isCourierAwaitingQuote(job, deliveryRequest)) {
+    return COURIER_STATUS_WAITING_QUOTATION;
+  }
   const derived = getCourierTimelineStepIndex(job, deliveryRequest ?? null);
   const stored = Number.isFinite(Number(job.progressStep)) ? Number(job.progressStep) : 0;
   const idx = Math.min(5, Math.max(stored, derived));

@@ -46,6 +46,26 @@ async function getEvidenceByJobId(jobId) {
   return toEvidenceDto(row);
 }
 
+async function getEvidenceByJobIdForActor(jobId, actorUserId, actorRole) {
+  const job = await prisma.job.findUnique({
+    where: { id: String(jobId) },
+    select: { customerId: true, providerId: true },
+  });
+  if (!job) throw new AppError("Job not found", 404);
+  const role = String(actorRole || "").toUpperCase();
+  const uid = String(actorUserId);
+  if (role === "ADMIN") {
+    // allowed
+  } else if (role === "CUSTOMER" && uid === String(job.customerId)) {
+    // allowed
+  } else if (role === "PROVIDER" && uid === String(job.providerId || "")) {
+    // allowed
+  } else {
+    throw new AppError("Forbidden", 403);
+  }
+  return getEvidenceByJobId(jobId);
+}
+
 async function listVerifiedByProviderUserId(providerUserId, limit = 50) {
   const rows = await prisma.jobCompletionEvidence.findMany({
     where: { providerId: String(providerUserId), verified: true },
@@ -116,6 +136,7 @@ module.exports = {
   MAX_VIDEOS,
   toEvidenceDto,
   getEvidenceByJobId,
+  getEvidenceByJobIdForActor,
   listVerifiedByProviderUserId,
   createEvidenceInTransaction,
   assertMediaLimits,

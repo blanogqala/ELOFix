@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { ArrowLeft, Building2, Search } from 'lucide-react';
+import { ProductCardSkeleton } from '@/components/common/loading';
 import {
   Select,
   SelectContent,
@@ -182,7 +183,7 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
         </div>
       </div>
 
-      {insightLoading && <p className="text-sm text-muted-foreground">Loading inventory…</p>}
+      {insightLoading && <ProductCardSkeleton count={8} />}
 
       {!insightLoading && filteredProducts.length === 0 && (
         <p className="text-sm text-muted-foreground">No products match filters.</p>

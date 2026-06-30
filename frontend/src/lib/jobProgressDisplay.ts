@@ -11,6 +11,14 @@ import { getCourierJobDisplayStatusLabel, getCourierTimelineStepIndex } from '@/
 /** Re-export canonical six timeline labels (Provider & Customer). */
 export const JOB_TIMELINE_LABELS = UNIFIED_TIMELINE_STEPS;
 
+export const SERVICE_STATUS_WAITING_PRICE = 'Waiting for service price';
+
+function isAwaitingServicePrice(job: Job): boolean {
+  if (job.courierFlow) return false;
+  if (job.servicePrice || job.laborPaid || job.proposedLaborPrice) return false;
+  return job.status === 'ASSIGNED' || job.status === 'INSPECTED';
+}
+
 /** User / provider job cards & headers — labels follow `getMonotonicTimelineStepIndex` ↔ `job.progressStep`. */
 export function getJobDisplayStatusLabel(job: Job): string {
   if (job.status === 'CANCELLED') return 'Cancelled';
@@ -18,6 +26,9 @@ export function getJobDisplayStatusLabel(job: Job): string {
   if (job.status === 'DISPUTED') return 'Disputed';
   if (job.courierFlow) {
     return getCourierJobDisplayStatusLabel(job);
+  }
+  if (isAwaitingServicePrice(job)) {
+    return SERVICE_STATUS_WAITING_PRICE;
   }
   return getJobStatusLabelFromProgressStep(getMonotonicTimelineStepIndex(job));
 }

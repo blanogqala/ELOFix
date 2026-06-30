@@ -10,12 +10,13 @@ type Props = {
 
 function isProcessedRefund(status?: string): boolean {
   const s = String(status || '').toLowerCase();
-  return s === 'processed' || s === 'partial';
+  return s === 'processed' || s === 'partial' || s === 'partial_pending_recovery';
 }
 
 function refundLabel(status?: string): string {
   const s = String(status || '').toLowerCase();
   if (s === 'gateway_failed') return 'Refund recorded';
+  if (s === 'partial_pending_recovery') return 'Refund in progress';
   if (s === 'partial') return 'Partial refund';
   if (s === 'processed') return 'Refunded';
   if (s === 'recorded' || s === 'pending') return 'Refund pending';
@@ -49,9 +50,46 @@ export function hasRefundDisplay(job: { refundAmount?: number; refundStatus?: st
   const amount = Number(job.refundAmount);
   if (Number.isFinite(amount) && amount > 0) return true;
   const s = String(job.refundStatus || '').toLowerCase();
-  return s === 'processed' || s === 'partial' || s === 'gateway_failed' || s === 'recorded';
+  return (
+    s === 'processed' ||
+    s === 'partial' ||
+    s === 'partial_pending_recovery' ||
+    s === 'gateway_failed' ||
+    s === 'recorded'
+  );
 }
 
 export function isJobRefunded(job: { refundAmount?: number; refundStatus?: string }): boolean {
   return isProcessedRefund(job.refundStatus) && Number(job.refundAmount) > 0;
+}
+
+type StagedProps = {
+  immediateRefund?: number;
+  pendingRefund?: number;
+  className?: string;
+};
+
+/** Shows refunded-now vs pending-recovery breakdown for staged dispute refunds. */
+export function StagedRefundBreakdown({ immediateRefund, pendingRefund, className }: StagedProps) {
+  const immediate = Number(immediateRefund) || 0;
+  const pending = Number(pendingRefund) || 0;
+  if (pending <= 0 && immediate <= 0) return null;
+  return (
+    <div className={cn('space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs', className)}>
+      {immediate > 0 && (
+        <p className="text-muted-foreground">
+          Refunded to your card:{' '}
+          <span className="font-semibold text-success tabular-nums">{formatCurrency(immediate)}</span>
+        </p>
+      )}
+      {pending > 0 && (
+        <p className="text-muted-foreground">
+          Pending (recovered from provider, up to ~30 days):{' '}
+          <span className="font-semibold text-amber-700 dark:text-amber-400 tabular-nums">
+            {formatCurrency(pending)}
+          </span>
+        </p>
+      )}
+    </div>
+  );
 }

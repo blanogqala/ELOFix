@@ -4,6 +4,7 @@
  */
 const { randomUUID } = require("crypto");
 const AppError = require("../utils/AppError");
+const { normalizeMeta } = require("./jobMeta.service");
 
 const EPS = 1e-6;
 
@@ -85,15 +86,13 @@ async function createRefundDebt(tx, { providerId, jobId, amount, idempotencyKey 
 }
 
 /**
- * Apply new release toward outstanding refund_debt before crediting available balance.
- * @returns {{ remainingRelease: number, debtRecovered: number }}
+ * Core FIFO refund_debt ledger reduction (no RefundRecovery mirror).
+ * @returns {number} amount recovered
  */
-async function recoverRefundDebtFromRelease(tx, { providerId, jobId, releaseAmount, idempotencyKey }) {
-  let remaining = Number(releaseAmount) || 0;
+async function recoverRefundDebtLedgerOnly(tx, { providerId, jobId, amount, idempotencyKey }) {
+  let remaining = Number(amount) || 0;
   let debtRecovered = 0;
-  if (remaining <= EPS) {
-    return { remainingRelease: 0, debtRecovered: 0 };
-  }
+  if (remaining <= EPS) return 0;
 
   const debts = await tx.earning.findMany({
     where: { providerId, type: "debit", status: "refund_debt" },
@@ -120,7 +119,64 @@ async function recoverRefundDebtFromRelease(tx, { providerId, jobId, releaseAmou
     });
   }
 
-  return { remainingRelease: remaining, debtRecovered };
+  return debtRecovered;
+}
+
+async function mirrorDebtRecoveryToRefundRecoveries(tx, { providerId, amount }) {
+  if (amount <= EPS) return [];
+  try {
+    const refundRecovery = require("./refundRecovery.service");
+    return refundRecovery.applyRecoveryToRefundRecoveriesInTransaction(tx, {
+      providerId,
+      amount,
+    });
+  } catch (_e) {
+    return [];
+  }
+}
+
+/**
+ * Apply new release toward outstanding refund_debt before crediting available balance.
+ * @returns {{ remainingRelease: number, debtRecovered: number, payouts: Array }}
+ */
+async function recoverRefundDebtFromRelease(tx, { providerId, jobId, releaseAmount, idempotencyKey }) {
+  let remaining = Number(releaseAmount) || 0;
+  if (remaining <= EPS) {
+    return { remainingRelease: 0, debtRecovered: 0, payouts: [] };
+  }
+
+  const debtRecovered = await recoverRefundDebtLedgerOnly(tx, {
+    providerId,
+    jobId,
+    amount: remaining,
+    idempotencyKey,
+  });
+  remaining = Math.round((remaining - debtRecovered) * 100) / 100;
+
+  const payouts = await mirrorDebtRecoveryToRefundRecoveries(tx, {
+    providerId,
+    amount: debtRecovered,
+  });
+
+  return { remainingRelease: remaining, debtRecovered, payouts };
+}
+
+/**
+ * Recover refund debt directly (bank transfer admin confirm) without a job release.
+ * @returns {{ recovered: number, payouts: Array }}
+ */
+async function recoverRefundDebtByAmount(tx, { providerId, jobId, amount, idempotencyKey }) {
+  const recovered = await recoverRefundDebtLedgerOnly(tx, {
+    providerId,
+    jobId,
+    amount,
+    idempotencyKey,
+  });
+  const payouts = await mirrorDebtRecoveryToRefundRecoveries(tx, {
+    providerId,
+    amount: recovered,
+  });
+  return { recovered, payouts };
 }
 
 /**
@@ -220,12 +276,22 @@ async function sumLedgerForProviderTx(tx, providerId) {
  * Move `releaseAmount` from pending credit to a new available credit row.
  */
 async function applyReleaseToLedger(tx, { providerId, jobId, releaseAmount, idempotencyKey }) {
+  if (jobId) {
+    const jobRow = await tx.job.findUnique({ where: { id: String(jobId) }, select: { meta: true } });
+    if (jobRow) {
+      const meta = normalizeMeta(jobRow.meta);
+      if (meta.statusOverride === "DISPUTED" || meta.escrowFrozen === true) {
+        throw new AppError("Escrow is frozen while a dispute is open", 400);
+      }
+    }
+  }
+
   let r = Number(releaseAmount) || 0;
   if (r <= 0) {
     throw new AppError("Release amount must be positive", 400);
   }
 
-  const { remainingRelease } = await recoverRefundDebtFromRelease(tx, {
+  const { remainingRelease, payouts: stagedPayouts } = await recoverRefundDebtFromRelease(tx, {
     providerId,
     jobId,
     releaseAmount: r,
@@ -233,7 +299,7 @@ async function applyReleaseToLedger(tx, { providerId, jobId, releaseAmount, idem
   });
   r = remainingRelease;
   if (r <= EPS) {
-    return;
+    return { stagedPayouts: stagedPayouts || [] };
   }
 
   const pending = await tx.earning.findFirst({
@@ -269,6 +335,8 @@ async function applyReleaseToLedger(tx, { providerId, jobId, releaseAmount, idem
       ...(idempotencyKey ? { idempotencyKey } : {}),
     },
   });
+
+  return { stagedPayouts: stagedPayouts || [] };
 }
 
 async function createLaborCreditPending(tx, { providerId, jobId, amount, idempotencyKey }) {
@@ -324,6 +392,7 @@ module.exports = {
   createClawbackDebit,
   createRefundDebt,
   recoverRefundDebtFromRelease,
+  recoverRefundDebtByAmount,
   applyEscrowToRefund,
   clawbackFromAvailable,
   sumLedgerForProviderTx,

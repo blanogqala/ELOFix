@@ -18,12 +18,17 @@ const providerTrustScore = require("./providerTrustScore.service");
 const jobCompletionEvidence = require("./jobCompletionEvidence.service");
 const notificationEvents = require("./notificationEvents.service");
 const disputeRoundService = require("./disputeRound.service");
+const { mapDisputeMessages } = require("./jobDispute.service");
 const {
   applyProviderRefundClawbackInTransaction,
   disputeGrossToLaborNet,
-  processGatewayRefundForJob,
+  attemptGatewayRefundFirst,
+  resolveRefundStatusAfterGateway,
+  roundMoney,
 } = require("./providerRefundClawback.service");
+const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { normalizeMeta } = require("./jobMeta.service");
+const refundRecoveryService = require("./refundRecovery.service");
 const { UPLOAD_ROOT } = require("../middleware/upload.middleware");
 
 const VALID_ACTIONS = new Set([
@@ -124,17 +129,11 @@ async function getDisputeDetail(disputeId) {
   const meta = row.job ? await getJobMeta(row.job.id) : null;
   const evidence = await jobCompletionEvidence.getEvidenceByJobId(row.jobId);
   const rounds = await disputeRoundService.getDisputeRounds(row.id);
+  const messages = await mapDisputeMessages(row.messages);
 
   return {
     dispute: toAdminDisputeDto({ ...row, customer, provider }),
-    messages: row.messages.map((m) => ({
-      id: m.id,
-      senderId: m.senderId,
-      senderRole: m.senderRole,
-      body: m.body,
-      attachments: m.attachments || [],
-      createdAt: m.createdAt.toISOString(),
-    })),
+    messages,
     resolutionLogs: row.resolutionLogs.map((l) => ({
       id: l.id,
       adminId: l.adminId,
@@ -190,11 +189,12 @@ async function updateDisputeStatus(adminUserId, disputeId, status, adminNotes) {
   return getDisputeDetail(row.id);
 }
 
-async function resolveDispute(adminUserId, disputeId, payload) {
+async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts = {}) {
   const action = String(payload?.action || "").trim().toUpperCase();
   if (!VALID_ACTIONS.has(action)) throw new AppError("Invalid resolution action", 400);
   const notes = payload?.notes != null ? String(payload.notes) : null;
   const amount = payload?.amount != null ? Number(payload.amount) : null;
+  const { idempotencyKey, requestHash, route } = idempotencyOpts;
 
   const dispute = await prisma.jobDispute.findUnique({
     where: { id: String(disputeId) },
@@ -202,6 +202,9 @@ async function resolveDispute(adminUserId, disputeId, payload) {
   });
   if (!dispute) throw new AppError("Dispute not found", 404);
   if (!dispute.job) throw new AppError("Job not found", 404);
+  if (["RESOLVED", "CLOSED"].includes(String(dispute.status || "").toUpperCase())) {
+    return getDisputeDetail(dispute.id);
+  }
 
   await disputeRoundService.ensureDisputeRounds(dispute.id);
 
@@ -211,8 +214,49 @@ async function resolveDispute(adminUserId, disputeId, payload) {
     select: { id: true },
   });
 
-  await prisma.$transaction(
+  let refundLaborNet = 0;
+  let refundGross = 0;
+  let gatewayPreflight = null;
+  if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
+    refundGross =
+      action === "FULL_REFUND"
+        ? Number(job.totalPrice) || Number(job.price) || 0
+        : Math.max(0, Number(amount) || 0);
+    const metaBefore = normalizeMeta(job.meta);
+    refundLaborNet = disputeGrossToLaborNet(action, refundGross, job, metaBefore);
+    if (refundLaborNet > 0 && job.laborPaid) {
+      const split = providerRow
+        ? await refundRecoveryService.previewProviderRefundSplit(job, providerRow.id, refundLaborNet)
+        : { immediateCustomerRefund: refundLaborNet, pendingCustomerRefund: 0 };
+      const gatewayAmount = split.immediateCustomerRefund;
+      if (gatewayAmount > 0) {
+        gatewayPreflight = await attemptGatewayRefundFirst(job.id, gatewayAmount);
+        if (gatewayPreflight.failed) {
+          const reason = gatewayPreflight.result?.error || gatewayPreflight.result?.reason || "unknown";
+          throw new AppError(`Gateway refund failed: ${reason}`, 502);
+        }
+      } else {
+        gatewayPreflight = { attempted: false, result: null, manualOnly: true, failed: false };
+      }
+    }
+  }
+
+  let trustUpdate = null;
+
+  const txResult = await prisma.$transaction(
     async (tx) => {
+      if (idempotencyKey && requestHash && route) {
+        const gate = await idempotencyGate(tx, { idempotencyKey, requestHash, route });
+        if (gate.replay) {
+          return { replay: true };
+        }
+      }
+
+      const disputeRow = await tx.jobDispute.findUnique({ where: { id: dispute.id } });
+      if (["RESOLVED", "CLOSED"].includes(String(disputeRow?.status || "").toUpperCase())) {
+        return { replay: true };
+      }
+
       await tx.disputeResolutionLog.create({
         data: {
           id: randomUUID(),
@@ -237,18 +281,27 @@ async function resolveDispute(adminUserId, disputeId, payload) {
         }
         await tx.job.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
         await mutateJobMetaInTransaction(tx, job.id, (m) => {
-          const next = { ...m, completionConfirmedByUser: true, disputeId: null, statusOverride: "COMPLETED" };
+          const next = {
+            ...m,
+            completionConfirmedByUser: true,
+            disputeId: null,
+            statusOverride: "COMPLETED",
+            escrowFrozen: false,
+          };
           next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, job);
           return next;
         });
       } else if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
-        const refundGross =
-          action === "FULL_REFUND"
-            ? Number(job.totalPrice) || Number(job.price) || 0
-            : Math.max(0, Number(amount) || 0);
-        const metaBefore = normalizeMeta(job.meta);
-        const laborNet = disputeGrossToLaborNet(action, refundGross, job, metaBefore);
-        const idempotencyKey = `dispute-refund:${dispute.id}:${action}`;
+        const laborNet = refundLaborNet;
+        const clawbackIdempotencyKey = `dispute-refund:${dispute.id}:${action}`;
+        const laborGross = Number(job.totalPrice) || Number(job.price) || 0;
+        const maxNetLabor = Math.round(laborGross * 0.93 * 100) / 100;
+        const isFullRefund = laborNet > 0 && laborNet >= maxNetLabor - 0.01;
+        const refundStatusOverride = resolveRefundStatusAfterGateway({
+          manualOnly: Boolean(gatewayPreflight?.manualOnly),
+          gatewaySuccess: gatewayPreflight?.result?.ok === true,
+          isFullRefund,
+        });
 
         if (providerRow && job.laborPaid && laborNet > 0) {
           await applyProviderRefundClawbackInTransaction(tx, {
@@ -256,9 +309,10 @@ async function resolveDispute(adminUserId, disputeId, payload) {
             providerProfileId: providerRow.id,
             laborRefundNet: laborNet,
             adminUserId,
-            idempotencyKey,
+            idempotencyKey: clawbackIdempotencyKey,
             refundKind: "dispute_refund",
             disputeId: dispute.id,
+            refundStatusOverride,
           });
         }
 
@@ -267,25 +321,21 @@ async function resolveDispute(adminUserId, disputeId, payload) {
           ...m,
           statusOverride: "CANCELLED",
           disputeId: null,
+          escrowFrozen: false,
         }));
         if (providerRow) {
-          await providerTrustScore.onRefundResolved(
-            providerRow.id,
-            action === "FULL_REFUND" ? "FULL_REFUND" : "PARTIAL_REFUND"
-          );
-          await providerTrustScore.onDisputeLost(providerRow.id);
+          trustUpdate = {
+            providerProfileId: providerRow.id,
+            kind: action === "FULL_REFUND" ? "FULL_REFUND" : "PARTIAL_REFUND",
+          };
         }
-        await notificationEvents.notifyRefundApproved({
-          customerId: dispute.customerId,
-          jobId: job.id,
-          amount: refundGross,
-        });
       } else if (action === "RETURN_PROVIDER") {
         await tx.job.update({ where: { id: job.id }, data: { status: "IN_PROGRESS" } });
         await mutateJobMetaInTransaction(tx, job.id, (m) => ({
           ...m,
           statusOverride: "IN_PROGRESS",
           disputeId: null,
+          escrowFrozen: false,
           markedCompleteAt: null,
           confirmationDeadlineAt: null,
           progressStep: 3,
@@ -294,6 +344,7 @@ async function resolveDispute(adminUserId, disputeId, payload) {
         await mutateJobMetaInTransaction(tx, job.id, (m) => ({
           ...m,
           disputeId: null,
+          escrowFrozen: false,
         }));
       }
 
@@ -313,9 +364,23 @@ async function resolveDispute(adminUserId, disputeId, payload) {
           adminNotes: notes != null ? notes : dispute.adminNotes,
         },
       });
+
+      if (idempotencyKey && requestHash && route) {
+        await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
+      }
+
+      return { replay: false };
     },
     { maxWait: 5000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );
+
+  if (txResult?.replay) {
+    return getDisputeDetail(dispute.id);
+  }
+
+  if (trustUpdate) {
+    await providerTrustScore.onDisputeRefundResolved(trustUpdate.providerProfileId, trustUpdate.kind);
+  }
 
   await notificationEvents.notifyCaseClosed({
     customerId: dispute.customerId,
@@ -326,28 +391,41 @@ async function resolveDispute(adminUserId, disputeId, payload) {
   });
 
   if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
-    const refundGross =
-      action === "FULL_REFUND"
-        ? Number(job.totalPrice) || Number(job.price) || 0
-        : Math.max(0, Number(amount) || 0);
-    const metaBefore = normalizeMeta(job.meta);
-    const laborNet = disputeGrossToLaborNet(action, refundGross, job, metaBefore);
-    if (laborNet > 0) {
-      await processGatewayRefundForJob(job.id, laborNet);
-    }
     try {
+      const metaAfter = await getJobMeta(job.id);
+      const refundMeta = metaAfter?.refund && typeof metaAfter.refund === "object" ? metaAfter.refund : {};
+      const customerRefundNet =
+        Number(refundMeta.cumulativeCustomerNet ?? refundMeta.customerNet ?? refundMeta.amount) || 0;
+      const immediate =
+        Number(refundMeta.immediateRefund) ||
+        roundMoney(
+          (Number(refundMeta.escrowApplied) || 0) + (Number(refundMeta.clawbackApplied) || 0)
+        );
+      const pending = Number(refundMeta.pendingRefund) || Number(refundMeta.providerDebtAdded) || 0;
+
+      await notificationEvents.notifyStagedRefundApproved({
+        customerId: dispute.customerId,
+        jobId: job.id,
+        netTotal: customerRefundNet,
+        immediateAmount: immediate,
+        pendingAmount: pending,
+      });
+
       if (job.providerId) {
-        const metaAfter = await getJobMeta(job.id);
-        const clawback = Number(metaAfter?.refund?.clawbackApplied) || 0;
-        const debt = Number(metaAfter?.refund?.providerDebtAdded) || 0;
-        if (clawback > 0 || debt > 0) {
-          await notificationEvents.notifyProviderRefundClawback?.(
-            job.providerId,
-            job.id,
-            clawback,
-            debt
-          );
-        }
+        const debtSummary = providerRow
+          ? await refundRecoveryService.getProviderRefundDebtSummary(providerRow.id)
+          : null;
+        await notificationEvents.notifyProviderStagedRefundOutcome({
+          providerId: job.providerId,
+          jobId: job.id,
+          action,
+          customerRefundNet,
+          escrowApplied: Number(refundMeta.escrowApplied) || 0,
+          clawbackApplied: Number(refundMeta.clawbackApplied) || 0,
+          providerDebtAdded: Number(refundMeta.providerDebtAdded) || 0,
+          dueAt: debtSummary?.dueAt || refundRecoveryService.dueAtFromNow(),
+          bankReference: debtSummary?.reference || null,
+        });
       }
     } catch (_e) {
       /* optional */

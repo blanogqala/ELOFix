@@ -17,6 +17,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Job, MaterialLine, SavedCard, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { MaterialCard } from '@/components/materials/MaterialCard';
+import { LoadingOverlay } from '@/components/common/loading';
 import {
   CreditCard,
   Truck,
@@ -1701,6 +1702,7 @@ export function MaterialPaymentSection({
           ]}
         />
       )}
+      <LoadingOverlay open={isProcessing} message="Processing payment…" />
     </>
   );
 }

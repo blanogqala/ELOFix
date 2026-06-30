@@ -314,18 +314,6 @@ export default function UserPayments() {
         {/* Tabs */}
         <div className="flex flex-wrap gap-2 border-b border-border">
           <button
-            onClick={() => setActiveTab('invoices')}
-            className={cn(
-              "px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px",
-              activeTab === 'invoices' 
-                ? "border-primary text-primary" 
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <FileText className="inline-block h-4 w-4 mr-2" />
-            Invoices
-          </button>
-          <button
             onClick={() => setActiveTab('cards')}
             className={cn(
               "px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px",
@@ -337,6 +325,19 @@ export default function UserPayments() {
             <CreditCard className="inline-block h-4 w-4 mr-2" />
             Saved Cards
           </button>
+          <button
+            onClick={() => setActiveTab('invoices')}
+            className={cn(
+              "px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px",
+              activeTab === 'invoices' 
+                ? "border-primary text-primary" 
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <FileText className="inline-block h-4 w-4 mr-2" />
+            Refunded Invoices
+          </button>
+         
         </div>
 
         {/* Cards Tab */}

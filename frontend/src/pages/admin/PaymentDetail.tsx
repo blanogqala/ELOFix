@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { getJobById, releaseEscrowPayment } from '@/lib/api/jobs';
 import { getLaborInvoiceByJobId } from '@/lib/api/jobs';
 import { processAdminJobRefund } from '@/lib/api/payments';
+import { LoadingOverlay } from '@/components/common/loading';
 import { getAdminEscrowV2Breakdown } from '@/lib/adminJobFinancial';
 import { Job } from '@/types';
 import {
@@ -16,6 +17,7 @@ import {
   Clock,
   CheckCircle,
   FileText,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -318,6 +320,7 @@ export default function AdminPaymentDetail() {
               Payment method: card ···{paymentMethodHint} · Gateway refund attempted when configured
             </p>
             <Button onClick={() => void handleProcessRefund()} disabled={refundBusy || !job.laborPaid}>
+              {refundBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {refundBusy ? 'Processing…' : 'Process refund'}
             </Button>
           </CardContent>
@@ -389,11 +392,16 @@ export default function AdminPaymentDetail() {
                 onClick={handleReleasePayment}
                 disabled={isReleasing || !releaseAmount || parseFloat(releaseAmount) <= 0 || parseFloat(releaseAmount) > maxReleasable}
               >
+                {isReleasing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 {isReleasing ? 'Releasing...' : 'Release Payment'}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <LoadingOverlay
+          open={isReleasing || refundBusy}
+          message={isReleasing ? 'Releasing escrow…' : 'Processing refund…'}
+        />
       </div>
     </DashboardLayout>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { ProviderProfileSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSupplierMe, patchBranchStaffProfile } from '@/lib/api/supplierPortal';
 import type { SupplierBranchProfile } from '@/types';
@@ -77,7 +78,7 @@ export default function BranchStaffProfilePage() {
   if (isLoading || !profile) {
     return (
       <DashboardLayout>
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <ProviderProfileSkeleton />
       </DashboardLayout>
     );
   }

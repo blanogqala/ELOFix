@@ -1,8 +1,9 @@
 import { Badge } from '@/components/ui/badge';
-import { Package } from 'lucide-react';
+import { AlertTriangle, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { RefundSummaryLine } from '@/components/payments/RefundSummaryLine';
+import { isCustomerDeliveryFeePaymentDue } from '@/lib/orderFinance';
 
 export interface OrderCardViewModel {
   id: string;
@@ -14,6 +15,8 @@ export interface OrderCardViewModel {
   itemsCount: number;
   total: number;
   deliveryFee?: number;
+  deliveryType?: string;
+  deliveryPaid?: boolean;
   deliveryTypeLabel: string;
   deliveryStatusLabel: string;
   fulfillmentStatus?: string;
@@ -34,6 +37,8 @@ interface OrderCardProps {
 export function OrderCard({ order, onClick }: OrderCardProps) {
   const isService = Boolean(order.jobId);
   const isRefunded = Boolean(order.isRefunded || (order.refundAmount != null && order.refundAmount > 0));
+  const deliveryFeePaymentDue = isCustomerDeliveryFeePaymentDue(order);
+
   return (
     <div
       className={cn(
@@ -101,13 +106,21 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
         <span>{formatCurrency(order.total, { decimals: 2 })}</span>
       </div>
 
-      <div className="mt-2 space-y-1 text-sm text-muted-foreground sm:ml-16 sm:mt-0">
+      <div className="mt-2 space-y-2 text-sm text-muted-foreground sm:ml-16 sm:mt-0">
         {order.deliveryFee && order.deliveryFee > 0 && (
           <div className="flex justify-between">
             <span>Delivery Fee</span>
             <span>{formatCurrency(order.deliveryFee, { decimals: 2 })}</span>
           </div>
         )}
+        {deliveryFeePaymentDue ? (
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 flex gap-2 text-amber-950 dark:text-amber-100">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
+            <p className="text-sm leading-snug">
+              Pay the delivery fee so your order can leave the store. Tap to open order details and pay.
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
   );

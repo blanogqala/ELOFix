@@ -162,6 +162,12 @@ async function getProviderEarnings(userId) {
   const jobIds = jobs.map((j) => j.id);
   const clawbackMap = await getJobClawbackMap(provider.id, jobIds);
 
+  const earningRows = jobs.map((job) => jobToEarningRow(job, clawbackMap[job.id] || 0));
+  const providerEscrowRemaining = earningRows.reduce(
+    (sum, row) => sum + Math.max(0, Number(row.remainingAmount) || 0),
+    0
+  );
+
   return {
     summary: {
       totalReleased: ledger.creditsAvailable,
@@ -170,10 +176,10 @@ async function getProviderEarnings(userId) {
       available: ledger.available,
       refundDebtOwed: ledger.refundDebtOwed,
       totalClawback: ledger.clawback,
+      pending: ledger.pending,
+      providerEscrowRemaining,
     },
-    jobs: jobs.map((job) =>
-      jobToEarningRow(job, clawbackMap[job.id] || 0)
-    ),
+    jobs: earningRows,
   };
 }
 
@@ -313,6 +319,16 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
         throw new AppError("Insufficient funds", 400);
       }
 
+      const openDisputeCount = await tx.jobDispute.count({
+        where: {
+          providerId: String(provider.userId),
+          status: { in: ["OPEN", "UNDER_INVESTIGATION"] },
+        },
+      });
+      if (openDisputeCount > 0) {
+        throw new AppError("Withdrawals are unavailable while you have an open dispute", 403);
+      }
+
       const withdrawal = await tx.withdrawalRequest.create({
         data: {
           id: randomUUID(),
@@ -433,7 +449,7 @@ async function listProviderTransactions(userId) {
     }),
     prisma.job.findMany({
       where: { providerId: provider.userId },
-      select: { id: true, title: true },
+      select: { id: true, title: true, meta: true, createdAt: true },
     }),
   ]);
 
@@ -480,6 +496,29 @@ async function listProviderTransactions(userId) {
       jobTitle: row.jobId ? jobTitleMap[row.jobId] || null : null,
       createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
       description: "Refund debt recorded — recovered from future releases",
+    });
+  }
+
+  for (const job of jobs) {
+    const meta = normalizeMeta(job.meta);
+    const escrowApplied = Number(meta?.refund?.escrowApplied) || 0;
+    if (escrowApplied <= 0) continue;
+    const processedAt = meta?.refund?.processedAt;
+    const createdAt =
+      processedAt != null && String(processedAt).trim() !== ""
+        ? String(processedAt)
+        : job.createdAt instanceof Date
+          ? job.createdAt.toISOString()
+          : String(job.createdAt);
+    transactions.push({
+      id: `escrow-refund:${job.id}`,
+      kind: "refund_escrow_reversal",
+      amount: escrowApplied,
+      status: null,
+      jobId: job.id,
+      jobTitle: job.title || null,
+      createdAt,
+      description: "Refund reversed from escrow",
     });
   }
 

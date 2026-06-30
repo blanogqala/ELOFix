@@ -6,6 +6,8 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AuthGuard } from "@/components/guards/AuthGuard";
 import { GoogleMapsProvider } from "@/components/map/GoogleMapsProvider";
+import { LoadingProvider } from "@/components/common/loading";
+import { OverlayLockGuard } from "@/components/common/OverlayLockGuard";
 
 // Public pages
 import Landing from "./pages/Landing";
@@ -91,6 +93,7 @@ import FraudAlerts from "./pages/admin/FraudAlerts";
 import FraudAlertDetail from "./pages/admin/FraudAlertDetail";
 import FraudDeviceDetail from "./pages/admin/FraudDeviceDetail";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
+import AdminRefundRepayments from "./pages/admin/RefundRepayments";
 import AdminDisputeDetail from "./pages/admin/DisputeDetail";
 import AdminCustomers from "./pages/admin/Customers";
 import AdminCustomerDetail from "./pages/admin/CustomerDetail";
@@ -117,12 +120,14 @@ const queryClient = new QueryClient({
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <LoadingProvider>
     <AuthProvider>
       <GoogleMapsProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <OverlayLockGuard />
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<Landing />} />
@@ -254,6 +259,7 @@ const App = () => (
             <Route path="/admin/payments" element={<AuthGuard allowedRoles={['admin']}><AdminPayments /></AuthGuard>} />
             <Route path="/admin/payments/:jobId" element={<AuthGuard allowedRoles={['admin']}><AdminPaymentDetail /></AuthGuard>} />
             <Route path="/admin/withdrawals" element={<AuthGuard allowedRoles={['admin']}><AdminWithdrawals /></AuthGuard>} />
+            <Route path="/admin/refund-repayments" element={<AuthGuard allowedRoles={['admin']}><AdminRefundRepayments /></AuthGuard>} />
             <Route path="/admin/disputes" element={<Navigate to="/admin/jobs?view=dispatched" replace />} />
             <Route path="/admin/disputes/:id" element={<AuthGuard allowedRoles={['admin']}><AdminDisputeDetail /></AuthGuard>} />
 
@@ -264,6 +270,7 @@ const App = () => (
       </TooltipProvider>
       </GoogleMapsProvider>
     </AuthProvider>
+    </LoadingProvider>
   </QueryClientProvider>
 );
 

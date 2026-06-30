@@ -370,7 +370,7 @@ async function getCustomerById(userId) {
 async function loadCustomerUser(userId) {
   const user = await prisma.user.findFirst({
     where: { id: userId, role: "CUSTOMER" },
-    select: { id: true, blocked: true, deletedAt: true },
+    select: { id: true, blocked: true, blockedReason: true, deletedAt: true },
   });
   if (!user) {
     throw new AppError("Customer not found", 404);
@@ -380,20 +380,27 @@ async function loadCustomerUser(userId) {
 
 async function blockCustomerByUserId(userId, auditOpts = {}) {
   const user = await loadCustomerUser(userId);
+  const reason = String(auditOpts.reason || "").trim();
+  if (!reason) {
+    throw new AppError("Block reason is required", 400);
+  }
+  const now = new Date();
   await prisma.user.update({
     where: { id: userId },
-    data: { blocked: true },
+    data: { blocked: true, blockedReason: reason, blockedAt: now },
   });
   await logAudit(AUDIT_ACTIONS.VERIFICATION_CUSTOMER_BLOCKED, {
     userId: auditOpts.userId,
     actorType: ACTOR_TYPES.ADMIN,
     entityType: ENTITY_TYPES.USER,
     entityId: userId,
-    oldValue: { blocked: user.blocked },
-    newValue: { blocked: true },
+    oldValue: { blocked: user.blocked, blockedReason: user.blockedReason || null },
+    newValue: { blocked: true, blockedReason: reason },
     ipAddress: auditOpts.ipAddress,
     deviceFingerprint: auditOpts.deviceFingerprint,
   });
+  const notificationEvents = require("./notificationEvents.service");
+  await notificationEvents.notifyAccountBlocked(userId, reason);
   return getCustomerById(userId);
 }
 
@@ -401,7 +408,7 @@ async function unblockCustomerByUserId(userId, auditOpts = {}) {
   const user = await loadCustomerUser(userId);
   await prisma.user.update({
     where: { id: userId },
-    data: { blocked: false },
+    data: { blocked: false, blockedReason: null, blockedAt: null },
   });
   await logAudit(AUDIT_ACTIONS.VERIFICATION_CUSTOMER_UNBLOCKED, {
     userId: auditOpts.userId,

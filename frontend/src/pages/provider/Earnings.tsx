@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
+import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 import {
   getProviderEarnings,
   getProviderBalance,
@@ -11,9 +13,12 @@ import {
   saveWithdrawalProfile,
   requestWithdrawal,
   getProviderTransactions,
+  getProviderRefundDebt,
+  submitProviderRefundRepayment,
   type ProviderEarningJobRow,
   type ProviderBalanceSnapshot,
   type ProviderTransactionRow,
+  type ProviderRefundDebtSummary,
 } from '@/lib/api/providerAccount';
 import {
   getJobReleasedAmount,
@@ -28,6 +33,7 @@ import {
   getStatusColor,
   sumProviderNetAcrossJobs,
   sumReleasedAcrossJobs,
+  sumProviderEscrowRemaining,
 } from '@/lib/providerEarningsDerived';
 import { RefundSummaryLine, hasRefundDisplay } from '@/components/payments/RefundSummaryLine';
 import { queryKeys } from '@/lib/queryKeys';
@@ -55,6 +61,7 @@ const PREFETCH_DEBOUNCE_MS = 220;
 
 export default function ProviderEarnings() {
   const { user } = useAuth();
+  const { dialogProps, guardAction, openIfBlockedMessage } = useBlockedActionGuard();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [balance, setBalance] = useState<ProviderBalanceSnapshot | null>(null);
@@ -77,6 +84,11 @@ export default function ProviderEarnings() {
   const [bankMask, setBankMask] = useState<{ account: string; branch: string } | null>(null);
   const [transactions, setTransactions] = useState<ProviderTransactionRow[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [providerEscrowRemaining, setProviderEscrowRemaining] = useState<number | null>(null);
+  const [refundDebtDetail, setRefundDebtDetail] = useState<ProviderRefundDebtSummary | null>(null);
+  const [repayAmount, setRepayAmount] = useState('');
+  const [repayReference, setRepayReference] = useState('');
+  const [submittingRepayment, setSubmittingRepayment] = useState(false);
 
   const loadEarnings = useCallback(async () => {
     if (!user) return;
@@ -89,7 +101,20 @@ export default function ProviderEarnings() {
         refundDebtOwed: bal.refundDebtOwed ?? 0,
         totalClawback: bal.totalClawback ?? 0,
       });
+      setProviderEscrowRemaining(
+        data.summary.providerEscrowRemaining ?? data.summary.pending ?? bal.pending ?? null
+      );
       setJobs(data.jobs);
+      if ((bal.refundDebtOwed ?? 0) > 0) {
+        try {
+          const debt = await getProviderRefundDebt();
+          setRefundDebtDetail(debt);
+        } catch {
+          setRefundDebtDetail(null);
+        }
+      } else {
+        setRefundDebtDetail(null);
+      }
     } catch (error) {
       console.error('Failed to load earnings:', error);
       toast({
@@ -164,11 +189,14 @@ export default function ProviderEarnings() {
 
   const yourTotalEarnings = sumProviderNetAcrossJobs(jobs);
   const amountReleasedToYou = sumReleasedAcrossJobs(jobs);
-  const pendingBalanceFromJobs = jobs.reduce((sum, j) => sum + getJobRemainingAmount(j), 0);
+  const remainingToYou =
+    providerEscrowRemaining ?? sumProviderEscrowRemaining(jobs) ?? balance?.pending ?? 0;
 
   const available = balance?.available ?? 0;
   const refundDebtOwed = balance?.refundDebtOwed ?? 0;
-  const totalClawback = balance?.totalClawback ?? 0;
+  const refundDebtDueLabel = refundDebtDetail?.dueAt
+    ? new Date(refundDebtDetail.dueAt).toLocaleString('en-ZA')
+    : 'the due date';
   const withdrawNum = parseFloat(withdrawAmount);
   const withdrawExceeds =
     Number.isFinite(withdrawNum) && withdrawNum > 0 && withdrawNum > available + 1e-6;
@@ -261,13 +289,57 @@ export default function ProviderEarnings() {
       setWithdrawAmount('');
       await Promise.all([loadEarnings(), loadProfile(), loadTransactions()]);
     } catch (error) {
+      const message = error instanceof Error ? error.message : undefined;
+      if (!message || !openIfBlockedMessage(message)) {
+        toast({
+          title: 'Withdrawal failed',
+          description: message,
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
+  const handleSubmitRepayment = async () => {
+    const n = parseFloat(repayAmount);
+    if (!Number.isFinite(n) || n <= 0) {
+      toast({ title: 'Invalid amount', variant: 'destructive' });
+      return;
+    }
+    if (!repayReference.trim()) {
+      toast({ title: 'Reference required', description: 'Enter your bank payment reference.', variant: 'destructive' });
+      return;
+    }
+    setSubmittingRepayment(true);
+    try {
+      await submitProviderRefundRepayment({ amount: n, reference: repayReference.trim() });
       toast({
-        title: 'Withdrawal failed',
+        title: 'Repayment submitted',
+        description: 'Waiting for admin approval. This usually takes less than 24 hours.',
+      });
+      await loadEarnings();
+    } catch (error) {
+      const status =
+        error && typeof error === 'object' && 'status' in error
+          ? Number((error as { status: number }).status)
+          : 0;
+      if (status === 409) {
+        toast({
+          title: 'Payment already submitted',
+          description: 'Your repayment is waiting for admin review.',
+        });
+        await loadEarnings();
+        return;
+      }
+      toast({
+        title: 'Submission failed',
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
     } finally {
-      setWithdrawing(false);
+      setSubmittingRepayment(false);
     }
   };
 
@@ -293,6 +365,13 @@ export default function ProviderEarnings() {
     : 0;
   const panelHasRefund = mergedPanelJob ? jobHasRefundImpact(mergedPanelJob) : false;
 
+  useEffect(() => {
+    if (refundDebtDetail?.pendingRepayment) return;
+    if (refundDebtDetail?.reference) {
+      setRepayReference(refundDebtDetail.reference);
+    }
+  }, [refundDebtDetail?.reference, refundDebtDetail?.pendingRepayment]);
+
   const transactionAmountClass = (kind: ProviderTransactionRow['kind']) => {
     if (kind === 'withdrawal') return 'text-foreground';
     return 'text-destructive';
@@ -303,6 +382,7 @@ export default function ProviderEarnings() {
     if (tx.kind === 'refund_clawback') return 'Refund recovery';
     if (tx.kind === 'debt_recovery') return 'Debt recovered';
     if (tx.kind === 'refund_debt') return 'Refund debt';
+    if (tx.kind === 'refund_escrow_reversal') return 'Refund from escrow';
     return tx.description;
   };
 
@@ -345,7 +425,7 @@ export default function ProviderEarnings() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
-                  {formatCurrency(pendingBalanceFromJobs)}
+                  {formatCurrency(remainingToYou)}
                 </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Remaining to you (escrow)</p>
               </div>
@@ -374,11 +454,6 @@ export default function ProviderEarnings() {
                   {formatCurrency(available)}
                 </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Available to withdraw</p>
-                {totalClawback > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-0.5 sm:text-xs">
-                    Includes {formatCurrency(totalClawback)} deducted for customer refunds
-                  </p>
-                )}
               </div>
             </div>
           </div>
@@ -394,7 +469,7 @@ export default function ProviderEarnings() {
                 <p className="text-xs text-muted-foreground sm:text-sm">Refund owed</p>
                 {refundDebtOwed > 0 && (
                   <p className="text-[10px] text-muted-foreground mt-0.5 sm:text-xs">
-                    Auto-deducted from available balance and future job earnings
+                    Pay before {refundDebtDueLabel} via bank transfer or future earnings — see Withdrawal tab
                   </p>
                 )}
               </div>
@@ -446,6 +521,9 @@ export default function ProviderEarnings() {
                         const netReleased = getJobNetReleasedAfterRefund(job);
                         const remaining = getJobRemainingAmount(job);
                         const hasRefund = jobHasRefundImpact(job);
+                        const showRefund = hasRefundDisplay(job);
+                        const escrowReversed =
+                          Number(job.escrowReversed ?? job.refundDetails?.escrowApplied) || 0;
                         const fromRow = job.customerName?.trim();
                         const customerDisplay = customerNameCache[job.id] ?? (fromRow || '—');
                         const displayStatus = getJobStatus(job);
@@ -486,6 +564,13 @@ export default function ProviderEarnings() {
                                         −{formatCurrency(clawback)}
                                       </p>
                                     </>
+                                  ) : showRefund ? (
+                                    <>
+                                      <p className="text-muted-foreground">Customer refund</p>
+                                      <p className="font-semibold tabular-nums text-destructive">
+                                        −{formatCurrency(Number(job.refundAmount) || 0)}
+                                      </p>
+                                    </>
                                   ) : (
                                     <>
                                       <p className="text-muted-foreground">Remaining to you</p>
@@ -494,6 +579,21 @@ export default function ProviderEarnings() {
                                   )}
                                 </div>
                               </div>
+                              {showRefund && (
+                                <div className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5">
+                                  <RefundSummaryLine
+                                    refundAmount={job.refundAmount}
+                                    refundStatus={job.refundStatus}
+                                    variant="stacked"
+                                    className="text-xs"
+                                  />
+                                  {escrowReversed > 0 && clawback === 0 && (
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      Held funds returned to customer — not released to you.
+                                    </p>
+                                  )}
+                                </div>
+                              )}
                               {hasRefund && clawback > 0 && (
                                 <p className="text-xs text-muted-foreground">
                                   Net you kept:{' '}
@@ -690,23 +790,119 @@ export default function ProviderEarnings() {
               <p className="text-sm text-muted-foreground">
                 Bank details are stored encrypted. Ledger balance available to withdraw: {formatCurrency(available)}.
               </p>
-              {(totalClawback > 0 || refundDebtOwed > 0) && (
+              {refundDebtOwed > 0 && (
                 <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
-                  {totalClawback > 0 && (
-                    <p>
-                      Refund deductions from balance:{' '}
-                      <span className="font-semibold text-destructive tabular-nums">
-                        −{formatCurrency(totalClawback)}
-                      </span>
+                  <p>
+                    Outstanding refund debt (pay before {refundDebtDueLabel} or account will be blocked):{' '}
+                    <span className="font-semibold text-destructive tabular-nums">
+                      {formatCurrency(refundDebtOwed)}
+                    </span>
+                  </p>
+                </div>
+              )}
+              {refundDebtOwed > 0 && refundDebtDetail && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 space-y-3 text-sm">
+                  <p className="font-semibold text-destructive">Settle refund debt</p>
+                  {refundDebtDetail.dueAt && (
+                    <p className="text-muted-foreground">
+                      Due by: {new Date(refundDebtDetail.dueAt).toLocaleDateString('en-ZA')}
                     </p>
                   )}
-                  {refundDebtOwed > 0 && (
-                    <p>
-                      Outstanding refund debt (auto-recovered from future releases):{' '}
-                      <span className="font-semibold text-destructive tabular-nums">
-                        {formatCurrency(refundDebtOwed)}
-                      </span>
+                  {refundDebtDetail.reference && (
+                    <p className="text-muted-foreground">
+                      Your payment reference:{' '}
+                      <span className="font-mono font-semibold text-foreground">{refundDebtDetail.reference}</span>
                     </p>
+                  )}
+                  <div className="text-xs text-muted-foreground space-y-1 rounded border border-border bg-background/50 p-2">
+                    <p className="font-medium text-foreground">EloFix bank account</p>
+                    <p>{refundDebtDetail.platformBank.bankName}</p>
+                    <p>{refundDebtDetail.platformBank.accountName}</p>
+                    <p>Account: {refundDebtDetail.platformBank.accountNumber}</p>
+                    <p>Branch: {refundDebtDetail.platformBank.branchCode}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    You can also clear debt automatically from future job earnings. Unpaid debt after the due date
+                    blocks your account and may lead to legal action.
+                  </p>
+                  {refundDebtDetail.pendingRepayment ? (
+                    <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-4">
+                      <p className="font-semibold text-primary">Waiting for admin approval</p>
+                      <p className="text-muted-foreground">
+                        Submitted{' '}
+                        <span className="font-semibold text-foreground tabular-nums">
+                          {formatCurrency(refundDebtDetail.pendingRepayment.amount)}
+                        </span>{' '}
+                        on{' '}
+                        {new Date(refundDebtDetail.pendingRepayment.createdAt).toLocaleString('en-ZA')}
+                      </p>
+                      <p className="text-muted-foreground">
+                        Reference:{' '}
+                        <span className="font-mono font-semibold text-foreground">
+                          {refundDebtDetail.pendingRepayment.reference}
+                        </span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Your payment is being reviewed. This usually takes less than 24 hours.
+                      </p>
+                      <Button type="button" variant="outline" disabled className="w-full sm:w-auto">
+                        Submitted {formatCurrency(refundDebtDetail.pendingRepayment.amount)} — awaiting review
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {refundDebtDetail.lastRejectedRepayment && (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
+                          <p className="font-medium text-destructive">Previous submission not accepted</p>
+                          <p className="mt-1 text-muted-foreground">
+                            {formatCurrency(refundDebtDetail.lastRejectedRepayment.amount)} with ref{' '}
+                            <span className="font-mono">{refundDebtDetail.lastRejectedRepayment.reference}</span>
+                            {refundDebtDetail.lastRejectedRepayment.adminNote
+                              ? ` — ${refundDebtDetail.lastRejectedRepayment.adminNote}`
+                              : null}
+                          </p>
+                          <p className="mt-1 text-muted-foreground">
+                            You can submit again after verifying your bank transfer.
+                          </p>
+                        </div>
+                      )}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <Label htmlFor="repay-amt">Amount paid (ZAR)</Label>
+                          <Input
+                            id="repay-amt"
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={repayAmount}
+                            onChange={(e) => setRepayAmount(e.target.value)}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="repay-ref">Bank reference used</Label>
+                          <Input
+                            id="repay-ref"
+                            value={repayReference}
+                            onChange={(e) => setRepayReference(e.target.value)}
+                            className="mt-1"
+                            placeholder={refundDebtDetail.reference || 'Your reference'}
+                          />
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => void handleSubmitRepayment()}
+                        disabled={submittingRepayment}
+                      >
+                        {submittingRepayment ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          'I have paid — submit for review'
+                        )}
+                      </Button>
+                    </>
                   )}
                 </div>
               )}
@@ -788,7 +984,7 @@ export default function ProviderEarnings() {
                 </div>
                 <Button
                   type="button"
-                  onClick={() => void handleWithdraw()}
+                  onClick={() => guardAction(() => void handleWithdraw())}
                   disabled={
                     withdrawing ||
                     available <= 0 ||
@@ -878,6 +1074,7 @@ export default function ProviderEarnings() {
           </TabsContent>
         </Tabs>
       </div>
+      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

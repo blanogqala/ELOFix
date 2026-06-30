@@ -1,14 +1,11 @@
 const jwt = require("jsonwebtoken");
 const AppError = require("../utils/AppError");
+const { assertAuthenticatedAccountActive } = require("../services/accountStatus.service");
 
-function authenticate(req, res, next) {
+function attachUserFromBearer(req) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
-    return next(new AppError("Authentication required", 401));
-  }
-
+  if (!header || !header.startsWith("Bearer ")) return false;
   const token = header.slice(7);
-
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = {
@@ -20,9 +17,33 @@ function authenticate(req, res, next) {
       branchId: payload.branchId || null,
       supplierOrgId: payload.supplierOrgId || null,
     };
-    next();
+    return true;
   } catch {
-    next(new AppError("Invalid or expired token", 401));
+    return false;
+  }
+}
+
+async function authenticate(req, res, next) {
+  if (!attachUserFromBearer(req)) {
+    return next(new AppError("Authentication required", 401));
+  }
+  try {
+    await assertAuthenticatedAccountActive(req.user);
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function optionalAuthenticate(req, res, next) {
+  if (!attachUserFromBearer(req)) {
+    return next();
+  }
+  try {
+    await assertAuthenticatedAccountActive(req.user);
+    return next();
+  } catch (err) {
+    return next(err);
   }
 }
 
@@ -42,7 +63,6 @@ function authorizeRoles(allowedRoles) {
   };
 }
 
-/** Supplier portal: primary supplier account or branch-level staff. */
 function authorizeSupplierPortal() {
   return (req, res, next) => {
     if (!req.user?.role) {
@@ -55,4 +75,4 @@ function authorizeSupplierPortal() {
   };
 }
 
-module.exports = { authenticate, authorizeRoles, authorizeSupplierPortal };
+module.exports = { authenticate, optionalAuthenticate, authorizeRoles, authorizeSupplierPortal };

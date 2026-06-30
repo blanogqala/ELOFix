@@ -92,6 +92,11 @@ export function sumReleasedAcrossJobs(jobs: ProviderEarningJobRow[]): number {
   return jobs.reduce((s, j) => s + getJobReleasedAmount(j), 0);
 }
 
+/** Sum provider-entitled unreleased share across jobs (excludes courier pre-delivery customer escrow). */
+export function sumProviderEscrowRemaining(jobs: ProviderEarningJobRow[]): number {
+  return jobs.reduce((s, j) => s + getJobRemainingAmount(j), 0);
+}
+
 export function getStatusColor(status: EarningsJobDisplayStatus): string {
   switch (status) {
     case 'Pending':

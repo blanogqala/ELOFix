@@ -820,18 +820,14 @@ async function createInventoryCategoryForPortal(reqUser, rawName, branchId) {
   const actor = await resolveInventoryActor(reqUser);
   const br = await assertBranchInventoryAccess(actor, branchId);
   const name = normalizeInventoryCategoryKey(trimmed);
-  const existing = await prisma.branchInventoryCategory.findFirst({
+  // Idempotent: create the category if missing, otherwise return the existing
+  // one. Avoids a 409 when the name was already auto-derived from products.
+  await ensureInventoryCategory(prisma, br.id, name);
+  const row = await prisma.branchInventoryCategory.findFirst({
     where: { branchId: br.id, name },
-    select: { id: true },
+    select: { id: true, name: true },
   });
-  if (existing) {
-    throw new AppError("A category with this name already exists", 409);
-  }
-  const id = randomUUID();
-  await prisma.branchInventoryCategory.create({
-    data: { id, branchId: br.id, name },
-  });
-  return { id, name };
+  return { id: row ? String(row.id) : randomUUID(), name: row ? String(row.name) : name };
 }
 
 async function patchBranchForBranchStaff(branchUserId, body = {}) {

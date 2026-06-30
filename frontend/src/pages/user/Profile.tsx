@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
 import { updateUserProfile, uploadUserAvatar } from '@/lib/api/users';
 import { compressImageForUpload } from '@/lib/imageCompression';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -153,6 +154,13 @@ export default function UserProfile() {
           )}
         </div>
 
+        {user?.blocked ? (
+          <BlockedProfileBanner
+            blockedReason={user.blockedReason}
+            supportHref="/user/notifications"
+          />
+        ) : null}
+
         <div className="card-elevated p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row items-center gap-6">
             <input
@@ -183,9 +191,15 @@ export default function UserProfile() {
             <div className="text-center sm:text-left">
               <h2 className="text-xl font-semibold">{user?.name}</h2>
               <p className="text-muted-foreground">{user?.email}</p>
-              <span className="inline-block mt-2 px-3 py-1 rounded-full bg-success/10 text-success text-xs font-medium">
-                Verified Account
-              </span>
+              {user?.blocked ? (
+                <span className="inline-block mt-2 px-3 py-1 rounded-full bg-destructive/10 text-destructive text-xs font-medium">
+                  Profile blocked
+                </span>
+              ) : (
+                <span className="inline-block mt-2 px-3 py-1 rounded-full bg-success/10 text-success text-xs font-medium">
+                  Verified Account
+                </span>
+              )}
             </div>
           </div>
         </div>

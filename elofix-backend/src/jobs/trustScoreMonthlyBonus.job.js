@@ -19,19 +19,35 @@ async function processMonthlyTrustBonus() {
 
   for (const p of providers) {
     try {
-      const [disputes, refunds] = await Promise.all([
+      const [disputes, refunds, fraudAlerts] = await Promise.all([
         prisma.jobDispute.count({
           where: { providerId: p.userId, openedAt: { gte: since } },
+        }),
+        prisma.jobDispute.count({
+          where: {
+            providerId: p.userId,
+            openedAt: { gte: since },
+            resolutionLogs: {
+              some: { action: { in: ["PARTIAL_REFUND", "FULL_REFUND"] } },
+            },
+          },
         }),
         prisma.fraudAlert.count({
           where: {
             providerId: p.id,
-            alertType: { in: ["DUPLICATE_SA_ID", "DUPLICATE_COMPANY_REG", "DUPLICATE_BANK_ACCOUNT", "FAKE_DOCUMENTATION"] },
+            alertType: {
+              in: [
+                "DUPLICATE_SA_ID",
+                "DUPLICATE_COMPANY_REG",
+                "DUPLICATE_BANK_ACCOUNT",
+                "FAKE_DOCUMENTATION",
+              ],
+            },
             createdAt: { gte: since },
           },
         }),
       ]);
-      if (disputes === 0 && refunds === 0) {
+      if (disputes === 0 && refunds === 0 && fraudAlerts === 0) {
         await providerTrustScore.onMonthWithoutComplaints(p.id);
       }
     } catch (e) {

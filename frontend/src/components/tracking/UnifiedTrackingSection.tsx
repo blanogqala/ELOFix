@@ -183,7 +183,7 @@ function deriveStatusBanner(
       description: 'Your materials are ready. Confirm collection once staff has handed everything to you.',
     };
   }
-  if (u === 'COMPLETED' && awaitingCustomerConfirmation) {
+  if (u === 'COMPLETED' && awaitingCustomerConfirmation && (mode === 'store_delivery' || mode === 'self_pickup')) {
     return {
       className: 'border-amber-500/35 bg-amber-500/8 text-amber-950 dark:text-amber-100',
       title: 'Delivered',
@@ -607,7 +607,7 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {deliveryArea && showDeliveryIssueReported && !locked && mode !== 'self_pickup' ? (
+      {deliveryArea && showDeliveryIssueReported && !locked && mode === 'store_delivery' ? (
         <div className="rounded-lg border border-amber-500/35 bg-amber-500/8 px-4 py-4 flex flex-col gap-2 shadow-sm ring-1 ring-amber-500/15">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
@@ -627,7 +627,7 @@ export function UnifiedTrackingSection({
         </div>
       ) : null}
 
-      {deliveryArea && showConfirmDelivery && !locked && mode !== 'self_pickup' ? (
+      {deliveryArea && showConfirmDelivery && !locked && mode === 'store_delivery' ? (
         <div
           className={cn(
             'rounded-lg border border-emerald-500/35 bg-emerald-500/8 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shadow-sm ring-1 ring-emerald-500/15',

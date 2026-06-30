@@ -11,8 +11,13 @@ function ensureDir(dir) {
 
 const {
   validateProviderDocumentFileMeta,
+  normalizeExt: normalizeDocExt,
   MAX_BYTES: PROVIDER_DOC_MAX_BYTES,
 } = require("../utils/providerDocumentFile.util");
+const {
+  extensionForImageMime,
+  extensionForVideoMime,
+} = require("../utils/uploadMagic.util");
 const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 const ALLOWED_QUOTATION_MIME = new Set([
@@ -23,7 +28,7 @@ const ALLOWED_QUOTATION_MIME = new Set([
   "image/png",
 ]);
 
-const { validateQuotationFileMeta, MAX_BYTES: QUOTATION_MAX_BYTES } = require("../utils/quotationFile.util");
+const { validateQuotationFileMeta, normalizeExt: normalizeQuotationExt, MAX_BYTES: QUOTATION_MAX_BYTES } = require("../utils/quotationFile.util");
 
 function providerDocFileFilter(req, file, cb) {
   try {
@@ -59,7 +64,7 @@ function providerDocStorage(userIdFromReq) {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || "";
+      const ext = normalizeDocExt(file.originalname) || ".pdf";
       const safe = `${req.params.docType || "doc"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
       cb(null, safe);
     },
@@ -75,7 +80,7 @@ function providerAvatarStorage(userIdFromReq) {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".jpg";
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `avatar-${Date.now()}${ext}`);
     },
   });
@@ -90,7 +95,7 @@ function workPostImageStorage(userIdFromReq) {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".jpg";
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `work-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   });
@@ -105,7 +110,7 @@ function customerAvatarStorage(userIdFromReq) {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".jpg";
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `avatar-${Date.now()}${ext}`);
     },
   });
@@ -120,7 +125,7 @@ function jobImageStorage() {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".jpg";
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   });
@@ -171,7 +176,9 @@ function jobCompletionStorage() {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || (file.mimetype?.startsWith("video/") ? ".mp4" : ".jpg");
+      const ext = file.mimetype?.startsWith("video/")
+        ? extensionForVideoMime(file.mimetype, file.originalname)
+        : extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `completion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   });
@@ -201,7 +208,7 @@ function jobQuotationStorage() {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || "";
+      const ext = normalizeQuotationExt(file.originalname) || ".pdf";
       cb(null, `quotation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   });
@@ -222,7 +229,7 @@ function supplierProductImageStorage() {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".jpg";
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `product-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   });
@@ -237,7 +244,7 @@ function supplierLogoStorage() {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".jpg";
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
       cb(null, `logo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   });

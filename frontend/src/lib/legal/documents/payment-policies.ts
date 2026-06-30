@@ -143,16 +143,17 @@ export const escrowPolicy: LegalDocument = {
       content: [
         'EloFix retains the 7% platform commission on confirmed labor and material transactions.',
         'EloFix may delay, withhold, or reverse payouts for fraud review, chargebacks, policy violations, open disputes, or legal compliance.',
-        'Commission is not refunded to Providers on partial labor refunds processed through dispute resolution.',
+        'Commission is not refunded to Providers on labor refunds processed through dispute resolution.',
+        'When refund recovery from a Provider is required, EloFix may stage Customer payouts: immediate refund from held funds, with the remainder paid as Provider debt is recovered within approximately 30 days.',
       ],
     },
     {
       id: 'cancellation-refunds',
       title: '7. Cancellation and Refund Impact on Escrow',
       content: [
-        'Before any provider share is released: full gross labor refund to Customer.',
-        'After the first tranche is released: refund limited to remaining held escrow (not full original payment).',
-        'Admin partial or full refunds through dispute resolution trigger provider clawback from escrow or earnings as applicable.',
+        'Before any provider share is released: net labor refund to Customer (93% of gross).',
+        'After the first tranche is released: refund limited to remaining held escrow plus recoverable provider balance; any shortfall is recovered from the Provider over up to 30 days.',
+        'Admin partial or full refunds through dispute resolution trigger provider clawback from escrow, available earnings, or recorded refund debt as applicable.',
       ],
     },
     {

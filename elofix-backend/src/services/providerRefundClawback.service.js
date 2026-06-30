@@ -2,37 +2,15 @@ const earningService = require("./earning.service");
 const paymentService = require("./payment.service");
 const { mutateJobMetaInTransaction, normalizeMeta } = require("./jobMeta.service");
 const refundService = require("./payments/refund.service");
-
-const EPS = earningService.EPS;
-
-function roundMoney(n) {
-  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-}
-
-function laborGrossFromJob(job, meta) {
-  if (job.totalPrice != null && Number(job.totalPrice) > 0) {
-    return Number(job.totalPrice);
-  }
-  if (meta?.servicePrice?.amount != null) {
-    return Number(meta.servicePrice.amount);
-  }
-  return Number(job.price) || 0;
-}
-
-function grossToNetLaborRefund(grossAmount, laborGross) {
-  const cap = Math.max(0, Number(laborGross) || 0);
-  const gross = Math.min(Math.max(0, Number(grossAmount) || 0), cap);
-  const maxNet = roundMoney(cap * 0.93);
-  return roundMoney(Math.min(gross * 0.93, maxNet));
-}
-
-function disputeGrossToLaborNet(action, amount, job, meta) {
-  const laborGross = laborGrossFromJob(job, meta);
-  const maxNetLabor = roundMoney(laborGross * 0.93);
-  if (action === "FULL_REFUND") return maxNetLabor;
-  const gross = Math.max(0, Number(amount) || 0);
-  return roundMoney(Math.min(grossToNetLaborRefund(gross, laborGross), maxNetLabor));
-}
+const {
+  EPS,
+  roundMoney,
+  laborGrossFromJob,
+  grossToNetLaborRefund,
+  disputeGrossToLaborNet,
+  classifyGatewayRefundResult,
+  resolveRefundStatusAfterGateway,
+} = require("../utils/refundMath.util");
 
 async function resolveCardLast4(userId, meta) {
   const masked = meta?.servicePayment?.maskedPaymentMethod || "";
@@ -58,6 +36,7 @@ async function applyProviderRefundClawbackInTransaction(tx, {
   refundKind = "admin_refund",
   disputeId = null,
   skipInvoice = false,
+  refundStatusOverride = null,
 }) {
   const jobId = job.id;
   const laborNet = roundMoney(laborRefundNet);
@@ -87,50 +66,65 @@ async function applyProviderRefundClawbackInTransaction(tx, {
       0,
       roundMoney(Number(job.providerAmount || 0) - Number(job.releasedAmount || 0))
     );
-    const escrowTarget = Math.min(laborNet, heldFromJob);
+    // heldPortion: fund customer refund from THIS job's escrow only (admin hold or courier pre-delivery).
+    const heldPortion = Math.min(laborNet, heldFromJob);
+    // releasedPortion: provider share already paid out — recovered only via available balance, then refund_debt.
+    const releasedPortion = roundMoney(laborNet - heldPortion);
 
     escrowApplied = await earningService.applyEscrowToRefund(tx, {
       providerId: providerProfileId,
       jobId,
-      amount: escrowTarget,
+      amount: heldPortion,
     });
-    if (escrowApplied < escrowTarget - EPS) {
-      escrowApplied = escrowTarget;
-    }
 
-    let stillNeeded = roundMoney(laborNet - escrowApplied);
-    if (stillNeeded > EPS) {
+    const providerRecoveryNeeded = roundMoney(laborNet - escrowApplied);
+    const releasedRecoveryTarget = Math.min(providerRecoveryNeeded, releasedPortion);
+
+    if (releasedRecoveryTarget > EPS) {
       clawbackApplied = await earningService.clawbackFromAvailable(tx, {
         providerId: providerProfileId,
         jobId,
-        amount: stillNeeded,
+        amount: releasedRecoveryTarget,
         idempotencyKey,
       });
-      stillNeeded = roundMoney(stillNeeded - clawbackApplied);
-    }
-
-    if (stillNeeded > EPS) {
-      await earningService.createRefundDebt(tx, {
-        providerId: providerProfileId,
-        jobId,
-        amount: stillNeeded,
-        idempotencyKey: idempotencyKey ? `${idempotencyKey}:debt` : undefined,
-      });
-      providerDebtAdded = stillNeeded;
+      const debtAmount = roundMoney(releasedRecoveryTarget - clawbackApplied);
+      if (debtAmount > EPS) {
+        await earningService.createRefundDebt(tx, {
+          providerId: providerProfileId,
+          jobId,
+          amount: debtAmount,
+          idempotencyKey: idempotencyKey ? `${idempotencyKey}:debt` : undefined,
+        });
+        providerDebtAdded = debtAmount;
+      }
     }
   }
 
   const cumulativeCustomerNet = roundMoney(priorCumulative + laborNet);
+  const immediateCustomerRefund = roundMoney(escrowApplied + clawbackApplied);
+  const pendingCustomerRefund = providerDebtAdded;
   const cardLast4 = await resolveCardLast4(job.customerId, metaBefore);
   const isFullRefund = laborNet > 0 && cumulativeCustomerNet >= maxNetLabor - EPS;
   const refundStatusLabel =
-    laborNet + materialsNet <= 0 ? "pending" : isFullRefund ? "processed" : "partial";
+    refundStatusOverride ||
+    (laborNet + materialsNet <= 0
+      ? "pending"
+      : pendingCustomerRefund > EPS
+        ? isFullRefund
+          ? "partial_pending_recovery"
+          : "partial"
+        : isFullRefund
+          ? "processed"
+          : "partial");
 
-  if (!skipInvoice && (laborNet > 0 || materialsNet > 0)) {
+  const invoiceLaborAmount =
+    pendingCustomerRefund > EPS ? immediateCustomerRefund : laborNet;
+
+  if (!skipInvoice && (laborNet > 0 || materialsNet > 0) && invoiceLaborAmount > EPS) {
     await paymentService.createRefundInvoiceInTransaction(tx, {
       userId: job.customerId,
       jobId,
-      laborRefund: laborNet,
+      laborRefund: invoiceLaborAmount,
       materialsRefund: materialsNet,
       cardLast4,
       meta: {
@@ -139,8 +133,11 @@ async function applyProviderRefundClawbackInTransaction(tx, {
         escrowApplied,
         clawbackApplied,
         providerDebtAdded,
+        immediateRefund: immediateCustomerRefund,
+        pendingRefund: pendingCustomerRefund,
         refundKind,
         disputeId,
+        staged: pendingCustomerRefund > EPS,
       },
     });
   }
@@ -161,6 +158,8 @@ async function applyProviderRefundClawbackInTransaction(tx, {
       escrowApplied,
       clawbackApplied,
       providerDebtAdded,
+      immediateRefund: immediateCustomerRefund,
+      pendingRefund: pendingCustomerRefund,
       processedAt: new Date().toISOString(),
       processedByAdminId: adminUserId,
       disputeId: disputeId || null,
@@ -172,6 +171,17 @@ async function applyProviderRefundClawbackInTransaction(tx, {
     },
     paymentSettlementStatus: "refund",
   }));
+
+  if (providerDebtAdded > EPS && providerProfileId) {
+    const refundRecovery = require("./refundRecovery.service");
+    await refundRecovery.createRefundRecoveryInTransaction(tx, {
+      providerId: providerProfileId,
+      customerId: job.customerId,
+      jobId,
+      disputeId: disputeId || null,
+      amount: providerDebtAdded,
+    });
+  }
 
   let jobRow = job;
   if (paymentService.isEscrowV2Job(job) && escrowApplied > EPS) {
@@ -196,9 +206,178 @@ async function applyProviderRefundClawbackInTransaction(tx, {
     escrowApplied,
     clawbackApplied,
     providerDebtAdded,
+    immediateCustomerRefund,
+    pendingCustomerRefund,
     cumulativeCustomerNet,
     refundStatusLabel,
   };
+}
+
+async function findRefundableLaborIntent(jobId) {
+  const prisma = require("../config/prisma");
+  return prisma.paymentIntent.findFirst({
+    where: {
+      jobId,
+      kind: "LABOR",
+      state: { in: ["PAID", "PARTIALLY_REFUNDED", "DISPUTED"] },
+    },
+    orderBy: { paidAt: "desc" },
+  });
+}
+
+/**
+ * Attempt gateway refund before ledger clawback when the provider supports API refunds.
+ */
+async function attemptGatewayRefundFirst(jobId, laborNet) {
+  if (laborNet <= EPS) {
+    return { attempted: false, result: { ok: false, reason: "zero_amount" }, manualOnly: false, failed: false };
+  }
+  const intent = await findRefundableLaborIntent(jobId);
+  if (!intent) {
+    return {
+      attempted: false,
+      result: { ok: false, reason: "no_intent" },
+      manualOnly: false,
+      failed: false,
+    };
+  }
+  const result = await refundService.requestGatewayRefund(intent.id, laborNet);
+  const { manualOnly, success, failed } = classifyGatewayRefundResult(result);
+  return { attempted: !manualOnly, result, manualOnly, failed };
+}
+
+/**
+ * Gateway-first labor refund: API refund when supported, then provider clawback in one transaction.
+ */
+async function orchestrateJobLaborRefund({
+  jobId,
+  laborRefundNet,
+  materialsRefundNet = 0,
+  adminUserId = null,
+  idempotencyKey = null,
+  requestHash = null,
+  route = null,
+  refundKind = "admin_refund",
+  disputeId = null,
+  skipInvoice = false,
+  skipGatewayAttempt = false,
+}) {
+  const { Prisma } = require("@prisma/client");
+  const prisma = require("../config/prisma");
+  const AppError = require("../utils/AppError");
+  const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
+
+  const laborNet = roundMoney(laborRefundNet);
+  const materialsNet = roundMoney(materialsRefundNet);
+
+  let gatewayPreflight = {
+    attempted: false,
+    result: null,
+    manualOnly: false,
+    failed: false,
+  };
+  if (!skipGatewayAttempt) {
+    let gatewayAmount = laborNet;
+    if (laborNet > EPS) {
+      const job = await prisma.job.findUnique({ where: { id: jobId } });
+      let providerProfileId = null;
+      if (job?.providerId) {
+        const providerRow = await prisma.provider.findUnique({
+          where: { userId: job.providerId },
+          select: { id: true },
+        });
+        providerProfileId = providerRow?.id || null;
+      }
+      if (job && providerProfileId) {
+        const refundRecovery = require("./refundRecovery.service");
+        const split = await refundRecovery.previewProviderRefundSplit(
+          job,
+          providerProfileId,
+          laborNet
+        );
+        gatewayAmount = split.immediateCustomerRefund;
+      }
+    }
+    gatewayPreflight = await attemptGatewayRefundFirst(jobId, gatewayAmount);
+    if (gatewayPreflight.failed) {
+      const reason = gatewayPreflight.result?.error || gatewayPreflight.result?.reason || "unknown";
+      throw new AppError(`Gateway refund failed: ${reason}`, 502);
+    }
+  }
+
+  const txResult = await prisma.$transaction(
+    async (tx) => {
+      if (idempotencyKey && requestHash && route) {
+        const gate = await idempotencyGate(tx, { idempotencyKey, requestHash, route });
+        if (gate.replay) {
+          return { replay: true };
+        }
+      }
+
+      const job = await tx.job.findUnique({ where: { id: jobId } });
+      if (!job) throw new AppError("Job not found", 404);
+      if (laborNet > 0 && !job.laborPaid) {
+        throw new AppError("Job has no paid labor to refund", 400);
+      }
+
+      let providerProfileId = null;
+      if (job.providerId) {
+        const providerRow = await tx.provider.findUnique({
+          where: { userId: job.providerId },
+          select: { id: true },
+        });
+        providerProfileId = providerRow?.id || null;
+      }
+
+      const metaBefore = normalizeMeta(job.meta);
+      const laborGross = laborGrossFromJob(job, metaBefore);
+      const maxNetLabor = roundMoney(laborGross * 0.93);
+      const existingRefund =
+        metaBefore.refund && typeof metaBefore.refund === "object" ? metaBefore.refund : {};
+      const priorCumulative =
+        Number(existingRefund.cumulativeCustomerNet ?? existingRefund.amount ?? 0) || 0;
+      const cumulativeAfter = roundMoney(priorCumulative + laborNet);
+      const isFullRefund = laborNet > 0 && cumulativeAfter >= maxNetLabor - EPS;
+      const refundStatusOverride = resolveRefundStatusAfterGateway({
+        manualOnly: gatewayPreflight.manualOnly,
+        gatewaySuccess: gatewayPreflight.result?.ok === true,
+        isFullRefund,
+      });
+
+      const clawbackResult = await applyProviderRefundClawbackInTransaction(tx, {
+        job,
+        providerProfileId,
+        laborRefundNet: laborNet,
+        materialsRefundNet: materialsNet,
+        adminUserId,
+        idempotencyKey,
+        refundKind,
+        disputeId,
+        skipInvoice,
+        refundStatusOverride,
+      });
+
+      if (idempotencyKey && requestHash && route) {
+        await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
+      }
+
+      return {
+        replay: false,
+        ...clawbackResult,
+        customerId: job.customerId,
+        providerUserId: job.providerId,
+        gatewayResult: gatewayPreflight.result,
+        gatewayManualOnly: gatewayPreflight.manualOnly,
+      };
+    },
+    {
+      maxWait: 5000,
+      timeout: 20000,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }
+  );
+
+  return txResult;
 }
 
 async function processGatewayRefundForJob(jobId, laborNet) {
@@ -238,5 +417,10 @@ module.exports = {
   grossToNetLaborRefund,
   disputeGrossToLaborNet,
   applyProviderRefundClawbackInTransaction,
+  findRefundableLaborIntent,
+  classifyGatewayRefundResult,
+  attemptGatewayRefundFirst,
+  resolveRefundStatusAfterGateway,
+  orchestrateJobLaborRefund,
   processGatewayRefundForJob,
 };

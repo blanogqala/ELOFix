@@ -9,8 +9,6 @@ interface EloFixLogoProps {
 }
 
 export function EloFixLogo({ variant = 'dark', className = '', clickable = true }: EloFixLogoProps) {
-  const navigate = useNavigate();
-
   const logoSrc = variant === 'light' ? eloFixLogoLight : eloFixLogoDark;
 
   const img = (
@@ -23,9 +21,15 @@ export function EloFixLogo({ variant = 'dark', className = '', clickable = true 
 
   if (!clickable) return img;
 
+  return <ClickableLogo>{img}</ClickableLogo>;
+}
+
+function ClickableLogo({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+
   return (
     <button onClick={() => navigate('/')} className="flex items-center" type="button" aria-label="Go to home">
-      {img}
+      {children}
     </button>
   );
 }

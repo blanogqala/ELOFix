@@ -155,13 +155,19 @@ async function settleJobStoreOrderFromIntent(intent) {
 
   const jobService = require("../job.service");
   try {
-    await jobService.payForStoreMaterials(jobId, supplierId, "****", {
-      paymentIntentId: intent.id,
-      deliveryType: meta.deliveryType || "SELF",
-      deliveryFee: Number(meta.deliveryFee || 0),
-      deliveryProviderId: meta.deliveryProviderId ? String(meta.deliveryProviderId) : undefined,
-      orderId: meta.orderId ? String(meta.orderId) : undefined,
-    });
+    await jobService.payForStoreMaterials(
+      jobId,
+      supplierId,
+      "****",
+      {
+        paymentIntentId: intent.id,
+        deliveryType: meta.deliveryType || "SELF",
+        deliveryFee: Number(meta.deliveryFee || 0),
+        deliveryProviderId: meta.deliveryProviderId ? String(meta.deliveryProviderId) : undefined,
+        orderId: meta.orderId ? String(meta.orderId) : undefined,
+      },
+      String(intent.userId || "")
+    );
   } catch (e) {
     const msg = String(e?.message || "");
     if (e?.statusCode === 400 && /already|paid|no longer active/i.test(msg)) {

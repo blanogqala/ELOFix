@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
 import { PaymentModal } from '@/components/payments/PaymentModal';
+import { LoadingOverlay } from '@/components/common/loading';
 import { Supplier, Product, DeliveryProvider } from '@/types';
 import {
   ArrowLeft,
@@ -32,7 +33,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
+import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
+import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 import { buildOrderFinanceFromParts } from '@/lib/orderFinance';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { getDeliveryProviders } from '@/lib/api/specials';
@@ -93,6 +95,7 @@ function geolocationMessage(code?: number): string {
 
 export default function OrderMaterials() {
   const { user } = useAuth();
+  const { dialogProps, guardAction, openIfBlockedMessage } = useBlockedActionGuard();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -344,8 +347,11 @@ export default function OrderMaterials() {
       });
       setPendingOrderId(order.id);
       setPaymentModalOpen(true);
-    } catch {
-      setError('Could not create order. Please try again.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not create order. Please try again.';
+      if (!openIfBlockedMessage(message)) {
+        setError(message);
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -798,7 +804,11 @@ export default function OrderMaterials() {
                 </div>
               )}
 
-              <Button className="btn-accent w-full" onClick={handlePay} disabled={isProcessing}>
+              <Button
+                className="btn-accent w-full"
+                onClick={() => guardAction(() => void handlePay())}
+                disabled={isProcessing}
+              >
                 <Lock className="h-4 w-4 mr-2" />
                 {isProcessing ? 'Preparing…' : `Continue to payment ${formatCurrency(total, { decimals: 2 })}`}
               </Button>
@@ -822,6 +832,8 @@ export default function OrderMaterials() {
           ]}
         />
       )}
+      <LoadingOverlay open={isProcessing} message="Preparing checkout…" />
+      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

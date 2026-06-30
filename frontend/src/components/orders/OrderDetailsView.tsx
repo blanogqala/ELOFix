@@ -311,6 +311,8 @@ export function OrderDetailsView({
   const mapLng = mapLngRaw != null && Number.isFinite(Number(mapLngRaw)) ? Number(mapLngRaw) : null;
 
   const isPickupCanonical = canonical === 'pickup';
+  const unifiedMode: UnifiedDeliveryMode =
+    canonical === 'pickup' ? 'self_pickup' : canonical === 'supplier_delivery' ? 'store_delivery' : 'provider_delivery';
   const showConfirmReceipt =
     Boolean(onConfirmReceipt) &&
     order.deliveryConfirmed !== true &&
@@ -318,7 +320,8 @@ export function OrderDetailsView({
       order.customerDeliveryIssue &&
       order.customerDeliveryIssue.status === 'open'
     ) &&
-    ((fulfillmentU === 'READY' && isPickupCanonical) || fulfillmentU === 'COMPLETED');
+    ((fulfillmentU === 'READY' && isPickupCanonical) ||
+      (fulfillmentU === 'COMPLETED' && unifiedMode === 'store_delivery'));
 
   const showDeliveryIssueReported =
     Boolean(order.customerDeliveryIssue) &&
@@ -330,9 +333,6 @@ export function OrderDetailsView({
   const deliveryState = order.deliveryState || 'Processing';
   const stateBadge = DELIVERY_STATE_BADGES[deliveryState] || DELIVERY_STATE_BADGES.Processing;
   const showTracking = order.deliveryType !== 'SELF' && order.deliveryPaid;
-
-  const unifiedMode: UnifiedDeliveryMode =
-    canonical === 'pickup' ? 'self_pickup' : canonical === 'supplier_delivery' ? 'store_delivery' : 'provider_delivery';
 
   const deliveryEffectivelyComplete =
     fulfillmentU === 'COMPLETED' || deliveryState === 'Delivered';

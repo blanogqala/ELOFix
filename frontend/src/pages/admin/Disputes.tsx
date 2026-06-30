@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { listAdminDisputes, type AdminDisputeRow } from '@/lib/api/adminDisputes';
 import { formatRequestedResolution } from '@/lib/disputeLabels';
-import { Loader2, Search } from 'lucide-react';
+import { JobCardSkeleton } from '@/components/common/loading';
+import { Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function AdminDisputes() {
@@ -59,9 +60,7 @@ export default function AdminDisputes() {
           </TabsList>
           <TabsContent value={tab} className="mt-4">
             {loading ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
+              <JobCardSkeleton count={6} className="py-4" />
             ) : rows.length === 0 ? (
               <p className="text-center text-muted-foreground py-12">No disputes found</p>
             ) : (

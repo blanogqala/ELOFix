@@ -36,7 +36,7 @@ import { Job, MaterialLine, Measurements } from '@/types';
 import {
   ArrowLeft, User, Calendar, MessageSquare, Send, MapPin,
   XCircle, CheckCircle, Clock, AlertTriangle, DollarSign, X,
-  Pencil, ExternalLink, CreditCard, Lock, Paperclip, Upload, Loader2,
+  Pencil, ExternalLink, CreditCard, Lock, Paperclip, Upload, Loader2, Phone, Mail,
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
@@ -491,6 +491,14 @@ export default function ProviderJobDetail() {
 
   const handleMarkComplete = async () => {
     if (!job) return;
+    if (!job.laborPaid) {
+      toast({
+        title: 'Service payment required',
+        description: 'The customer must pay the service price before you can mark this job complete.',
+        variant: 'destructive',
+      });
+      return;
+    }
     try {
       await updateJobStatus(job.id, 'AWAITING_CONFIRMATION');
       await syncJobsAfterMutation();
@@ -720,6 +728,7 @@ export default function ProviderJobDetail() {
     deliveryRequest && deliveryRequest.source === 'job_context' && !isCourierJob;
   const showMarkComplete =
     job && !isCourierJob ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) : false;
+  const canMarkJobComplete = Boolean(job?.laborPaid);
   const showCancel = job
     ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION'
     : false;
@@ -822,12 +831,33 @@ export default function ProviderJobDetail() {
             <p className="text-muted-foreground ">Customer</p>
               <span>{job.userName}</span>
             </div>
-            {job.providerName && (
-              <div className="border-b-2 border-primary/20 pb-3">
-                <p className="text-muted-foreground">Selected Provider</p>
-                <p className="font-medium">{job.providerName}</p>
+            <div className="border-b-2 border-primary/20 pb-3">
+              <p className="text-muted-foreground">Customer contact details</p>
+              <div className="mt-1 space-y-1">
+                {job.userPhone ? (
+                  <a
+                    href={`tel:${job.userPhone.replace(/\s/g, '')}`}
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                  >
+                    <Phone className="h-3.5 w-3.5 shrink-0" />
+                    {job.userPhone}
+                  </a>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Phone not provided</p>
+                )}
+                {job.userEmail ? (
+                  <a
+                    href={`mailto:${job.userEmail}`}
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline break-all"
+                  >
+                    <Mail className="h-3.5 w-3.5 shrink-0" />
+                    {job.userEmail}
+                  </a>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Email not provided</p>
+                )}
               </div>
-            )}
+            </div>
             <div className="border-b-2 border-primary/20 pb-3">
               <p className="text-muted-foreground ">Service Category</p>
               <p className="font-medium">{job.categoryName}</p>
@@ -1479,7 +1509,16 @@ export default function ProviderJobDetail() {
         {(showMarkComplete || showCancel) && (
           <div className="flex gap-3 sticky bottom-4">
             {showMarkComplete && (
-              <Button className="flex-1 h-12" onClick={handleMarkComplete}>
+              <Button
+                className="flex-1 h-12"
+                onClick={handleMarkComplete}
+                disabled={!canMarkJobComplete}
+                title={
+                  !canMarkJobComplete
+                    ? 'Customer must pay the service price before you can mark this job complete.'
+                    : undefined
+                }
+              >
                 <CheckCircle className="mr-2 h-5 w-5" /> Mark as Complete
               </Button>
             )}

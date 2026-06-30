@@ -7,6 +7,8 @@ const {
   uploadProviderAvatar,
   uploadWorkPostImage,
 } = require("../middleware/upload.middleware");
+const { uploadRateLimit } = require("../middleware/uploadRateLimit.middleware");
+const { UPLOAD_CATEGORIES } = require("../services/uploadRateLimit.service");
 
 const router = express.Router();
 
@@ -36,6 +38,7 @@ router.post(
   authenticate,
   authorizeRoles(["PROVIDER"]),
   uploadProviderDocument.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.PROVIDER_DOCUMENT),
   asyncHandler(providerController.uploadDocumentScoped)
 );
 

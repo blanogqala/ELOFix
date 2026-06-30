@@ -1,5 +1,8 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
+const outboxService = require("./notificationDeliveryOutbox.service");
 
 function emitToUserRoom(userId, event, payload) {
   if (!userId || !global.io) return;
@@ -51,6 +54,37 @@ async function getNotifications(userId) {
   return list.map(toApiShape);
 }
 
+function buildNotificationData(notification) {
+  return {
+    id: randomUUID(),
+    userId: String(notification.userId),
+    senderId: notification.senderId ? String(notification.senderId) : null,
+    senderName: notification.senderName != null ? String(notification.senderName) : null,
+    senderRole: notification.senderRole != null ? String(notification.senderRole) : null,
+    type: String(notification.type || "job_completed"),
+    title: String(notification.title || "Notification"),
+    message: String(notification.message || ""),
+    read: false,
+    jobId: notification.jobId || null,
+    materialOrderId:
+      notification.materialOrderId != null && String(notification.materialOrderId).trim() !== ""
+        ? String(notification.materialOrderId).trim()
+        : null,
+    branchUserId:
+      notification.branchUserId != null && String(notification.branchUserId).trim() !== ""
+        ? String(notification.branchUserId).trim()
+        : null,
+    supportTargetUserId:
+      notification.supportTargetUserId != null && String(notification.supportTargetUserId).trim() !== ""
+        ? String(notification.supportTargetUserId).trim()
+        : null,
+    dedupeKey:
+      notification.dedupeKey != null && String(notification.dedupeKey).trim() !== ""
+        ? String(notification.dedupeKey).trim()
+        : null,
+  };
+}
+
 async function addNotification(notification) {
   let conversationId = null;
   if (notification.senderId && notification.conversationType !== "support") {
@@ -61,35 +95,81 @@ async function addNotification(notification) {
     });
   }
 
-  const item = await prisma.notification.create({
-    data: {
-      id: randomUUID(),
-      userId: String(notification.userId),
-      senderId: notification.senderId ? String(notification.senderId) : null,
-      senderName: notification.senderName != null ? String(notification.senderName) : null,
-      senderRole: notification.senderRole != null ? String(notification.senderRole) : null,
-      type: String(notification.type || "job_completed"),
-      title: String(notification.title || "Notification"),
-      message: String(notification.message || ""),
-      read: false,
-      jobId: notification.jobId || null,
-      materialOrderId:
-        notification.materialOrderId != null && String(notification.materialOrderId).trim() !== ""
-          ? String(notification.materialOrderId).trim()
-          : null,
-      branchUserId:
-        notification.branchUserId != null && String(notification.branchUserId).trim() !== ""
-          ? String(notification.branchUserId).trim()
-          : null,
-      supportTargetUserId:
-        notification.supportTargetUserId != null && String(notification.supportTargetUserId).trim() !== ""
-          ? String(notification.supportTargetUserId).trim()
-          : null,
-      conversationId,
+  const data = buildNotificationData(notification);
+  let item;
+  let deduped = false;
+
+  if (data.dedupeKey) {
+    const existing = await prisma.notification.findFirst({
+      where: { userId: data.userId, dedupeKey: data.dedupeKey },
+    });
+    if (existing) {
+      item = existing;
+      deduped = true;
+    }
+  }
+
+  if (!item) {
+    try {
+      item = await prisma.notification.create({
+        data: { ...data, conversationId },
+      });
+    } catch (err) {
+      if (err?.code === "P2002" && data.dedupeKey) {
+        const existing = await prisma.notification.findFirst({
+          where: { userId: data.userId, dedupeKey: data.dedupeKey },
+        });
+        if (!existing) throw err;
+        item = existing;
+        deduped = true;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  const apiItem = toApiShape(item);
+
+  if (deduped) {
+    void logAudit(AUDIT_ACTIONS.NOTIFICATION_DEDUPED, {
+      userId: apiItem.userId,
+      entityType: ENTITY_TYPES.NOTIFICATION,
+      entityId: apiItem.id,
+      newValue: {
+        type: apiItem.type,
+        dedupeKey: data.dedupeKey,
+        jobId: apiItem.jobId,
+        materialOrderId: apiItem.materialOrderId,
+      },
+    });
+    return apiItem;
+  }
+
+  void logAudit(AUDIT_ACTIONS.NOTIFICATION_CREATED, {
+    userId: apiItem.userId,
+    entityType: ENTITY_TYPES.NOTIFICATION,
+    entityId: apiItem.id,
+    newValue: {
+      type: apiItem.type,
+      dedupeKey: data.dedupeKey,
+      jobId: apiItem.jobId,
+      materialOrderId: apiItem.materialOrderId,
     },
   });
-  const apiItem = toApiShape(item);
-  emitToUserRoom(apiItem.userId, "notification:new", apiItem);
+
+  try {
+    await outboxService.enqueueSocketDelivery({
+      notificationId: apiItem.id,
+      userId: apiItem.userId,
+      event: "notification:new",
+      payload: apiItem,
+    });
+    void outboxService.processOutboxBatch(1);
+  } catch (outboxErr) {
+    console.error("[notifications] socket outbox enqueue failed", outboxErr);
+    emitToUserRoom(apiItem.userId, "notification:new", apiItem);
+  }
+
   return apiItem;
 }
 
@@ -141,6 +221,8 @@ const JOB_SECTION_TYPES = {
     "dispute_opened",
     "dispute_under_investigation",
     "refund_approved",
+    "refund_processed",
+    "refund_clawback",
     "case_closed",
     "payment_released",
     "job_cancelled",
@@ -172,7 +254,7 @@ async function markJobNotificationsRead(userId, jobId, section = "all") {
 /**
  * In-app notification for the supplier org owner (User row) for material-order events.
  */
-async function notifySupplierOrgOwnerMaterialEvent(supplierOrgId, { type, title, message, materialOrderId, jobId }) {
+async function notifySupplierOrgOwnerMaterialEvent(supplierOrgId, { type, title, message, materialOrderId, jobId, dedupeKey }) {
   const sid = String(supplierOrgId || "").trim();
   if (!sid) return null;
   const supplier = await prisma.supplier.findUnique({
@@ -189,6 +271,7 @@ async function notifySupplierOrgOwnerMaterialEvent(supplierOrgId, { type, title,
     message,
     ...(materialOrderId ? { materialOrderId: String(materialOrderId) } : {}),
     ...(jobId ? { jobId: String(jobId) } : {}),
+    ...(dedupeKey ? { dedupeKey: String(dedupeKey) } : {}),
   });
 }
 
@@ -200,4 +283,7 @@ module.exports = {
   getUnreadCount,
   markJobNotificationsRead,
   notifySupplierOrgOwnerMaterialEvent,
+  emitToUserRoom,
+  toApiShape,
+  buildNotificationData,
 };

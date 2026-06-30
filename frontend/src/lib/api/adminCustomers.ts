@@ -54,9 +54,10 @@ export async function getAdminCustomerById(userId: string): Promise<AdminCustome
   };
 }
 
-export async function blockAdminCustomer(userId: string): Promise<AdminCustomerDetail> {
+export async function blockAdminCustomer(userId: string, reason: string): Promise<AdminCustomerDetail> {
   const { data } = await apiClient.patch<{ success: boolean; customer: AdminCustomerDetail }>(
     `/admin/customers/${userId}/block`,
+    { reason },
   );
   if (!data?.customer) throw new Error('Failed to block customer');
   return data.customer;

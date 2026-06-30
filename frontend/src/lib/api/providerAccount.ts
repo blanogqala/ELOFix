@@ -37,6 +37,8 @@ export interface ProviderEarningJobRow {
     escrowApplied?: number;
     clawbackApplied?: number;
     providerDebtAdded?: number;
+    immediateRefund?: number;
+    pendingRefund?: number;
     cumulativeCustomerNet?: number;
     processedAt?: string | null;
   };
@@ -78,6 +80,10 @@ export interface ProviderEarningsSummary {
   available: number;
   refundDebtOwed?: number;
   totalClawback?: number;
+  /** Raw ledger pending credits (all jobs). */
+  pending?: number;
+  /** Provider-entitled escrow only — use for "Remaining to you" card. */
+  providerEscrowRemaining?: number;
 }
 
 export interface ProviderWithdrawalRow {
@@ -89,7 +95,7 @@ export interface ProviderWithdrawalRow {
 
 export interface ProviderTransactionRow {
   id: string;
-  kind: 'withdrawal' | 'refund_clawback' | 'refund_debt' | 'debt_recovery';
+  kind: 'withdrawal' | 'refund_clawback' | 'refund_debt' | 'debt_recovery' | 'refund_escrow_reversal';
   amount: number;
   status?: string | null;
   jobId?: string | null;
@@ -156,5 +162,60 @@ export async function getProviderWithdrawals(): Promise<{
   const { data } = await apiClient.get<{ success: boolean; withdrawals: ProviderWithdrawalRow[] }>(
     '/provider/withdrawals'
   );
+  return data;
+}
+
+export interface ProviderRefundDebtSummary {
+  totalOwed: number;
+  dueAt: string | null;
+  reference: string | null;
+  platformBank: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    branchCode: string;
+    accountType: string;
+  };
+  pendingRepayment?: {
+    id: string;
+    amount: number;
+    reference: string;
+    status: string;
+    createdAt: string;
+  } | null;
+  lastRejectedRepayment?: {
+    amount: number;
+    reference: string;
+    adminNote?: string | null;
+    reviewedAt?: string | null;
+  } | null;
+  recoveries: Array<{
+    id: string;
+    jobId: string | null;
+    jobTitle: string | null;
+    totalPending: number;
+    recoveredAmount: number;
+    balance: number;
+    status: string;
+    dueAt: string;
+    reference: string;
+  }>;
+}
+
+export async function getProviderRefundDebt(): Promise<{ success: boolean } & ProviderRefundDebtSummary> {
+  const { data } = await apiClient.get<{ success: boolean } & ProviderRefundDebtSummary>(
+    '/provider/refund-debt'
+  );
+  return data;
+}
+
+export async function submitProviderRefundRepayment(body: {
+  amount: number;
+  reference: string;
+  proofUrl?: string;
+}): Promise<{ success: boolean; repayment: { id: string; status: string } }> {
+  const { data } = await apiClient.post('/provider/refund-debt/repayments', body, {
+    headers: idempotencyHeaders(),
+  });
   return data;
 }

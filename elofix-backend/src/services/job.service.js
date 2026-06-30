@@ -24,7 +24,8 @@ const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
-const { expandLaborPricingFromPaidJob } = require("./provider.service");
+const { expandLaborPricingFromPaidJob, isProviderAvailable } = require("./provider.service");
+const { assertCustomerNotBlocked } = require("./accountStatus.service");
 const {
   registerUploadedFile,
   resolveFileForDownload,
@@ -36,10 +37,12 @@ const {
   sanitizeDownloadFilename,
   MAX_BYTES: QUOTATION_MAX_BYTES,
 } = require("../utils/quotationFile.util");
+const { scanUploadedFile } = require("./fileScan.service");
+const { unlinkQuietly } = require("../utils/uploadSecurity.util");
 
 const jobInclude = {
   customer: {
-    select: { id: true, name: true, email: true, role: true },
+    select: { id: true, name: true, email: true, phone: true, role: true },
   },
   provider: {
     select: { id: true, name: true, email: true, role: true },
@@ -206,24 +209,18 @@ async function resolveProviderUserId(selectedProviderId) {
     return undefined;
   }
 
-  const providerUser = await prisma.user.findFirst({
-    where: { id: rawId, role: "PROVIDER" },
-    select: { id: true },
-  });
-  if (providerUser) {
-    return providerUser.id;
-  }
-
   const providerProfile = await prisma.provider.findFirst({
     where: {
-      OR: [{ id: rawId }, { userId: rawId }],
+      OR: [{ id: rawId }, { userId: rawId }, { user: { id: rawId, role: "PROVIDER" } }],
     },
     select: {
+      id: true,
       userId: true,
       approved: true,
       profileCompleted: true,
       blocked: true,
       deletedAt: true,
+      settings: true,
     },
   });
 
@@ -232,10 +229,13 @@ async function resolveProviderUserId(selectedProviderId) {
       providerProfile.deletedAt ||
       providerProfile.blocked ||
       providerProfile.approved !== true ||
-      providerProfile.profileCompleted !== true
+      providerProfile.profileCompleted !== true ||
+      !isProviderAvailable(providerProfile.settings)
     ) {
       throw new AppError("Selected provider is not available for booking", 400);
     }
+    const refundRecovery = require("./refundRecovery.service");
+    await refundRecovery.assertProviderNoOverdueRefundDebt(providerProfile.id);
     return providerProfile.userId;
   }
 
@@ -395,7 +395,27 @@ function assertActorCanAccessJob(job, actorUserId, actorRole) {
   throw new AppError("Forbidden", 403);
 }
 
+function assertCustomerOwnsJob(job, actorUserId) {
+  if (!job) throw new AppError("Job not found", 404);
+  if (String(job.customerId) !== String(actorUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
+}
+
+function assertProviderOwnsJob(job, actorUserId) {
+  if (!job) throw new AppError("Job not found", 404);
+  if (String(job.providerId || "") !== String(actorUserId)) {
+    throw new AppError("Forbidden", 403);
+  }
+}
+
 async function createJob(userId, body) {
+  const customer = await prisma.user.findUnique({
+    where: { id: String(userId) },
+    select: { blocked: true },
+  });
+  assertCustomerNotBlocked(customer);
+
   const { title, description, price, category, location, width, height, length, area, images, measurements, materials, selectedProviderId } = body;
 
   const normalizedCategory = String(category || title || "").trim();
@@ -575,6 +595,7 @@ async function getMatchedJobsForProvider(userId) {
       approved: true,
       profileCompleted: true,
       blocked: true,
+      settings: true,
     },
   });
 
@@ -587,6 +608,10 @@ async function getMatchedJobsForProvider(userId) {
     provider.approved !== true ||
     provider.profileCompleted !== true
   ) {
+    return [];
+  }
+
+  if (!isProviderAvailable(provider.settings)) {
     return [];
   }
 
@@ -663,6 +688,15 @@ async function acceptJob(jobId, userId) {
       "Your profile must be approved and complete before accepting jobs",
       403
     );
+  }
+
+  const providerProfile = await prisma.provider.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (providerProfile) {
+    const refundRecovery = require("./refundRecovery.service");
+    await refundRecovery.assertProviderNoOverdueRefundDebt(providerProfile.id);
   }
 
   await assertProviderCanActOnPendingJob(jobId, userId);
@@ -1082,6 +1116,17 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
     const metaBefore = await getJobMeta(jobId);
     await assertSpecificationsReadyForPricing(job, metaBefore);
   }
+  if (String(status) === "AWAITING_CONFIRMATION") {
+    const metaBefore = await getJobMeta(jobId);
+    const isCourier = Boolean(metaBefore?.courierFlow);
+    const laborPaid = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);
+    if (!isCourier && !laborPaid) {
+      throw new AppError(
+        "Service payment is required before marking the job complete.",
+        409
+      );
+    }
+  }
   const dbStatus = mapFrontendStatusToDb(status);
   let updatedJob = job;
   if (dbStatus && dbStatus !== job.status) {
@@ -1136,9 +1181,10 @@ async function deleteJob(jobId, actorUserId, actorRole) {
   return { id: jobId };
 }
 
-async function addMaterials(jobId, newMaterials = []) {
+async function addMaterials(jobId, newMaterials = [], actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const existing = Array.isArray(job.materials) ? job.materials : [];
   const next = [...existing, ...newMaterials];
@@ -1151,9 +1197,10 @@ async function addMaterials(jobId, newMaterials = []) {
   return await finalizeJob(updated, meta);
 }
 
-async function removeMaterial(jobId, productId, supplierId) {
+async function removeMaterial(jobId, productId, supplierId, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const existing = Array.isArray(job.materials) ? job.materials : [];
   const next = existing.filter(
@@ -1168,17 +1215,19 @@ async function removeMaterial(jobId, productId, supplierId) {
   return await finalizeJob(updated, meta);
 }
 
-async function addJobNote(jobId, author, message, title) {
+async function addJobNote(jobId, author, message, title, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorCanAccessJob(job, actorUserId, actorRole);
   const note = createNote(author, message, title);
   const meta = await mutateJobMeta(jobId, (m) => ({ ...m, jobNotes: [...m.jobNotes, note] }));
   return await finalizeJob(job, meta);
 }
 
-async function addChatMessage(jobId, author, message) {
+async function addChatMessage(jobId, author, message, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertActorCanAccessJob(job, actorUserId, actorRole);
   const chat = createChat(author, message);
   const meta = await mutateJobMeta(jobId, (m) => ({ ...m, chat: [...m.chat, chat] }));
   const recipientId =
@@ -1245,6 +1294,12 @@ async function uploadJobQuotation(jobId, providerUserId, file) {
     throw new AppError("Quotation file must be 10MB or smaller", 400);
   }
   await assertQuotationFileMagic(file.path, ext);
+  try {
+    await scanUploadedFile(file.path, { originalName: file.originalname });
+  } catch (err) {
+    await unlinkQuietly(file.path);
+    throw err;
+  }
 
   const stored = await registerUploadedFile(file, {
     ownerUserId: providerUserId,
@@ -1636,9 +1691,10 @@ async function updateProviderRequirements(jobId, updates, actorUserId, actorRole
   return await finalizeJob(job, meta);
 }
 
-async function addUserMaterialSuggestion(jobId, suggested, message) {
+async function addUserMaterialSuggestion(jobId, suggested, message, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const suggestion = {
     id: randomUUID(),
@@ -1656,9 +1712,10 @@ async function addUserMaterialSuggestion(jobId, suggested, message) {
   return await finalizeJob(job, meta);
 }
 
-async function acceptUserSuggestion(jobId, suggestionId) {
+async function acceptUserSuggestion(jobId, suggestionId, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertProviderOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => {
     const suggestions = m.userMaterialSuggestions.map((s) =>
@@ -1710,9 +1767,10 @@ async function acceptUserSuggestion(jobId, suggestionId) {
   return await finalizeJob(job, meta);
 }
 
-async function rejectUserSuggestion(jobId, suggestionId) {
+async function rejectUserSuggestion(jobId, suggestionId, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertProviderOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
@@ -1723,9 +1781,10 @@ async function rejectUserSuggestion(jobId, suggestionId) {
   return await finalizeJob(job, meta);
 }
 
-async function addProviderMaterialSuggestion(jobId, suggested, message) {
+async function addProviderMaterialSuggestion(jobId, suggested, message, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertProviderOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const suggestion = {
     id: randomUUID(),
@@ -1743,9 +1802,10 @@ async function addProviderMaterialSuggestion(jobId, suggested, message) {
   return await finalizeJob(job, meta);
 }
 
-async function acceptProviderSuggestion(jobId, suggestionId) {
+async function acceptProviderSuggestion(jobId, suggestionId, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
@@ -1756,9 +1816,10 @@ async function acceptProviderSuggestion(jobId, suggestionId) {
   return await finalizeJob(job, meta);
 }
 
-async function rejectProviderSuggestion(jobId, suggestionId) {
+async function rejectProviderSuggestion(jobId, suggestionId, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
@@ -1769,9 +1830,10 @@ async function rejectProviderSuggestion(jobId, suggestionId) {
   return await finalizeJob(job, meta);
 }
 
-async function proposeNewLaborPrice(jobId, amount, reason) {
+async function proposeNewLaborPrice(jobId, amount, reason, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertProviderOwnsJob(job, actorUserId);
   const meta = await mutateJobMeta(jobId, (m) => ({
     ...m,
     proposedLaborPrice: { amount: coerceNumber(amount), reason: String(reason || "") },
@@ -1783,9 +1845,10 @@ async function proposeNewLaborPrice(jobId, amount, reason) {
   return enriched;
 }
 
-async function acceptProposedPrice(jobId) {
+async function acceptProposedPrice(jobId, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, actorUserId);
   const metaBefore = await getJobMeta(jobId);
   const hadProposal = Boolean(metaBefore.proposedLaborPrice);
   const meta = await mutateJobMeta(jobId, (m) => {
@@ -1824,6 +1887,23 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
     ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
     : null;
 
+  const expectedRefund =
+    policy.refundAmount != null ? Number(policy.refundAmount) || 0 : paymentService.computeCancelRefundAmount(job);
+  let refundStatusForMeta = "recorded";
+  if (expectedRefund > 0 && job.laborPaid) {
+    const { attemptGatewayRefundFirst } = require("./providerRefundClawback.service");
+    const gatewayPreflight = await attemptGatewayRefundFirst(jobId, expectedRefund);
+    if (gatewayPreflight.failed) {
+      const reason = gatewayPreflight.result?.error || gatewayPreflight.result?.reason || "unknown";
+      throw new AppError(`Gateway refund failed: ${reason}`, 502);
+    }
+    if (gatewayPreflight.manualOnly) {
+      refundStatusForMeta = "pending_manual_gateway";
+    } else if (gatewayPreflight.result?.ok) {
+      refundStatusForMeta = "processed";
+    }
+  }
+
   const { updated, meta, refundAmount } = await prisma.$transaction(
     async (tx) => {
       const j = await tx.job.findUnique({ where: { id: jobId } });
@@ -1855,7 +1935,7 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
                 reason: "cancel",
                 at: new Date().toISOString(),
                 kind: String(refundKind || policy.refundKind || ""),
-                status: "recorded",
+                status: refundStatusForMeta,
                 ...(originalPaymentRef ? { originalPaymentRef: String(originalPaymentRef) } : {}),
               },
             }
@@ -1885,6 +1965,12 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   } catch (e) {
     console.error("markLaborIntentRefunded", e);
   }
+
+  if (Number(refundAmount) > 0 && providerRow) {
+    const providerTrustScore = require("./providerTrustScore.service");
+    await providerTrustScore.onRefundResolved(providerRow.id, "PARTIAL_REFUND");
+  }
+
   return {
     job: await finalizeJob(updated, meta),
     refundAmount: Number(refundAmount) || 0,
@@ -1893,6 +1979,24 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
     customerForfeits: policy.customerForfeits,
     refundKind: policy.refundKind,
   };
+}
+
+/**
+ * Courier delivery jobs reach the "awaiting confirmation" step via the linked
+ * delivery request's fulfillmentStatus (COMPLETED), which is not always mirrored
+ * onto job.status. This lets the customer confirm receipt + rate the courier from
+ * the job page once the courier has completed the delivery.
+ */
+async function isCourierDeliveryReadyForConfirmation(job, meta) {
+  if (!meta?.courierFlow) return false;
+  const dr = await prisma.deliveryRequest.findFirst({
+    where: { jobId: String(job.id) },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!dr) return false;
+  const fs = String(dr.fulfillmentStatus || "").toUpperCase();
+  const status = String(dr.status || "").toLowerCase();
+  return fs === "COMPLETED" || status === "completed";
 }
 
 async function confirmJobCompletion(jobId, rating, review, customerUserId, options = {}) {
@@ -1920,7 +2024,13 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
     throw new AppError("Cannot confirm completion while dispute is open", 400);
   }
   if (!autoCompleted && currentStatus !== "AWAITING_CONFIRMATION" && currentStatus !== "COMPLETED") {
-    throw new AppError("Job is not awaiting confirmation", 400);
+    // Courier delivery jobs surface "awaiting confirmation" via the linked delivery
+    // request's fulfillmentStatus, which is not always mirrored onto job.status.
+    // Allow the customer to confirm once the courier has completed the delivery.
+    const courierReady = await isCourierDeliveryReadyForConfirmation(job, metaBefore);
+    if (!courierReady) {
+      throw new AppError("Job is not awaiting confirmation", 400);
+    }
   }
 
   const r = Number(rating);
@@ -1931,7 +2041,11 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
   const roundedRating = autoCompleted ? null : normalizeRating(r);
 
   const existingReview = await prisma.providerReview.findUnique({ where: { jobId } });
-  if (existingReview && !autoCompleted) {
+  const isDisputeResolution =
+    existingReview &&
+    existingReview.rating === 0 &&
+    Boolean(existingReview.wasDisputed);
+  if (existingReview && !autoCompleted && !isDisputeResolution) {
     const ageMs = Date.now() - existingReview.createdAt.getTime();
     if (ageMs > 10 * 60 * 1000) {
       throw new AppError("Review can only be edited within 10 minutes of submission", 400);
@@ -1943,8 +2057,20 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
     : null;
 
   const paymentReleasedAt = new Date();
+  const preservedDisputeImages =
+    isDisputeResolution && existingReview
+      ? (existingReview.disputeImages?.length
+          ? existingReview.disputeImages
+          : existingReview.images) || []
+      : [];
+  const preservedDisputeVideos =
+    isDisputeResolution && existingReview
+      ? (existingReview.disputeVideos?.length
+          ? existingReview.disputeVideos
+          : existingReview.videos) || []
+      : [];
 
-  const { updated } = await prisma.$transaction(
+  const { updated, wasAlreadySettled, stagedPayouts } = await prisma.$transaction(
     async (tx) => {
       const updated0 = await tx.job.update({
         where: { id: jobId },
@@ -1955,6 +2081,7 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
       if (!j0) {
         throw new AppError("Job not found", 404);
       }
+      const alreadySettledBefore = Boolean(j0.escrowSecondReleaseDone && j0.paymentReleased);
       const meta0 = await mutateJobMetaInTransaction(tx, jobId, (m) => {
         let patched = {
           ...m,
@@ -1998,26 +2125,45 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
             providerId: providerRow.id,
             rating: roundedRating,
             comment: trimmedComment,
+            images: Array.isArray(images) ? images.map(String) : [],
+            videos: Array.isArray(videos) ? videos.map(String) : [],
+            disputeImages: isDisputeResolution ? preservedDisputeImages.map(String) : [],
+            disputeVideos: isDisputeResolution ? preservedDisputeVideos.map(String) : [],
+            wasDisputed: Boolean(isDisputeResolution),
+            resolvedAfterDispute: Boolean(isDisputeResolution),
           },
           update: {
             rating: roundedRating,
             comment: trimmedComment,
+            images: Array.isArray(images) ? images.map(String) : [],
+            videos: Array.isArray(videos) ? videos.map(String) : [],
+            disputeImages: isDisputeResolution
+              ? preservedDisputeImages.map(String)
+              : existingReview?.disputeImages || [],
+            disputeVideos: isDisputeResolution
+              ? preservedDisputeVideos.map(String)
+              : existingReview?.disputeVideos || [],
+            wasDisputed: Boolean(isDisputeResolution || existingReview?.wasDisputed),
+            resolvedAfterDispute: Boolean(isDisputeResolution),
           },
         });
       }
       if (providerRow) {
         const alreadySettled = Boolean(j0.escrowSecondReleaseDone && j0.paymentReleased);
+        let stagedPayouts = [];
         if (!alreadySettled) {
-          await paymentService.runSecondTrancheInTransaction(tx, {
+          const releaseResult = await paymentService.runSecondTrancheInTransaction(tx, {
             job: j0,
             providerProfileId: providerRow.id,
             jobId,
           });
+          stagedPayouts = releaseResult?.stagedPayouts || [];
           const escrowSettlement = require("./payments/escrowSettlement.service");
           await escrowSettlement.markLaborEscrowFullyReleased(jobId, tx);
         }
+        return { updated: updated0, meta: meta0, wasAlreadySettled: alreadySettledBefore, stagedPayouts };
       }
-      return { updated: updated0, meta: meta0 };
+      return { updated: updated0, meta: meta0, wasAlreadySettled: alreadySettledBefore, stagedPayouts: [] };
     },
     {
       maxWait: 5000,
@@ -2025,6 +2171,15 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
   );
+
+  if (stagedPayouts?.length) {
+    try {
+      const refundRecovery = require("./refundRecovery.service");
+      await refundRecovery.processStagedCustomerPayouts(stagedPayouts);
+    } catch (e) {
+      console.error("[job] staged refund payout failed", e?.message || e);
+    }
+  }
 
   if (!autoCompleted) {
     await logAudit(AUDIT_ACTIONS.REVIEW_UPSERT, {
@@ -2060,8 +2215,10 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
         await expandLaborPricingFromPaidJob(job.providerId, catSlug, grossLabor);
       }
     }
-    await notificationEvents.notifyJobCompleted(job.providerId, jobId, job.title);
-    await notificationEvents.notifyPaymentReleased(job.providerId, jobId, job.title);
+    if (!wasAlreadySettled) {
+      await notificationEvents.notifyJobCompleted(job.providerId, jobId, job.title);
+      await notificationEvents.notifyPaymentReleased(job.providerId, jobId, job.title);
+    }
   }
 
   const finalMeta = await getJobMeta(jobId);
@@ -2108,6 +2265,7 @@ async function autoCompleteJobAfterDeadline(jobId) {
       title: "Job auto-completed",
       message: `The confirmation window expired. "${job.title || "Your job"}" was marked complete and payment released.`,
       jobId,
+      dedupeKey: notificationEvents.jobDedupe(jobId, "job_auto_completed_customer"),
     });
   }
   return result;
@@ -2138,9 +2296,7 @@ function ensureStoreOrder(meta, storeId, fallback) {
 async function setStoreDeliveryOption(jobId, storeId, params, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
-  if (customerUserId && String(job.customerId) !== String(customerUserId)) {
-    throw new AppError("Forbidden", 403);
-  }
+  assertCustomerOwnsJob(job, customerUserId);
   await assertJobCategoryAllowsMaterials(job);
   const wantOrderId = params.orderId ? String(params.orderId).trim() : "";
   let resolvedStoreOrderId = wantOrderId || "";
@@ -2359,17 +2515,18 @@ function fallbackStoreNameFromJob(job, storeId) {
   return fromMaterials?.supplierName || "Store";
 }
 
-async function approveStoreDeliveryRequest(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" });
+async function approveStoreDeliveryRequest(jobId, storeId, customerUserId) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" }, customerUserId);
 }
 
-async function updateStoreOrderDeliveryStatus(jobId, storeId, status) {
-  return updateStoreOrderDelivery(jobId, storeId, { status });
+async function updateStoreOrderDeliveryStatus(jobId, storeId, status, customerUserId) {
+  return updateStoreOrderDelivery(jobId, storeId, { status }, customerUserId);
 }
 
-async function updateStoreOrderDelivery(jobId, storeId, updates) {
+async function updateStoreOrderDelivery(jobId, storeId, updates, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, customerUserId);
   await assertJobCategoryAllowsMaterials(job);
   const metaBefore = await getJobMeta(jobId);
   const storeOrderBefore = Array.isArray(metaBefore.storeOrders)
@@ -2438,17 +2595,18 @@ async function updateStoreOrderDelivery(jobId, storeId, updates) {
   return enriched;
 }
 
-async function approveStoreOrderDelivery(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" });
+async function approveStoreOrderDelivery(jobId, storeId, customerUserId) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Approved" }, customerUserId);
 }
 
-async function rejectStoreOrderDelivery(jobId, storeId) {
-  return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" });
+async function rejectStoreOrderDelivery(jobId, storeId, customerUserId) {
+  return updateStoreOrderDelivery(jobId, storeId, { status: "Rejected" }, customerUserId);
 }
 
-async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
+async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, customerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, customerUserId);
   await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
@@ -2480,7 +2638,7 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee) {
   return enriched;
 }
 
-async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) {
+async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, customerUserId) {
   if (options.paymentIntentId) {
     const intent = await prisma.paymentIntent.findUnique({
       where: { id: String(options.paymentIntentId) },
@@ -2495,6 +2653,7 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
 
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, customerUserId);
   await assertJobCategoryAllowsMaterials(job);
 
   const metaPeek = await getJobMeta(jobId);
@@ -2749,7 +2908,10 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}) 
   return enriched;
 }
 
-async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, route, actingUserId) {
+async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, route, actingUserId, actorRole) {
+  if (String(actorRole || "").toUpperCase() !== "ADMIN") {
+    throw new AppError("Forbidden", 403);
+  }
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   if (job.paymentReleased || (paymentService.isEscrowV2Job(job) && job.isFullyReleased)) {
@@ -2760,6 +2922,9 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
   }
 
   const jobMeta = normalizeMeta(job.meta);
+  if (jobMeta.statusOverride === "DISPUTED" || jobMeta.escrowFrozen === true) {
+    throw new AppError("Escrow is frozen while a dispute is open", 400);
+  }
   if (jobMeta.courierFlow && jobMeta.completionConfirmedByUser !== true) {
     throw new AppError(
       "Courier delivery funds can only be released after the customer confirms delivery",
@@ -2900,7 +3065,10 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
   return finalizeJob(jobRow, meta);
 }
 
-async function getLaborInvoiceByJobId(jobId) {
+async function getLaborInvoiceByJobId(jobId, actorUserId, actorRole) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  assertActorCanAccessJob(job, actorUserId, actorRole);
   const meta = await getJobMeta(jobId);
   if (!meta.servicePayment) return null;
   return {
@@ -2925,13 +3093,16 @@ async function getLaborInvoiceByJobId(jobId) {
   };
 }
 
-async function createLaborInvoice(jobId, userId, laborAmount, cardLast4) {
+async function createLaborInvoice(jobId, userId, laborAmount, cardLast4, actorUserId, actorRole) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  assertActorCanAccessJob(job, actorUserId, actorRole);
   const amount = coerceNumber(laborAmount, 0);
   const now = new Date().toISOString();
   return {
     id: `INV-LAB-${String(jobId).slice(-6)}-${Date.now()}`,
     jobId,
-    userId,
+    userId: String(actorUserId),
     type: "labor",
     status: "paid",
     laborCost: amount,

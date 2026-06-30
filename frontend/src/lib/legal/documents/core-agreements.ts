@@ -57,6 +57,7 @@ export const providerAgreement: LegalDocument = {
         'Approximately 50% of your provider share (93% of gross labor after 7% platform commission) is released when labor payment is confirmed. The remaining share is released upon Customer confirmation, admin release, or automatic acceptance after the 7-day completion window.',
         'Payouts may be delayed or withheld for fraud review, open disputes, chargebacks, policy violations, incomplete verification, or legal compliance.',
         'You authorize EloFix to deduct applicable platform fees, refunds, clawbacks, adjustments, and chargebacks from amounts otherwise payable to you.',
+        'If a Customer refund requires recovery from you after your share was already paid out, you must settle the outstanding refund debt within 30 days by bank transfer (using the reference EloFix provides) and/or automatic recovery from future job earnings. Failure to pay may result in account blocking and legal action.',
       ],
     },
     {
@@ -181,8 +182,10 @@ export const refundPolicy: LegalDocument = {
       content: [
         'Approved refunds are returned to the original payment method where possible.',
         'Processing times vary by payment provider and bank, typically within 5–10 business days after approval.',
+        'Customer labor refunds are calculated net of the platform commission (93% of gross labor). The 7% platform fee is not refunded.',
+        'Staged refunds: When a dispute refund is approved, the portion still held in escrow or immediately recoverable is refunded to the Customer right away. Any remainder that depends on recovering funds from the Provider is paid to the Customer as recovery completes, within approximately 30 days.',
         'EloFix may issue account credits instead of cash refunds when permitted by policy or requested by the user.',
-        'Platform commission on labor is not refunded to Providers on partial labor refunds processed through admin dispute resolution.',
+        'Platform commission on labor is not refunded to Providers on labor refunds processed through admin dispute resolution.',
       ],
     },
     {
@@ -192,6 +195,7 @@ export const refundPolicy: LegalDocument = {
         'Customers may open a dispute during the Job completion verification window. See the Dispute Resolution Policy for full procedures.',
         'Requesting a refund in a dispute does not automatically trigger a refund. EloFix administrators investigate and may order full refund, partial refund, release of funds, return for corrective work, or case closure.',
         'Open disputes freeze release of the remaining escrow tranche until resolved.',
+        'When part of an approved refund must be recovered from a Provider who has already been paid, that portion is not guaranteed instantly. EloFix will pay the Customer as recovery completes. The Provider has 30 days to settle via bank transfer or future earnings before account restrictions apply.',
       ],
     },
     {

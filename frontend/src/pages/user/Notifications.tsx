@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { NotificationSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -119,6 +120,11 @@ function initialFromName(name: string): string {
 }
 
 function navigateForNotification(n: AppNotification, role: UserRole, navigate: NavigateFunction): void {
+  if (n.type === 'account_blocked') {
+    if (role === 'provider') navigate('/provider/profile');
+    else if (role === 'user') navigate('/user/profile');
+    return;
+  }
   if (n.type === 'provider_approved') {
     navigate('/provider/profile');
     return;
@@ -189,6 +195,8 @@ function getNotificationIcon(type: AppNotification['type']) {
     case 'supplier_material_order_cancelled':
     case 'material_order_cancelled':
       return <AlertCircle className="h-4 w-4 text-warning" />;
+    case 'account_blocked':
+      return <AlertCircle className="h-4 w-4 text-destructive" />;
     default:
       return <Bell className="h-4 w-4 text-muted-foreground" />;
   }
@@ -842,14 +850,7 @@ export default function NotificationsPage() {
   if (isLoading) {
     return (
       <DashboardLayout>
-        <div className="space-y-6 animate-pulse">
-          <div className="h-8 w-48 bg-muted rounded" />
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-20 bg-muted rounded-lg" />
-            ))}
-          </div>
-        </div>
+        <NotificationSkeleton count={5} className="space-y-6" />
       </DashboardLayout>
     );
   }

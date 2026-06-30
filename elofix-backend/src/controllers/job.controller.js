@@ -1,6 +1,7 @@
 const AppError = require("../utils/AppError");
 const { filePathToPublicUrl } = require("../middleware/upload.middleware");
 const { resolveUserDisplayName } = require("../utils/displayName.util");
+const { validateUploadedImageFile, validateUploadedCompletionMedia } = require("../utils/uploadSecurity.util");
 const jobService = require("../services/job.service");
 
 async function authorFromRequest(req) {
@@ -19,6 +20,7 @@ async function uploadJobImage(req, res) {
   if (!req.file) {
     throw new AppError("File is required", 400);
   }
+  await validateUploadedImageFile(req.file);
   res.json({ success: true, url: filePathToPublicUrl(req.file.path) });
 }
 
@@ -57,7 +59,7 @@ async function deleteJob(req, res) {
 }
 
 async function addMaterials(req, res) {
-  const job = await jobService.addMaterials(req.params.id, req.body?.materials || []);
+  const job = await jobService.addMaterials(req.params.id, req.body?.materials || [], req.user.userId);
   res.json({ success: true, job });
 }
 
@@ -65,7 +67,8 @@ async function removeMaterial(req, res) {
   const job = await jobService.removeMaterial(
     req.params.id,
     req.body?.productId || req.query.productId,
-    req.body?.supplierId || req.query.supplierId
+    req.body?.supplierId || req.query.supplierId,
+    req.user.userId
   );
   res.json({ success: true, job });
 }
@@ -75,7 +78,9 @@ async function addJobNote(req, res) {
     req.params.id,
     await authorFromRequest(req),
     req.body?.message,
-    req.body?.title
+    req.body?.title,
+    req.user.userId,
+    req.user.role
   );
   res.json({ success: true, job });
 }
@@ -84,7 +89,9 @@ async function addChatMessage(req, res) {
   const job = await jobService.addChatMessage(
     req.params.id,
     await authorFromRequest(req),
-    req.body?.message
+    req.body?.message,
+    req.user.userId,
+    req.user.role
   );
   res.json({ success: true, job });
 }
@@ -222,42 +229,65 @@ async function updateProviderRequirements(req, res) {
 }
 
 async function addUserMaterialSuggestion(req, res) {
-  const job = await jobService.addUserMaterialSuggestion(req.params.id, req.body?.suggested, req.body?.message);
+  const job = await jobService.addUserMaterialSuggestion(
+    req.params.id,
+    req.body?.suggested,
+    req.body?.message,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function acceptUserSuggestion(req, res) {
-  const job = await jobService.acceptUserSuggestion(req.params.id, req.params.suggestionId);
+  const job = await jobService.acceptUserSuggestion(req.params.id, req.params.suggestionId, req.user.userId);
   res.json({ success: true, job });
 }
 
 async function rejectUserSuggestion(req, res) {
-  const job = await jobService.rejectUserSuggestion(req.params.id, req.params.suggestionId);
+  const job = await jobService.rejectUserSuggestion(req.params.id, req.params.suggestionId, req.user.userId);
   res.json({ success: true, job });
 }
 
 async function addProviderMaterialSuggestion(req, res) {
-  const job = await jobService.addProviderMaterialSuggestion(req.params.id, req.body?.suggested, req.body?.message);
+  const job = await jobService.addProviderMaterialSuggestion(
+    req.params.id,
+    req.body?.suggested,
+    req.body?.message,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function acceptProviderSuggestion(req, res) {
-  const job = await jobService.acceptProviderSuggestion(req.params.id, req.params.suggestionId);
+  const job = await jobService.acceptProviderSuggestion(
+    req.params.id,
+    req.params.suggestionId,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function rejectProviderSuggestion(req, res) {
-  const job = await jobService.rejectProviderSuggestion(req.params.id, req.params.suggestionId);
+  const job = await jobService.rejectProviderSuggestion(
+    req.params.id,
+    req.params.suggestionId,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function proposeNewLaborPrice(req, res) {
-  const job = await jobService.proposeNewLaborPrice(req.params.id, req.body?.amount, req.body?.reason);
+  const job = await jobService.proposeNewLaborPrice(
+    req.params.id,
+    req.body?.amount,
+    req.body?.reason,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function acceptProposedPrice(req, res) {
-  const job = await jobService.acceptProposedPrice(req.params.id);
+  const job = await jobService.acceptProposedPrice(req.params.id, req.user.userId);
   res.json({ success: true, job });
 }
 
@@ -294,6 +324,7 @@ async function openJobDispute(req, res) {
 
 async function uploadCompletionEvidence(req, res) {
   if (!req.file) throw new AppError("File is required", 400);
+  await validateUploadedCompletionMedia(req.file);
   const url = filePathToPublicUrl(req.file.path);
   const kind = req.file.mimetype && req.file.mimetype.startsWith("video/") ? "video" : "image";
   res.json({ success: true, url, kind });
@@ -301,7 +332,11 @@ async function uploadCompletionEvidence(req, res) {
 
 async function getJobCompletionEvidence(req, res) {
   const jobCompletionEvidence = require("../services/jobCompletionEvidence.service");
-  const evidence = await jobCompletionEvidence.getEvidenceByJobId(req.params.id);
+  const evidence = await jobCompletionEvidence.getEvidenceByJobIdForActor(
+    req.params.id,
+    req.user.userId,
+    req.user.role
+  );
   res.json({ success: true, evidence });
 }
 
@@ -316,27 +351,49 @@ async function setStoreDeliveryOption(req, res) {
 }
 
 async function approveStoreDeliveryRequest(req, res) {
-  const job = await jobService.approveStoreDeliveryRequest(req.params.id, req.params.storeId);
+  const job = await jobService.approveStoreDeliveryRequest(
+    req.params.id,
+    req.params.storeId,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function updateStoreOrderDeliveryStatus(req, res) {
-  const job = await jobService.updateStoreOrderDeliveryStatus(req.params.id, req.params.storeId, req.body?.status);
+  const job = await jobService.updateStoreOrderDeliveryStatus(
+    req.params.id,
+    req.params.storeId,
+    req.body?.status,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function updateStoreOrderDelivery(req, res) {
-  const job = await jobService.updateStoreOrderDelivery(req.params.id, req.params.storeId, req.body || {});
+  const job = await jobService.updateStoreOrderDelivery(
+    req.params.id,
+    req.params.storeId,
+    req.body || {},
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function approveStoreOrderDelivery(req, res) {
-  const job = await jobService.approveStoreOrderDelivery(req.params.id, req.params.storeId);
+  const job = await jobService.approveStoreOrderDelivery(
+    req.params.id,
+    req.params.storeId,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
 async function rejectStoreOrderDelivery(req, res) {
-  const job = await jobService.rejectStoreOrderDelivery(req.params.id, req.params.storeId);
+  const job = await jobService.rejectStoreOrderDelivery(
+    req.params.id,
+    req.params.storeId,
+    req.user.userId
+  );
   res.json({ success: true, job });
 }
 
@@ -345,7 +402,8 @@ async function payStoreOrderDelivery(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body?.fee
+    req.body?.fee,
+    req.user.userId
   );
   res.json({ success: true, job });
 }
@@ -361,7 +419,8 @@ async function payForStoreMaterials(req, res) {
     req.params.id,
     req.params.storeId,
     req.body?.cardLast4 || "****",
-    req.body || {}
+    req.body || {},
+    req.user.userId
   );
   res.json({ success: true, job });
 }
@@ -442,22 +501,25 @@ async function releaseEscrowPayment(req, res) {
     req.financialIdempotencyKey,
     req.financialRequestHash,
     req.financialIdempotencyRoute,
-    req.user.userId
+    req.user.userId,
+    req.user.role
   );
   res.json({ success: true, job });
 }
 
 async function getLaborInvoice(req, res) {
-  const invoice = await jobService.getLaborInvoiceByJobId(req.params.id);
+  const invoice = await jobService.getLaborInvoiceByJobId(req.params.id, req.user.userId, req.user.role);
   res.json({ success: true, invoice });
 }
 
 async function createLaborInvoice(req, res) {
   const invoice = await jobService.createLaborInvoice(
     req.params.id,
-    req.body?.userId || req.user.userId,
+    req.user.userId,
     req.body?.laborAmount,
-    req.body?.cardLast4
+    req.body?.cardLast4,
+    req.user.userId,
+    req.user.role
   );
   res.status(201).json({ success: true, invoice });
 }

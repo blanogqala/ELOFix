@@ -1,6 +1,7 @@
 const path = require("path");
 const AppError = require("../utils/AppError");
 const { resolveFileForDownload } = require("../services/fileStorage.service");
+const { assertProtectedFileAccess } = require("../services/fileAccess.service");
 
 function contentDispositionFilename(name) {
   const fallback = path.basename(String(name || "file"));
@@ -14,9 +15,12 @@ async function getFileById(req, res) {
     throw new AppError("File not found", 404);
   }
 
+  assertProtectedFileAccess(req, file);
+
   const filename = contentDispositionFilename(file.originalName);
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.setHeader("X-Content-Type-Options", "nosniff");
   res.sendFile(file.absolutePath);
 }
 

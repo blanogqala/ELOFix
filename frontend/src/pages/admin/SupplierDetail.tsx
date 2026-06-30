@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { ProviderProfileSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { getAdminSupplierDetail } from '@/lib/api/admin';
 import {
@@ -59,7 +60,7 @@ export default function AdminSupplierDetail() {
   if (detailQuery.isLoading || !supplier) {
     return (
       <DashboardLayout>
-        <p className="text-muted-foreground animate-fade-in">Loading…</p>
+        <ProviderProfileSkeleton />
       </DashboardLayout>
     );
   }

@@ -1,10 +1,10 @@
-const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const routes = require("./routes");
 const errorMiddleware = require("./middleware/error.middleware");
 const asyncHandler = require("./middleware/asyncHandler");
 const paymentController = require("./controllers/payment.controller");
+const uploadsStaticMiddleware = require("./middleware/uploadsStatic.middleware");
 
 const app = express();
 
@@ -44,7 +44,7 @@ app.post(
 
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true, limit: "12mb" }));
-app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+app.use("/uploads", uploadsStaticMiddleware);
 
 app.use((req, res, next) => {
   const start = Date.now();

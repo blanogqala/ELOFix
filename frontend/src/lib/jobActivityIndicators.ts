@@ -15,8 +15,9 @@ const MATERIAL_TYPES: AppNotificationType[] = [
 
 const MESSAGE_TYPES: AppNotificationType[] = ['job_chat'];
 
+const REQUEST_TYPES: AppNotificationType[] = ['job_request'];
+
 const GENERAL_TYPES: AppNotificationType[] = [
-  'job_request',
   'job_accepted',
   'inspection_completed',
   'price_submitted',
@@ -67,6 +68,14 @@ export function jobIdsWithActivity(notifications: AppNotification[]): Set<string
 
 export function hasJobsNavActivity(notifications: AppNotification[]): boolean {
   return jobIdsWithActivity(notifications).size > 0;
+}
+
+export function isUnreadRequest(n: AppNotification): boolean {
+  return Boolean(n.jobId && !n.read && REQUEST_TYPES.includes(n.type));
+}
+
+export function hasRequestsNavActivity(notifications: AppNotification[]): boolean {
+  return notifications.some(isUnreadRequest);
 }
 
 export function activeTabHasActivity(

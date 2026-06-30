@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { NotificationSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -65,7 +66,7 @@ export default function FraudAlerts() {
 
         <div className="card-elevated divide-y">
           {loading ? (
-            <p className="p-6 text-sm text-muted-foreground">Loading…</p>
+            <NotificationSkeleton count={6} className="p-6" />
           ) : items.length === 0 ? (
             <p className="p-6 text-sm text-muted-foreground">No alerts found.</p>
           ) : (

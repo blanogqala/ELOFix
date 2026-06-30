@@ -13,6 +13,7 @@ const {
   payfastSettleOnReturn,
 } = require("./paymentConfig");
 const escrowSettlement = require("./escrowSettlement.service");
+const { assertCustomerNotBlocked } = require("../accountStatus.service");
 const webhookService = require("./webhook.service");
 const { logAudit } = require("../auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
@@ -90,10 +91,12 @@ async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, m
     if (order?.paymentStatus === "paid") {
       throw new AppError("Order already paid", 400);
     }
+    // Scope to the same kind so a delivery-fee intent never blocks materials payment
+    // (and vice versa) now that multiple intent kinds coexist per material order.
     const existing = await tx.paymentIntent.findFirst({
-      where: { materialOrderId, state: { in: ["PAID", "PROCESSING", "PENDING"] } },
+      where: { materialOrderId, kind, state: "PAID" },
     });
-    if (existing && existing.state === "PAID") {
+    if (existing) {
       throw new AppError("Payment already completed for this order", 400);
     }
   }
@@ -167,6 +170,15 @@ async function createPaymentIntent({
   const validKinds = ["LABOR", "MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"];
   if (!validKinds.includes(kindNorm)) {
     throw new AppError("Invalid payment kind", 400);
+  }
+
+  const customerBlockKinds = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
+  if (customerBlockKinds.has(kindNorm)) {
+    const customerRow = await prisma.user.findUnique({
+      where: { id: String(userId) },
+      select: { blocked: true },
+    });
+    assertCustomerNotBlocked(customerRow);
   }
 
   const gw = getGateway(providerKey);
@@ -245,9 +257,67 @@ async function createPaymentIntent({
         metadata,
       });
 
-      const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
       const defaultReturn = `${frontendBaseUrl()}/payments/return?intentId=`;
       const defaultCancel = `${frontendBaseUrl()}/payments/cancel?intentId=`;
+
+      const customer = await tx.user.findUnique({
+        where: { id: String(userId) },
+        select: { email: true, name: true, phone: true },
+      });
+
+      // Reuse an existing non-paid DELIVERY_FEE intent for this order instead of
+      // creating a duplicate (composite unique on [materialOrderId, kind]).
+      // Covers retries after a PENDING/PROCESSING/FAILED/CANCELLED attempt.
+      if (kindNorm === "DELIVERY_FEE" && materialOrderId) {
+        const reusable = await tx.paymentIntent.findFirst({
+          where: {
+            materialOrderId,
+            kind: "DELIVERY_FEE",
+            state: { not: "PAID" },
+          },
+        });
+        if (reusable) {
+          const refreshed = await tx.paymentIntent.update({
+            where: { id: reusable.id },
+            data: {
+              provider: providerKey,
+              amount: resolvedAmount,
+              state: "PENDING",
+              failedAt: null,
+              cancelledAt: null,
+              returnUrl: returnUrl || reusable.returnUrl || null,
+              cancelUrl: cancelUrl || reusable.cancelUrl || null,
+              gatewayPayload:
+                metadata && typeof metadata === "object" ? metadata : reusable.gatewayPayload ?? undefined,
+            },
+          });
+
+          const reuseCheckout = await gw.createCheckout(
+            {
+              ...refreshed,
+              amount: Number(refreshed.amount),
+              returnUrl: refreshed.returnUrl || `${defaultReturn}${refreshed.id}`,
+              cancelUrl: refreshed.cancelUrl || `${defaultCancel}${refreshed.id}`,
+            },
+            customer
+          );
+
+          await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
+
+          return {
+            replay: false,
+            payload: {
+              intentId: refreshed.id,
+              merchantReference: refreshed.merchantReference,
+              intent: serializeIntent(refreshed),
+              checkout: reuseCheckout,
+              reused: true,
+            },
+          };
+        }
+      }
+
+      const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
 
       const intent = await tx.paymentIntent.create({
         data: {
@@ -268,11 +338,6 @@ async function createPaymentIntent({
           cancelUrl: cancelUrl || null,
           gatewayPayload: metadata && typeof metadata === "object" ? metadata : undefined,
         },
-      });
-
-      const customer = await tx.user.findUnique({
-        where: { id: String(userId) },
-        select: { email: true, name: true, phone: true },
       });
 
       const checkout = await gw.createCheckout(

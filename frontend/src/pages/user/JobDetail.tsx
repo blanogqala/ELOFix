@@ -33,6 +33,8 @@ import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/type
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
 import { JobCompletionEvidenceDialog } from '@/components/jobs/JobCompletionEvidenceDialog';
 import { JobDisputeDialog } from '@/components/jobs/JobDisputeDialog';
+import { JobDetailPageSkeleton } from '@/components/common/loading';
+import { useTransactionOverlay } from '@/hooks/useTransactionOverlay';
 import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
 import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection';
 import { PaymentModal } from '@/components/payments/PaymentModal';
@@ -61,7 +63,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getUserLaborGross, getQuoteMaterialsTotal, getQuoteMaterialsRefundTotal, jobHasRefundedMaterials } from '@/lib/jobUtils';
-import { RefundSummaryLine, isJobRefunded } from '@/components/payments/RefundSummaryLine';
+import { RefundSummaryLine, isJobRefunded, StagedRefundBreakdown } from '@/components/payments/RefundSummaryLine';
 import { JobDeliveryRequirementsBlock } from '@/components/jobs/JobDeliveryRequirementsBlock';
 import { JobCustomerRequirementsBlock } from '@/components/jobs/JobCustomerRequirementsBlock';
 import { isDeliveryOrMovingJob } from '@/lib/courierCategories';
@@ -92,6 +94,14 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSavedCards } from '@/lib/api/payments';
+
+function addDaysIso(iso: string | null | undefined, days: number): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -168,6 +178,8 @@ export default function JobDetail() {
   const [legacyInvoice, setLegacyInvoice] = useState<{ paidAt: string; cardLast4?: string } | null>(null);
   const [isActionPending, setIsActionPending] = useState(false);
   const [isMessageSending, setIsMessageSending] = useState(false);
+
+  useTransactionOverlay(isActionPending, 'Processing your request…');
 
   const loadStoresForJob = useCallback(async () => {
     if (!job) return;
@@ -359,23 +371,14 @@ export default function JobDetail() {
     try {
       await confirmJobCompletion(job.id, rating, review, { images, videos });
       await syncJobsAfterMutation();
+      await queryClient.invalidateQueries({ queryKey: ['delivery-request-by-job', jobId] });
       setEvidenceDialogOpen(false);
       const isCourier = Boolean(job.courierFlow);
-      if (isCourier) {
-        const materialOrderId =
-          deliveryRequest?.materialOrderId ?? job.jobMaterialOrders?.[0]?.id ?? null;
-        if (materialOrderId) {
-          toast({
-            title: 'Thanks for rating your courier',
-            description: 'Next, confirm receipt of your materials with the store on your order page.',
-          });
-          navigate(`/user/material-orders/${materialOrderId}?highlight=confirm`);
-          return;
-        }
-      }
       toast({
-        title: 'Job Completed!',
-        description: 'Thank you for your review. Payment has been released to the provider.',
+        title: isCourier ? 'Delivery confirmed' : 'Job Completed!',
+        description: isCourier
+          ? 'Thanks for confirming receipt and rating your courier. Payment has been released.'
+          : 'Thank you for your review. Payment has been released to the provider.',
       });
     } catch (error) {
       toast({
@@ -406,10 +409,10 @@ export default function JobDetail() {
         description: 'Our team will review your case and contact you with updates.',
         variant: 'destructive',
       });
-    } catch {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to open dispute.',
+        description: error instanceof Error ? error.message : 'Failed to open dispute.',
         variant: 'destructive',
       });
     } finally {
@@ -631,10 +634,7 @@ export default function JobDetail() {
   if (isLoading) {
     return (
       <DashboardLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 w-48 bg-muted rounded" />
-          <div className="h-64 bg-muted rounded-lg" />
-        </div>
+        <JobDetailPageSkeleton />
       </DashboardLayout>
     );
   }
@@ -644,7 +644,7 @@ export default function JobDetail() {
       <DashboardLayout>
         <div className="text-center py-12">
           <h2 className="text-xl font-semibold mb-2">Job not found</h2>
-          <Button onClick={() => navigate(-1)}>Go Back</Button>
+          <Button onClick={() => navigate('/user/jobs')}>Go Back</Button>
         </div>
       </DashboardLayout>
     );
@@ -681,10 +681,27 @@ export default function JobDetail() {
     (job.cancellationDetails && job.cancellationDetails.trim()) ||
     (job.cancellationReason && job.cancellationReason.trim()) ||
     'No reason provided';
-  const awaitingUserConfirmation = job.status === 'AWAITING_CONFIRMATION';
   const jobDisputed = job.status === 'DISPUTED';
 
   const isCourierJob = Boolean(job.courierFlow);
+  // Courier jobs reach the "awaiting confirmation" step via the linked delivery's
+  // fulfillmentStatus, which is not always mirrored onto job.status. Let the customer
+  // confirm (and rate the courier) once the courier has completed the delivery.
+  const courierDeliveryAwaitingConfirmation =
+    isCourierJob &&
+    String(deliveryRequest?.fulfillmentStatus || '').toUpperCase() === 'COMPLETED' &&
+    deliveryRequest?.deliveryConfirmed !== true &&
+    job.completionConfirmedByUser !== true &&
+    job.status !== 'COMPLETED' &&
+    job.status !== 'CANCELLED' &&
+    !jobDisputed;
+  const awaitingUserConfirmation =
+    job.status === 'AWAITING_CONFIRMATION' || courierDeliveryAwaitingConfirmation;
+  const confirmationDeadlineAt =
+    job.confirmationDeadlineAt ||
+    (courierDeliveryAwaitingConfirmation
+      ? addDaysIso(deliveryRequest?.updatedAt ?? deliveryRequest?.createdAt, 7)
+      : null);
   const linkedJobDelivery =
     deliveryRequest && deliveryRequest.source === 'job_context' && !isCourierJob;
   const drStatusLower = String(deliveryRequest?.status || '').toLowerCase();
@@ -715,7 +732,7 @@ export default function JobDetail() {
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div className="flex min-w-0 items-start gap-3 sm:gap-4">
-            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate('/user/jobs')}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div className="min-w-0 flex-1">
@@ -928,7 +945,13 @@ export default function JobDetail() {
                 serviceNote={job.servicePrice?.note}
               />
               {job.refundAmount != null && job.refundAmount > 0 && (
-                <RefundSummaryLine refundAmount={job.refundAmount} refundStatus={job.refundStatus} />
+                <>
+                  <RefundSummaryLine refundAmount={job.refundAmount} refundStatus={job.refundStatus} />
+                  <StagedRefundBreakdown
+                    immediateRefund={job.refundDetails?.immediateRefund ?? undefined}
+                    pendingRefund={job.refundDetails?.pendingRefund ?? undefined}
+                  />
+                </>
               )}
               <div className="flex items-center justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
@@ -1145,8 +1168,8 @@ export default function JobDetail() {
                           </div>
                         ) : (
                           <>
-                        <ConfirmationCountdown deadlineAt={job.confirmationDeadlineAt} />
-                        <div className="flex flex-col gap-2 sm:flex-row">
+                        <ConfirmationCountdown deadlineAt={confirmationDeadlineAt} />
+                        <div className="flex flex-col gap-2 sm:flex-col">
                           <Button
                             type="button"
                             variant="outline"
@@ -1154,7 +1177,7 @@ export default function JobDetail() {
                             disabled={isActionPending}
                             onClick={() => setDisputeDialogOpen(true)}
                           >
-                            No, work not complete
+                            No, not complete
                           </Button>
                           <Button
                             type="button"
@@ -1163,7 +1186,7 @@ export default function JobDetail() {
                             onClick={() => setEvidenceDialogOpen(true)}
                           >
                             <CheckCircle className="mr-2 h-4 w-4" />
-                            Yes, work completed
+                            Yes, completed
                           </Button>
                         </div>
                           </>

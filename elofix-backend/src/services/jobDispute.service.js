@@ -15,12 +15,36 @@ const notificationEvents = require("./notificationEvents.service");
 const providerTrustScore = require("./providerTrustScore.service");
 const jobCompletionEvidence = require("./jobCompletionEvidence.service");
 const disputeRoundService = require("./disputeRound.service");
+const { upsertDisputeReviewForJob } = require("./providerReview.service");
+const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
 
 const VALID_RESOLUTIONS = new Set([
   "PROVIDER_RETURN_FIX",
   "REFUND",
   "OTHER",
 ]);
+
+async function mapDisputeMessages(messages) {
+  const msgs = Array.isArray(messages) ? messages : [];
+  const senderIds = [...new Set(msgs.map((m) => String(m.senderId)).filter(Boolean))];
+  const users =
+    senderIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: senderIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+  const nameById = Object.fromEntries(users.map((u) => [String(u.id), u.name]));
+  return msgs.map((m) => ({
+    id: m.id,
+    senderId: m.senderId,
+    senderRole: m.senderRole,
+    senderName: nameById[String(m.senderId)] || undefined,
+    body: m.body,
+    attachments: m.attachments || [],
+    createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
+  }));
+}
 
 function toDisputeDto(row, extras = {}) {
   if (!row) return null;
@@ -41,14 +65,16 @@ function toDisputeDto(row, extras = {}) {
     adminNotes: row.adminNotes,
     openedAt: row.openedAt instanceof Date ? row.openedAt.toISOString() : row.openedAt,
     resolvedAt: row.resolvedAt instanceof Date ? row.resolvedAt.toISOString() : row.resolvedAt,
-    messages: (row.messages || []).map((m) => ({
-      id: m.id,
-      senderId: m.senderId,
-      senderRole: m.senderRole,
-      body: m.body,
-      attachments: m.attachments || [],
-      createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
-    })),
+    messages:
+      extras.messages ??
+      (row.messages || []).map((m) => ({
+        id: m.id,
+        senderId: m.senderId,
+        senderRole: m.senderRole,
+        body: m.body,
+        attachments: m.attachments || [],
+        createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
+      })),
     ...extras,
   };
 }
@@ -63,7 +89,15 @@ async function getDisputeById(disputeId, actorUserId, actorRole) {
   const job = await prisma.job.findUnique({ where: { id: row.jobId } });
   const meta = job ? await getJobMeta(job.id) : null;
   const rounds = await disputeRoundService.getDisputeRounds(row.id);
+  const [customer, provider, messages] = await Promise.all([
+    prisma.user.findUnique({ where: { id: row.customerId }, select: { name: true } }),
+    prisma.user.findUnique({ where: { id: row.providerId }, select: { name: true } }),
+    mapDisputeMessages(row.messages),
+  ]);
   return toDisputeDto(row, {
+    customerName: customer?.name,
+    providerName: provider?.name,
+    messages,
     job: job ? enrichJob(job, meta) : null,
     resolutionLogs: (row.resolutionLogs || []).map((l) => ({
       id: l.id,
@@ -90,6 +124,9 @@ async function listDisputesForActor(actorUserId, actorRole, filters = {}) {
   const where = {};
   if (role === "CUSTOMER") where.customerId = String(actorUserId);
   else if (role === "PROVIDER") where.providerId = String(actorUserId);
+  else if (role !== "ADMIN") {
+    throw new AppError("Forbidden", 403);
+  }
   const statusFilter = String(filters.status || "").trim().toUpperCase();
   if (statusFilter && statusFilter !== "ALL") {
     if (statusFilter === "OPEN") where.status = { in: ["OPEN", "UNDER_INVESTIGATION"] };
@@ -203,8 +240,22 @@ async function openDispute(jobId, customerUserId, payload) {
       await mutateJobMetaInTransaction(tx, jobId, (m) => ({
         ...m,
         statusOverride: "DISPUTED",
+        escrowFrozen: true,
         disputeId: row.id,
       }));
+      if (providerRow) {
+        await upsertDisputeReviewForJob(
+          {
+            jobId,
+            customerId: job.customerId,
+            providerProfileId: providerRow.id,
+            comment,
+            images,
+            videos,
+          },
+          tx
+        );
+      }
       return row;
     },
     { maxWait: 5000, timeout: 15000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -221,6 +272,10 @@ async function openDispute(jobId, customerUserId, payload) {
     }
   } catch (e) {
     console.warn("[jobDispute] markIntentDisputed failed", e?.message || e);
+  }
+
+  if (providerRow) {
+    await syncProviderAggregateRating(providerRow.id);
   }
 
   await logAudit(reopening ? AUDIT_ACTIONS.DISPUTE_REOPENED : AUDIT_ACTIONS.DISPUTE_OPENED, {
@@ -319,4 +374,5 @@ module.exports = {
   addDisputeMessage,
   getProviderDisputeStats,
   toDisputeDto,
+  mapDisputeMessages,
 };

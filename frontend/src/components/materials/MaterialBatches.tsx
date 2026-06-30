@@ -1,8 +1,10 @@
 import type { Job, JobStoreOrder } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
-import { MapPin } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { MapPin, Truck } from 'lucide-react';
 import { MaterialCard } from '@/components/materials/MaterialCard';
 import { MaterialTrackingMini } from '@/components/materials/MaterialTrackingMini';
+import { Button } from '@/components/ui/button';
 import {
   fulfillmentStatusBadgeLabel,
   isMaterialOrderRefunded,
@@ -10,7 +12,6 @@ import {
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
 import { getStoreOrderDeliveryLine, isStoreDeliveryPaymentPending } from '@/lib/jobQuoteDisplay';
-import { ProviderCourierActions } from '@/components/tracking/ProviderCourierActions';
 import { cn } from '@/lib/utils';
 
 export interface MaterialBatchesProps {
@@ -26,6 +27,7 @@ export function MaterialBatches({
   materialRequests,
   hasSubmittedMaterialRequests,
 }: MaterialBatchesProps) {
+  const navigate = useNavigate();
   const hasRefundedMaterial = paidBatches.some((card) =>
     isMaterialOrderRefunded(resolveMaterialOrderForStoreOrder(job, card))
   );
@@ -175,12 +177,32 @@ export function MaterialBatches({
                         ) : null}
                       </div>
                       <MaterialTrackingMini batch={batch} />
-                      <ProviderCourierActions
-                        jobId={job.id}
-                        orderId={mo?.id || card.orderId}
-                        fulfillmentStatus={mo?.fulfillmentStatus}
-                        deliveryType={card.deliveryType}
-                      />
+                      {card.deliveryType === 'PROVIDER' ? (
+                        <div className="mt-3 space-y-2 rounded-md border border-primary/25 bg-primary/5 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-primary">Courier (you)</p>
+                          {(() => {
+                            const courierJobId = mo?.courierJobId ?? card.courierJobId;
+                            if (courierJobId) {
+                              return (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="btn-accent w-full sm:w-auto"
+                                  onClick={() => navigate(`/provider/jobs/${courierJobId}`)}
+                                >
+                                  <Truck className="mr-2 h-4 w-4" aria-hidden />
+                                  View Delivery
+                                </Button>
+                              );
+                            }
+                            return (
+                              <p className="text-xs text-muted-foreground">
+                                Delivery job will appear once the courier request is set up.
+                              </p>
+                            );
+                          })()}
+                        </div>
+                      ) : null}
                     </div>
                   )
                 }

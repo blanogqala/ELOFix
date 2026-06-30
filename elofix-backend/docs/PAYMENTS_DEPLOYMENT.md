@@ -42,6 +42,12 @@ Set on Netlify/Vite host:
 
 Routes: `/payments/return`, `/payments/cancel`
 
+## Refunds
+
+- **Payflex / PayJustNow:** API refunds run automatically before provider clawback when a job or dispute refund is processed.
+- **PayFast:** No API refund endpoint. When `refund.status` is `pending_manual_gateway`, ops must issue the refund in the [PayFast merchant dashboard](https://www.payfast.co.za/) using the original payment reference. Internal ledger clawback still applies so provider balances stay correct.
+- **Idempotency:** Admin job refunds and dispute resolutions require an `Idempotency-Key` header (frontend sends this automatically).
+
 ## Escrow
 
 Labor payments use existing escrow v2 (7% commission, 50% release on pay, 50% on completion). Payment intents record provider and state; settlement runs from verified webhooks.
