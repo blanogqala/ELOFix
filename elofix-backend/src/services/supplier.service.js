@@ -958,6 +958,8 @@ module.exports = {
   getBranchStaffPortalProfile,
   patchBranchForBranchStaff,
   requireSupplierOwnedByUserId,
+  resolveInventoryActor,
+  assertBranchInventoryAccess,
   upsertSupplierProductForPortal,
   updateSupplierProductForPortal,
   deleteSupplierProductForPortal,

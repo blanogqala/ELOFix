@@ -1,9 +1,11 @@
 const express = require("express");
 const AppError = require("../utils/AppError");
 const portal = require("../controllers/supplierPortal.controller");
+const branchAccount = require("../controllers/branchAccount.controller");
 const supplierBranch = require("../controllers/supplierBranch.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeSupplierPortal } = require("../middleware/auth.middleware");
+const financialIdem = require("../middleware/financialIdempotency.middleware");
 const { uploadSupplierProductImage, uploadSupplierLogo } = require("../middleware/upload.middleware");
 const { uploadRateLimit } = require("../middleware/uploadRateLimit.middleware");
 const { UPLOAD_CATEGORIES } = require("../services/uploadRateLimit.service");
@@ -24,10 +26,21 @@ router.get("/me", asyncHandler(portal.getMe));
 router.patch("/branch/me", asyncHandler(portal.patchBranchMe));
 router.get("/analytics/overview", asyncHandler(portal.getAnalyticsOverview));
 router.get("/analytics/branches", ownerOnly, asyncHandler(portal.getAnalyticsBranches));
+router.get("/branch-withdrawals", ownerOnly, asyncHandler(branchAccount.getOrgBranchWithdrawals));
 router.get("/analytics/branch/:branchId/inventory", ownerOnly, asyncHandler(portal.getAnalyticsBranchInventory));
 router.get("/branches", ownerOnly, asyncHandler(supplierBranch.listBranches));
 router.post("/branches", ownerOnly, asyncHandler(supplierBranch.createBranch));
 router.get("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.getBranch));
+router.get("/branches/:branchId/balance", asyncHandler(branchAccount.getBalance));
+router.get("/branches/:branchId/withdrawal-profile", asyncHandler(branchAccount.getWithdrawalProfile));
+router.put("/branches/:branchId/withdrawal-profile", asyncHandler(branchAccount.putWithdrawalProfile));
+router.get("/branches/:branchId/withdrawals", asyncHandler(branchAccount.getWithdrawals));
+router.post(
+  "/branches/:branchId/withdraw",
+  financialIdem.attachFinancialRequestFingerprint,
+  financialIdem.requireIdempotencyKey,
+  asyncHandler(branchAccount.postWithdraw)
+);
 router.delete("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.deleteBranch));
 router.patch("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.patchBranch));
 router.get("/branches/:branchId/users", ownerOnly, asyncHandler(supplierBranch.listBranchUsers));

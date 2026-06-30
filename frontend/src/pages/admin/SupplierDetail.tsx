@@ -22,7 +22,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
-import { AdminSupplierOrdersPanel } from '@/components/admin/AdminSupplierOrdersPanel';
+import { AdminSupplierMaterialOrdersSection } from '@/components/admin/AdminSupplierMaterialOrdersSection';
 
 export default function AdminSupplierDetail() {
   const { supplierId } = useParams<{ supplierId: string }>();
@@ -200,18 +200,11 @@ export default function AdminSupplierDetail() {
           </div>
         </div>
 
-        <div>
-          <h2 className="mb-2 text-lg font-semibold">Material orders</h2>
-          <p className="mb-6 text-sm text-muted-foreground max-w-3xl">
-            Same earnings-style breakdown suppliers see: filter by date range and branch, export to Excel or PDF. Figures use
-            the portal&apos;s revenue / commission / net impact rules (including cancellations).
-          </p>
-          <AdminSupplierOrdersPanel
-            supplierId={id}
-            branches={supplier.branches ?? []}
-            businessLabel={displayBusiness}
-          />
-        </div>
+        <AdminSupplierMaterialOrdersSection
+          supplierId={id}
+          branches={supplier.branches ?? []}
+          businessLabel={displayBusiness}
+        />
       </div>
     </DashboardLayout>
   );

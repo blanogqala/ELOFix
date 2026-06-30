@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const branchAccountService = require("./branchAccount.service");
 
 function moneyNum(d) {
   if (d == null) return 0;
@@ -135,6 +136,11 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
 
   const dateFilter = ordersDateWhere(query);
 
+  const withdrawalsSummary = await branchAccountService.computeSupplierAvailableWithdrawalsSummary(sid, {
+    from: query.from,
+    to: query.to,
+  });
+
   const orders = await prisma.materialOrder.findMany({
     where: { supplierId: sid, ...dateFilter },
     select: {
@@ -195,11 +201,15 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
       netEarnings,
       platformCommission,
       grossRevenue: Math.round((netEarnings + platformCommission) * 100) / 100,
+      availableWithdrawals: withdrawalsSummary.byBranchId[b.id] ?? 0,
       managerEmails: (b.branchUsers || []).map((u) => u.email).filter(Boolean),
     });
   }
 
-  return out;
+  return {
+    branches: out,
+    totalAvailableWithdrawals: withdrawalsSummary.totalAvailable,
+  };
 }
 
 /**

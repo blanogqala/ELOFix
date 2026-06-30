@@ -85,13 +85,17 @@ async function getAnalyticsOverview(req, res) {
 
 async function getAnalyticsBranches(req, res) {
   const row = await supplierService.requireSupplierOwnedByUserId(req.user.userId);
-  const branches = await supplierAnalyticsService.listBranchesWithStats(row.id, {
+  const result = await supplierAnalyticsService.listBranchesWithStats(row.id, {
     city: req.query.city,
     q: req.query.q,
     from: req.query.from,
     to: req.query.to,
   });
-  res.json({ success: true, branches });
+  res.json({
+    success: true,
+    branches: result.branches,
+    totalAvailableWithdrawals: result.totalAvailableWithdrawals,
+  });
 }
 
 async function getAnalyticsBranchInventory(req, res) {

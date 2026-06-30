@@ -298,7 +298,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
   const [ordCityFilter, setOrdCityFilter] = useState('');
   const [ordSearchQ, setOrdSearchQ] = useState('');
 
-  const { data: orderBranchCards = [] } = useQuery({
+  const { data: orderBranchCardsData } = useQuery({
     queryKey: ['supplier', 'analytics', 'branches', 'orders-page', userId, ordCityFilter, ordSearchQ],
     queryFn: () =>
       getSupplierAnalyticsBranches({
@@ -307,6 +307,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
       }),
     enabled: Boolean(userId) && isSupplierReadOnly,
   });
+  const orderBranchCards = orderBranchCardsData?.branches ?? [];
 
   const { data: portalOverview } = useQuery({
     queryKey: ['supplier', 'analytics-overview', userId],

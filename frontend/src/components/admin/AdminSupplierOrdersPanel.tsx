@@ -52,20 +52,37 @@ export function AdminSupplierOrdersPanel({
   supplierId,
   branches,
   businessLabel,
+  controlledFrom,
+  controlledTo,
+  onControlledFromChange,
+  onControlledToChange,
+  hideRangeInputs = false,
+  omitSummaryCards = false,
 }: {
   supplierId: string;
   branches: SupplierBranchProfile[];
   businessLabel?: string;
+  controlledFrom?: string;
+  controlledTo?: string;
+  onControlledFromChange?: (v: string) => void;
+  onControlledToChange?: (v: string) => void;
+  hideRangeInputs?: boolean;
+  omitSummaryCards?: boolean;
 }) {
   const today = new Date();
   const monthAgo = new Date();
   monthAgo.setDate(today.getDate() - 30);
 
-  const [from, setFrom] = useState(() => parseInitialDate(undefined, monthAgo));
-  const [to, setTo] = useState(() => parseInitialDate(undefined, today));
+  const [internalFrom, setInternalFrom] = useState(() => parseInitialDate(undefined, monthAgo));
+  const [internalTo, setInternalTo] = useState(() => parseInitialDate(undefined, today));
   const [branchScope, setBranchScope] = useState<string>('');
   const [branchPickFilter, setBranchPickFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>('__all__');
+
+  const from = controlledFrom ?? internalFrom;
+  const to = controlledTo ?? internalTo;
+  const setFrom = onControlledFromChange ?? setInternalFrom;
+  const setTo = onControlledToChange ?? setInternalTo;
 
   const branchChoices = useMemo(() => {
     const q = branchPickFilter.trim().toLowerCase();
@@ -172,6 +189,7 @@ export function AdminSupplierOrdersPanel({
 
   return (
     <div className="space-y-6">
+      {!omitSummaryCards ? (
       <div className="grid gap-4 sm:grid-cols-3">
         <Card className="border-2 border-primary/80 shadow-sm">
           <CardHeader className="pb-2">
@@ -205,6 +223,7 @@ export function AdminSupplierOrdersPanel({
           </CardContent>
         </Card>
       </div>
+      ) : null}
 
       <Card className="overflow-hidden border-2 border-primary shadow-md">
         <CardHeader className="border-b border-primary/30 bg-muted/20 pb-4">
@@ -219,30 +238,34 @@ export function AdminSupplierOrdersPanel({
         <CardContent className="space-y-6 pt-6">
           <div className="flex flex-col gap-5 xl:flex-row xl:flex-wrap xl:items-end xl:justify-between">
             <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-              <div className="space-y-1.5">
-                <Label htmlFor="admin-sup-from" className="text-xs text-muted-foreground">
-                  From date
-                </Label>
-                <Input
-                  id="admin-sup-from"
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className="w-full sm:w-[11rem]"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="admin-sup-to" className="text-xs text-muted-foreground">
-                  To date
-                </Label>
-                <Input
-                  id="admin-sup-to"
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="w-full sm:w-[11rem]"
-                />
-              </div>
+              {!hideRangeInputs ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="admin-sup-from" className="text-xs text-muted-foreground">
+                      From date
+                    </Label>
+                    <Input
+                      id="admin-sup-from"
+                      type="date"
+                      value={from}
+                      onChange={(e) => setFrom(e.target.value)}
+                      className="w-full sm:w-[11rem]"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="admin-sup-to" className="text-xs text-muted-foreground">
+                      To date
+                    </Label>
+                    <Input
+                      id="admin-sup-to"
+                      type="date"
+                      value={to}
+                      onChange={(e) => setTo(e.target.value)}
+                      className="w-full sm:w-[11rem]"
+                    />
+                  </div>
+                </>
+              ) : null}
               <div className="space-y-1.5 w-full sm:w-56">
                 <Label className="text-xs text-muted-foreground">Order status</Label>
                 <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as OrderStatusFilter)}>

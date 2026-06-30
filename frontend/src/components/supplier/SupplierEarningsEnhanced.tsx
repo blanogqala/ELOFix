@@ -5,6 +5,7 @@ import {
   getSupplierOrdersExport,
   getSupplierMe,
   getSupplierAnalyticsBranches,
+  getSupplierOrgBranchWithdrawals,
   EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY,
   type SupplierOrdersExportRow,
 } from '@/lib/api/supplierPortal';
@@ -35,6 +36,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SupplierOrgWithdrawalHistoryPanel } from '@/components/supplier/SupplierOrgWithdrawalHistoryPanel';
 
 export function toDateInputValue(d: Date): string {
   const yyyy = d.getFullYear();
@@ -43,7 +46,7 @@ export function toDateInputValue(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function parseInitialDate(s: string | undefined, fallback: Date): string {
+export function parseInitialDate(s: string | undefined, fallback: Date): string {
   if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return toDateInputValue(fallback);
   const d = new Date(`${s}T12:00:00`);
   return Number.isNaN(d.getTime()) ? toDateInputValue(fallback) : s;
@@ -67,6 +70,7 @@ export function SupplierEarningsOrdersPanel({
   onControlledToChange,
   hideRangeInputs = false,
   omitSummaryCards = false,
+  hideExportButtons = false,
 }: {
   userId: string;
   branchId?: string;
@@ -81,6 +85,8 @@ export function SupplierEarningsOrdersPanel({
   hideRangeInputs?: boolean;
   /** When nested in earnings hub — table & export only (top KPIs handled by hub). */
   omitSummaryCards?: boolean;
+  /** Hide Excel/PDF export (e.g. branch page moves export to withdrawal history tab). */
+  hideExportButtons?: boolean;
 }) {
   const today = new Date();
   const monthAgo = new Date();
@@ -302,6 +308,8 @@ export function SupplierEarningsOrdersPanel({
               </div>
             )}
             <div className="flex flex-wrap gap-2 sm:justify-end">
+              {!hideExportButtons ? (
+                <>
               <Button type="button" variant="outline" size="sm" onClick={exportExcel} disabled={filteredRows.length === 0}>
                 <FileSpreadsheet className="mr-2 h-4 w-4" />
                 Export Excel
@@ -310,6 +318,8 @@ export function SupplierEarningsOrdersPanel({
                 <FileText className="mr-2 h-4 w-4" />
                 Export PDF
               </Button>
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -483,7 +493,7 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
     enabled: Boolean(userId),
   });
 
-  const { data: branchRows = [], isLoading: branchesLoading } = useQuery({
+  const { data: branchAnalyticsData, isLoading: branchesLoading } = useQuery({
     queryKey: ['supplier', 'analytics', 'branches', 'earnings-hub', userId, cityFilter, branchSearch, from, to],
     queryFn: () =>
       getSupplierAnalyticsBranches({
@@ -494,6 +504,8 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
       }),
     enabled: Boolean(userId),
   });
+  const branchRows = branchAnalyticsData?.branches ?? [];
+  const totalAvailableWithdrawals = branchAnalyticsData?.totalAvailableWithdrawals ?? 0;
 
   const hubSummary = hubExport?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
   const hubRows = hubExport?.rows ?? [];
@@ -504,22 +516,10 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Date range (summary + branch list)</Label>
-            <div className="flex flex-wrap gap-2">
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-[10.5rem]" />
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-[10.5rem]" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {hubLoading ? (
+      {hubLoading || branchesLoading ? (
         <p className="text-sm text-muted-foreground">Loading summary…</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card className="card-elevated">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total revenue</CardTitle>
@@ -553,10 +553,45 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
               <p className="mt-1 text-xs text-muted-foreground">Supplier share · excluding cancelled</p>
             </CardContent>
           </Card>
+          <Card className="card-elevated">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Available withdrawals</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums text-primary">
+                {formatCurrency(totalAvailableWithdrawals)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">In selected date range · all branches</p>
+            </CardContent>
+          </Card>
         </div>
       )}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="space-y-1.5">
+          <Label htmlFor="hub-earnings-from" className="text-xs text-muted-foreground">
+            From Date
+          </Label>
+          <Input
+            id="hub-earnings-from"
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-full sm:w-[10.5rem]"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="hub-earnings-to" className="text-xs text-muted-foreground">
+            To Date
+          </Label>
+          <Input
+            id="hub-earnings-to"
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-full sm:w-[10.5rem]"
+          />
+        </div>
         <div className="flex w-full flex-col gap-1.5 sm:w-56">
           <Label className="text-xs text-muted-foreground">City</Label>
           <Select value={cityFilter || '__all__'} onValueChange={(v) => setCityFilter(v === '__all__' ? '' : v)}>
@@ -626,6 +661,12 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
                       {formatCurrency(supplierBranchGrossRevenue(b))}
                     </span>
                   </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Available withdrawals</span>
+                    <span className="font-medium text-primary">
+                      {formatCurrency(b.availableWithdrawals ?? 0)}
+                    </span>
+                  </div>
                 </CardContent>
               </Card>
             </Link>
@@ -633,17 +674,41 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
         </div>
       )}
 
-      <SupplierEarningsOrdersPanel
-        userId={userId}
-        heading="All orders (all branches)"
-        showOrdersCardHeader
-        controlledFrom={from}
-        controlledTo={to}
-        onControlledFromChange={setFrom}
-        onControlledToChange={setTo}
-        hideRangeInputs
-        omitSummaryCards
-      />
+      <Tabs defaultValue="orders" className="w-full">
+        <TabsList className="grid w-full max-w-lg grid-cols-2">
+          <TabsTrigger value="orders">List of Orders</TabsTrigger>
+          <TabsTrigger value="history">History of Withdrawals</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="orders" className="mt-4">
+          <SupplierEarningsOrdersPanel
+            userId={userId}
+            heading="All orders (all branches)"
+            showOrdersCardHeader
+            controlledFrom={from}
+            controlledTo={to}
+            onControlledFromChange={setFrom}
+            onControlledToChange={setTo}
+            hideRangeInputs
+            omitSummaryCards
+          />
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-4">
+          <SupplierOrgWithdrawalHistoryPanel
+            queryKeyPrefix={`supplier-${userId}-earnings-hub`}
+            fetchWithdrawals={getSupplierOrgBranchWithdrawals}
+            initialFrom={from}
+            initialTo={to}
+            controlledFrom={from}
+            controlledTo={to}
+            onControlledFromChange={setFrom}
+            onControlledToChange={setTo}
+            exportFileTag="supplier-earnings-withdrawals"
+            description="Past payout requests across all branches"
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

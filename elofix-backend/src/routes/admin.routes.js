@@ -77,6 +77,11 @@ router.get("/suppliers", asyncHandler(adminController.listSuppliers));
 router.post("/suppliers", asyncHandler(adminController.createSupplier));
 router.get("/suppliers/:supplierId/material-orders", asyncHandler(adminController.listSupplierMaterialOrders));
 router.get("/suppliers/:supplierId/orders/export", asyncHandler(adminController.getAdminSupplierOrdersExport));
+router.get("/suppliers/:supplierId/branch-withdrawals", asyncHandler(adminController.getAdminSupplierBranchWithdrawals));
+router.get(
+  "/suppliers/:supplierId/available-withdrawals",
+  asyncHandler(adminController.getAdminSupplierAvailableWithdrawals)
+);
 router.get("/suppliers/:supplierId/orders", asyncHandler(adminController.listSupplierOrders));
 router.get("/suppliers/:supplierId", asyncHandler(adminController.getAdminSupplierDetail));
 

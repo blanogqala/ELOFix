@@ -230,6 +230,53 @@ export async function getAdminSupplierOrdersExport(
   };
 }
 
+export interface AdminSupplierBranchWithdrawalRow {
+  id: string;
+  branchId: string;
+  branchName: string;
+  amount: number;
+  status: string;
+  createdAt: string;
+}
+
+export async function getAdminSupplierBranchWithdrawals(
+  supplierId: string,
+  filters?: { from?: string; to?: string; branchId?: string }
+): Promise<{ success: boolean; withdrawals: AdminSupplierBranchWithdrawalRow[] }> {
+  const { data } = await apiClient.get<{ success: boolean; withdrawals: AdminSupplierBranchWithdrawalRow[] }>(
+    `/admin/suppliers/${encodeURIComponent(supplierId)}/branch-withdrawals`,
+    {
+      params: {
+        ...(filters?.from ? { from: filters.from } : {}),
+        ...(filters?.to ? { to: filters.to } : {}),
+        ...(filters?.branchId ? { branchId: filters.branchId } : {}),
+      },
+    }
+  );
+  return {
+    success: Boolean(data?.success),
+    withdrawals: Array.isArray(data?.withdrawals) ? data.withdrawals : [],
+  };
+}
+
+export async function getAdminSupplierAvailableWithdrawals(
+  supplierId: string,
+  filters?: { from?: string; to?: string }
+): Promise<{ totalAvailableWithdrawals: number }> {
+  const { data } = await apiClient.get<{ success: boolean; totalAvailableWithdrawals: number }>(
+    `/admin/suppliers/${encodeURIComponent(supplierId)}/available-withdrawals`,
+    {
+      params: {
+        ...(filters?.from ? { from: filters.from } : {}),
+        ...(filters?.to ? { to: filters.to } : {}),
+      },
+    }
+  );
+  return {
+    totalAvailableWithdrawals: Number(data?.totalAvailableWithdrawals ?? 0),
+  };
+}
+
 /** All platform material orders + revenue / commission rollup (persisted MaterialOrder rows). */
 export async function getAdminPlatformMaterialOrders(limit?: number) {
   const { data } = await apiClient.get<{

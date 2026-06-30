@@ -997,10 +997,40 @@ model Branch {
   materialOrders        MaterialOrder[]
   inventoryCategories   BranchInventoryCategory[]
   branchUsers           BranchUser[]
+  withdrawalProfile     BranchWithdrawalProfile?
+  withdrawalRequests    BranchWithdrawalRequest[]
 
   @@index([supplierId])
   @@index([supplierId, isActive])
   @@index([isActive])
+}
+
+model BranchWithdrawalProfile {
+  id              String   @id @default(uuid())
+  branchId        String   @unique
+  branch          Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  bankName        String
+  accountNumber   String
+  accountHolder   String
+  branchCode      String
+  bankAccountHash String?
+  updatedAt       DateTime @updatedAt
+
+  @@index([bankAccountHash])
+}
+
+model BranchWithdrawalRequest {
+  id             String   @id @default(uuid())
+  branchId       String
+  branch         Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  amount         Decimal  @db.Decimal(12, 2)
+  status         String   @default("pending")
+  idempotencyKey String?  @unique
+  createdAt      DateTime @default(now())
+
+  @@index([branchId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model BranchUser {

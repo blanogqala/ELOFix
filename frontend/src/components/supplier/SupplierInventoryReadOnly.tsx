@@ -37,7 +37,7 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
   const [productSearch, setProductSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
-  const { data: branchRows = [] } = useQuery({
+  const { data: branchRowsData } = useQuery({
     queryKey: ['supplier', 'analytics', 'branches', 'inv-ro', userId, cityFilter, searchQ],
     queryFn: () =>
       getSupplierAnalyticsBranches({
@@ -46,6 +46,7 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
       }),
     enabled: Boolean(userId),
   });
+  const branchRows = branchRowsData?.branches ?? [];
 
   const distinctCities = useMemo(() => {
     const s = new Set<string>();

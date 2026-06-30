@@ -3649,6 +3649,30 @@ function computeSupplierExportFinancials(order) {
   };
 }
 
+async function computeBranchAllTimeEarned(supplierId, branchId) {
+  const orders = await listMaterialOrdersBySupplier(supplierId, { branchId });
+  let total = 0;
+  for (const o of orders) {
+    const fx = computeSupplierExportFinancials(o);
+    if (fx.completedPaid) {
+      total = roundMoney2(total + fx.netEarnings);
+    }
+  }
+  return total;
+}
+
+async function computeBranchEarnedInRange(supplierId, branchId, { from, to } = {}) {
+  const orders = await listMaterialOrdersBySupplier(supplierId, { branchId, from, to });
+  let total = 0;
+  for (const o of orders) {
+    const fx = computeSupplierExportFinancials(o);
+    if (fx.completedPaid) {
+      total = roundMoney2(total + fx.netEarnings);
+    }
+  }
+  return total;
+}
+
 async function buildSupplierOrdersExport(supplierId, { from, to, branchId } = {}) {
   const orders = await listMaterialOrdersBySupplier(supplierId, { from, to, branchId });
   const rows = orders.map((o) => {
@@ -3846,6 +3870,8 @@ module.exports = {
   aggregateCompletedPaidMaterialOrders,
   aggregateCompletedPaidMaterialOrdersBySupplier,
   buildSupplierOrdersExport,
+  computeBranchAllTimeEarned,
+  computeBranchEarnedInRange,
   listRecentMaterialOrdersBySupplierForAdmin,
   orderTotalFromRow,
   createMaterialOrder,

@@ -520,7 +520,13 @@ export interface SupplierBranchAnalyticsRow {
   netEarnings: number;
   platformCommission?: number;
   grossRevenue?: number;
+  availableWithdrawals?: number;
   managerEmails?: string[];
+}
+
+export interface SupplierAnalyticsBranchesResult {
+  branches: SupplierBranchAnalyticsRow[];
+  totalAvailableWithdrawals: number;
 }
 
 export async function getSupplierAnalyticsBranches(params?: {
@@ -528,12 +534,16 @@ export async function getSupplierAnalyticsBranches(params?: {
   q?: string;
   from?: string;
   to?: string;
-}): Promise<SupplierBranchAnalyticsRow[]> {
-  const { data } = await apiClient.get<{ success: boolean; branches: SupplierBranchAnalyticsRow[] }>(
-    '/supplier/analytics/branches',
-    { params: { ...params } }
-  );
-  return Array.isArray(data?.branches) ? data.branches : [];
+}): Promise<SupplierAnalyticsBranchesResult> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    branches: SupplierBranchAnalyticsRow[];
+    totalAvailableWithdrawals?: number;
+  }>('/supplier/analytics/branches', { params: { ...params } });
+  return {
+    branches: Array.isArray(data?.branches) ? data.branches : [],
+    totalAvailableWithdrawals: Number(data?.totalAvailableWithdrawals ?? 0),
+  };
 }
 
 export interface SupplierBranchInventoryInsightProduct {
@@ -581,4 +591,133 @@ export async function patchBranchStaffProfile(body: {
     body
   );
   return data?.profile ?? null;
+}
+
+function branchIdempotencyHeaders(): { 'Idempotency-Key': string } {
+  const uuid =
+    typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return { 'Idempotency-Key': uuid };
+}
+
+export interface BranchBalanceSnapshot {
+  totalEarned: number;
+  totalWithdrawn: number;
+  withdrawalCap: number;
+  available: number;
+}
+
+export interface BranchWithdrawalProfile {
+  id: string;
+  branchId: string;
+  bankName: string;
+  accountHolder: string;
+  accountNumberMasked: string;
+  branchCodeMasked: string;
+  updatedAt: string;
+}
+
+export interface BranchWithdrawalRow {
+  id: string;
+  amount: number;
+  status: string;
+  createdAt: string;
+}
+
+export async function getBranchBalance(branchId: string): Promise<BranchBalanceSnapshot> {
+  const { data } = await apiClient.get<{ success: boolean } & BranchBalanceSnapshot>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/balance`
+  );
+  return {
+    totalEarned: data.totalEarned ?? 0,
+    totalWithdrawn: data.totalWithdrawn ?? 0,
+    withdrawalCap: data.withdrawalCap ?? 0,
+    available: data.available ?? 0,
+  };
+}
+
+export async function getBranchWithdrawalProfile(
+  branchId: string
+): Promise<{ success: boolean; profile: BranchWithdrawalProfile | null }> {
+  const { data } = await apiClient.get<{ success: boolean; profile: BranchWithdrawalProfile | null }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile`
+  );
+  return data;
+}
+
+export async function saveBranchWithdrawalProfile(
+  branchId: string,
+  body: {
+    bankName: string;
+    accountNumber: string;
+    accountHolder: string;
+    branchCode: string;
+  }
+): Promise<{ success: boolean; profile: BranchWithdrawalProfile }> {
+  const { data } = await apiClient.put<{ success: boolean; profile: BranchWithdrawalProfile }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile`,
+    body
+  );
+  return data;
+}
+
+export async function requestBranchWithdrawal(
+  branchId: string,
+  amount: number
+): Promise<{
+  success: boolean;
+  withdrawal: { id: string; amount: number; status: string; createdAt: string };
+}> {
+  const { data } = await apiClient.post(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdraw`,
+    { amount },
+    { headers: branchIdempotencyHeaders() }
+  );
+  return data;
+}
+
+export async function getBranchWithdrawals(
+  branchId: string,
+  filters?: { from?: string; to?: string }
+): Promise<{ success: boolean; withdrawals: BranchWithdrawalRow[] }> {
+  const params: Record<string, string> = {};
+  if (filters?.from) params.from = filters.from;
+  if (filters?.to) params.to = filters.to;
+  const { data } = await apiClient.get<{ success: boolean; withdrawals: BranchWithdrawalRow[] }>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdrawals`,
+    Object.keys(params).length > 0 ? { params } : undefined
+  );
+  return {
+    success: Boolean(data?.success),
+    withdrawals: Array.isArray(data?.withdrawals) ? data.withdrawals : [],
+  };
+}
+
+export interface SupplierOrgWithdrawalRow {
+  id: string;
+  branchId: string;
+  branchName: string;
+  amount: number;
+  status: string;
+  createdAt: string;
+}
+
+export async function getSupplierOrgBranchWithdrawals(filters?: {
+  from?: string;
+  to?: string;
+  branchId?: string;
+}): Promise<{ success: boolean; withdrawals: SupplierOrgWithdrawalRow[] }> {
+  const params: Record<string, string> = {};
+  if (filters?.from) params.from = filters.from;
+  if (filters?.to) params.to = filters.to;
+  if (filters?.branchId) params.branchId = filters.branchId;
+  const { data } = await apiClient.get<{ success: boolean; withdrawals: SupplierOrgWithdrawalRow[] }>(
+    '/supplier/branch-withdrawals',
+    Object.keys(params).length > 0 ? { params } : undefined
+  );
+  return {
+    success: Boolean(data?.success),
+    withdrawals: Array.isArray(data?.withdrawals) ? data.withdrawals : [],
+  };
 }

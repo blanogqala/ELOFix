@@ -9,6 +9,7 @@ const { getCommissionSummary } = require("../services/commission.service");
 const AppError = require("../utils/AppError");
 const supplierService = require("../services/supplier.service");
 const materialOrderService = require("../services/materialOrder.service");
+const branchAccountService = require("../services/branchAccount.service");
 const adminCustomersService = require("../services/adminCustomers.service");
 const adminProviderService = require("../services/adminProvider.service");
 const prisma = require("../config/prisma");
@@ -317,6 +318,42 @@ async function getAdminSupplierOrdersExport(req, res) {
   res.json({ success: true, ...out });
 }
 
+async function getAdminSupplierBranchWithdrawals(req, res) {
+  const supplierId = String(req.params.supplierId || "").trim();
+  if (!supplierId) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const supplier = await supplierService.getSupplierDetailsForAdmin(supplierId);
+  if (!supplier) {
+    throw new AppError("Supplier not found", 404);
+  }
+  const data = await branchAccountService.listSupplierOrgBranchWithdrawals(supplierId, {
+    from: req.query.from,
+    to: req.query.to,
+    branchId: req.query.branchId,
+  });
+  res.json({ success: true, ...data });
+}
+
+async function getAdminSupplierAvailableWithdrawals(req, res) {
+  const supplierId = String(req.params.supplierId || "").trim();
+  if (!supplierId) {
+    throw new AppError("supplierId is required", 400);
+  }
+  const supplier = await supplierService.getSupplierDetailsForAdmin(supplierId);
+  if (!supplier) {
+    throw new AppError("Supplier not found", 404);
+  }
+  const summary = await branchAccountService.computeSupplierAvailableWithdrawalsSummary(supplierId, {
+    from: req.query.from || undefined,
+    to: req.query.to || undefined,
+  });
+  res.json({
+    success: true,
+    totalAvailableWithdrawals: summary.totalAvailable,
+  });
+}
+
 async function listSupplierMaterialOrders(req, res) {
   const supplierId = String(req.params.supplierId || "").trim();
   if (!supplierId) {
@@ -565,6 +602,8 @@ module.exports = {
   getAdminSupplierDetail,
   listSupplierOrders,
   getAdminSupplierOrdersExport,
+  getAdminSupplierBranchWithdrawals,
+  getAdminSupplierAvailableWithdrawals,
   listSupplierMaterialOrders,
   listAllPlatformMaterialOrders,
   listAdminDisputes,
