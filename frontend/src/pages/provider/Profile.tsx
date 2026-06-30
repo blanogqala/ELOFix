@@ -801,11 +801,11 @@ export default function ProviderProfile() {
             <TabsTrigger value="docs" className="gap-1.5 text-xs sm:text-sm">
               Documents {coreSections.documents ? '✅' : '⚠️'}
             </TabsTrigger>
-            <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm col-span-2 sm:col-span-1">
-              Settings {coreSections.settings ? '✅' : '⚠️'}
-            </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
               <span className="truncate">Work Posts</span>
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm col-span-2 sm:col-span-1">
+              Settings {coreSections.settings ? '✅' : '⚠️'}
             </TabsTrigger>
             <TabsTrigger value="customer-reviews" className="gap-1.5 text-xs sm:text-sm">
               <MessageSquare className="h-3.5 w-3.5 shrink-0" />
