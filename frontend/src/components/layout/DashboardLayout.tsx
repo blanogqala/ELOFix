@@ -10,7 +10,7 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSupplierMe } from '@/lib/api/supplierPortal';
 import { socket } from '@/lib/socket';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { ProfileAvatar } from '@/components/common/ProfileAvatar';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
 import { 
   LayoutDashboard, 
@@ -164,19 +164,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     queryFn: () => getSupplierMe(),
     enabled: Boolean(user?.id && user?.role === 'branch_staff'),
   });
-  const branchAvatarUrl = resolveUploadUrl(branchStaffProfile?.supplierLogo || branchStaffProfile?.logo);
-
-  const sidebarAvatarUrl = useMemo(() => {
+  const sidebarAvatarImage = useMemo(() => {
     if (!user) return '';
-    if (user.role === 'branch_staff') return branchAvatarUrl;
+    if (user.role === 'branch_staff') {
+      return branchStaffProfile?.supplierLogo || branchStaffProfile?.logo || '';
+    }
     if (user.role === 'user' || user.role === 'provider') {
-      return resolveUploadUrl(user.profileImage);
+      return user.profileImage || '';
     }
     if (user.role === 'supplier' && 'supplierProfile' in user) {
-      return resolveUploadUrl(user.supplierProfile?.logo);
+      return user.supplierProfile?.logo || '';
     }
     return '';
-  }, [user, branchAvatarUrl]);
+  }, [user, branchStaffProfile]);
 
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications', 'unread-count', user?.id],
@@ -348,13 +348,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 onClick={() => setSidebarOpen(false)}
                 className="flex min-w-0 items-center gap-3 rounded-md p-1 -m-1 transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <div className="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
-                  {sidebarAvatarUrl ? (
-                    <img src={sidebarAvatarUrl} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <User className="h-4 w-4 text-primary" />
-                  )}
-                </div>
+                <ProfileAvatar name={user?.name} imageUrl={sidebarAvatarImage} iconFallback />
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-1.5">
                     <p className="truncate font-medium text-sm">{user?.name}</p>

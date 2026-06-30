@@ -5,6 +5,7 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const authService = require("./auth.service");
 const { validateLegalAcceptance, truthy } = require("./legalAcceptance.service");
+const { shouldSyncGoogleAvatarOnLogin } = require("../utils/avatarUrl.util");
 
 const OAUTH_STATE_TTL = "10m";
 const EXCHANGE_TOKEN_TTL = "5m";
@@ -194,10 +195,13 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
     if (!user.profileImage && profile.profileImage) updates.profileImage = profile.profileImage;
     if (user.authProvider === "LOCAL" && !user.googleId) {
       // Link Google to an existing local account without changing authProvider.
-    } else if (user.authProvider === "GOOGLE") {
-      if (profile.profileImage && user.profileImage !== profile.profileImage) {
-        updates.profileImage = profile.profileImage;
-      }
+    } else if (
+      user.authProvider === "GOOGLE" &&
+      profile.profileImage &&
+      shouldSyncGoogleAvatarOnLogin(user.profileImage) &&
+      user.profileImage !== profile.profileImage
+    ) {
+      updates.profileImage = profile.profileImage;
     }
 
     if (Object.keys(updates).length > 0) {

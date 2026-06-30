@@ -8,7 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
 import { updateUserProfile, uploadUserAvatar } from '@/lib/api/users';
 import { compressImageForUpload } from '@/lib/imageCompression';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { ProfileAvatar } from '@/components/common/ProfileAvatar';
 import {
   User as UserIcon,
   Camera,
@@ -124,8 +124,6 @@ export default function UserProfile() {
     }
   };
 
-  const avatarUrl = resolveUploadUrl(profile.profileImage);
-
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -171,13 +169,13 @@ export default function UserProfile() {
               onChange={handleImageFileChange}
             />
             <div className="relative">
-              <div className="h-24 w-24 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt="Profile" className="h-full w-full object-cover" />
-                ) : (
-                  <UserIcon className="h-12 w-12 text-primary" />
-                )}
-              </div>
+              <ProfileAvatar
+                name={user?.name}
+                imageUrl={profile.profileImage}
+                className="h-24 w-24"
+                iconFallback
+                fallbackClassName="text-2xl"
+              />
               <button
                 type="button"
                 onClick={() => !isUploadingImage && avatarInputRef.current?.click()}

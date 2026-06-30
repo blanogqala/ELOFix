@@ -3,9 +3,9 @@ import { Check, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Provider } from '@/types';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { ProviderReputationSummary } from './ProviderReputationSummary';
 import { ProviderVerificationBadges } from './ProviderVerificationBadges';
+import { ProfileAvatar } from '@/components/common/ProfileAvatar';
 
 interface ProviderDiscoveryCardProps {
   provider: Provider;
@@ -21,7 +21,6 @@ export function ProviderDiscoveryCard({
   onViewProfile,
 }: ProviderDiscoveryCardProps) {
   const navigate = useNavigate();
-  const avatarUrl = resolveUploadUrl(provider.profileImage);
 
   const openProfile = () => {
     if (onViewProfile) {
@@ -36,14 +35,15 @@ export function ProviderDiscoveryCard({
       <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
         <button
           type="button"
-          className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10"
+          className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={openProfile}
         >
-          {avatarUrl ? (
-            <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <span className="text-xl font-bold text-primary">{provider.name.charAt(0)}</span>
-          )}
+          <ProfileAvatar
+            name={provider.name}
+            imageUrl={provider.profileImage}
+            className="h-14 w-14"
+            fallbackClassName="text-xl font-bold"
+          />
         </button>
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex items-center gap-2">
