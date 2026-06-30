@@ -49,11 +49,14 @@ export default function Register() {
       await register(name, email, phone, password, role, buildLegalAcceptancePayload(role));
       toast({
         title: 'Account created!',
-        description: role === 'provider' 
-        ? 'Welcome! Please complete your profile and upload documents for approval.'
+        description: role === 'provider'
+          ? 'Welcome! Complete your profile to get approved.'
           : 'Welcome to EloFix! Start by creating a service request.',
       });
-      navigate(role === 'provider' ? '/provider/profile' : '/user/dashboard');
+      navigate(
+        role === 'provider' ? '/provider/profile' : '/user/dashboard',
+        role === 'provider' ? { state: { newProviderOnboarding: true } } : undefined,
+      );
     } catch (error) {
       toast({
         title: 'Registration failed',

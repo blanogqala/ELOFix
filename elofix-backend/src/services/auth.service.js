@@ -12,6 +12,7 @@ const {
   getBlockInfo,
 } = require("./accountStatus.service");
 const { normalizePhone } = require("../utils/phoneNormalization.util");
+const fraudDetection = require("./fraudDetection.service");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 

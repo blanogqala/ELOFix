@@ -73,7 +73,13 @@ export default function GoogleCallback() {
               : 'You have successfully signed in with Google.',
         });
 
-        navigate(resolvePostLoginPath(user.role, nextPath, getGoogleDefaultPath(user.role)), { replace: true });
+        const destination = resolvePostLoginPath(user.role, nextPath, getGoogleDefaultPath(user.role));
+        const isNewProviderRegister =
+          searchParams.get('mode') === 'register' && user.role === 'provider';
+        navigate(destination, {
+          replace: true,
+          ...(isNewProviderRegister ? { state: { newProviderOnboarding: true } } : {}),
+        });
       } catch (err) {
         toast({
           title: 'Google sign-in failed',

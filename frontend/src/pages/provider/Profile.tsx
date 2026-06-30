@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { ProviderProfileSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,6 +26,10 @@ import {
   type CategorySuggestion,
 } from '@/lib/api/categories';
 import { businessHoursComplete, evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
+import {
+  getProviderOnboardingStorageKey,
+  type ProviderProfileLocationState,
+} from '@/lib/providerOnboarding';
 import { validateSkillPricingDraft } from '@/lib/providerLaborPricing';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { Category, Provider, WorkPost, ProviderSettings } from '@/types';
@@ -79,10 +84,10 @@ function FieldRequirementBadge({ required }: { required: boolean }) {
   );
 }
 
-const ONBOARDING_KEY = 'provider_onboarding_seen';
-
 export default function ProviderProfile() {
   const { user, refreshProfile } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { isApproved, isProfileComplete, isBlocked } = useProviderStatus();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const workPostImageInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +147,7 @@ export default function ProviderProfile() {
   const [profileTab, setProfileTab] = useState<string>('info');
   const [manualAreaInput, setManualAreaInput] = useState('');
   const [settingsHoursError, setSettingsHoursError] = useState(false);
+  const onboardingWelcomeShownRef = useRef(false);
 
   // Settings state
   const defaultSettings = useMemo<ProviderSettings>(
@@ -170,11 +176,27 @@ export default function ProviderProfile() {
   }, [user]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!localStorage.getItem(ONBOARDING_KEY)) {
+    if (!user?.id || user.role !== 'provider') return;
+
+    const state = location.state as ProviderProfileLocationState | null;
+    const isNewRegistration = state?.newProviderOnboarding === true;
+    const storageKey = getProviderOnboardingStorageKey(user.id);
+    const hasDismissed =
+      typeof window !== 'undefined' && Boolean(localStorage.getItem(storageKey));
+
+    if (isNewRegistration || (!hasDismissed && !isProfileComplete)) {
       setOnboardingOpen(true);
     }
-  }, []);
+
+    if (isNewRegistration && !onboardingWelcomeShownRef.current) {
+      onboardingWelcomeShownRef.current = true;
+      toast({
+        title: 'Account created!',
+        description: 'Welcome! Complete your profile to get approved.',
+      });
+      navigate('.', { replace: true, state: {} });
+    }
+  }, [user?.id, user?.role, location.state, isProfileComplete, navigate, toast]);
 
   const loadServiceAreas = useCallback(async () => {
     try {
@@ -571,8 +593,8 @@ export default function ProviderProfile() {
 
   const dismissOnboarding = () => {
     setOnboardingOpen(false);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(ONBOARDING_KEY, '1');
+    if (typeof window !== 'undefined' && user?.id) {
+      localStorage.setItem(getProviderOnboardingStorageKey(user.id), '1');
     }
   };
 
@@ -708,9 +730,42 @@ export default function ProviderProfile() {
     return null;
   };
 
+  const onboardingDialog = (
+    <Dialog
+      open={onboardingOpen}
+      onOpenChange={(open) => {
+        if (!open) dismissOnboarding();
+        else setOnboardingOpen(open);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Complete Your Profile</DialogTitle>
+          <DialogDescription>
+            Overview of the sections you need to finish before you can receive jobs.
+          </DialogDescription>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          To start receiving jobs, you must complete all sections:
+        </p>
+        <ul className="list-disc pl-5 text-sm space-y-1">
+          <li>Profile info</li>
+          <li>Skills &amp; Pricing</li>
+          <li>Documents</li>
+          <li>Settings (business hours)</li>
+          <li className="text-muted-foreground">Work Posts (optional)</li>
+        </ul>
+        <div className="flex justify-end pt-2">
+          <Button onClick={dismissOnboarding}>Got it</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (isLoading) {
     return (
       <DashboardLayout>
+        {onboardingDialog}
         <ProviderProfileSkeleton />
       </DashboardLayout>
     );
@@ -1540,29 +1595,7 @@ export default function ProviderProfile() {
         </Tabs>
       </div>
 
-      <Dialog open={onboardingOpen} onOpenChange={(open) => { if (!open) dismissOnboarding(); else setOnboardingOpen(open); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Complete Your Profile</DialogTitle>
-            <DialogDescription>
-              Overview of the sections you need to finish before you can receive jobs.
-            </DialogDescription>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            To start receiving jobs, you must complete all sections:
-          </p>
-          <ul className="list-disc pl-5 text-sm space-y-1">
-            <li>Profile info</li>
-            <li>Skills &amp; Pricing</li>
-            <li>Documents</li>
-            <li>Settings (business hours)</li>
-            <li className="text-muted-foreground">Work Posts (optional)</li>
-          </ul>
-          <div className="flex justify-end pt-2">
-            <Button onClick={dismissOnboarding}>Got it</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {onboardingDialog}
 
       <Dialog open={suggestOpen} onOpenChange={setSuggestOpen}>
         <DialogContent>

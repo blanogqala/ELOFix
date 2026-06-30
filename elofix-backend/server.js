@@ -31,6 +31,22 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
       "[WARN] GOOGLE_CALLBACK_URL and/or FRONTEND_URL missing. Set production URLs in Render (see elofix-backend/.env.example)."
     );
   }
+
+  const secretKey = process.env.SECRET_KEY;
+  if (!secretKey || String(secretKey).trim().length < 8) {
+    console.error(
+      "[FATAL] SECRET_KEY is missing or shorter than 8 characters. Provider profile saves (SA ID, company reg, bank fields) require it. Set SECRET_KEY in Render Environment (see .env.example)."
+    );
+    if (process.env.NODE_ENV === "production") {
+      process.exit(1);
+    }
+  }
+  const bankSalt = process.env.BANK_KDF_SALT;
+  if (!bankSalt || String(bankSalt).trim().length < 8) {
+    console.warn(
+      "[WARN] BANK_KDF_SALT is missing or shorter than 8 characters. Bank field encryption may fail until set in Render Environment."
+    );
+  }
 })();
 
 const http = require("http");
