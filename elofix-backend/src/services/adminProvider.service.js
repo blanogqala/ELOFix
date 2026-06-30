@@ -15,12 +15,20 @@ function sumJobFinancials(jobs) {
     const providerAmount = Number(e.providerAmount);
     const releasedAmount = Number(e.releasedAmount);
     const remainingAmount = Number(e.remainingAmount);
+    const refundDetails = e.refundDetails || {};
+    const escrow = Number(refundDetails.escrowApplied) || 0;
+    const clawback = Number(refundDetails.clawbackApplied) || 0;
+    const debt = Number(refundDetails.providerDebtAdded) || 0;
+    const netLaborRefunded =
+      Number(refundDetails.cumulativeCustomerNet) ||
+      Number(refundDetails.customerNet) ||
+      escrow + clawback + debt;
 
     if (Number.isFinite(providerAmount) && providerAmount >= 0) {
-      totalEarnings += providerAmount;
+      totalEarnings += Math.max(0, providerAmount - netLaborRefunded);
     }
     if (Number.isFinite(releasedAmount) && releasedAmount >= 0) {
-      releasedByPlatform += releasedAmount;
+      releasedByPlatform += Math.max(0, releasedAmount - clawback - debt);
     }
     if (Number.isFinite(remainingAmount) && remainingAmount >= 0) {
       remainingInEscrow += remainingAmount;

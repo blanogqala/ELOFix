@@ -56,11 +56,54 @@ export function getJobClawbackAmount(j: ProviderEarningJobRow): number {
   return 0;
 }
 
-/** Net amount provider kept after refund clawback. */
-export function getJobNetReleasedAfterRefund(j: ProviderEarningJobRow): number {
-  const fromApi = j.netReleasedAfterRefund;
+/** Escrow returned to customer from held provider share. */
+export function getJobEscrowReversedAmount(j: ProviderEarningJobRow): number {
+  const fromApi = j.escrowReversed;
   if (typeof fromApi === 'number' && Number.isFinite(fromApi)) return Math.max(0, fromApi);
-  return Math.max(0, getJobReleasedAmount(j) - getJobClawbackAmount(j));
+  const fromMeta = j.refundDetails?.escrowApplied;
+  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta)) return Math.max(0, fromMeta);
+  return 0;
+}
+
+/** Provider debt from refunds when released funds were already withdrawn. */
+export function getJobProviderDebtAdded(j: ProviderEarningJobRow): number {
+  const fromMeta = j.refundDetails?.providerDebtAdded;
+  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta)) return Math.max(0, fromMeta);
+  const fromApi = j.providerRefundDebt;
+  if (typeof fromApi === 'number' && Number.isFinite(fromApi)) return Math.max(0, fromApi);
+  return 0;
+}
+
+/** Net labor refunded to customer (escrow + clawback + provider debt). */
+export function getJobNetLaborRefunded(j: ProviderEarningJobRow): number {
+  const cumulative = j.refundDetails?.cumulativeCustomerNet;
+  if (typeof cumulative === 'number' && Number.isFinite(cumulative) && cumulative > 0) {
+    return cumulative;
+  }
+  const customerNet = j.refundDetails?.customerNet;
+  if (typeof customerNet === 'number' && Number.isFinite(customerNet) && customerNet > 0) {
+    return customerNet;
+  }
+  const refundAmt = Number(j.refundAmount);
+  if (Number.isFinite(refundAmt) && refundAmt > 0) return refundAmt;
+  return (
+    getJobEscrowReversedAmount(j) + getJobClawbackAmount(j) + getJobProviderDebtAdded(j)
+  );
+}
+
+/** Provider net kept after refunds (full net labor refund deducted from share). */
+export function getJobNetProviderKept(j: ProviderEarningJobRow): number {
+  const providerNet = getJobProviderNet(j);
+  const netLaborRefunded = getJobNetLaborRefunded(j);
+  return Math.max(0, providerNet - netLaborRefunded);
+}
+
+/** Net amount provider kept from released funds after clawback and debt. */
+export function getJobNetReleasedAfterRefund(j: ProviderEarningJobRow): number {
+  return Math.max(
+    0,
+    getJobReleasedAmount(j) - getJobClawbackAmount(j) - getJobProviderDebtAdded(j)
+  );
 }
 
 export function jobHasRefundImpact(j: ProviderEarningJobRow): boolean {
@@ -90,6 +133,16 @@ export function sumProviderNetAcrossJobs(jobs: ProviderEarningJobRow[]): number 
 /** Sum of amounts already released to the provider (job-level releasedAmount). */
 export function sumReleasedAcrossJobs(jobs: ProviderEarningJobRow[]): number {
   return jobs.reduce((s, j) => s + getJobReleasedAmount(j), 0);
+}
+
+/** Sum provider net kept after refunds across jobs. */
+export function sumNetProviderKeptAcrossJobs(jobs: ProviderEarningJobRow[]): number {
+  return jobs.reduce((s, j) => s + getJobNetProviderKept(j), 0);
+}
+
+/** Sum net released to provider after clawback across jobs. */
+export function sumNetReleasedAcrossJobs(jobs: ProviderEarningJobRow[]): number {
+  return jobs.reduce((s, j) => s + getJobNetReleasedAfterRefund(j), 0);
 }
 
 /** Sum provider-entitled unreleased share across jobs (excludes courier pre-delivery customer escrow). */

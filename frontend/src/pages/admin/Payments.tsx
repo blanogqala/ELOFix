@@ -13,8 +13,8 @@ import {
   formatAdminCommissionBreakdown,
   getAdminEscrowV2Breakdown,
   getAdminJobLaborPaid,
-  getAdminPaidLaborProviderShare,
-  getAdminPaidLaborReleasedAmount,
+  getAdminNetPaidLaborProviderShare,
+  getAdminNetPaidLaborReleasedAmount,
   isAdminPaidLaborProviderJob,
 } from '@/lib/adminJobFinancial';
 import { getAdminPaymentStatusDisplay, jobMatchesAdminPaymentStatusFilter, type AdminPaymentStatusFilter } from '@/lib/adminJobStatus';
@@ -129,11 +129,11 @@ export default function AdminPayments() {
     });
   }, [jobs, searchQuery, categoryFilter, cityFilter, statusFilter]);
 
-  const jobsWithEscrow = filteredJobs.filter((j) => j.escrow.enabled);
   const paidLaborJobs = filteredJobs.filter(isAdminPaidLaborProviderJob);
-  const totalProviderShare = paidLaborJobs.reduce((sum, j) => sum + getAdminPaidLaborProviderShare(j), 0);
+  const completedPaidJobs = paidLaborJobs.filter((j) => j.status === 'COMPLETED');
+  const totalProviderShare = paidLaborJobs.reduce((sum, j) => sum + getAdminNetPaidLaborProviderShare(j), 0);
   const totalReleasedToProviders = paidLaborJobs.reduce(
-    (sum, j) => sum + getAdminPaidLaborReleasedAmount(j),
+    (sum, j) => sum + getAdminNetPaidLaborReleasedAmount(j),
     0
   );
 
@@ -143,7 +143,7 @@ export default function AdminPayments() {
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
         <div>
-          <h1 className="text-2xl font-bold">Payments Overview</h1>
+          <h1 className="text-2xl font-bold">Jobs Payments</h1>
           <p className="text-muted-foreground">Monitor escrow and payment transactions (ZAR)</p>
         </div>
 
@@ -236,8 +236,11 @@ export default function AdminPayments() {
                 <DollarSign className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{jobsWithEscrow.length}</p>
-                <p className="text-sm text-muted-foreground">Active Jobs</p>
+                <p className="text-2xl font-bold tabular-nums">
+                  {completedPaidJobs.length} / {paidLaborJobs.length}
+                </p>
+                <p className="text-sm text-muted-foreground">Completed jobs</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Completed & paid / All paid jobs</p>
               </div>
             </div>
           </div>

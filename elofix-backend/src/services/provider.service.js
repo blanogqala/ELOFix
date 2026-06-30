@@ -19,10 +19,7 @@ const { signDocumentFields } = require("./fileAccess.service");
 const { scanUploadedFile } = require("./fileScan.service");
 const { validateUploadedImageFile, unlinkQuietly } = require("../utils/uploadSecurity.util");
 
-const {
-  validateProviderDocumentFileMeta,
-  assertProviderDocumentFileMagic,
-} = require("../utils/providerDocumentFile.util");
+const { normalizeMeta } = require("./jobMeta.service");
 
 const REQUIRED_DOCUMENT_TYPES = ["idDoc", "companyReg", "proofOfAddress"];
 const OPTIONAL_DOCUMENT_TYPES = ["proofOfSkill", "certifications"];
@@ -1038,10 +1035,6 @@ async function listProviderNetRevenues() {
       providerId: { in: ids },
       laborPaid: true,
       providerAmount: { not: null },
-      OR: [
-        { status: { not: 'CANCELLED' } },
-        { AND: [{ status: 'CANCELLED' }, { releasedAmount: { gt: 0 } }] },
-      ],
     },
     select: {
       providerId: true,
@@ -1050,6 +1043,7 @@ async function listProviderNetRevenues() {
       providerAmount: true,
       commissionAmount: true,
       releasedAmount: true,
+      meta: true,
     },
   });
 
@@ -1078,19 +1072,21 @@ async function listProviderNetRevenues() {
     const commission = prismaDecimalToNumber(job.commissionAmount);
     const providerAmt = prismaDecimalToNumber(job.providerAmount);
     const total = prismaDecimalToNumber(job.totalPrice);
-    const released = prismaDecimalToNumber(job.releasedAmount);
     const comm = Number.isFinite(commission) ? commission : 0;
-    const statusU = String(job.status || '').toUpperCase();
-
-    let net;
-    let gross;
-    if (statusU === 'COMPLETED') {
-      net = Number.isFinite(providerAmt) ? providerAmt : 0;
-      gross = Number.isFinite(total) && total > 0 ? total : net + comm;
-    } else {
-      net = Number.isFinite(released) && released > 0 ? released : 0;
-      gross = net + comm;
-    }
+    const meta = normalizeMeta(job.meta);
+    const escrowApplied = Number(meta?.refund?.escrowApplied) || 0;
+    const clawbackApplied = Number(meta?.refund?.clawbackApplied) || 0;
+    const providerDebtAdded = Number(meta?.refund?.providerDebtAdded) || 0;
+    const netLaborRefunded =
+      Number(meta?.refund?.cumulativeCustomerNet) ||
+      Number(meta?.refund?.customerNet) ||
+      escrowApplied + clawbackApplied + providerDebtAdded;
+    const net = Math.max(
+      0,
+      (Number.isFinite(providerAmt) ? providerAmt : 0) - netLaborRefunded
+    );
+    const gross =
+      Number.isFinite(total) && total > 0 ? total : net + comm;
 
     mergeStats(providerId, {
       netRevenue: net,

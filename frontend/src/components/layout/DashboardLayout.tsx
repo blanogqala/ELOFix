@@ -100,7 +100,7 @@ const adminNavStructure: AdminNavEntry[] = [
     label: 'Finance',
     icon: <DollarSign className="h-4 w-4 shrink-0" />,
     children: [
-      { label: 'Payments', path: '/admin/payments' },
+      { label: 'Jobs Payments', path: '/admin/payments' },
       { label: 'Withdrawals', path: '/admin/withdrawals' },
       { label: 'Refund repayments', path: '/admin/refund-repayments' },
     ],

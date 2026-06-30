@@ -31,8 +31,8 @@ import {
   getJobNetReleasedAfterRefund,
   jobHasRefundImpact,
   getStatusColor,
-  sumProviderNetAcrossJobs,
-  sumReleasedAcrossJobs,
+  sumNetProviderKeptAcrossJobs,
+  sumNetReleasedAcrossJobs,
   sumProviderEscrowRemaining,
 } from '@/lib/providerEarningsDerived';
 import { RefundSummaryLine, hasRefundDisplay } from '@/components/payments/RefundSummaryLine';
@@ -187,8 +187,8 @@ export default function ProviderEarnings() {
     });
   }, [jobs]);
 
-  const yourTotalEarnings = sumProviderNetAcrossJobs(jobs);
-  const amountReleasedToYou = sumReleasedAcrossJobs(jobs);
+  const yourTotalEarnings = sumNetProviderKeptAcrossJobs(jobs);
+  const amountReleasedToYou = sumNetReleasedAcrossJobs(jobs);
   const remainingToYou =
     providerEscrowRemaining ?? sumProviderEscrowRemaining(jobs) ?? balance?.pending ?? 0;
 

@@ -224,7 +224,7 @@ export default function AdminProviders() {
                   <p className="mt-2 text-2xl font-semibold tabular-nums">
                     {filteredStats.completedJobCount} / {filteredStats.paidJobCount}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid / All paid jobs in revenue totals</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Completed & paid / All paid jobs</p>
                 </div>
                 <div className="rounded-lg bg-primary/10 p-2">
                   <PackageCheck className="h-5 w-5 text-primary" />

@@ -301,6 +301,35 @@ export function getAdminPaidLaborReleasedAmount(job: Job): number {
   return roundMoney(num(job.releasedAmount));
 }
 
+/** Net labor refunded to customer (escrow + clawback + provider debt). */
+export function getAdminJobProviderRefundDeduction(job: Job): number {
+  const cumulative = num(job.refundDetails?.cumulativeCustomerNet);
+  if (cumulative > 0) return roundMoney(cumulative);
+  const customerNet = num(job.refundDetails?.customerNet);
+  if (customerNet > 0) return roundMoney(customerNet);
+  const refundAmt = num(job.refundAmount);
+  if (refundAmt > 0) return roundMoney(refundAmt);
+  const escrowApplied = num(job.refundDetails?.escrowApplied);
+  const clawbackApplied = num(job.refundDetails?.clawbackApplied);
+  const providerDebtAdded = num(job.refundDetails?.providerDebtAdded);
+  return roundMoney(escrowApplied + clawbackApplied + providerDebtAdded);
+}
+
+/** Provider share (93%) after refund deductions. */
+export function getAdminNetPaidLaborProviderShare(job: Job): number {
+  const share = getAdminPaidLaborProviderShare(job);
+  const deduction = getAdminJobProviderRefundDeduction(job);
+  return roundMoney(Math.max(0, share - deduction));
+}
+
+/** Released amount after clawback and provider debt from refunds. */
+export function getAdminNetPaidLaborReleasedAmount(job: Job): number {
+  const released = getAdminPaidLaborReleasedAmount(job);
+  const clawbackApplied = num(job.refundDetails?.clawbackApplied);
+  const providerDebtAdded = num(job.refundDetails?.providerDebtAdded);
+  return roundMoney(Math.max(0, released - clawbackApplied - providerDebtAdded));
+}
+
 /** Courier/delivery/mover jobs use full-hold escrow until customer confirms delivery. */
 export function isAdminCourierEscrowJob(job: Job): boolean {
   return job.courierFlow === true;
