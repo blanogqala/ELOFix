@@ -18,6 +18,10 @@ const {
 const { signDocumentFields } = require("./fileAccess.service");
 const { scanUploadedFile } = require("./fileScan.service");
 const { validateUploadedImageFile, unlinkQuietly } = require("../utils/uploadSecurity.util");
+const {
+  validateProviderDocumentFileMeta,
+  assertProviderDocumentFileMagic,
+} = require("../utils/providerDocumentFile.util");
 
 const { normalizeMeta } = require("./jobMeta.service");
 
