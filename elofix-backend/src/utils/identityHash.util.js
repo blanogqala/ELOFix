@@ -1,14 +1,8 @@
 const crypto = require("crypto");
+const { resolveSecretKey } = require("./secretKey.util");
 
 function getSecret() {
-  const k = process.env.SECRET_KEY;
-  if (!k || String(k).length < 8) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("SECRET_KEY must be set for identity hashing");
-    }
-    return "dev-identity-hash-key";
-  }
-  return String(k);
+  return resolveSecretKey({ purpose: "identity hashing" });
 }
 
 function hmacHash(value, namespace = "default") {

@@ -1,6 +1,8 @@
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
+const { isTestingDeployment } = require("./src/utils/secretKey.util");
+
 (function validateCriticalEnv() {
   const jwt = process.env.JWT_SECRET;
   if (!jwt || !String(jwt).trim()) {
@@ -33,19 +35,32 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
   }
 
   const secretKey = process.env.SECRET_KEY;
+  const testingMode = isTestingDeployment();
   if (!secretKey || String(secretKey).trim().length < 8) {
-    console.error(
-      "[FATAL] SECRET_KEY is missing or shorter than 8 characters. Provider profile saves (SA ID, company reg, bank fields) require it. Set SECRET_KEY in Render Environment (see .env.example)."
-    );
-    if (process.env.NODE_ENV === "production") {
-      process.exit(1);
+    if (testingMode) {
+      console.warn(
+        "[WARN] SECRET_KEY not set — using built-in test secrets because ELOFIX_TESTING_MODE=true. Set real SECRET_KEY before launch."
+      );
+    } else {
+      console.error(
+        "[FATAL] SECRET_KEY is missing or shorter than 8 characters. Provider profile saves require it. Set SECRET_KEY in Render, or for pre-launch testing only set ELOFIX_TESTING_MODE=true (see .env.example)."
+      );
+      if (process.env.NODE_ENV === "production") {
+        process.exit(1);
+      }
     }
   }
   const bankSalt = process.env.BANK_KDF_SALT;
   if (!bankSalt || String(bankSalt).trim().length < 8) {
-    console.warn(
-      "[WARN] BANK_KDF_SALT is missing or shorter than 8 characters. Bank field encryption may fail until set in Render Environment."
-    );
+    if (testingMode) {
+      console.warn(
+        "[WARN] BANK_KDF_SALT not set — using built-in test salt because ELOFIX_TESTING_MODE=true. Set real BANK_KDF_SALT before launch."
+      );
+    } else {
+      console.warn(
+        "[WARN] BANK_KDF_SALT is missing or shorter than 8 characters. Bank field encryption may fail until set in Render Environment."
+      );
+    }
   }
 })();
 

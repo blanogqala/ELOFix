@@ -1,29 +1,21 @@
 const crypto = require("crypto");
 const CryptoJS = require("crypto-js");
+const { resolveSecretKey, resolveBankKdfSalt } = require("./secretKey.util");
 
 const PREFIX_V1 = "enc:v1:";
 const PREFIX_V2 = "enc:v2:";
 const ALGO = "aes-256-cbc";
 
 function getSecret() {
-  const k = process.env.SECRET_KEY;
-  if (!k || String(k).length < 8) {
-    throw new Error("SECRET_KEY must be set (min 8 chars) for bank field encryption");
-  }
-  return String(k);
+  return resolveSecretKey({ purpose: "bank field encryption" });
 }
 
 function getKdfSalt() {
-  const s = process.env.BANK_KDF_SALT;
-  if (s && String(s).length >= 8) {
-    return String(s);
+  const resolved = resolveBankKdfSalt();
+  if (!process.env.BANK_KDF_SALT && process.env.NODE_ENV !== "production") {
+    console.warn("[bankCrypto] BANK_KDF_SALT not set; using derived salt (development only)");
   }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("BANK_KDF_SALT must be set (min 8 chars) for bank field encryption");
-  }
-  console.warn("[bankCrypto] BANK_KDF_SALT not set; using derived salt (development only)");
-  const k = getSecret();
-  return `dev:${k.slice(0, 48)}`;
+  return resolved;
 }
 
 function deriveKeyV2() {
