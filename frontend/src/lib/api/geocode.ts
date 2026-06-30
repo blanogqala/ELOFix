@@ -7,6 +7,7 @@ export interface ReverseGeocodeResult {
   city: string;
   suburb?: string;
   area?: string;
+  metro?: string;
   coordinates: { lat: number; lng: number };
 }
 

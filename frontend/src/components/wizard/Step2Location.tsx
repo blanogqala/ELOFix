@@ -44,6 +44,7 @@ export function Step2Location({ location, setLocation }: Step2LocationProps) {
             city: r.city,
             area: areaVal,
             suburb: r.suburb ?? r.area ?? r.city,
+            metro: r.metro,
             coordinates: r.coordinates,
           });
           toast({

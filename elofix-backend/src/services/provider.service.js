@@ -11,6 +11,11 @@ const fs = require("fs");
 const { randomUUID } = require("crypto");
 const { countJobsByStatus } = require("../utils/jobStatusCounts.util");
 const {
+  customerLocationHasFields,
+  extractMetroFromText,
+  providerMatchesCustomerLocation,
+} = require("../utils/serviceAreaMatch.util");
+const {
   toApiFileUrl,
   registerUploadedFile,
   resolveExistingFileReference,
@@ -890,7 +895,7 @@ async function publicUrlFromUploadedFile(requestUserId, file) {
   return { url: stored.url, fileId: stored.fileId };
 }
 
-async function listProviders({ category, forAdmin = false, nearCity } = {}) {
+async function listProviders({ category, forAdmin = false, nearCity, customerLocation } = {}) {
   const normalizedCategory = String(category || "").trim();
   const nearCityTrim = String(nearCity || "").trim();
 
@@ -1001,19 +1006,17 @@ async function listProviders({ category, forAdmin = false, nearCity } = {}) {
     })
   );
 
-  if (courierCategory && nearCityTrim) {
-    const needle = nearCityTrim.toLowerCase();
-    return providers.filter((p) => {
-      const c = String(p.city || "")
-        .trim()
-        .toLowerCase();
-      if (c && (c.includes(needle) || needle.includes(c))) return true;
-      const areas = Array.isArray(p.serviceAreas) ? p.serviceAreas : [];
-      return areas.some((a) => {
-        const s = String(a).toLowerCase();
-        return s.includes(needle) || needle.includes(s);
-      });
-    });
+  const locationFilter = customerLocationHasFields(customerLocation)
+    ? customerLocation
+    : nearCityTrim
+      ? {
+          city: nearCityTrim,
+          metro: extractMetroFromText(nearCityTrim) || undefined,
+        }
+      : null;
+
+  if (locationFilter) {
+    return providers.filter((p) => providerMatchesCustomerLocation(p, locationFilter));
   }
 
   return providers;

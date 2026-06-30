@@ -14,10 +14,17 @@ async function resolveTargetProviderUserId(req) {
 }
 
 async function listProviders(req, res) {
+  const customerLocation = {
+    metro: req.query.metro,
+    city: req.query.city,
+    area: req.query.area,
+    suburb: req.query.suburb,
+  };
   const providers = await providerService.listProviders({
     category: req.query.category,
     forAdmin: false,
     nearCity: req.query.city || req.query.nearCity,
+    customerLocation,
   });
   res.json({ success: true, providers });
 }

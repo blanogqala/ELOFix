@@ -1,5 +1,5 @@
 import apiClient from '@/api/client';
-import { Provider } from '@/types';
+import { Provider, JobLocation } from '@/types';
 import type { ProviderDocType } from '@/lib/providerDocuments';
 
 interface ProvidersResponse {
@@ -51,9 +51,19 @@ export async function getProviderById(id: string): Promise<Provider | null> {
   }
 }
 
-export async function getProvidersByCategory(categoryId: string): Promise<Provider[]> {
+export async function getProvidersByCategory(
+  categoryId: string,
+  location?: Partial<JobLocation>
+): Promise<Provider[]> {
+  const params: Record<string, string> = {};
+  if (categoryId) params.category = categoryId;
+  if (location?.metro?.trim()) params.metro = location.metro.trim();
+  if (location?.city?.trim()) params.city = location.city.trim();
+  if (location?.area?.trim()) params.area = location.area.trim();
+  if (location?.suburb?.trim()) params.suburb = location.suburb.trim();
+
   const { data } = await apiClient.get<ProvidersResponse>('/providers', {
-    params: categoryId ? { category: categoryId } : undefined,
+    params: Object.keys(params).length > 0 ? params : undefined,
   });
   const providers = Array.isArray(data?.providers) ? data.providers : [];
   return providers.filter(
@@ -186,8 +196,7 @@ export async function updateProviderPortfolio(id: string, portfolioImages: strin
 export function recommendProviders(
   category: string,
   providers: Provider[],
-  measurements: Record<string, number>,
-  customerCity?: string
+  measurements: Record<string, number>
 ): Provider[] {
   void measurements;
   const eligible = providers.filter(
@@ -200,17 +209,7 @@ export function recommendProviders(
       provider.skills.includes(category)
   );
 
-  const needle = (customerCity || '').trim().toLowerCase();
-  const areaFiltered = needle
-    ? eligible.filter((p) => {
-        const areas = [p.city, ...(p.serviceAreas ?? [])]
-          .filter(Boolean)
-          .map((a) => String(a).toLowerCase());
-        return areas.some((a) => a.includes(needle) || needle.includes(a));
-      })
-    : eligible;
-
-  return [...areaFiltered].sort((a, b) => {
+  return [...eligible].sort((a, b) => {
     const reviewsA = a.totalReviews ?? a.reviews?.length ?? 0;
     const reviewsB = b.totalReviews ?? b.reviews?.length ?? 0;
     const scoreA = a.rating * 25 + reviewsA * 2 + a.completedJobs * 0.5;

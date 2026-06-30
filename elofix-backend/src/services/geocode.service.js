@@ -1,4 +1,5 @@
 const AppError = require("../utils/AppError");
+const { extractMetroFromText } = require("../utils/serviceAreaMatch.util");
 
 const UA = process.env.GEOCODE_USER_AGENT || "ELOFix/1.0";
 const CONTACT = process.env.GEOCODE_CONTACT_EMAIL || "";
@@ -54,6 +55,20 @@ function buildLineFromComponents(c) {
   return parts.filter(Boolean).join(", ");
 }
 
+/** Resolve canonical service metro from geocoder components (municipality preferred). */
+function deriveMetro(components) {
+  const c = components || {};
+  const municipality = String(c.municipality || "").trim();
+  const state = String(c.state || c.region || "").trim();
+  const city = String(pickCity(c) || "").trim();
+  return (
+    extractMetroFromText(municipality) ||
+    extractMetroFromText(state) ||
+    extractMetroFromText(city) ||
+    undefined
+  );
+}
+
 /** City/town field: suburb missing → area uses city; city missing → use state */
 function deriveCityAndSuburb(components) {
   const c = components || {};
@@ -81,6 +96,7 @@ function mapOpenCage(data, lat, lng) {
   }
   const c = first.components || {};
   const { city, suburb, area } = deriveCityAndSuburb(c);
+  const metro = deriveMetro(c);
   const builtLine = buildLineFromComponents(c);
   const formatted = String(first.formatted || "").trim();
   const address = finalizeAddress(formatted || builtLine, builtLine);
@@ -100,6 +116,7 @@ function mapOpenCage(data, lat, lng) {
     city: city || area || address.split(",")[0]?.trim() || "",
     suburb,
     area,
+    metro,
     coordinates: { lat, lng },
   };
 }
@@ -107,6 +124,7 @@ function mapOpenCage(data, lat, lng) {
 function mapNominatim(data, lat, lng) {
   const a = data?.address || {};
   const { city, suburb, area } = deriveCityAndSuburb(a);
+  const metro = deriveMetro(a);
   const builtLine = buildLineFromComponents(a);
   const display = String(data?.display_name || "").trim();
   const address = finalizeAddress(display || builtLine, builtLine);
@@ -126,6 +144,7 @@ function mapNominatim(data, lat, lng) {
     city: city || area || (display ? display.split(",")[1]?.trim() : "") || "",
     suburb,
     area,
+    metro,
     coordinates: { lat, lng },
   };
 }

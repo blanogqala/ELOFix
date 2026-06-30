@@ -6,6 +6,7 @@ export interface ReverseGeocodeResult {
   city: string;
   area?: string;
   suburb?: string;
+  metro?: string;
   coordinates: { lat: number; lng: number };
 }
 
@@ -31,6 +32,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<ReverseG
     city: String(data.city || '').trim(),
     area: data.area,
     suburb: data.suburb,
+    metro: data.metro,
     coordinates: data.coordinates || { lat, lng },
   };
 }

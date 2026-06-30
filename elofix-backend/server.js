@@ -244,3 +244,11 @@ function shutdown(signal) {
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGUSR2", () => {
+  console.log("SIGUSR2 received (nodemon restart), closing HTTP server");
+  server.close(() => {
+    void prisma.$disconnect().finally(() => {
+      process.kill(process.pid, "SIGUSR2");
+    });
+  });
+});

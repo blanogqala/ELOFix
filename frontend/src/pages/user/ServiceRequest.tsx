@@ -160,12 +160,11 @@ export default function ServiceRequest() {
   const loadProviders = useCallback(async () => {
     try {
       setProvidersError(null);
-      const categoryProviders = await getProvidersByCategory(selectedCategory);
+      const categoryProviders = await getProvidersByCategory(selectedCategory, location);
       const recommended = recommendProviders(
         selectedCategory,
         categoryProviders,
-        measurements.values,
-        location.city
+        measurements.values
       );
       setProviders(recommended);
     } catch (error) {
@@ -173,7 +172,7 @@ export default function ServiceRequest() {
       setProviders([]);
       setProvidersError(message);
     }
-  }, [measurements.values, selectedCategory, location.city]);
+  }, [measurements.values, selectedCategory, location]);
 
   const loadCouriers = useCallback(async () => {
     setCouriersLoading(true);
@@ -711,7 +710,7 @@ export default function ServiceRequest() {
                   </div>
                 ) : providers.length === 0 ? (
                   <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
-                    No approved providers serve {location.city || 'this area'} for this category yet.
+                    No approved providers serve {location.metro || location.city || 'this area'} for this category yet.
                   </div>
                 ) : (
                   providers.map((provider) => (

@@ -582,6 +582,7 @@ export interface JobLocation {
   city?: string;
   area?: string;
   suburb?: string;
+  metro?: string;
   notes?: string;
   coordinates?: { lat: number; lng: number };
 }
