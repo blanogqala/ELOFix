@@ -62,7 +62,9 @@ async function resolveJobCancellationPolicy(job, meta, actorUserId, actorRole) {
   }
 
   const providerEnRoute = await isProviderEnRouteToService(job, meta);
-  const fullRefund = job.laborPaid ? paymentService.computeCancelRefundAmount(job) : 0;
+  const fullRefund = job.laborPaid
+    ? paymentService.computeCancelRefundAmount(job, { courierFlow: Boolean(meta?.courierFlow) })
+    : 0;
 
   let refundAmount = fullRefund;
   let refundKind = job.laborPaid ? "standard" : "none";

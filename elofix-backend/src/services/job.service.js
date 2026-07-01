@@ -1935,7 +1935,9 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
     : null;
 
   const expectedRefund =
-    policy.refundAmount != null ? Number(policy.refundAmount) || 0 : paymentService.computeCancelRefundAmount(job);
+    policy.refundAmount != null
+      ? Number(policy.refundAmount) || 0
+      : paymentService.computeCancelRefundAmount(job, { courierFlow: Boolean(preMeta?.courierFlow) });
   let refundStatusForMeta = "recorded";
   if (expectedRefund > 0 && job.laborPaid) {
     const { attemptGatewayRefundFirst } = require("./providerRefundClawback.service");
@@ -1961,6 +1963,7 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
         job: j,
         providerProfileId: providerRow?.id,
         refundOverride: policy.refundAmount,
+        courierFlow: Boolean(preMeta?.courierFlow),
       });
       const u = await tx.job.update({
         where: { id: jobId },

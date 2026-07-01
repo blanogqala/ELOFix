@@ -68,12 +68,20 @@ export function countAdminJobsByStatus(jobs: Job[]): AdminJobStatusCounts {
 /** Cancelled after customer payment — refund / forfeit bucket for admin payments filter. */
 export function isAdminPaymentRefundJob(job: Job): boolean {
   const refundStatus = String(job.refundStatus || '').toLowerCase();
-  if (refundStatus === 'processed' || refundStatus === 'partial' || refundStatus === 'gateway_failed') {
+  if (refundStatus === 'forfeited') return false;
+  if (
+    refundStatus === 'processed' ||
+    refundStatus === 'partial' ||
+    refundStatus === 'gateway_failed' ||
+    refundStatus === 'recorded' ||
+    refundStatus === 'pending_manual_gateway' ||
+    refundStatus.includes('cancel')
+  ) {
     return true;
   }
-  if (typeof job.refundAmount === 'number' && job.refundAmount > 0 && refundStatus !== 'recorded') {
-    return true;
-  }
+  const refunded = Number(job.refundAmount ?? 0);
+  if (refunded > 0 && job.status === 'CANCELLED') return true;
+  if (refunded > 0 && job.paymentSettlementStatus === 'refund') return true;
   return false;
 }
 
@@ -107,6 +115,9 @@ export function getAdminPaymentStatusDisplay(job: Job): { label: string; class: 
   if (settlement === 'released') return { label: 'Released', class: 'text-success' };
   if (settlement === 'held') return { label: 'Held', class: 'text-warning' };
   if (settlement === 'refund') {
+    if (job.status === 'CANCELLED') {
+      return { label: 'Cancelled · refunded', class: 'text-destructive' };
+    }
     return {
       label: isPartialRefundDisplay(job) ? 'Partial refund' : 'Refund',
       class: 'text-destructive',

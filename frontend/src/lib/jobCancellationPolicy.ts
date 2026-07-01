@@ -2,6 +2,17 @@ import type { DeliveryRequestRecord, Job } from '@/types';
 import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
 
 const EN_ROUTE_COURIER = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
+const COURIER_CANCEL_COMMISSION_RATE = 0.07;
+
+function roundMoney(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/** Mirrors backend netCourierCancelRefundFromGross — 7% commission kept on courier cancel. */
+export function netCourierCancelRefundFromGross(gross: number): number {
+  const commission = roundMoney(gross * COURIER_CANCEL_COMMISSION_RATE);
+  return roundMoney(gross - commission);
+}
 
 export function isProviderEnRouteToService(
   job: Job,
@@ -55,7 +66,10 @@ export function getCustomerCancelPreview(
     };
   }
 
-  const laborRefund = laborPaid ? laborGross : 0;
+  let laborRefund = laborPaid ? laborGross : 0;
+  if (job.courierFlow && laborRefund > 0) {
+    laborRefund = netCourierCancelRefundFromGross(laborGross);
+  }
   const materialsRefund = materialsRefundable ? materialsTotal : 0;
 
   return {

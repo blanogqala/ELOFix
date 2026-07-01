@@ -336,7 +336,10 @@ export default function AdminPaymentDetail() {
           <CardContent>
             {transactionHistory.length > 0 ? (
               <div className="space-y-3">
-                {transactionHistory.map((tx, i) => (
+                {transactionHistory.map((tx, i) => {
+                  const isRefundOut =
+                    /refund/i.test(tx.type) && !/payment/i.test(tx.type);
+                  return (
                   <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
                       <p className="font-medium text-sm">{tx.type}</p>
@@ -344,9 +347,18 @@ export default function AdminPaymentDetail() {
                         {new Date(tx.date).toLocaleString()} • {tx.by}
                       </p>
                     </div>
-                    <span className="font-medium">{formatCurrency(tx.amount)}</span>
+                    <span
+                      className={cn(
+                        'font-medium tabular-nums',
+                        isRefundOut && 'text-destructive',
+                      )}
+                    >
+                      {isRefundOut ? '−' : ''}
+                      {formatCurrency(tx.amount)}
+                    </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-muted-foreground text-sm">No transactions yet</p>

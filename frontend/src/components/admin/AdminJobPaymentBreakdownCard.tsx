@@ -1,6 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getAdminEscrowV2Breakdown, getAdminJobLaborPaid } from '@/lib/adminJobFinancial';
+import {
+  getAdminEscrowV2Breakdown,
+  getAdminJobCustomerRefundNet,
+  getAdminJobLaborPaid,
+  getAdminNetEscrowRemaining,
+  getAdminNetPaidLaborProviderShare,
+} from '@/lib/adminJobFinancial';
 import type { Job } from '@/types';
 import { DollarSign } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -24,6 +30,10 @@ export function AdminJobPaymentBreakdownCard({
 }: Props) {
   const fin = getAdminEscrowV2Breakdown(job);
   const laborPaid = getAdminJobLaborPaid(job);
+  const customerRefund = getAdminJobCustomerRefundNet(job);
+  const netProviderShare = getAdminNetPaidLaborProviderShare(job);
+  const netRemaining = getAdminNetEscrowRemaining(job);
+  const isCancelledRefund = job.status === 'CANCELLED' && customerRefund > 0;
   const totalPaid =
     fin.totalPrice > 0
       ? fin.totalPrice
@@ -31,9 +41,11 @@ export function AdminJobPaymentBreakdownCard({
 
   const resolvedDescription =
     description ??
-    (fin.isCourierEscrow
-      ? 'Delivery fee settlement: full provider share is held until the customer confirms delivery.'
-      : 'Labor settlement: what the customer paid, platform fee, provider share, and 50% / 50% releases.');
+    (isCancelledRefund && fin.isCourierEscrow
+      ? 'Delivery cancelled — held customer funds were refunded (7% platform fee retained).'
+      : fin.isCourierEscrow
+        ? 'Delivery fee settlement: full provider share is held until the customer confirms delivery.'
+        : 'Labor settlement: what the customer paid, platform fee, provider share, and 50% / 50% releases.');
 
   return (
     <Card>
@@ -56,7 +68,7 @@ export function AdminJobPaymentBreakdownCard({
           </div>
           <div className="border-b border-border pb-2 flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Provider earnings (93%)</span>
-            <span className="font-medium tabular-nums">{formatCurrency(fin.provider)}</span>
+            <span className="font-medium tabular-nums">{formatCurrency(netProviderShare)}</span>
           </div>
 
           <div className="h-px bg-border my-3" aria-hidden />
@@ -67,17 +79,21 @@ export function AdminJobPaymentBreakdownCard({
                 Escrow (full hold until delivery confirmed)
               </p>
               <div className="flex items-center justify-between text-sm py-2">
-                <span className="text-muted-foreground">Held until delivery confirmed</span>
-                <span className="tabular-nums">{formatCurrency(fin.remaining)}</span>
+                <span className="text-muted-foreground">
+                  {isCancelledRefund ? 'Held funds (refunded to customer)' : 'Held until delivery confirmed'}
+                </span>
+                <span className="tabular-nums">{formatCurrency(isCancelledRefund ? 0 : fin.remaining)}</span>
               </div>
               <div className="flex items-center justify-between text-sm py-2 border-b border-border pb-2">
                 <span className="text-muted-foreground">Released after delivery confirmed</span>
                 <span className="tabular-nums">{formatCurrency(fin.released)}</span>
               </div>
               <p className="text-xs text-muted-foreground pt-2">
-                {fin.deliveryConfirmed
-                  ? 'Customer has confirmed delivery — provider funds may be released.'
-                  : 'No funds are released until the customer confirms delivery.'}
+                {isCancelledRefund
+                  ? 'Customer held payment was returned on cancellation.'
+                  : fin.deliveryConfirmed
+                    ? 'Customer has confirmed delivery — provider funds may be released.'
+                    : 'No funds are released until the customer confirms delivery.'}
               </p>
             </>
           ) : (
@@ -104,36 +120,42 @@ export function AdminJobPaymentBreakdownCard({
           </div>
           <div className="flex items-center justify-between text-sm py-2">
             <span className="text-muted-foreground">Remaining balance</span>
-            <span className="font-medium tabular-nums">{formatCurrency(fin.remaining)}</span>
+            <span className="font-medium tabular-nums">{formatCurrency(netRemaining)}</span>
           </div>
 
-          {job.refundDetails && (job.refundAmount ?? 0) > 0 && (
+          {customerRefund > 0 && (
             <>
               <div className="h-px bg-border my-3" aria-hidden />
-              <p className="text-xs font-medium text-destructive uppercase tracking-wide mb-2">Refund</p>
+              <p className="text-xs font-medium text-destructive uppercase tracking-wide mb-2">
+                {isCancelledRefund ? 'Cancellation refund' : 'Refund'}
+              </p>
               <div className="flex items-center justify-between text-sm py-2">
-                <span className="text-muted-foreground">Customer refunded (net)</span>
+                <span className="text-muted-foreground">
+                  {fin.isCourierEscrow && isCancelledRefund
+                    ? 'Held funds refunded to customer (net)'
+                    : 'Customer refunded (net)'}
+                </span>
                 <span className="font-medium text-destructive tabular-nums">
-                  −{formatCurrency(job.refundDetails.cumulativeCustomerNet ?? job.refundAmount ?? 0)}
+                  −{formatCurrency(customerRefund)}
                 </span>
               </div>
-              {(job.refundDetails.escrowApplied ?? 0) > 0 && (
+              {(job.refundDetails?.escrowApplied ?? 0) > 0 && (
                 <div className="flex items-center justify-between text-sm py-2">
                   <span className="text-muted-foreground">From escrow held</span>
                   <span className="tabular-nums">{formatCurrency(job.refundDetails.escrowApplied!)}</span>
                 </div>
               )}
-              {(job.refundDetails.clawbackApplied ?? 0) > 0 && (
+              {(job.refundDetails?.clawbackApplied ?? 0) > 0 && (
                 <div className="flex items-center justify-between text-sm py-2">
                   <span className="text-muted-foreground">Provider clawback</span>
-                  <span className="tabular-nums">{formatCurrency(job.refundDetails.clawbackApplied!)}</span>
+                  <span className="tabular-nums">{formatCurrency(job.refundDetails!.clawbackApplied!)}</span>
                 </div>
               )}
-              {(job.refundDetails.providerDebtAdded ?? 0) > 0 && (
+              {(job.refundDetails?.providerDebtAdded ?? 0) > 0 && (
                 <div className="flex items-center justify-between text-sm py-2">
                   <span className="text-muted-foreground">Provider refund debt</span>
                   <span className="tabular-nums text-destructive">
-                    {formatCurrency(job.refundDetails.providerDebtAdded!)}
+                    {formatCurrency(job.refundDetails!.providerDebtAdded!)}
                   </span>
                 </div>
               )}

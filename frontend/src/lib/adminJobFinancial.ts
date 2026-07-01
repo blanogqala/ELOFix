@@ -341,6 +341,21 @@ export function canAdminManualReleaseEscrow(job: Job): boolean {
   return job.completionConfirmedByUser === true;
 }
 
+/** Customer labor/service refund net (excludes material refunds). */
+export function getAdminJobCustomerRefundNet(job: Job): number {
+  return getAdminJobLaborRefund(job);
+}
+
+/** Escrow still owed to provider after customer refunds (0 when held funds returned on cancel). */
+export function getAdminNetEscrowRemaining(job: Job): number {
+  const fin = getAdminEscrowV2Breakdown(job);
+  const refund = getAdminJobCustomerRefundNet(job);
+  if (job.status === 'CANCELLED' && refund > 0) {
+    return 0;
+  }
+  return roundMoney(Math.max(0, fin.remaining - refund));
+}
+
 /**
  * Admin-only display: labor jobs use 50/50 tranches; courier jobs use full-hold until delivery confirmed.
  * Commission and provider share come from the job API — not recalculated.
@@ -415,6 +430,20 @@ export function buildAdminJobTransactionHistory(job: Job): AdminJobTransactionRo
       amount: released,
       date: job.updatedAt || job.createdAt,
       by: 'Platform',
+    });
+  }
+  const laborRefund = getAdminJobLaborRefund(job);
+  if (laborRefund > 0) {
+    const cancelled = job.status === 'CANCELLED';
+    rows.push({
+      type: cancelled
+        ? job.courierFlow
+          ? 'Delivery cancellation refund (held funds to customer)'
+          : 'Job cancellation refund (to customer)'
+        : 'Customer refund',
+      amount: laborRefund,
+      date: job.cancelledAt || job.refundDetails?.processedAt || job.updatedAt || job.createdAt,
+      by: job.cancelledBy === 'provider' ? 'Provider cancel' : job.cancelledBy === 'customer' ? 'Customer cancel' : 'Platform',
     });
   }
   return rows;

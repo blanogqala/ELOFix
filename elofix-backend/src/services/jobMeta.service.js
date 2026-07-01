@@ -160,7 +160,28 @@ function isTerminalJobState(meta, jobRow) {
 
 function resolvePaymentSettlementStatus(job, safeMeta) {
   const refundStatus = String(safeMeta.refund?.status || "").toLowerCase();
-  if (refundStatus === "processed" || refundStatus === "partial" || refundStatus === "gateway_failed") {
+  const refundAmount =
+    safeMeta.refund?.cumulativeCustomerNet != null && Number.isFinite(Number(safeMeta.refund.cumulativeCustomerNet))
+      ? Number(safeMeta.refund.cumulativeCustomerNet)
+      : safeMeta.refund?.amount != null && Number.isFinite(Number(safeMeta.refund.amount))
+        ? Number(safeMeta.refund.amount)
+        : 0;
+  const isCancelled =
+    String(job?.status || "").toUpperCase() === "CANCELLED" ||
+    String(safeMeta.statusOverride || "").toUpperCase() === "CANCELLED";
+  const isCancelRefund =
+    String(safeMeta.refund?.reason || "").toLowerCase() === "cancel" || isCancelled;
+
+  if (refundStatus === "forfeited") {
+    // Customer forfeited service payment — not a refund settlement.
+  } else if (
+    refundStatus === "processed" ||
+    refundStatus === "partial" ||
+    refundStatus === "gateway_failed" ||
+    refundStatus === "recorded" ||
+    refundStatus === "pending_manual_gateway" ||
+    (refundAmount > 0 && isCancelRefund)
+  ) {
     return "refund";
   }
   if (safeMeta.paymentSettlementStatus === "refund") return "refund";

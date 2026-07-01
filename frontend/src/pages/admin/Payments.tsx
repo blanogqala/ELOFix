@@ -13,6 +13,7 @@ import {
   formatAdminCommissionBreakdown,
   getAdminEscrowV2Breakdown,
   getAdminJobLaborPaid,
+  getAdminNetEscrowRemaining,
   getAdminNetPaidLaborProviderShare,
   getAdminNetPaidLaborReleasedAmount,
   isAdminPaidLaborProviderJob,
@@ -33,9 +34,9 @@ function rowFinancials(job: Job) {
   return {
     totalPrice: fin.totalPrice > 0 ? fin.totalPrice : laborPaid || safeMoney(job.servicePrice?.amount) || safeMoney(job.totalEstimateRange?.min),
     commission: fin.commission,
-    provider: fin.provider,
-    released: fin.released,
-    remaining: fin.remaining,
+    provider: getAdminNetPaidLaborProviderShare(job),
+    released: getAdminNetPaidLaborReleasedAmount(job),
+    remaining: getAdminNetEscrowRemaining(job),
   };
 }
 

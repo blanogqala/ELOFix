@@ -749,20 +749,37 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
 }
 
 /**
- * @param {import("@prisma/client").Job} job
+ * Customer refund net of 7% platform commission on courier delivery cancel (pre-release full gross).
+ * @param {number|string|import("@prisma/client").Prisma.Decimal} gross
  */
-function computeCancelRefundAmount(job) {
+function netCourierCancelRefundFromGross(gross) {
+  const { commissionAmount } = splitLaborTotalGross(gross);
+  return Number(
+    toPrismaDecimal(gross)
+      .sub(commissionAmount)
+      .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+  );
+}
+
+/**
+ * @param {import("@prisma/client").Job} job
+ * @param {{ courierFlow?: boolean }} [options]
+ */
+function computeCancelRefundAmount(job, options = {}) {
+  const courierFlow = Boolean(options.courierFlow);
   if (!job.laborPaid) {
     return 0;
   }
   if (!isEscrowV2Job(job) || !job.totalPrice) {
-    return Number(job.price) || 0;
+    const legacy = Number(job.price) || 0;
+    return courierFlow && legacy > 0 ? netCourierCancelRefundFromGross(legacy) : legacy;
   }
   const total = toPrismaDecimal(job.totalPrice);
   const releasedToProvider = toPrismaDecimal(job.releasedAmount || 0);
-  // No funds released to provider yet → 100% of gross to customer; platform does not keep commission in mock path.
+  // No funds released to provider yet → full gross (courier: minus 7% commission kept by platform).
   if (releasedToProvider.lte(0)) {
-    return Number(total.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP));
+    const gross = Number(total.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP));
+    return courierFlow && gross > 0 ? netCourierCancelRefundFromGross(gross) : gross;
   }
   // After at least one tranche: refund only **remaining provider escrow** (not gross − released which would mis-count commission).
   const providerTotal = toPrismaDecimal(job.providerAmount);
@@ -778,24 +795,34 @@ function computeCancelRefundAmount(job) {
 /**
  * @param {import("@prisma/client").Prisma.TransactionClient} tx
  */
-async function runCancelJobFinancialsInTransaction(tx, { job, providerProfileId, refundOverride }) {
+async function runCancelJobFinancialsInTransaction(tx, { job, providerProfileId, refundOverride, courierFlow }) {
+  const isCourierFlow = Boolean(courierFlow);
   if (!job.laborPaid) {
     return { refundAmount: 0, cleanedEarnings: 0, refundKind: "none" };
   }
-  const computedRefund = computeCancelRefundAmount(job);
+  const computedRefund = computeCancelRefundAmount(job, { courierFlow: isCourierFlow });
   const refundAmount =
     refundOverride !== undefined && refundOverride !== null
       ? Math.max(0, Number(refundOverride) || 0)
       : computedRefund;
   if (!isEscrowV2Job(job)) {
-    return { refundAmount, cleanedEarnings: 0, refundKind: refundAmount > 0 ? "legacy" : "none" };
+    const refundKind =
+      refundAmount > 0
+        ? isCourierFlow
+          ? "courier_cancel_keep_commission"
+          : "legacy"
+        : "none";
+    return { refundAmount, cleanedEarnings: 0, refundKind };
   }
 
   const released = toPrismaDecimal(job.releasedAmount || 0);
   if (released.lte(0)) {
     await tx.earning.deleteMany({ where: { jobId: job.id } });
-    await tx.commissionLedger.deleteMany({ where: { jobId: job.id } });
-    return { refundAmount, cleanedEarnings: 1, refundKind: "full" };
+    if (!isCourierFlow) {
+      await tx.commissionLedger.deleteMany({ where: { jobId: job.id } });
+      return { refundAmount, cleanedEarnings: 1, refundKind: "full" };
+    }
+    return { refundAmount, cleanedEarnings: 1, refundKind: "courier_cancel_keep_commission" };
   }
   await tx.earning.deleteMany({
     where: { jobId: job.id, type: "credit", status: "pending" },
@@ -1095,6 +1122,7 @@ module.exports = {
   backfillCourierDeliveryEscrowInTransaction,
   backfillCourierServicePaymentIfMissing,
   finalizeCourierDeliveryEscrowAfterPayment,
+  netCourierCancelRefundFromGross,
   computeCancelRefundAmount,
   runCancelJobFinancialsInTransaction,
   getPaystackSecret,
