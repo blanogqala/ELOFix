@@ -61,6 +61,10 @@ export async function getProvidersByCategory(
   if (location?.city?.trim()) params.city = location.city.trim();
   if (location?.area?.trim()) params.area = location.area.trim();
   if (location?.suburb?.trim()) params.suburb = location.suburb.trim();
+  const lat = location?.coordinates?.lat;
+  const lng = location?.coordinates?.lng;
+  if (typeof lat === 'number' && Number.isFinite(lat)) params.lat = String(lat);
+  if (typeof lng === 'number' && Number.isFinite(lng)) params.lng = String(lng);
 
   const { data } = await apiClient.get<ProvidersResponse>('/providers', {
     params: Object.keys(params).length > 0 ? params : undefined,

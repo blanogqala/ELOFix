@@ -2,6 +2,10 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
+const {
+  branchMatchesCustomerLocation,
+  resolveCustomerMetrosWithCoords,
+} = require("../utils/serviceAreaMatch.util");
 
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -118,12 +122,23 @@ async function listBranchesForLocation(query = {}) {
   const lngRaw = query.lng != null ? Number(query.lng) : NaN;
   const hasUserCoords = Number.isFinite(latRaw) && Number.isFinite(lngRaw);
   const radiusKm = Number(query.radiusKm) > 0 ? Number(query.radiusKm) : 120;
-  const cityFilter = String(query.city || "")
-    .trim()
-    .toLowerCase();
   const qRaw = String(query.q || "")
     .trim()
     .toLowerCase();
+
+  const customerLocation = {
+    metro: String(query.metro || "").trim() || undefined,
+    city: String(query.city || "").trim() || undefined,
+    area: String(query.area || "").trim() || undefined,
+    suburb: String(query.suburb || "").trim() || undefined,
+  };
+
+  const customerMetros = resolveCustomerMetrosWithCoords(
+    customerLocation,
+    hasUserCoords ? latRaw : undefined,
+    hasUserCoords ? lngRaw : undefined
+  );
+  const hasCustomerMetro = customerMetros.length > 0;
 
   const branches = await prisma.branch.findMany({
     where: { isActive: true },
@@ -140,6 +155,26 @@ async function listBranchesForLocation(query = {}) {
     }
     return { ...api, distanceKm };
   });
+
+  if (hasCustomerMetro) {
+    list = list.filter((s) =>
+      branchMatchesCustomerLocation(
+        {
+          city: s.city,
+          area: s.area,
+          address: s.address,
+          name: s.name,
+          displayName: s.displayName,
+          latitude: s.latitude,
+          longitude: s.longitude,
+        },
+        customerLocation,
+        customerMetros
+      )
+    );
+  } else if (hasUserCoords) {
+    list = list.filter((s) => s.distanceKm != null && s.distanceKm <= radiusKm);
+  }
 
   if (qRaw) {
     const tokens = qRaw.split(/\s+/).filter(Boolean);
@@ -159,40 +194,6 @@ async function listBranchesForLocation(query = {}) {
       return tokens.every(
         (t) => hay.includes(t) || hay.split(/\s+/).some((w) => w.startsWith(t))
       );
-    });
-  }
-
-  // No search text: prefer branches in the job city. If none match (e.g. job in Bellville,
-  // branch listed as Cape Town), fall back to full list and rank by distance below.
-  if (cityFilter && !qRaw) {
-    const beforeCity = list;
-    const cityMatched = list.filter((s) => {
-      const c = (s.city || "").toLowerCase();
-      const ar = (s.area || "").toLowerCase();
-      const addr = (s.address || "").toLowerCase();
-      return (
-        (c && c.includes(cityFilter)) ||
-        (ar && ar.includes(cityFilter)) ||
-        (addr && addr.includes(cityFilter))
-      );
-    });
-    if (cityMatched.length > 0) {
-      list = cityMatched;
-    } else {
-      list = beforeCity;
-    }
-  }
-
-  if (hasUserCoords && !qRaw) {
-    list = list.filter((s) => {
-      const cityOk =
-        Boolean(cityFilter) &&
-        ((s.city || "").toLowerCase().includes(cityFilter) ||
-          (s.area || "").toLowerCase().includes(cityFilter) ||
-          (s.address || "").toLowerCase().includes(cityFilter));
-      if (cityOk) return true;
-      if (s.distanceKm == null) return true;
-      return s.distanceKm <= radiusKm;
     });
   }
 

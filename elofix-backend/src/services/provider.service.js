@@ -14,6 +14,7 @@ const {
   customerLocationHasFields,
   extractMetroFromText,
   providerMatchesCustomerLocation,
+  resolveCustomerMetrosWithCoords,
 } = require("../utils/serviceAreaMatch.util");
 const {
   toApiFileUrl,
@@ -895,7 +896,14 @@ async function publicUrlFromUploadedFile(requestUserId, file) {
   return { url: stored.url, fileId: stored.fileId };
 }
 
-async function listProviders({ category, forAdmin = false, nearCity, customerLocation } = {}) {
+async function listProviders({
+  category,
+  forAdmin = false,
+  nearCity,
+  customerLocation,
+  customerLat,
+  customerLng,
+} = {}) {
   const normalizedCategory = String(category || "").trim();
   const nearCityTrim = String(nearCity || "").trim();
 
@@ -1006,8 +1014,12 @@ async function listProviders({ category, forAdmin = false, nearCity, customerLoc
     })
   );
 
-  const locationFilter = customerLocationHasFields(customerLocation)
-    ? customerLocation
+  const latNum = customerLat != null ? Number(customerLat) : NaN;
+  const lngNum = customerLng != null ? Number(customerLng) : NaN;
+  const hasCustomerCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
+
+  let locationFilter = customerLocationHasFields(customerLocation)
+    ? { ...customerLocation }
     : nearCityTrim
       ? {
           city: nearCityTrim,
@@ -1015,7 +1027,22 @@ async function listProviders({ category, forAdmin = false, nearCity, customerLoc
         }
       : null;
 
+  if (!locationFilter && hasCustomerCoords) {
+    const metros = resolveCustomerMetrosWithCoords({}, latNum, lngNum);
+    if (metros.length > 0) {
+      locationFilter = { metro: metros[0] };
+    }
+  }
+
   if (locationFilter) {
+    const metros = resolveCustomerMetrosWithCoords(
+      locationFilter,
+      hasCustomerCoords ? latNum : undefined,
+      hasCustomerCoords ? lngNum : undefined
+    );
+    if (metros.length > 0 && !String(locationFilter.metro || "").trim()) {
+      locationFilter = { ...locationFilter, metro: metros[0] };
+    }
     return providers.filter((p) => providerMatchesCustomerLocation(p, locationFilter));
   }
 

@@ -71,6 +71,8 @@ export async function getDeliveryProviders(options?: {
       params: {
         category,
         city: options?.city?.trim() || undefined,
+        lat: typeof options?.lat === 'number' && Number.isFinite(options.lat) ? String(options.lat) : undefined,
+        lng: typeof options?.lng === 'number' && Number.isFinite(options.lng) ? String(options.lng) : undefined,
       },
     }
   );

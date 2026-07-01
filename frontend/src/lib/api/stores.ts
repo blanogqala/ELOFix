@@ -31,6 +31,9 @@ export async function getBranchesNearby(params?: {
   lng?: number;
   radiusKm?: number;
   city?: string;
+  metro?: string;
+  area?: string;
+  suburb?: string;
   q?: string;
 }): Promise<StoreRow[]> {
   const { data } = await apiClient.get<BranchesNearbyResponse>('/branches/nearby', {
@@ -39,6 +42,9 @@ export async function getBranchesNearby(params?: {
       lng: params?.lng,
       radiusKm: params?.radiusKm,
       city: params?.city?.trim() || undefined,
+      metro: params?.metro?.trim() || undefined,
+      area: params?.area?.trim() || undefined,
+      suburb: params?.suburb?.trim() || undefined,
       q: params?.q?.trim() || undefined,
     },
   });
@@ -50,6 +56,9 @@ export async function getStores(params?: {
   lng?: number;
   radiusKm?: number;
   city?: string;
+  metro?: string;
+  area?: string;
+  suburb?: string;
   q?: string;
 }): Promise<StoreRow[]> {
   const { data } = await apiClient.get<StoresResponse>('/stores', {
@@ -58,6 +67,9 @@ export async function getStores(params?: {
       lng: params?.lng,
       radiusKm: params?.radiusKm,
       city: params?.city?.trim() || undefined,
+      metro: params?.metro?.trim() || undefined,
+      area: params?.area?.trim() || undefined,
+      suburb: params?.suburb?.trim() || undefined,
       q: params?.q?.trim() || undefined,
     },
   });

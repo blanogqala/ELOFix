@@ -115,6 +115,7 @@ export default function OrderMaterials() {
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryCity, setDeliveryCity] = useState('');
   const [deliveryArea, setDeliveryArea] = useState('');
+  const [deliveryMetro, setDeliveryMetro] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storeSearch, setStoreSearch] = useState('');
@@ -129,6 +130,8 @@ export default function OrderMaterials() {
       setError(null);
       const list = await getBranchesNearby({
         city: deliveryCity.trim() || undefined,
+        metro: deliveryMetro.trim() || undefined,
+        area: deliveryArea.trim() || undefined,
         lat: userGeo?.lat,
         lng: userGeo?.lng,
         q: storeSearch.trim() || undefined,
@@ -140,7 +143,7 @@ export default function OrderMaterials() {
     } finally {
       setStoresLoading(false);
     }
-  }, [deliveryCity, userGeo, storeSearch]);
+  }, [deliveryCity, deliveryMetro, deliveryArea, userGeo, storeSearch]);
 
   useEffect(() => {
     if (step !== 1) return;
@@ -207,6 +210,7 @@ export default function OrderMaterials() {
       setDeliveryCity((geo.city || '').trim());
       const area = (geo.area || geo.suburb || '').trim();
       setDeliveryArea(area);
+      setDeliveryMetro((geo.metro || '').trim());
     },
     []
   );

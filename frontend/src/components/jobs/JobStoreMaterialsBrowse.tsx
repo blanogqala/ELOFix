@@ -173,6 +173,9 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
     setStoresLoading(true);
     void getBranchesNearby({
       city: jobLocation?.city?.trim(),
+      metro: jobLocation?.metro?.trim(),
+      area: jobLocation?.area?.trim(),
+      suburb: jobLocation?.suburb?.trim(),
       lat: jobSiteCoords?.lat,
       lng: jobSiteCoords?.lng,
       q: storeSearch.trim() || undefined,
@@ -189,7 +192,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
     return () => {
       alive = false;
     };
-  }, [jobLocation?.city, jobSiteCoords?.lat, jobSiteCoords?.lng, storeSearch]);
+  }, [jobLocation?.city, jobLocation?.metro, jobLocation?.area, jobLocation?.suburb, jobSiteCoords?.lat, jobSiteCoords?.lng, storeSearch]);
 
   useEffect(() => {
     if (variant !== 'provider_cart') return;

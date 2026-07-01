@@ -186,6 +186,9 @@ export default function JobDetail() {
     try {
       const list = await getStores({
         city: job.location?.city?.trim(),
+        metro: job.location?.metro?.trim(),
+        area: job.location?.area?.trim(),
+        suburb: job.location?.suburb?.trim(),
         lat: job.location?.coordinates?.lat,
         lng: job.location?.coordinates?.lng,
       });

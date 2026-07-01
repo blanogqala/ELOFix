@@ -25,6 +25,8 @@ async function listProviders(req, res) {
     forAdmin: false,
     nearCity: req.query.city || req.query.nearCity,
     customerLocation,
+    customerLat: req.query.lat,
+    customerLng: req.query.lng,
   });
   res.json({ success: true, providers });
 }

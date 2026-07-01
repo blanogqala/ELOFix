@@ -264,6 +264,7 @@ function parseLocation(location) {
     city = undefined,
     area = undefined,
     suburb = undefined,
+    metro = undefined,
     notes = undefined,
     coordinates = undefined,
   } = location;
@@ -273,6 +274,7 @@ function parseLocation(location) {
   if (city !== undefined && city !== null && String(city).trim()) details.city = String(city).trim();
   if (area !== undefined && area !== null && String(area).trim()) details.area = String(area).trim();
   if (suburb !== undefined && suburb !== null && String(suburb).trim()) details.suburb = String(suburb).trim();
+  if (metro !== undefined && metro !== null && String(metro).trim()) details.metro = String(metro).trim();
   if (notes !== undefined && notes !== null && String(notes).trim()) details.notes = String(notes).trim();
 
   if (coordinates !== undefined && coordinates !== null && typeof coordinates === "object" && !Array.isArray(coordinates)) {
