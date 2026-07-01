@@ -932,6 +932,49 @@ async function syncMaterialOrderDeliveryFromRow(row, action, extra = {}) {
 }
 
 /**
+ * Resolve the courier child job id for a material order (DR link, parent storeOrders meta, job meta).
+ */
+async function resolveCourierJobIdForMaterialOrder(materialOrderId, hints = {}) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return "";
+
+  const hinted = hints.courierJobId ? String(hints.courierJobId).trim() : "";
+  if (hinted) return hinted;
+
+  const dr = await prisma.deliveryRequest.findFirst({
+    where: { materialOrderId: mid },
+    orderBy: { createdAt: "desc" },
+    select: { jobId: true },
+  });
+  if (dr?.jobId) return String(dr.jobId);
+
+  const mo = await prisma.materialOrder.findUnique({
+    where: { id: mid },
+    select: { jobId: true },
+  });
+  if (mo?.jobId) {
+    const { getJobMeta } = require("./jobMeta.service");
+    const meta = await getJobMeta(mo.jobId);
+    const storeOrder = Array.isArray(meta?.storeOrders)
+      ? meta.storeOrders.find((o) => String(o.orderId) === mid)
+      : null;
+    if (storeOrder?.courierJobId) return String(storeOrder.courierJobId);
+  }
+
+  const metaMatch = await prisma.job.findFirst({
+    where: {
+      status: { not: "CANCELLED" },
+      meta: { path: ["materialOrderId"], equals: mid },
+    },
+    select: { id: true },
+    orderBy: { createdAt: "desc" },
+  });
+  if (metaMatch?.id) return String(metaMatch.id);
+
+  return "";
+}
+
+/**
  * Cancel a material courier child job when the customer cancels delivery or switches provider.
  * Old courier sees the job in their Canceled requests inbox.
  */
@@ -953,6 +996,9 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
       orderBy: { createdAt: "desc" },
     });
     if (dr?.jobId) jobId = String(dr.jobId);
+    if (!jobId) {
+      jobId = await resolveCourierJobIdForMaterialOrder(materialOrderId, { courierJobId });
+    }
   } else if (jobId) {
     dr = await prisma.deliveryRequest.findFirst({ where: { jobId } });
   }
@@ -1337,6 +1383,7 @@ async function ensureMaterialCourierJobRequest(params) {
 
 module.exports = {
   createDeliveryRequest,
+  resolveCourierJobIdForMaterialOrder,
   cancelCourierDeliveryForCustomer,
   ensureMaterialCourierJobRequest,
   listDeliveryRequestsForCustomer,

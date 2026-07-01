@@ -183,6 +183,52 @@ async function testProviderToStoreCancelsCourier(prisma, fixtures) {
   const payload = mo.payload;
   assert.strictEqual(payload.deliveryType, "STORE_DELIVERY");
   assert.strictEqual(payload.delivery.type, "STORE");
+
+  const parentMeta = await getJobMeta(fixtures.parentJob.id);
+  const storeOrder = parentMeta.storeOrders.find((o) => String(o.orderId) === orderId);
+  assert.strictEqual(storeOrder.courierJobId, undefined, "parent storeOrders courierJobId should be cleared");
+}
+
+async function testCancelWithDetachedDeliveryRequestJobId(prisma, fixtures) {
+  const { orderId, courierJobId } = fixtures;
+  await prisma.deliveryRequest.update({
+    where: { id: fixtures.deliveryRequestId },
+    data: { jobId: null },
+  });
+
+  await materialOrderService.updateMaterialOrderDelivery(orderId, {
+    type: "SELF",
+    status: "SelfCollect",
+    fee: 0,
+  });
+
+  const courierJob = await prisma.job.findUnique({ where: { id: courierJobId } });
+  assert.strictEqual(courierJob.status, "CANCELLED", "should cancel via parent storeOrders courierJobId fallback");
+}
+
+async function testRepairStaleCourierJob(prisma, fixtures) {
+  const { orderId, courierJobId } = fixtures;
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: {
+      payload: {
+        materialsSubtotal: 500,
+        total: 500,
+        deliveryType: "STORE_DELIVERY",
+        deliveryFee: 0,
+        payment: { materialsPaid: true, deliveryPaid: false },
+        delivery: { type: "STORE", status: "PendingApproval", fee: 0 },
+      },
+    },
+  });
+
+  const result = await materialOrderService.repairStaleCourierJobsForMaterialOrder(orderId, {
+    notify: false,
+  });
+  assert.strictEqual(result.repaired, true);
+
+  const courierJob = await prisma.job.findUnique({ where: { id: courierJobId } });
+  assert.strictEqual(courierJob.status, "CANCELLED");
 }
 
 async function testCollectingBlocksDeliveryChange(prisma, fixtures) {
@@ -245,6 +291,17 @@ async function runDbIntegrationTests() {
     fixturesList.push(fixtures);
     await testProviderToStoreCancelsCourier(prisma, fixtures);
 
+    const detachedFixtures = await createFixtures(
+      prisma,
+      `${suffix}-detached`
+    );
+    fixturesList.push(detachedFixtures);
+    await testCancelWithDetachedDeliveryRequestJobId(prisma, detachedFixtures);
+
+    const repairFixtures = await createFixtures(prisma, `${suffix}-repair`);
+    fixturesList.push(repairFixtures);
+    await testRepairStaleCourierJob(prisma, repairFixtures);
+
     const collectingFixtures = await testCollectingBlocksDeliveryChange(prisma, fixtures);
     fixturesList.push(collectingFixtures);
 
@@ -257,7 +314,8 @@ async function runDbIntegrationTests() {
 
 async function main() {
   assert.strictEqual(typeof materialOrderService.updateMaterialOrderDelivery, "function");
-  assert.strictEqual(typeof materialOrderService.assertCourierNotCollectingForMaterialOrder, "function");
+  assert.strictEqual(typeof materialOrderService.repairStaleCourierJobsForMaterialOrder, "function");
+  assert.strictEqual(typeof materialOrderService.repairAllStaleCourierJobs, "function");
 
   if (process.env.DATABASE_URL) {
     await runDbIntegrationTests();

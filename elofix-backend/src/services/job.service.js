@@ -635,6 +635,20 @@ async function getMatchedJobsForProvider(userId) {
   const visibleJobs = [];
   for (const job of pendingJobs) {
     const meta = await getJobMeta(job.id);
+    if (meta?.courierFlow && meta?.materialOrderId) {
+      const mo = await prisma.materialOrder.findUnique({
+        where: { id: String(meta.materialOrderId) },
+        select: { payload: true },
+      });
+      const payload = mo?.payload && typeof mo.payload === "object" ? mo.payload : {};
+      const materialOrderService = require("./materialOrder.service");
+      if (!materialOrderService.isProviderDeliveryType(materialOrderService.resolvePayloadDeliveryType(payload))) {
+        materialOrderService
+          .repairStaleCourierJobsForMaterialOrder(String(meta.materialOrderId), { notify: false })
+          .catch((e) => console.error("getMatchedJobs repairStaleCourier", job.id, e));
+        continue;
+      }
+    }
     if (isPendingJobVisibleToProvider(job, userId, providerSkillsSet, meta)) {
       visibleJobs.push(job);
     }
@@ -780,9 +794,40 @@ async function getJobsForActor(userId, role) {
   }
   const out = [];
   for (const job of jobs) {
-    const meta = await getJobMeta(job.id);
+    let meta = await getJobMeta(job.id);
     if (role === "PROVIDER" && isDismissedFromProviderInbox(meta, userId)) {
       continue;
+    }
+    if (
+      role === "CUSTOMER" &&
+      meta?.courierFlow &&
+      meta?.materialOrderId &&
+      String(job.status) === "PENDING"
+    ) {
+      const mo = await prisma.materialOrder.findUnique({
+        where: { id: String(meta.materialOrderId) },
+        select: { payload: true },
+      });
+      const payload = mo?.payload && typeof mo.payload === "object" ? mo.payload : {};
+      const materialOrderService = require("./materialOrder.service");
+      if (
+        !materialOrderService.isProviderDeliveryType(
+          materialOrderService.resolvePayloadDeliveryType(payload)
+        )
+      ) {
+        await materialOrderService
+          .repairStaleCourierJobsForMaterialOrder(String(meta.materialOrderId), { notify: false })
+          .catch((e) => console.error("getJobsForActor repairStaleCourier", job.id, e));
+        const refreshed = await prisma.job.findUnique({
+          where: { id: job.id },
+          include: jobInclude,
+        });
+        if (refreshed) {
+          meta = await getJobMeta(job.id);
+          out.push(await finalizeJob(refreshed, meta));
+          continue;
+        }
+      }
     }
     out.push(await finalizeJob(job, meta));
   }

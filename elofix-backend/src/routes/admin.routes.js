@@ -25,6 +25,7 @@ router.post(
 router.get("/material-orders", asyncHandler(adminController.listAllPlatformMaterialOrders));
 router.get("/analytics", asyncHandler(adminController.getAnalytics));
 router.post("/payments/force-settle", asyncHandler(paymentController.adminForceSettle));
+router.post("/maintenance/repair-stale-courier-jobs", asyncHandler(adminController.repairStaleCourierJobs));
 
 router.get("/financial-summary", asyncHandler(adminController.getFinancialSummaryEndpoint));
 router.get("/commissions", asyncHandler(adminController.getCommissions));

@@ -201,6 +201,17 @@ export default function OrderDetails() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const invalidateJobsAfterDeliveryChange = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
+    if (user?.id) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.byUser(user.id) });
+    }
+    const parentJobId = order?.jobId || jobContext?.jobId;
+    if (parentJobId) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(parentJobId) });
+    }
+  };
+
   const [order, setOrder] = useState<NormalizedOrder | null>(null);
   const [jobContext, setJobContext] = useState<{ jobId: string; storeId: string } | null>(null);
   const [payDeliveryModalOpen, setPayDeliveryModalOpen] = useState(false);
@@ -558,6 +569,7 @@ export default function OrderDetails() {
       }
       toast({ title: 'Delivery cancelled', description: 'Delivery cancelled. You can choose a new delivery option.' });
       loadOrder();
+      invalidateJobsAfterDeliveryChange();
     } catch {
       toast({ title: 'Error', description: 'Failed to cancel delivery.', variant: 'destructive' });
     }
@@ -737,6 +749,7 @@ export default function OrderDetails() {
       toast({ title: 'Delivery option updated', description: 'Your delivery preference has been saved.' });
       setDeliveryChooserOpen(false);
       loadOrder();
+      invalidateJobsAfterDeliveryChange();
     } catch {
       toast({ title: 'Error', description: 'Failed to update delivery option.', variant: 'destructive' });
     }

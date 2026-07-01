@@ -570,6 +570,12 @@ async function rejectRefundRepayment(req, res) {
   res.json({ success: true, repayment: row });
 }
 
+async function repairStaleCourierJobs(req, res) {
+  const limit = req.body?.limit != null ? Number(req.body.limit) : 200;
+  const result = await materialOrderService.repairAllStaleCourierJobs({ limit });
+  res.json({ success: true, ...result });
+}
+
 module.exports = {
   listProviders,
   listProviderNetRevenues,
@@ -632,4 +638,5 @@ module.exports = {
   confirmRefundRepayment,
   rejectRefundRepayment,
   processAdminJobRefund,
+  repairStaleCourierJobs,
 };
