@@ -5,12 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getCurrentSession } from '@/lib/api/auth';
-import { getDefaultDashboardPath, resolvePostLoginPath } from '@/lib/postLoginRedirect';
-
-function getGoogleDefaultPath(role: string) {
-  if (role === 'provider') return '/provider/profile';
-  return getDefaultDashboardPath(role);
-}
+import { getDefaultDashboardPath } from '@/lib/postLoginRedirect';
 
 export default function GoogleCallback() {
   const [searchParams] = useSearchParams();
@@ -54,10 +49,7 @@ export default function GoogleCallback() {
 
       const existingSession = getCurrentSession();
       if (existingSession?.user && existingSession.token) {
-        navigate(
-          resolvePostLoginPath(existingSession.user.role, nextPath, getGoogleDefaultPath(existingSession.user.role)),
-          { replace: true },
-        );
+        navigate(getDefaultDashboardPath(existingSession.user.role), { replace: true });
         return;
       }
 
@@ -73,10 +65,9 @@ export default function GoogleCallback() {
               : 'You have successfully signed in with Google.',
         });
 
-        const destination = resolvePostLoginPath(user.role, nextPath, getGoogleDefaultPath(user.role));
         const isNewProviderRegister =
           searchParams.get('mode') === 'register' && user.role === 'provider';
-        navigate(destination, {
+        navigate(getDefaultDashboardPath(user.role), {
           replace: true,
           ...(isNewProviderRegister ? { state: { newProviderOnboarding: true } } : {}),
         });

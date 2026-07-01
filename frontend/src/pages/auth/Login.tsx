@@ -9,7 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
-import { resolvePostLoginPath } from '@/lib/postLoginRedirect';
+import { getDefaultDashboardPath } from '@/lib/postLoginRedirect';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -52,7 +52,7 @@ export default function Login() {
         title: 'Welcome back!',
         description: 'You have successfully logged in.',
       });
-      navigate(resolvePostLoginPath(loggedInUser.role, from), { replace: true });
+      navigate(getDefaultDashboardPath(loggedInUser.role), { replace: true });
     } catch (error) {
       toast({
         title: 'Login failed',
