@@ -23,6 +23,8 @@ import {
   getCustomerCourierTrackingBanner,
 } from '@/lib/customerCourierTracking';
 import { ensureSocketAuthAndConnect, socket } from '@/lib/socket';
+import { resolveLinkedMaterialOrderId } from '@/lib/resolveLinkedMaterialOrderId';
+import { useNavigate } from 'react-router-dom';
 
 function resolveCollectionPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
   if (dr.collectionPoint?.address?.trim()) return dr.collectionPoint;
@@ -74,6 +76,7 @@ export function JobDeliverySection({
 }: JobDeliverySectionProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [payModalOpen, setPayModalOpen] = useState(false);
 
   const collection = resolveCollectionPoint(job, deliveryRequest);
@@ -154,6 +157,8 @@ export function JobDeliverySection({
 
   const statusLabel = getCourierJobDisplayStatusLabel(job, deliveryRequest);
   const customerBanner = getCustomerCourierTrackingBanner(fs, job, deliveryRequest);
+  const linkedMaterialOrderId =
+    variant === 'user' ? resolveLinkedMaterialOrderId(job, deliveryRequest) : null;
 
   const wrapperClass = embedded
     ? cn('card-elevated border border-primary/25 p-4 sm:p-6 space-y-4', className)
@@ -266,10 +271,26 @@ export function JobDeliverySection({
       {items.length > 0 ? (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Items
-            </CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Package className="h-4 w-4" />
+                Items
+              </CardTitle>
+              {variant === 'user' && linkedMaterialOrderId ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 whitespace-nowrap"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/user/material-orders/${encodeURIComponent(linkedMaterialOrderId)}`);
+                  }}
+                >
+                  View order details
+                </Button>
+              ) : null}
+            </div>
           </CardHeader>
           <CardContent className="text-sm space-y-1">
             {items.map((item, i) => (
