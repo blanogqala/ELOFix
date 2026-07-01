@@ -8,6 +8,7 @@ import { AuthGuard } from "@/components/guards/AuthGuard";
 import { GoogleMapsProvider } from "@/components/map/GoogleMapsProvider";
 import { LoadingProvider } from "@/components/common/loading";
 import { OverlayLockGuard } from "@/components/common/OverlayLockGuard";
+import { ScrollToTop } from "@/components/common/ScrollToTop";
 
 // Public pages
 import Landing from "./pages/Landing";
@@ -127,6 +128,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <ScrollToTop />
           <OverlayLockGuard />
           <Routes>
             {/* Public Routes */}
