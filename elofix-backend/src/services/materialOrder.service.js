@@ -11,6 +11,7 @@ const paymentService = require("./payment.service");
 const branchService = require("./branch.service");
 const branchStaffNotificationService = require("./branchStaffNotification.service");
 const { assertCustomerNotBlocked } = require("./accountStatus.service");
+const { EN_ROUTE_COURIER_FULFILLMENT } = require("../utils/jobCancellationPolicy.util");
 
 async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
   const org = String(supplierOrgId || "").trim();
@@ -485,7 +486,7 @@ async function syncJobStoreOrderDeliveryFromMaterialOrder(row, payload) {
       const idx = list.findIndex((o) => String(o.orderId) === storeOrderId);
       if (idx < 0) return m;
       const prev = list[idx];
-      list[idx] = {
+      const nextOrder = {
         ...prev,
         deliveryType,
         deliveryFee,
@@ -503,6 +504,10 @@ async function syncJobStoreOrderDeliveryFromMaterialOrder(row, payload) {
           deliveryPaid,
         },
       };
+      if (deliveryType !== "PROVIDER") {
+        delete nextOrder.courierJobId;
+      }
+      list[idx] = nextOrder;
       return { ...m, storeOrders: list };
     });
   } catch (e) {
@@ -837,12 +842,23 @@ function resolveEffectiveDeliveryStatus(moPayload, dr, courierJob, moFulfillment
 async function reconcileMaterialOrderWithDeliveryContext(row, base, deliveryRequestRow) {
   if (!deliveryRequestRow) return base;
 
+  const deliveryType = String(row.deliveryType || base.deliveryType || "").toUpperCase();
+  const drCancelled = String(deliveryRequestRow.status || "").toLowerCase() === "cancelled";
+
   let courierJob = null;
   if (deliveryRequestRow.jobId) {
     courierJob = await prisma.job.findUnique({
       where: { id: String(deliveryRequestRow.jobId) },
       select: { id: true, status: true },
     });
+  }
+  const jobCancelled = courierJob && String(courierJob.status) === "CANCELLED";
+  if (
+    deliveryRequestRow.jobId &&
+    deliveryType === "DELIVERY_PROVIDER" &&
+    !drCancelled &&
+    !jobCancelled
+  ) {
     base.courierJobId = String(deliveryRequestRow.jobId);
   }
 
@@ -882,7 +898,6 @@ async function reconcileMaterialOrderWithDeliveryContext(row, base, deliveryRequ
     base.deliveryStatus = "out_for_delivery";
   }
 
-  const deliveryType = String(row.deliveryType || base.deliveryType || "").toUpperCase();
   const needsRepair =
     deliveryType === "DELIVERY_PROVIDER" &&
     (effectivePaid !== moPaid || effectiveStatus !== currentStatus || (drFee != null && drFee !== Number(base.deliveryFee ?? 0)));
@@ -1191,7 +1206,35 @@ async function ensureCourierJobForMaterialOrder(materialOrderId) {
   return { courierJobId };
 }
 
-function assertDeliveryChangeAllowed(row, current, updates = {}) {
+function resolvePayloadDeliveryType(payload) {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const fromDelivery = String(p.delivery?.type || "").toUpperCase();
+  if (fromDelivery) return fromDelivery;
+  const canonical = String(p.deliveryType || "").toUpperCase();
+  if (canonical === "DELIVERY_PROVIDER") return "PROVIDER";
+  if (canonical === "STORE_DELIVERY") return "STORE";
+  return "SELF";
+}
+
+async function assertCourierNotCollectingForMaterialOrder(materialOrderId) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return;
+  const dr = await prisma.deliveryRequest.findFirst({
+    where: { materialOrderId: mid },
+    orderBy: { createdAt: "desc" },
+    select: { fulfillmentStatus: true },
+  });
+  if (!dr) return;
+  const fs = String(dr.fulfillmentStatus || "").toUpperCase();
+  if (EN_ROUTE_COURIER_FULFILLMENT.has(fs)) {
+    throw new AppError(
+      "Delivery option cannot be changed after the provider has started collecting",
+      409
+    );
+  }
+}
+
+async function assertDeliveryChangeAllowed(row, current, updates = {}, orderId = null) {
   if (updates.status && normalizeDeliveryStatus(updates.status) === "Cancelled") return;
   const fulfillment = String(row.fulfillmentStatus || current.fulfillmentStatus || "").toUpperCase();
   if (["OUT_FOR_DELIVERY", "COMPLETED", "CANCELLED"].includes(fulfillment)) {
@@ -1204,6 +1247,12 @@ function assertDeliveryChangeAllowed(row, current, updates = {}) {
   if (current.payment?.deliveryPaid === true && updates.type) {
     throw new AppError("Cancel or refund delivery payment before changing delivery option", 409);
   }
+  const isProviderContext =
+    resolvePayloadDeliveryType(current) === "PROVIDER" ||
+    String(row.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER";
+  if (isProviderContext && orderId && updates.type != null) {
+    await assertCourierNotCollectingForMaterialOrder(orderId);
+  }
 }
 
 async function updateMaterialOrderDelivery(orderId, updates = {}) {
@@ -1211,6 +1260,7 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
   const prevPayload =
     rowBefore?.payload && typeof rowBefore.payload === "object" ? rowBefore.payload : {};
   const prevProviderId = prevPayload.deliveryProviderId || prevPayload.delivery?.providerId;
+  const prevDeliveryType = resolvePayloadDeliveryType(prevPayload);
 
   const result = await prisma.$transaction(
     async (tx) => {
@@ -1219,7 +1269,7 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
         throw new AppError("Material order not found", 404);
       }
       const current = row.payload;
-      assertDeliveryChangeAllowed(row, current, updates);
+      await assertDeliveryChangeAllowed(row, current, updates, orderId);
       const prevDeliveryType = String(current.delivery?.type || "").toUpperCase();
       const nextTypeRaw = updates.type != null ? String(updates.type).toUpperCase() : prevDeliveryType;
       const typeChanging = updates.type != null && nextTypeRaw !== prevDeliveryType;
@@ -1299,8 +1349,15 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
   const isProviderDelivery =
     String(result.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER" ||
     String(prevPayload.deliveryType || "").toUpperCase() === "DELIVERY_PROVIDER";
+  const nextTypeRaw =
+    updates.type != null ? String(updates.type).toUpperCase() : prevDeliveryType;
+  const leftProviderDelivery =
+    updates.type != null &&
+    nextTypeRaw !== prevDeliveryType &&
+    prevDeliveryType === "PROVIDER" &&
+    nextTypeRaw !== "PROVIDER";
 
-  if (isCancelled || (providerChanged && isProviderDelivery)) {
+  if (isCancelled || (providerChanged && isProviderDelivery) || leftProviderDelivery) {
     try {
       const deliveryRequestService = require("./deliveryRequest.service");
       if (isCancelled) {
@@ -1308,11 +1365,16 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
           materialOrderId: orderId,
           source: "customer_cancel",
         });
-      } else {
+      } else if (providerChanged && isProviderDelivery) {
         await deliveryRequestService.cancelCourierDeliveryForCustomer({
           materialOrderId: orderId,
           source: "customer_changed_provider",
           resetDeliveryRequest: true,
+        });
+      } else if (leftProviderDelivery) {
+        await deliveryRequestService.cancelCourierDeliveryForCustomer({
+          materialOrderId: orderId,
+          source: "customer_changed_delivery_option",
         });
       }
     } catch (e) {
@@ -3908,6 +3970,7 @@ module.exports = {
   syncJobStoreCourierDeliveryRequest,
   ensureCourierJobForMaterialOrder,
   resolveCourierUserId,
+  assertCourierNotCollectingForMaterialOrder,
   resolveBranchForCourierDelivery,
   resolveCourierDeliveryGeoPoints,
   getJobMaterialOrdersForJob,

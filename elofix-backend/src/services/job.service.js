@@ -1616,7 +1616,7 @@ async function getCancelledRequestsForProvider(providerUserId) {
     const frontendStatus = toFrontendStatus(job.status, meta);
     if (frontendStatus !== "CANCELLED") continue;
     const source = String(meta.cancellationSource || "");
-    if (!["customer_cancel", "customer_changed_provider"].includes(source)) continue;
+    if (!["customer_cancel", "customer_changed_provider", "customer_changed_delivery_option"].includes(source)) continue;
     results.push(await finalizeJob(job, meta));
   }
   results.sort((a, b) => {
@@ -1638,7 +1638,7 @@ async function deleteCancelledRequestFromProviderView(jobId, actorUserId) {
     throw new AppError("Only cancelled requests can be removed", 400);
   }
   const source = String(meta.cancellationSource || "");
-  if (!["customer_cancel", "customer_changed_provider"].includes(source)) {
+  if (!["customer_cancel", "customer_changed_provider", "customer_changed_delivery_option"].includes(source)) {
     throw new AppError("Only customer-cancelled delivery requests can be removed", 400);
   }
   if (String(job.providerId || "") !== String(actorUserId)) {
@@ -2331,6 +2331,34 @@ async function setStoreDeliveryOption(jobId, storeId, params, customerUserId) {
     if (openMo) existingMaterialOrderId = String(openMo.id);
   }
 
+  const metaBefore = await getJobMeta(jobId);
+  let storeOrderBefore = null;
+  if (wantOrderId && Array.isArray(metaBefore?.storeOrders)) {
+    storeOrderBefore = metaBefore.storeOrders.find(
+      (o) => String(o.orderId) === wantOrderId && String(o.storeId) === String(storeId)
+    );
+  }
+  if (!storeOrderBefore && Array.isArray(metaBefore?.storeOrders)) {
+    const forStore = metaBefore.storeOrders.filter((o) => String(o.storeId) === String(storeId));
+    storeOrderBefore =
+      forStore.find((o) => o.payment?.materialsPaid === true) ||
+      forStore.filter((o) => !o.payment?.materialsPaid).pop() ||
+      forStore[forStore.length - 1];
+  }
+  const prevDeliveryType = storeOrderBefore?.deliveryType || null;
+  const prevMaterialOrderId = String(
+    storeOrderBefore?.orderId || existingMaterialOrderId || ""
+  ).trim();
+
+  const materialOrderService = require("./materialOrder.service");
+  if (
+    prevDeliveryType === "PROVIDER" &&
+    params.deliveryType !== prevDeliveryType &&
+    prevMaterialOrderId
+  ) {
+    await materialOrderService.assertCourierNotCollectingForMaterialOrder(prevMaterialOrderId);
+  }
+
   const meta = await mutateJobMeta(jobId, (m) => {
     const materialForStore = Array.isArray(job.materials)
       ? job.materials.find(
@@ -2507,6 +2535,54 @@ async function setStoreDeliveryOption(jobId, storeId, params, customerUserId) {
       });
     }
   }
+
+  const moSyncId = String(resolvedStoreOrderId || prevMaterialOrderId || "").trim();
+  if (moSyncId && prevDeliveryType !== params.deliveryType) {
+    const moRow = await prisma.materialOrder.findUnique({ where: { id: moSyncId } });
+    if (moRow) {
+      if (prevDeliveryType === "PROVIDER" && params.deliveryType !== "PROVIDER") {
+        await materialOrderService.updateMaterialOrderDelivery(moSyncId, {
+          type: params.deliveryType,
+          status: params.deliveryType === "SELF" ? "SelfCollect" : "PendingApproval",
+          fee: coerceNumber(params.deliveryFee),
+        });
+      } else if (params.deliveryType !== "PROVIDER") {
+        await materialOrderService.updateMaterialOrderDelivery(moSyncId, {
+          type: params.deliveryType,
+          status: params.deliveryType === "SELF" ? "SelfCollect" : "PendingApproval",
+          fee: coerceNumber(params.deliveryFee),
+        });
+      }
+      const refreshedJob = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+      const refreshedMeta = await getJobMeta(jobId);
+      return await finalizeJob(refreshedJob, refreshedMeta);
+    }
+    if (prevDeliveryType === "PROVIDER" && params.deliveryType !== "PROVIDER") {
+      const deliveryRequestService = require("./deliveryRequest.service");
+      await deliveryRequestService.cancelCourierDeliveryForCustomer({
+        materialOrderId: moSyncId || undefined,
+        courierJobId: storeOrderBefore?.courierJobId || undefined,
+        source: "customer_changed_delivery_option",
+      });
+      if (storeOrderBefore?.courierJobId) {
+        await mutateJobMeta(jobId, (m) => {
+          const list = Array.isArray(m.storeOrders) ? [...m.storeOrders] : [];
+          const idx = list.findIndex((o) => String(o.orderId) === moSyncId);
+          if (idx >= 0) {
+            const next = { ...list[idx] };
+            delete next.courierJobId;
+            list[idx] = next;
+            m.storeOrders = list;
+          }
+          return m;
+        });
+      }
+      const refreshedJob = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+      const refreshedMeta = await getJobMeta(jobId);
+      return await finalizeJob(refreshedJob, refreshedMeta);
+    }
+  }
+
   return enriched;
 }
 

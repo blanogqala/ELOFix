@@ -968,7 +968,9 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
   const cancellationReason =
     source === "customer_changed_provider"
       ? "Customer chose another courier"
-      : "Customer cancelled delivery";
+      : source === "customer_changed_delivery_option"
+        ? "Customer changed delivery option"
+        : "Customer cancelled delivery";
 
   await prisma.job.update({
     where: { id: jobId },
