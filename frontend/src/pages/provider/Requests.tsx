@@ -19,8 +19,8 @@ import {
 } from 'lucide-react';
 import { DeleteRejectedRequestDialog } from '@/components/jobs/DeleteRejectedRequestDialog';
 import { cn } from '@/lib/utils';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
+import { ProviderRequestCard } from '@/components/jobs/ProviderRequestCard';
 
 export default function ProviderRequests() {
   const { user } = useAuth();
@@ -96,116 +96,7 @@ export default function ProviderRequests() {
     return job.cancellationReason || 'Customer cancelled delivery';
   };
 
-  const RequestCard = ({
-    job,
-    showRejection = false,
-    showCancellation = false,
-  }: {
-    job: Job;
-    showRejection?: boolean;
-    showCancellation?: boolean;
-  }) => (
-    <div
-      className="card-elevated cursor-pointer p-4 transition-shadow hover:shadow-lg sm:p-6"
-      onClick={() => navigate(`/provider/requests/${job.id}`)}
-    >
-      <div className="flex flex-col gap-4 sm:flex-row">
-        {/* Thumbnail */}
-        <div className="flex aspect-video w-full shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted sm:aspect-square sm:h-24 sm:w-24">
-          {job.images[0] ? (
-            <img src={resolveUploadUrl(job.images[0])} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <ClipboardList className="h-8 w-8 text-muted-foreground" />
-          )}
-        </div>
-
-        {/* Details */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <h3 className="font-semibold">{job.categoryName}</h3>
-            {job.courierFlow ? (
-              <Badge variant="outline" className="text-xs">Delivery</Badge>
-            ) : null}
-            <Badge variant="secondary" className="text-xs">#{job.id.slice(-8)}</Badge>
-          </div>
-          <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{job.description}</p>
-          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <User className="h-3 w-3" /> {job.userName}
-            </span>
-            {job.courierFlow ? (
-              <span className="flex items-center gap-1">
-                <Package className="h-3 w-3" /> Delivery / moving
-              </span>
-            ) : (
-              <span className="flex items-center gap-1">
-                <Package className="h-3 w-3" /> {job.materials?.length ?? 0} materials
-              </span>
-            )}
-            <span className="flex items-center gap-1">
-              <Calendar className="h-3 w-3" /> {new Date(job.createdAt).toLocaleDateString()}
-            </span>
-          </div>
-
-          {showRejection && job.rejectionReason && (
-            <div className="mt-3 p-2 bg-destructive/10 rounded text-sm">
-              <span className="font-medium text-destructive">Reason: </span>
-              <span className="text-muted-foreground">{job.rejectionReason.replace(/_/g, ' ')}</span>
-              {job.rejectionDetails && (
-                <p className="text-xs text-muted-foreground mt-1">{job.rejectionDetails}</p>
-              )}
-            </div>
-          )}
-          {showCancellation && (
-            <div className="mt-3 p-2 bg-muted rounded text-sm">
-              <span className="font-medium text-muted-foreground">Cancelled: </span>
-              <span>{cancellationLabel(job)}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Estimate & Actions */}
-        <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end sm:text-right">
-          <p className="text-lg font-bold text-primary tabular-nums">
-            {getProviderJobPriceDisplay(job).text}
-          </p>
-          {showRejection ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
-              onClick={e => { e.stopPropagation(); setJobToDelete(job); setDeleteDialogOpen(true); }}
-            >
-              <Trash2 className="mr-1 h-4 w-4" /> Delete
-            </Button>
-          ) : showCancellation ? (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 w-full whitespace-nowrap sm:w-auto"
-                onClick={e => { e.stopPropagation(); navigate(`/provider/requests/${job.id}`); }}
-              >
-                View
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
-                onClick={e => { e.stopPropagation(); setJobToDelete(job); setDeleteCancelledDialogOpen(true); }}
-              >
-                <Trash2 className="mr-1 h-4 w-4" /> Delete
-              </Button>
-            </>
-          ) : (
-            <Button variant="outline" size="sm" className="h-9 w-full whitespace-nowrap sm:w-auto" onClick={e => { e.stopPropagation(); navigate(`/provider/requests/${job.id}`); }}>
-              View Details
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  // Card UI extracted to `ProviderRequestCard` for reuse in Active Jobs → Pending.
 
   const SkeletonCards = () => (
     <div className="space-y-4">
@@ -260,7 +151,9 @@ export default function ProviderRequests() {
           <TabsContent value="pending">
             {isLoading ? <SkeletonCards /> : pendingJobs.length > 0 ? (
               <div className="space-y-4">
-                {pendingJobs.map(job => <RequestCard key={job.id} job={job} />)}
+                {pendingJobs.map(job => (
+                  <ProviderRequestCard key={job.id} job={job} variant="pending" />
+                ))}
               </div>
             ) : (
               <div className="card-elevated p-12 text-center">
@@ -278,7 +171,27 @@ export default function ProviderRequests() {
           <TabsContent value="rejected">
             {isLoading ? <SkeletonCards /> : rejectedJobs.length > 0 ? (
               <div className="space-y-4">
-                {rejectedJobs.map(job => <RequestCard key={job.id} job={job} showRejection />)}
+                {rejectedJobs.map(job => (
+                  <ProviderRequestCard
+                    key={job.id}
+                    job={job}
+                    variant="rejected"
+                    actions={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setJobToDelete(job);
+                          setDeleteDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="mr-1 h-4 w-4" /> Delete
+                      </Button>
+                    }
+                  />
+                ))}
               </div>
             ) : (
               <div className="card-elevated p-12 text-center">
@@ -297,7 +210,38 @@ export default function ProviderRequests() {
             {isLoading ? <SkeletonCards /> : cancelledJobs.length > 0 ? (
               <div className="space-y-4">
                 {cancelledJobs.map(job => (
-                  <RequestCard key={job.id} job={job} showCancellation />
+                  <ProviderRequestCard
+                    key={job.id}
+                    job={job}
+                    variant="cancelled"
+                    actions={
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 w-full whitespace-nowrap sm:w-auto"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/provider/requests/${job.id}`);
+                          }}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setJobToDelete(job);
+                            setDeleteCancelledDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="mr-1 h-4 w-4" /> Delete
+                        </Button>
+                      </>
+                    }
+                  />
                 ))}
               </div>
             ) : (

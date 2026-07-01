@@ -28,6 +28,7 @@ import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
+import { ProviderRequestCard } from '@/components/jobs/ProviderRequestCard';
 
 type JobsView = 'jobs' | 'disputes';
 
@@ -339,6 +340,17 @@ export default function ProviderActiveJobs() {
               <div className="divide-y divide-border">
                 {groupedEntries.map((entry) => renderEntry(entry))}
               </div>
+            </div>
+          ) : jobsView === 'jobs' && filter === 'pending' ? (
+            <div className="space-y-4">
+              {filtered.map((job) => (
+                <ProviderRequestCard
+                  key={job.id}
+                  job={job}
+                  variant="pending"
+                  onClick={() => navigate(`/provider/requests/${job.id}`)}
+                />
+              ))}
             </div>
           ) : (
             <div className="space-y-4">{groupedEntries.map((entry) => renderEntry(entry))}</div>
