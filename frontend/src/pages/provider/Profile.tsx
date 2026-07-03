@@ -88,7 +88,7 @@ export default function ProviderProfile() {
   const { user, refreshProfile } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const { isApproved, isProfileComplete, isBlocked } = useProviderStatus();
+  const { isApproved, isProfileComplete, isBlocked, isRejected, awaitingApproval } = useProviderStatus();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const workPostImageInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -689,7 +689,7 @@ export default function ProviderProfile() {
     }
   };
 
-  /** Badge priority: blocked → incomplete → pending approval → active */
+  /** Badge priority: blocked → incomplete → rejected → pending approval → active */
   const renderStatusBadge = () => {
     if (isBlocked) {
       return (
@@ -712,6 +712,13 @@ export default function ProviderProfile() {
         </Badge>
       );
     }
+    if (isRejected) {
+      return (
+        <Badge className="shrink-0 border-destructive/40 bg-destructive/15 text-destructive">
+          Rejected
+        </Badge>
+      );
+    }
     return (
       <Badge className="shrink-0 border-amber-400/50 bg-amber-400/20 text-amber-950 dark:text-amber-100">
         Pending Approval
@@ -720,10 +727,29 @@ export default function ProviderProfile() {
   };
 
   const smartBanner = () => {
-    if (isProfileComplete && !isApproved) {
+    if (isRejected) {
+      return (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          Your application was rejected.
+          {provider?.rejectionReason ? (
+            <span className="block mt-1 text-foreground">
+              Reason: {provider.rejectionReason}
+            </span>
+          ) : null}{' '}
+          <button
+            type="button"
+            className="mt-2 font-medium text-primary underline underline-offset-2"
+            onClick={() => navigate('/provider/notifications')}
+          >
+            View notifications
+          </button>
+        </div>
+      );
+    }
+    if (awaitingApproval) {
       return (
         <div className="rounded-lg border border-border bg-muted/60 px-4 py-3 text-sm text-muted-foreground">
-          Your profile is under review. You&apos;ll be notified once approved.
+          You have submitted your application to the admin. Please wait for approval.
         </div>
       );
     }

@@ -154,8 +154,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const queryClient = useQueryClient();
-  const { isApproved, isProfileComplete } = useProviderStatus();
+  const { isApproved, isProfileComplete, isRejected, awaitingApproval } = useProviderStatus();
   const isProfileBlocked = Boolean(user && 'blocked' in user && user.blocked);
+
+  const isProviderExemptRoute =
+    location.pathname === '/provider/profile' || location.pathname === '/provider/notifications';
+
+  const providerOverlayState: 'incomplete' | 'awaiting' | 'rejected' | null = useMemo(() => {
+    if (user?.role !== 'provider' || isProfileBlocked || isApproved) return null;
+    if (!isProfileComplete) return 'incomplete';
+    if (isRejected) return 'rejected';
+    if (awaitingApproval) return 'awaiting';
+    return 'incomplete';
+  }, [user?.role, isProfileBlocked, isApproved, isProfileComplete, isRejected, awaitingApproval]);
 
   const notificationsHref = useMemo(() => notificationsPathForRole(user?.role), [user?.role]);
 
@@ -199,13 +210,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     };
     const refreshAuthOnAccountChange = (notification?: { type?: string }) => {
       refreshUnread();
+      const type = notification?.type;
+      const isAccountBlockChange = type === 'account_unblocked' || type === 'account_blocked';
+      const isProviderStatusChange =
+        type === 'provider_approved' ||
+        type === 'provider_application_rejected' ||
+        type === 'provider_application_submitted';
+
       if (
-        user.role === 'provider' &&
-        (notification?.type === 'account_unblocked' ||
-          notification?.type === 'account_blocked' ||
-          notification?.type === 'provider_approved')
+        (user.role === 'provider' && (isAccountBlockChange || isProviderStatusChange)) ||
+        (user.role === 'user' && isAccountBlockChange)
       ) {
-        void refreshProfile();
+        void refreshProfile().then(() => {
+          if (user.role === 'provider') {
+            void queryClient.invalidateQueries({ queryKey: ['provider', 'profile', user.id] });
+          }
+        });
       }
     };
 
@@ -225,28 +245,32 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }, [queryClient, refreshProfile, user?.id, user?.role]);
 
   useEffect(() => {
-    if (user?.role !== 'provider') return;
+    if (user?.role !== 'provider' && user?.role !== 'user') return;
 
-    const refreshProviderProfile = () => {
+    const refreshOnFocus = () => {
       if (document.visibilityState === 'visible') {
-        void refreshProfile();
+        void refreshProfile().then(() => {
+          if (user.role === 'provider') {
+            void queryClient.invalidateQueries({ queryKey: ['provider', 'profile', user.id] });
+          }
+        });
       }
     };
 
-    window.addEventListener('focus', refreshProviderProfile);
-    document.addEventListener('visibilitychange', refreshProviderProfile);
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnFocus);
 
     return () => {
-      window.removeEventListener('focus', refreshProviderProfile);
-      document.removeEventListener('visibilitychange', refreshProviderProfile);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
     };
-  }, [refreshProfile, user?.role]);
+  }, [queryClient, refreshProfile, user?.id, user?.role]);
 
   const showInactiveProviderOverlay =
     user?.role === 'provider' &&
-    location.pathname !== '/provider/profile' &&
+    !isProviderExemptRoute &&
     !isProfileBlocked &&
-    (!isProfileComplete || !isApproved);
+    providerOverlayState !== null;
 
   const [adminGroupOpen, setAdminGroupOpen] = useState<Record<string, boolean>>({});
 
@@ -546,17 +570,51 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <div className="pointer-events-none select-none opacity-[0.38]">{children}</div>
                 <div className="absolute inset-0 z-50 flex items-center justify-center p-4 sm:p-8 bg-background/75 backdrop-blur-[2px]">
                   <div className="card-elevated max-w-md w-full border border-border bg-card p-6 shadow-lg text-center space-y-4">
-                    <AlertCircle className="h-12 w-12 text-amber-500 mx-auto" aria-hidden />
+                    <AlertCircle
+                      className={cn(
+                        'h-12 w-12 mx-auto',
+                        providerOverlayState === 'rejected'
+                          ? 'text-destructive'
+                          : 'text-amber-500'
+                      )}
+                      aria-hidden
+                    />
                     <div>
-                      <p className="font-semibold text-lg">Complete your profile and get approved</p>
-                      <p className="text-sm text-muted-foreground mt-2">
-                        Complete your profile and get approved to access this feature. You can still move around the app — open your profile to finish setup.
-                      </p>
+                      {providerOverlayState === 'incomplete' && (
+                        <>
+                          <p className="font-semibold text-lg">Complete your profile and get approved</p>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Complete your profile and get approved to access this feature. You can still move around the app — open your profile to finish setup.
+                          </p>
+                        </>
+                      )}
+                      {providerOverlayState === 'awaiting' && (
+                        <>
+                          <p className="font-semibold text-lg">Your application is under review</p>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            You have submitted your application to the admin. Please wait for approval. Check your notifications for updates.
+                          </p>
+                        </>
+                      )}
+                      {providerOverlayState === 'rejected' && (
+                        <>
+                          <p className="font-semibold text-lg">Your application was rejected</p>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Your provider application was not approved. Open notifications to see the reason and next steps.
+                          </p>
+                        </>
+                      )}
                     </div>
                     <Button asChild className="w-full sm:w-auto">
-                      <Link to="/provider/profile" onClick={() => setSidebarOpen(false)}>
-                        Go to Profile
-                      </Link>
+                      {providerOverlayState === 'incomplete' ? (
+                        <Link to="/provider/profile" onClick={() => setSidebarOpen(false)}>
+                          Go to Profile
+                        </Link>
+                      ) : (
+                        <Link to="/provider/notifications" onClick={() => setSidebarOpen(false)}>
+                          View Notifications
+                        </Link>
+                      )}
                     </Button>
                   </div>
                 </div>

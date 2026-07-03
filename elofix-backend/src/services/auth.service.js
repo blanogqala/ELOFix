@@ -260,6 +260,17 @@ async function login(body, auditContext = {}) {
     newValue: { role: user.role },
   });
 
+  if (user.role === "PROVIDER") {
+    const profile = await providerService.getProviderByUserId(user.id);
+    return {
+      user: {
+        ...profile,
+        role: "PROVIDER",
+      },
+      token,
+    };
+  }
+
   return { user: safe, token };
 }
 

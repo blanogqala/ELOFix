@@ -30,6 +30,7 @@ import {
   LifeBuoy,
   ArrowLeft,
   Send,
+  Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -129,6 +130,10 @@ function navigateForNotification(n: AppNotification, role: UserRole, navigate: N
     navigate('/provider/profile');
     return;
   }
+  if (n.type === 'provider_application_submitted' || n.type === 'provider_application_rejected') {
+    if (role === 'provider') navigate('/provider/notifications');
+    return;
+  }
   if (n.type === 'category_suggestion') {
     navigate('/admin/categories');
     return;
@@ -158,6 +163,7 @@ function getNotificationIcon(type: AppNotification['type']) {
     case 'job_completed':
       return <CheckCircle className="h-4 w-4 text-success" />;
     case 'provider_rejected':
+    case 'provider_application_rejected':
       return <XCircle className="h-4 w-4 text-destructive" />;
     case 'material_paid':
     case 'payment_made':
@@ -179,6 +185,8 @@ function getNotificationIcon(type: AppNotification['type']) {
       return <Truck className="h-4 w-4 text-primary" />;
     case 'provider_approved':
       return <CheckCircle className="h-4 w-4 text-success" />;
+    case 'provider_application_submitted':
+      return <Clock className="h-4 w-4 text-amber-600" />;
     case 'category_suggestion':
       return <Tags className="h-4 w-4 text-accent" />;
     case 'support_contact':

@@ -1,6 +1,7 @@
 import apiClient from '@/api/client';
 import { Provider, JobLocation } from '@/types';
 import type { ProviderDocType } from '@/lib/providerDocuments';
+import { isProviderAwaitingApproval } from '@/lib/providerAccountStatus';
 
 interface ProvidersResponse {
   success: boolean;
@@ -37,7 +38,7 @@ export async function getApprovedProviders(): Promise<Provider[]> {
 
 export async function getPendingProviders(): Promise<Provider[]> {
   const providers = await getAdminProviders();
-  return providers.filter((p) => !p.approved && !p.blocked);
+  return providers.filter((p) => isProviderAwaitingApproval(p));
 }
 
 export async function getProviderById(id: string): Promise<Provider | null> {

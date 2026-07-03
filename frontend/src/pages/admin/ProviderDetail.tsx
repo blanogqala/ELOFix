@@ -52,6 +52,12 @@ import {
   type ProviderDocType,
 } from '@/lib/providerDocuments';
 import {
+  canAdminActOnProviderApplication,
+  getProviderAccountStatus,
+  getProviderAccountStatusBadgeClass,
+  getProviderAccountStatusLabel,
+} from '@/lib/providerAccountStatus';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -257,9 +263,7 @@ export default function AdminProviderDetail() {
 
   const getAccountStatus = () => {
     if (!provider) return '';
-    if (provider.blocked) return 'Blocked';
-    if (provider.approved) return 'Approved';
-    return 'Pending';
+    return getProviderAccountStatusLabel(getProviderAccountStatus(provider));
   };
 
   const canApproveAccount = (p: Provider) => adminCanApproveProviderAccount(p);
@@ -437,11 +441,10 @@ export default function AdminProviderDetail() {
 
   const serviceNames = getCategoryNames(provider.skills);
   const pendingServiceSuggestions = provider.pendingSuggestions || [];
-  const statusClass = provider.blocked
-    ? 'status-cancelled'
-    : provider.approved
-      ? 'status-completed'
-      : 'status-assigned';
+  const statusClass = getProviderAccountStatusBadgeClass(getProviderAccountStatus(provider)).replace(
+    'status-badge ',
+    ''
+  );
 
   return (
     <DashboardLayout>
@@ -515,7 +518,12 @@ export default function AdminProviderDetail() {
                     variant="outline"
                     className="h-8 px-3 text-xs"
                     onClick={() => setRejectModalOpen(true)}
-                    disabled={isMutating}
+                    disabled={isMutating || !canAdminActOnProviderApplication(provider)}
+                    title={
+                      !canAdminActOnProviderApplication(provider)
+                        ? 'Provider must complete their profile and submit for review before you can reject'
+                        : undefined
+                    }
                   >
                     <X className="mr-1 h-3 w-3" />
                     Reject

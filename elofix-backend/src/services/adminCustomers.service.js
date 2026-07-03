@@ -420,6 +420,8 @@ async function unblockCustomerByUserId(userId, auditOpts = {}) {
     ipAddress: auditOpts.ipAddress,
     deviceFingerprint: auditOpts.deviceFingerprint,
   });
+  const notificationEvents = require("./notificationEvents.service");
+  await notificationEvents.notifyAccountUnblocked(userId);
   return getCustomerById(userId);
 }
 

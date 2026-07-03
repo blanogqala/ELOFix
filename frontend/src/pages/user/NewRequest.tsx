@@ -1,9 +1,12 @@
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
+import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 import { Wrench, ShoppingCart, ArrowRight } from 'lucide-react';
 
 export default function NewRequest() {
   const navigate = useNavigate();
+  const { dialogProps, guardAction } = useBlockedActionGuard();
 
   return (
     <DashboardLayout>
@@ -15,7 +18,7 @@ export default function NewRequest() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
           <div
-            onClick={() => navigate('/user/request/service')}
+            onClick={() => guardAction(() => navigate('/user/request/service'))}
             className="card-elevated group cursor-pointer p-6 transition-all hover:border-primary/40 sm:p-8"
           >
             <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 transition-colors group-hover:bg-primary/20 sm:h-16 sm:w-16">
@@ -32,7 +35,7 @@ export default function NewRequest() {
           </div>
 
           <div
-            onClick={() => navigate('/user/order-materials')}
+            onClick={() => guardAction(() => navigate('/user/order-materials'))}
             className="card-elevated group cursor-pointer p-6 transition-all hover:border-accent/40 sm:p-8"
           >
             <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10 transition-colors group-hover:bg-accent/20 sm:h-16 sm:w-16">
@@ -49,6 +52,7 @@ export default function NewRequest() {
           </div>
         </div>
       </div>
+      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

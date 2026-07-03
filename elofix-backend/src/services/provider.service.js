@@ -774,15 +774,20 @@ async function updateProviderForUser(requestUserId, body) {
   if (data.submitForReview === true) {
     const fresh = await prisma.provider.findUnique({
       where: { id: profileRowId },
-      select: { profileCompleted: true },
+      select: { profileCompleted: true, rejectionReason: true, rejectedAt: true },
     });
     if (!fresh?.profileCompleted) {
       throw new AppError("Complete your profile before submitting for review", 400);
     }
     await prisma.provider.update({
       where: { id: profileRowId },
-      data: { reviewSubmittedAt: new Date() },
+      data: {
+        reviewSubmittedAt: new Date(),
+        rejectionReason: null,
+        rejectedAt: null,
+      },
     });
+    await notificationEvents.notifyProviderApplicationSubmitted(requestUserId);
   }
 
   return getProviderByUserId(requestUserId);
@@ -1356,7 +1361,11 @@ async function approveProviderByUserId(targetUserId, auditOpts = {}) {
 
   await prisma.provider.update({
     where: { id: profile.id },
-    data: { approved: true },
+    data: {
+      approved: true,
+      rejectionReason: null,
+      rejectedAt: null,
+    },
   });
 
   await notificationEvents.notifyProviderApproved(targetUserId);
@@ -1381,14 +1390,25 @@ async function rejectProviderByUserId(targetUserId, reason, auditOpts = {}) {
     throw new AppError("Provider not found", 404);
   }
 
+  if (!profile.profileCompleted) {
+    throw new AppError("Cannot reject: provider profile is not complete", 400);
+  }
+  if (!profile.reviewSubmittedAt) {
+    throw new AppError("Cannot reject: provider has not submitted their application for review", 400);
+  }
+
+  const trimmedReason = String(reason || "").trim() || null;
+
   await prisma.provider.update({
     where: { id: profile.id },
     data: {
       approved: false,
-      rejectionReason: String(reason || "").trim() || null,
+      rejectionReason: trimmedReason,
       rejectedAt: new Date(),
     },
   });
+
+  await notificationEvents.notifyProviderApplicationRejected(targetUserId, trimmedReason);
 
   await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_REJECTED, {
     userId: auditOpts.userId,

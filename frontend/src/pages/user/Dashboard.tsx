@@ -23,10 +23,15 @@ import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobP
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
+import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
+import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 
 export default function UserDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { dialogProps, guardAction } = useBlockedActionGuard();
+  const isBlocked = Boolean(user && 'blocked' in user && user.blocked);
   const userId = user?.id ?? '';
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: queryKeys.jobs.byUser(userId),
@@ -93,11 +98,28 @@ export default function UserDashboard() {
             </h1>
             <p className="text-sm text-muted-foreground sm:text-base">Here&apos;s an overview of your service requests</p>
           </div>
-          <Button className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={() => navigate('/user/new-request')}>
-            <Plus className="mr-2 h-4 w-4" />
-            New Request
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {isBlocked ? (
+              <span className="inline-flex items-center justify-center rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
+                Profile blocked
+              </span>
+            ) : null}
+            <Button
+              className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto"
+              onClick={() => guardAction(() => navigate('/user/new-request'))}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              New Request
+            </Button>
+          </div>
         </div>
+
+        {isBlocked ? (
+          <BlockedProfileBanner
+            blockedReason={user && 'blockedReason' in user ? user.blockedReason : undefined}
+            supportHref="/user/notifications"
+          />
+        ) : null}
 
         {/* Monthly Specials Carousel */}
         <SpecialsCarousel />
@@ -203,7 +225,7 @@ export default function UserDashboard() {
               <p className="text-muted-foreground text-sm mb-4">
                 Create your first service request to get started
               </p>
-              <Button onClick={() => navigate('/user/new-request')}>
+              <Button onClick={() => guardAction(() => navigate('/user/new-request'))}>
                 Create Request
               </Button>
             </div>
@@ -214,7 +236,7 @@ export default function UserDashboard() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           <div 
             className="card-elevated cursor-pointer p-4 transition-colors hover:border-primary/30 sm:p-6"
-            onClick={() => navigate('/user/new-request')}
+            onClick={() => guardAction(() => navigate('/user/new-request'))}
           >
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10">
@@ -272,6 +294,7 @@ export default function UserDashboard() {
           </div> */}
         </div>
       </div>
+      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

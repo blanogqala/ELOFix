@@ -173,6 +173,29 @@ async function notifyProviderApproved(providerUserId) {
   });
 }
 
+async function notifyProviderApplicationSubmitted(providerUserId) {
+  return notifyUser(providerUserId, {
+    type: "provider_application_submitted",
+    title: "Application submitted",
+    message:
+      "You have submitted your application to the admin. Please wait for approval.",
+    dedupeKey: userDedupe(providerUserId, `provider_application_submitted:${Date.now()}`),
+  });
+}
+
+async function notifyProviderApplicationRejected(providerUserId, reason) {
+  const trimmed = String(reason || "").trim();
+  const message = trimmed
+    ? `Your provider application was rejected. Reason: ${trimmed}`
+    : "Your provider application was rejected.";
+  return notifyUser(providerUserId, {
+    type: "provider_application_rejected",
+    title: "Application rejected",
+    message,
+    dedupeKey: userDedupe(providerUserId, `provider_application_rejected:${Date.now()}`),
+  });
+}
+
 async function notifyAdminFraudAlert(alert) {
   try {
     const admins = await require("../config/prisma").user.findMany({
@@ -580,12 +603,15 @@ async function notifyProviderRefundDebtReminder(providerId, { daysLeft, amountOw
 }
 
 async function notifyAccountBlocked(userId, reason) {
-  const message = String(reason || "").trim().slice(0, 500);
+  const trimmed = String(reason || "").trim().slice(0, 500);
+  const message = trimmed
+    ? `Your account has been blocked. Reason: ${trimmed}`
+    : "Your profile has been blocked. View your profile for details.";
   await notifyUser(userId, {
     type: "account_blocked",
     title: "Profile blocked",
-    message: message || "Your profile has been blocked. View your profile for details.",
-    dedupeKey: userDedupe(userId, "account_blocked"),
+    message,
+    dedupeKey: userDedupe(userId, `account_blocked:${Date.now()}`),
   });
 }
 
@@ -657,6 +683,8 @@ module.exports = {
   notifyDeliveryQuoteSubmitted,
   notifyCourierDeliveryRequest,
   notifyProviderApproved,
+  notifyProviderApplicationSubmitted,
+  notifyProviderApplicationRejected,
   notifyAdminFraudAlert,
   notifyProviderFraudReview,
   notifyCategorySuggestion,

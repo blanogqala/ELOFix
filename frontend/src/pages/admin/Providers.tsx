@@ -15,6 +15,13 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { Card, CardContent } from '@/components/ui/card';
 import type { AdminProviderRevenueSummaryRow } from '@/lib/api/admin';
+import {
+  getProviderAccountStatus,
+  getProviderAccountStatusBadgeClass,
+  getProviderAccountStatusLabel,
+  isProviderAwaitingApproval,
+  type ProviderAccountStatus,
+} from '@/lib/providerAccountStatus';
 
 type ProviderJobStats = Pick<
   AdminProviderRevenueSummaryRow,
@@ -29,7 +36,9 @@ export default function AdminProviders() {
   const [isLoading, setIsLoading] = useState(true);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'blocked'>('all');
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | 'pending' | 'approved' | 'blocked' | 'rejected' | 'incomplete'
+  >('all');
   const [cityFilter, setCityFilter] = useState<string>('all');
   const [approvingProviderId, setApprovingProviderId] = useState<string | null>(null);
   const [providerStatsById, setProviderStatsById] = useState<Record<string, ProviderJobStats>>({});
@@ -104,10 +113,9 @@ export default function AdminProviders() {
         provider.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         provider.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (provider.city || '').toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || 
-        (statusFilter === 'pending' && !provider.approved && !provider.blocked) ||
-        (statusFilter === 'approved' && provider.approved && !provider.blocked) ||
-        (statusFilter === 'blocked' && provider.blocked);
+      const accountStatus = getProviderAccountStatus(provider);
+      const matchesStatus =
+        statusFilter === 'all' || accountStatus === statusFilter;
       const matchesCity = cityFilter === 'all' || provider.city === cityFilter;
       return matchesSearch && matchesStatus && matchesCity;
     });
@@ -129,7 +137,10 @@ export default function AdminProviders() {
   }, [filteredProviders, providerStatsById]);
 
   const activeFilters = [
-    statusFilter !== 'all' && { key: 'status', label: statusFilter },
+    statusFilter !== 'all' && {
+      key: 'status',
+      label: getProviderAccountStatusLabel(statusFilter as ProviderAccountStatus),
+    },
     cityFilter !== 'all' && { key: 'city', label: cityFilter },
   ].filter(Boolean) as { key: string; label: string }[];
 
@@ -250,17 +261,16 @@ export default function AdminProviders() {
               <option value="all">All Cities</option>
               {cities.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-            <div className="flex gap-2">
-              {(['all', 'pending', 'approved'] as const).map((f) => (
+            <div className="flex flex-wrap gap-2">
+              {(['all', 'pending', 'approved', 'incomplete', 'rejected', 'blocked'] as const).map((f) => (
                 <Button
                   key={f}
                   variant={statusFilter === f ? 'default' : 'outline'}
                   size="sm"
                   onClick={() => setStatusFilter(f)}
                 >
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                  {f === 'all' ? 'All' : getProviderAccountStatusLabel(f as ProviderAccountStatus)}
                 </Button>
-                
               ))}
             </div>
           </div>
@@ -361,13 +371,14 @@ export default function AdminProviders() {
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          {provider.blocked ? (
-                            <span className="status-badge status-cancelled">Blocked</span>
-                          ) : provider.approved ? (
-                            <span className="status-badge status-completed">Approved</span>
-                          ) : (
-                            <span className="status-badge status-assigned">Pending</span>
-                          )}
+                          {(() => {
+                            const accountStatus = getProviderAccountStatus(provider);
+                            return (
+                              <span className={getProviderAccountStatusBadgeClass(accountStatus)}>
+                                {getProviderAccountStatusLabel(accountStatus)}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-6 py-4">
                           <span className="flex items-center gap-1 text-sm">
@@ -389,7 +400,7 @@ export default function AdminProviders() {
                             <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); navigate(`/admin/providers/${provider.id}`); }}>
                               View
                             </Button>
-                            {!provider.approved && !provider.blocked && (
+                            {isProviderAwaitingApproval(provider) && (
                               <Button
                                 size="sm"
                                 disabled={approvingProviderId === provider.id}

@@ -856,6 +856,8 @@ export type AppNotificationType =
   | 'payment_made'
   | 'delivery_update'
   | 'provider_approved'
+  | 'provider_application_submitted'
+  | 'provider_application_rejected'
   | 'category_suggestion'
   | 'support_contact'
   | 'job_chat'
@@ -865,7 +867,8 @@ export type AppNotificationType =
   | 'supplier_material_order_cancelled'
   | 'material_order_new'
   | 'material_order_cancelled'
-  | 'account_blocked';
+  | 'account_blocked'
+  | 'account_unblocked';
 
 export interface AppNotification {
   id: string;

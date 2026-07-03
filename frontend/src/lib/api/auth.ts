@@ -38,6 +38,8 @@ interface BackendUser {
   blockedAt?: string;
   refundDebtBlockedAt?: string;
   reviewSubmittedAt?: string;
+  rejectionReason?: string;
+  rejectedAt?: string;
   supplierProfile?: SupplierAccountProfile | null;
   completedLaborByCategory?: Provider['completedLaborByCategory'];
 }
@@ -148,6 +150,8 @@ function toAuthUser(user: BackendUser): AuthUser {
       blockedAt: user.blockedAt || undefined,
       refundDebtBlockedAt: user.refundDebtBlockedAt || undefined,
       reviewSubmittedAt: user.reviewSubmittedAt,
+      rejectionReason: user.rejectionReason || undefined,
+      rejectedAt: user.rejectedAt || undefined,
       ...(user.completedLaborByCategory &&
       typeof user.completedLaborByCategory === 'object' &&
       !Array.isArray(user.completedLaborByCategory)

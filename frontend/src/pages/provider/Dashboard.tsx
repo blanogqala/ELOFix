@@ -20,9 +20,12 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { ProviderTrustScoreCard } from '@/components/provider/ProviderTrustScoreCard';
+import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
+import { useProviderStatus } from '@/hooks/useProviderStatus';
 
 export default function ProviderDashboard() {
   const { user } = useAuth();
+  const { isBlocked: isBlockedFromAuth } = useProviderStatus();
   const navigate = useNavigate();
   const userId = user?.id ?? '';
 
@@ -48,6 +51,15 @@ export default function ProviderDashboard() {
     queryFn: () => getPendingRequestsForProvider(userId),
     enabled: Boolean(userId),
   });
+
+  const isBlocked = isBlockedFromAuth || Boolean(provider?.blocked);
+  const blockedReason =
+    (user && 'blockedReason' in user ? user.blockedReason : undefined) ||
+    provider?.blockedReason;
+  const showPayBalance =
+    Boolean(user && 'refundDebtBlockedAt' in user && user.refundDebtBlockedAt) ||
+    Boolean(provider?.refundDebtBlockedAt) ||
+    /refund debt/i.test(blockedReason || '');
 
   const isLoading = loadingProvider || loadingJobs || loadingPending;
   const loadError = providerError
@@ -108,16 +120,21 @@ export default function ProviderDashboard() {
             <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Provider Dashboard</h1>
             <p className="text-sm text-muted-foreground sm:text-base">Manage your service requests and jobs</p>
           </div>
-          {!provider?.approved && (
+          {isBlocked ? (
+            <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-2 text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              <span className="text-sm font-medium">Profile Blocked</span>
+            </div>
+          ) : !provider?.approved ? (
             <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning rounded-lg">
               <AlertCircle className="h-4 w-4" />
               <span className="text-sm font-medium">Pending Approval</span>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* Approval Alert */}
-        {!provider?.approved && (
+        {!isBlocked && !provider?.approved && (
           <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
             <div className="flex items-start gap-4">
               <AlertCircle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
@@ -230,6 +247,15 @@ export default function ProviderDashboard() {
         {/* Provider Profile Card */}
         {provider && (
           <div className="card-elevated bg-accent/30 p-4 sm:p-6">
+            {isBlocked ? (
+              <BlockedProfileBanner
+                blockedReason={blockedReason}
+                supportHref="/provider/notifications"
+                payBalanceHref="/provider/earnings"
+                showPayBalance={showPayBalance}
+                className="mb-4"
+              />
+            ) : null}
             <div className="flex flex-col gap-4 sm:flex-col sm:items-start sm:pl-4">
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
@@ -245,7 +271,14 @@ export default function ProviderDashboard() {
               </div>
               
               <div className="min-w-0 flex-1">
-                <h3 className="text-lg font-semibold sm:text-xl">{provider.name}</h3>
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold sm:text-xl">{provider.name}</h3>
+                  {isBlocked ? (
+                    <span className="inline-block rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
+                      Blocked
+                    </span>
+                  ) : null}
+                </div>
                 <p className="mb-2 text-sm text-muted-foreground">{provider.bio || 'Add a bio to attract more clients'}</p>
                 <div className="flex flex-wrap gap-3 text-sm sm:gap-4">
                   <span className="flex items-center gap-1">
