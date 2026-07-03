@@ -20,7 +20,6 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { ProviderTrustScoreCard } from '@/components/provider/ProviderTrustScoreCard';
-import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 
 export default function ProviderDashboard() {
@@ -53,13 +52,6 @@ export default function ProviderDashboard() {
   });
 
   const isBlocked = isBlockedFromAuth || Boolean(provider?.blocked);
-  const blockedReason =
-    (user && 'blockedReason' in user ? user.blockedReason : undefined) ||
-    provider?.blockedReason;
-  const showPayBalance =
-    Boolean(user && 'refundDebtBlockedAt' in user && user.refundDebtBlockedAt) ||
-    Boolean(provider?.refundDebtBlockedAt) ||
-    /refund debt/i.test(blockedReason || '');
 
   const isLoading = loadingProvider || loadingJobs || loadingPending;
   const loadError = providerError
@@ -247,15 +239,6 @@ export default function ProviderDashboard() {
         {/* Provider Profile Card */}
         {provider && (
           <div className="card-elevated bg-accent/30 p-4 sm:p-6">
-            {isBlocked ? (
-              <BlockedProfileBanner
-                blockedReason={blockedReason}
-                supportHref="/provider/notifications"
-                payBalanceHref="/provider/earnings"
-                showPayBalance={showPayBalance}
-                className="mb-4"
-              />
-            ) : null}
             <div className="flex flex-col gap-4 sm:flex-col sm:items-start sm:pl-4">
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
