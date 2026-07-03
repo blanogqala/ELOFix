@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
+import { Link } from 'react-router-dom';
 import { updateUserProfile, uploadUserAvatar } from '@/lib/api/users';
 import { compressImageForUpload } from '@/lib/imageCompression';
 import { ProfileAvatar } from '@/components/common/ProfileAvatar';
@@ -152,53 +152,57 @@ export default function UserProfile() {
           )}
         </div>
 
-        {user?.blocked ? (
-          <BlockedProfileBanner
-            blockedReason={user.blockedReason}
-            supportHref="/user/notifications"
-          />
-        ) : null}
-
         <div className="card-elevated p-4 sm:p-6">
-          <div className="flex flex-col sm:flex-row items-center gap-6">
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleImageFileChange}
-            />
-            <div className="relative">
-              <ProfileAvatar
-                name={user?.name}
-                imageUrl={profile.profileImage}
-                className="h-24 w-24"
-                iconFallback
-                fallbackClassName="text-2xl"
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col items-center gap-6 sm:flex-row">
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImageFileChange}
               />
-              <button
-                type="button"
-                onClick={() => !isUploadingImage && avatarInputRef.current?.click()}
-                disabled={isUploadingImage}
-                className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity disabled:opacity-60"
-                aria-label="Change profile photo"
-              >
-                <Camera className="h-4 w-4" />
-              </button>
+              <div className="relative">
+                <ProfileAvatar
+                  name={user?.name}
+                  imageUrl={profile.profileImage}
+                  className="h-24 w-24"
+                  iconFallback
+                  fallbackClassName="text-2xl"
+                />
+                <button
+                  type="button"
+                  onClick={() => !isUploadingImage && avatarInputRef.current?.click()}
+                  disabled={isUploadingImage}
+                  className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-lg transition-opacity hover:opacity-90 disabled:opacity-60"
+                  aria-label="Change profile photo"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="min-w-0 text-center sm:text-left">
+                <h2 className="text-xl font-semibold">{user?.name}</h2>
+                <p className="text-muted-foreground">{user?.email}</p>
+                {!user?.blocked ? (
+                  <span className="mt-2 inline-block rounded-full bg-success/10 px-3 py-1 text-xs font-medium text-success">
+                    Verified Account
+                  </span>
+                ) : null}
+              </div>
             </div>
-            <div className="text-center sm:text-left">
-              <h2 className="text-xl font-semibold">{user?.name}</h2>
-              <p className="text-muted-foreground">{user?.email}</p>
-              {user?.blocked ? (
-                <span className="inline-block mt-2 px-3 py-1 rounded-full bg-destructive/10 text-destructive text-xs font-medium">
+            {user?.blocked ? (
+              <div className="flex w-full shrink-0 flex-col items-center gap-2 sm:w-auto sm:items-end sm:text-right">
+                <span className="inline-block rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
                   Profile blocked
                 </span>
-              ) : (
-                <span className="inline-block mt-2 px-3 py-1 rounded-full bg-success/10 text-success text-xs font-medium">
-                  Verified Account
-                </span>
-              )}
-            </div>
+                {user.blockedReason?.trim() ? (
+                  <p className="text-sm text-muted-foreground">{user.blockedReason}</p>
+                ) : null}
+                <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+                  <Link to="/user/notifications">Contact support</Link>
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
 

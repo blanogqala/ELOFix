@@ -23,7 +23,6 @@ import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobP
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
-import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
 import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
 import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 
@@ -100,9 +99,14 @@ export default function UserDashboard() {
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {isBlocked ? (
-              <span className="inline-flex items-center justify-center rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
-                Profile blocked
-              </span>
+              <div className="text-center sm:text-right">
+                <span className="inline-flex items-center justify-center rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
+                  Profile blocked
+                </span>
+                {user && 'blockedReason' in user && user.blockedReason?.trim() ? (
+                  <p className="mt-1 text-xs text-muted-foreground">{user.blockedReason}</p>
+                ) : null}
+              </div>
             ) : null}
             <Button
               className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto"
@@ -113,13 +117,6 @@ export default function UserDashboard() {
             </Button>
           </div>
         </div>
-
-        {isBlocked ? (
-          <BlockedProfileBanner
-            blockedReason={user && 'blockedReason' in user ? user.blockedReason : undefined}
-            supportHref="/user/notifications"
-          />
-        ) : null}
 
         {/* Monthly Specials Carousel */}
         <SpecialsCarousel />

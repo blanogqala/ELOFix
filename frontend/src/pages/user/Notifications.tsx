@@ -4,7 +4,6 @@ import { NotificationSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { ApiHttpError } from '@/api/client';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   getNotifications,
@@ -28,6 +27,7 @@ import {
   Search,
   Tags,
   LifeBuoy,
+  Headset,
   ArrowLeft,
   Send,
   Clock,
@@ -247,7 +247,6 @@ function parseSupportReplyTarget(
 }
 
 function apiErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiHttpError) return err.message || fallback;
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }
@@ -924,14 +923,14 @@ export default function NotificationsPage() {
             type="button"
             onClick={openSupport}
             className={cn(
-              'fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full',
+              'fixed bottom-12 right-12 z-50 flex h-14 w-14 items-center justify-center rounded-full',
               'bg-primary text-primary-foreground shadow-lg',
               'hover:scale-105 active:scale-95 transition-transform duration-200',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
             )}
             aria-label="Open support conversation"
           >
-            <LifeBuoy className="h-6 w-6" />
+            <Headset className="h-6 w-6" />
           </button>
         )}
 
