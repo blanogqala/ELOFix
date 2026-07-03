@@ -376,7 +376,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-1.5">
                     <p className="truncate font-medium text-sm">{user?.name}</p>
-                    {user.role === 'provider' && (!isProfileComplete || !isApproved) && !isProfileBlocked && (
+                    {user.role === 'provider' && isRejected && !isProfileBlocked && (
+                      <AlertCircle
+                        className="h-4 w-4 shrink-0 text-destructive"
+                        aria-label="Application rejected"
+                      />
+                    )}
+                    {user.role === 'provider' &&
+                      (!isProfileComplete || !isApproved) &&
+                      !isProfileBlocked &&
+                      !isRejected && (
                       <AlertCircle
                         className="h-4 w-4 shrink-0 text-amber-600"
                         aria-label="Profile needs attention"
@@ -390,9 +399,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">{getRoleLabel()}</p>
-                  {isProfileBlocked && (
+                  {isProfileBlocked ? (
                     <p className="text-xs font-medium text-destructive">Profile blocked</p>
-                  )}
+                  ) : user.role === 'provider' && isRejected ? (
+                    <p className="text-xs font-medium text-destructive">Application rejected</p>
+                  ) : null}
                 </div>
               </Link>
             ) : (

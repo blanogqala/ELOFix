@@ -689,7 +689,7 @@ export default function ProviderProfile() {
     }
   };
 
-  /** Badge priority: blocked → incomplete → rejected → pending approval → active */
+  /** Badge priority: blocked → active → rejected → incomplete → pending approval */
   const renderStatusBadge = () => {
     if (isBlocked) {
       return (
@@ -705,17 +705,17 @@ export default function ProviderProfile() {
         </Badge>
       );
     }
-    if (!isProfileComplete) {
-      return (
-        <Badge className="shrink-0 border-orange-400/50 bg-orange-500/15 text-orange-900 dark:text-orange-100">
-          Incomplete Profile
-        </Badge>
-      );
-    }
     if (isRejected) {
       return (
         <Badge className="shrink-0 border-destructive/40 bg-destructive/15 text-destructive">
           Rejected
+        </Badge>
+      );
+    }
+    if (!isProfileComplete) {
+      return (
+        <Badge className="shrink-0 border-orange-400/50 bg-orange-500/15 text-orange-900 dark:text-orange-100">
+          Incomplete Profile
         </Badge>
       );
     }
@@ -726,25 +726,30 @@ export default function ProviderProfile() {
     );
   };
 
+  const renderRejectedProfilePanel = () => (
+    <div className="flex w-full shrink-0 flex-col items-center gap-2 sm:w-auto sm:items-end sm:text-right">
+      <Badge className="shrink-0 border-destructive/40 bg-destructive/15 text-destructive">
+        Rejected
+      </Badge>
+      <p className="text-sm text-destructive">Your application was rejected.</p>
+      {provider?.rejectionReason?.trim() ? (
+        <p className="text-sm text-muted-foreground">Reason: {provider.rejectionReason}</p>
+      ) : null}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 text-xs"
+        onClick={() => navigate('/provider/notifications')}
+      >
+        View notifications
+      </Button>
+    </div>
+  );
+
   const smartBanner = () => {
     if (isRejected) {
-      return (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          Your application was rejected.
-          {provider?.rejectionReason ? (
-            <span className="block mt-1 text-foreground">
-              Reason: {provider.rejectionReason}
-            </span>
-          ) : null}{' '}
-          <button
-            type="button"
-            className="mt-2 font-medium text-primary underline underline-offset-2"
-            onClick={() => navigate('/provider/notifications')}
-          >
-            View notifications
-          </button>
-        </div>
-      );
+      return null;
     }
     if (awaitingApproval) {
       return (
@@ -819,7 +824,14 @@ export default function ProviderProfile() {
         <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-6">
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
             <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm ">
-              Profile {coreSections.profileInfo ? '✅' : '⚠️'}
+              Profile{' '}
+              {isRejected ? (
+                <span className="text-destructive">· Rejected</span>
+              ) : coreSections.profileInfo ? (
+                '✅'
+              ) : (
+                '⚠️'
+              )}
             </TabsTrigger>
             <TabsTrigger value="pricing" className="gap-1.5 text-xs sm:text-sm">
               <span className="truncate">Skills &amp; Pricing {coreSections.skillsAndPrices ? '✅' : '⚠️'}</span>
@@ -842,8 +854,8 @@ export default function ProviderProfile() {
           {/* ═══ PROFILE INFO ═══ */}
           <TabsContent value="info" className="space-y-6">
             <div className="card-elevated space-y-6 p-4 sm:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6 lg:flex-none">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
                   <input
                     ref={avatarInputRef}
                     type="file"
@@ -872,7 +884,7 @@ export default function ProviderProfile() {
                       <Camera className="h-7 w-7 text-white" />
                     </span>
                   </button>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 text-center sm:text-left">
                     <h2 className="text-xl font-semibold leading-tight tracking-tight break-words sm:text-2xl">
                       {provider?.name || user?.name}
                     </h2>
@@ -888,10 +900,13 @@ export default function ProviderProfile() {
                       Boolean(user.refundDebtBlockedAt) ||
                       /refund debt/i.test(user.blockedReason || '')
                     }
-                    className="min-w-0 flex-1 lg:max-w-xl"
+                    className="min-w-0 w-full sm:max-w-sm lg:max-w-md"
                   />
-                ) : null}
-                <div className="shrink-0 sm:pt-1">{renderStatusBadge()}</div>
+                ) : isRejected ? (
+                  renderRejectedProfilePanel()
+                ) : (
+                  <div className="shrink-0 sm:pt-1">{renderStatusBadge()}</div>
+                )}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
