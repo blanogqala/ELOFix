@@ -17,6 +17,8 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Job, MaterialLine, SavedCard, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { MaterialCard } from '@/components/materials/MaterialCard';
+import { MaterialOrderDeliveryModeBadge, MaterialOrderStatusSummary } from '@/components/materials/MaterialOrderStatusSummary';
+import { MaterialOrderExpandedDetails } from '@/components/materials/MaterialOrderExpandedDetails';
 import { LoadingOverlay } from '@/components/common/loading';
 import {
   CreditCard,
@@ -35,12 +37,14 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
 import { buildOrderFinanceFromParts } from '@/lib/orderFinance';
 import {
-  fulfillmentStatusBadgeLabel,
   isMaterialOrderRefunded,
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
-import { getStoreOrderDeliveryLine, isStoreDeliveryPaymentPending } from '@/lib/jobQuoteDisplay';
+import {
+  getMaterialOrderDeliveryPaymentReminder,
+  getStoreOrderDeliveryLine,
+} from '@/lib/jobQuoteDisplay';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 
 interface MaterialPaymentSectionProps {
@@ -501,9 +505,10 @@ export function MaterialPaymentSection({
     }
 
     const linkedStoreOrder =
-      displayStoreOrders.find((o) => o.storeId === deliveryStoreId) ||
-      paidCards.find((o) => o.storeId === deliveryStoreId) ||
-      pendingCards.find((o) => o.storeId === deliveryStoreId);
+      pendingCards.find((o) => o.storeId === deliveryStoreId) ||
+      displayStoreOrders.find(
+        (o) => o.storeId === deliveryStoreId && !o.payment?.materialsPaid
+      );
 
     setIsProcessing(true);
     setError(null);
@@ -647,7 +652,11 @@ export function MaterialPaymentSection({
                   const mo = resolveMaterialOrderForStoreOrder(job, storeOrder);
                   const isRefunded = isMaterialOrderRefunded(mo);
                   const deliveryLine = getStoreOrderDeliveryLine(storeOrder, mo);
-                  const deliveryPayPending = isStoreDeliveryPaymentPending(storeOrder, mo);
+                  const deliveryPaymentReminder = getMaterialOrderDeliveryPaymentReminder(
+                    storeOrder,
+                    mo,
+                    'user'
+                  );
                   const cardSubtotal =
                     itemsTotal +
                     (deliveryLine?.includeInSubtotal && !deliveryLine.struck ? deliveryLine.amount : 0);
@@ -704,6 +713,9 @@ export function MaterialPaymentSection({
                       key={materialOrderKey}
                       status={isRefunded ? 'refunded' : 'paid'}
                       collapsible
+                      headerBadges={
+                        <MaterialOrderDeliveryModeBadge storeOrder={storeOrder} mo={mo} />
+                      }
                       refundAmount={isRefunded ? mo?.refundAmount : undefined}
                       refundStatus={isRefunded ? mo?.refundStatus : undefined}
                       cancellationNote={
@@ -717,10 +729,14 @@ export function MaterialPaymentSection({
                       supplierName={storeName}
                       subtotal={cardSubtotal}
                       extraLines={deliveryLine ? [deliveryLine] : undefined}
-                      deliveryPaymentReminder={
-                        deliveryPayPending
-                          ? 'Pay the delivery fee so this order can leave the store. Open order details to pay.'
-                          : undefined
+                      deliveryPaymentReminder={deliveryPaymentReminder}
+                      summaryStatus={
+                        <MaterialOrderStatusSummary
+                          storeOrder={storeOrder}
+                          mo={mo}
+                          batch={batch}
+                          showSupplierLine
+                        />
                       }
                       items={storeOrder.items.map((item) => ({
                         rowKey: `${storeOrder.orderId}-${item.productId}`,
@@ -728,63 +744,19 @@ export function MaterialPaymentSection({
                         qty: item.qty,
                         lineTotal: item.qty * item.unitPrice,
                       }))}
-                      meta={
-                        <div className="space-y-2 w-full">
-                          <div className="flex flex-wrap gap-2 items-center">
-                            <Badge
-                              variant="secondary"
-                              className={cn(
-                                'text-xs',
-                                isRefunded && 'bg-destructive/10 text-destructive border-destructive/30'
-                              )}
-                            >
-                              {isRefunded
-                                ? 'Cancelled · Refunded'
-                                : fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
-                            </Badge>
-                            {deliveryPayPending ? (
-                              <Badge className="text-xs bg-amber-500/15 text-amber-900 border-amber-500/40 dark:text-amber-100">
-                                Delivery unpaid
-                              </Badge>
-                            ) : null}
-                            <Badge variant="outline">
-                              {storeOrder.deliveryType === 'SELF' && 'Pickup'}
-                              {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
-                              {storeOrder.deliveryType === 'PROVIDER' && 'Courier delivery'}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            Supplier:{' '}
-                            <span className="text-foreground font-medium">{mo?.supplierName || storeName}</span>
-                          </p>
-                          {!(summaryIsPickup && batch?.pickupAddress) && batch?.pickupAddress ? (
-                            <p className="text-xs text-muted-foreground">Pickup: {batch.pickupAddress}</p>
-                          ) : null}
-                          {batch?.deliveryType === 'pickup' && (
-                            <p className="text-xs text-muted-foreground">Collect your order at the supplier address above.</p>
-                          )}
-                          {!(!summaryIsPickup && batch?.deliveryAddress) && batch?.deliveryAddress ? (
-                            <p className="text-xs text-muted-foreground">Delivery address: {batch.deliveryAddress}</p>
-                          ) : null}
-                          {driverLabel ? (
-                            <p className="text-xs text-muted-foreground">Courier: {driverLabel}</p>
-                          ) : null}
-                          {batch?.deliveryType === 'delivery' && mo && ['READY', 'OUT_FOR_DELIVERY'].includes(String(mo.fulfillmentStatus).toUpperCase()) && (
-                            <p className="text-xs text-foreground">Delivery in progress — you will be notified at each step.</p>
-                          )}
-                        </div>
-                      }
                       footer={
-                        storeOrder.deliveryType !== 'SELF' ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className="w-full hover:bg-accent/80 border-primary border"
-                            asChild
-                          >
-                            <Link to={fullHref}>Full tracking view</Link>
-                          </Button>
-                        ) : null
+                        isRefunded ? undefined : (
+                          <MaterialOrderExpandedDetails
+                            variant="user"
+                            storeOrder={storeOrder}
+                            mo={mo}
+                            batch={batch}
+                            summaryIsPickup={summaryIsPickup}
+                            storeDisplayName={storeName}
+                            driverLabel={driverLabel}
+                            fullTrackingHref={fullHref}
+                          />
+                        )
                       }
                     />
                   );

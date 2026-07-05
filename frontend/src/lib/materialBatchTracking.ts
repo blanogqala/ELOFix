@@ -70,6 +70,52 @@ export function trackingLabelsForBatch(batch: MaterialBatch | null): string[] {
   ];
 }
 
+/** Active step index for the current batch status, or null when no step applies. */
+function currentStepIndexForBatch(batch: MaterialBatch): number | null {
+  const st = batch.status;
+  if (st === 'pending' || st === 'failed' || st === 'delayed' || st === 'cancelled') {
+    return null;
+  }
+
+  if (batch.deliveryType === 'pickup') {
+    const pickupIndex: Partial<Record<MaterialBatchStatus, number>> = {
+      accepted: 0,
+      preparing: 1,
+      ready: 2,
+      out_for_delivery: 2,
+      delivered: 3,
+    };
+    return pickupIndex[st] ?? null;
+  }
+
+  const deliveryIndex: Partial<Record<MaterialBatchStatus, number>> = {
+    accepted: 0,
+    preparing: 1,
+    ready: 2,
+    out_for_delivery: 3,
+    delivered: 4,
+  };
+  return deliveryIndex[st] ?? null;
+}
+
+/** Human-readable active step label, e.g. "Out for delivery (4/5)". */
+export function currentTrackingStepDisplay(batch: MaterialBatch | null): string | null {
+  if (!batch) return null;
+  const stepIdx = currentStepIndexForBatch(batch);
+  if (stepIdx == null) return null;
+  const { labels } = materialTrackingDisplay(batch);
+  return `${labels[stepIdx]} (${stepIdx + 1}/${labels.length})`;
+}
+
+/** Short active step label for badge display, e.g. "Out for delivery". */
+export function currentTrackingStepBadgeLabel(batch: MaterialBatch | null): string | null {
+  if (!batch) return null;
+  const stepIdx = currentStepIndexForBatch(batch);
+  if (stepIdx == null) return null;
+  const { labels } = materialTrackingDisplay(batch);
+  return labels[stepIdx] ?? null;
+}
+
 /** Four-step pickup timeline; five-step for delivery (reuse batch status as source of truth). */
 export function materialTrackingDisplay(batch: MaterialBatch | null): { labels: string[]; checks: boolean[] } {
   const pickup = batch?.deliveryType === 'pickup';

@@ -7,6 +7,7 @@ import type {
 } from '@/types';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getQuoteMaterialsTotal, getUserLaborGross } from '@/lib/jobUtils';
+import { resolveDisplayDeliveryType } from '@/lib/providerMaterialOrderHelpers';
 
 export interface QuoteLine {
   label: string;
@@ -253,11 +254,45 @@ export function getStoreOrderDeliveryLine(
   };
 }
 
-/** Store delivery quoted/approved but customer has not paid the delivery fee yet. */
+/** @deprecated Prefer `isMaterialOrderDeliveryPaymentPending` for store and courier cards. */
 export function isStoreDeliveryPaymentPending(
   storeOrder: JobStoreOrder,
   mo?: JobMaterialOrderSnapshot | null
 ): boolean {
+  return isMaterialOrderDeliveryPaymentPending(storeOrder, mo);
+}
+
+/** Delivery fee visible on a paid material card but still awaiting customer payment. */
+export function isMaterialOrderDeliveryPaymentPending(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): boolean {
   const line = getStoreOrderDeliveryLine(storeOrder, mo);
-  return Boolean(line && !line.struck && line.amount > 0 && line.hint === 'Approved');
+  const { deliveryPaid } = resolveStoreOrderDeliveryContext(storeOrder, mo);
+  return Boolean(
+    line &&
+      !line.struck &&
+      line.amount > 0 &&
+      !deliveryPaid &&
+      ['Approved', 'Quoted', 'Pay later'].includes(line.hint || '')
+  );
+}
+
+export function getMaterialOrderDeliveryPaymentReminder(
+  storeOrder: JobStoreOrder,
+  mo: JobMaterialOrderSnapshot | null | undefined,
+  role: 'user' | 'provider'
+): string | undefined {
+  if (!isMaterialOrderDeliveryPaymentPending(storeOrder, mo)) return undefined;
+
+  const deliveryType = resolveDisplayDeliveryType(storeOrder, mo);
+  if (deliveryType === 'PROVIDER') {
+    return role === 'provider'
+      ? 'Customer must pay the delivery fee to accept the courier quote before delivery can proceed.'
+      : 'Pay the delivery fee to accept the courier quote. Open Full tracking view to pay.';
+  }
+
+  return role === 'provider'
+    ? 'Customer must pay the delivery fee before this order can be dispatched.'
+    : 'Pay the delivery fee so this order can leave the store. Open order details to pay.';
 }

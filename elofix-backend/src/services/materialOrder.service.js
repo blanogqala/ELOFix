@@ -3591,6 +3591,25 @@ async function getJobMaterialOrdersForJob(jobId) {
     orderBy: { createdAt: "desc" },
     include: { supplier: { select: { id: true, name: true, businessName: true } } },
   });
+  const orderIds = rows.map((r) => String(r.id));
+  const deliveryRequests = orderIds.length
+    ? await prisma.deliveryRequest.findMany({
+        where: { materialOrderId: { in: orderIds } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          materialOrderId: true,
+          jobId: true,
+          fulfillmentStatus: true,
+        },
+      })
+    : [];
+  const deliveryRequestByMaterialOrderId = new Map();
+  for (const dr of deliveryRequests) {
+    const mid = dr.materialOrderId ? String(dr.materialOrderId) : "";
+    if (mid && !deliveryRequestByMaterialOrderId.has(mid)) {
+      deliveryRequestByMaterialOrderId.set(mid, dr);
+    }
+  }
   for (const r of rows) {
     const payload = r.payload && typeof r.payload === "object" ? r.payload : {};
     if (payload.jobStoreOrderId) {
@@ -3600,6 +3619,10 @@ async function getJobMaterialOrdersForJob(jobId) {
   return rows.map((r) => {
     const payload = r.payload && typeof r.payload === "object" ? r.payload : {};
     const items = Array.isArray(payload.items) ? payload.items : [];
+    const deliveryType = payload.deliveryType ? String(payload.deliveryType) : undefined;
+    const courierDeliveryRequest = isProviderDeliveryType(resolvePayloadDeliveryType(payload))
+      ? deliveryRequestByMaterialOrderId.get(String(r.id))
+      : null;
     return {
       id: r.id,
       jobId: r.jobId,
@@ -3633,13 +3656,17 @@ async function getJobMaterialOrdersForJob(jobId) {
         price: Number(i.price ?? i.unitPrice ?? 0),
         productId: i.productId,
       })),
-      deliveryType: payload.deliveryType ? String(payload.deliveryType) : undefined,
+      deliveryType,
       deliveryFee: Number(payload.deliveryFee ?? payload.delivery?.fee ?? 0),
       deliveryQuote: payload.deliveryQuote,
       delivery: payload.delivery,
       deliveryStatus: payload.delivery?.status,
       payment: payload.payment,
       materialBatch: mergeMaterialBatch(payload, r, {}),
+      courierJobId: courierDeliveryRequest?.jobId ? String(courierDeliveryRequest.jobId) : undefined,
+      courierFulfillmentStatus: courierDeliveryRequest?.fulfillmentStatus
+        ? String(courierDeliveryRequest.fulfillmentStatus)
+        : undefined,
       createdAt: r.createdAt?.toISOString?.() || String(r.createdAt),
     };
   });

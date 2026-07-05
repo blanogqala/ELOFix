@@ -115,6 +115,7 @@ export function JobDeliverySection({
     (deliveryRequest.deliveryConfirmed === true && deliveryRequest.customerRating != null);
 
   const mapCompletedMode = fullyComplete || (fs === 'COMPLETED' && deliveryRequest.deliveryConfirmed === true);
+  const showCustomerMap = activeFulfillment || mapCompletedMode;
   const headingToCustomer = courierMapShowsDestination(fs, mapCompletedMode);
 
   const mapDestCoords = useMemo(() => {
@@ -233,7 +234,7 @@ export function JobDeliverySection({
         </div>
       ) : null}
 
-      {variant === 'user' && paid ? (
+      {variant === 'user' && paid && showCustomerMap ? (
         <div className="overflow-hidden rounded-lg border border-border">
           <DeliveryMap
             className="w-full border-0 shadow-sm"

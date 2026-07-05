@@ -19,6 +19,33 @@ export function resolveMaterialOrderForStoreOrder(
   return null;
 }
 
+function canonicalStoreDeliveryType(raw?: string): JobStoreOrder['deliveryType'] | null {
+  const u = String(raw || '').toUpperCase();
+  if (u === 'SELF') return 'SELF';
+  if (u === 'STORE' || u === 'STORE_DELIVERY') return 'STORE';
+  if (u === 'PROVIDER' || u === 'DELIVERY_PROVIDER') return 'PROVIDER';
+  return null;
+}
+
+/** Prefer material-order snapshot delivery type when job meta storeOrders is stale or overwritten. */
+export function resolveDisplayDeliveryType(
+  storeOrder: JobStoreOrder,
+  mo: JobMaterialOrderSnapshot | null | undefined
+): JobStoreOrder['deliveryType'] {
+  const fromMo =
+    canonicalStoreDeliveryType(mo?.deliveryType) ??
+    canonicalStoreDeliveryType(mo?.delivery?.type);
+  if (fromMo) return fromMo;
+  return storeOrder.deliveryType;
+}
+
+export function deliveryModeLabel(deliveryType: JobStoreOrder['deliveryType']): string {
+  if (deliveryType === 'SELF') return 'Pickup';
+  if (deliveryType === 'STORE') return 'Store delivery';
+  if (deliveryType === 'PROVIDER') return 'Courier delivery';
+  return 'Delivery';
+}
+
 export function supplierFacingStatus(mo: JobMaterialOrderSnapshot | null): string {
   if (!mo) return 'Awaiting payment';
   return fulfillmentStatusBadgeLabel(String(mo.fulfillmentStatus));

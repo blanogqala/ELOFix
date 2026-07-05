@@ -71,6 +71,8 @@ export interface MaterialCardProps {
   collapsible?: boolean;
   /** Primary pickup or delivery location — shown in the summary when collapsible. */
   deliveryLocation?: ReactNode;
+  /** Shown in the always-visible area when collapsible paid/refunded (above deliveryLocation). */
+  summaryStatus?: ReactNode;
   defaultExpanded?: boolean;
   /** Shown when status is refunded (cancelled before dispatch). */
   refundAmount?: number;
@@ -78,6 +80,8 @@ export interface MaterialCardProps {
   cancellationNote?: string;
   /** Amber reminder when store delivery fee is approved but not yet paid. */
   deliveryPaymentReminder?: string;
+  /** Extra badges shown in the header beside Paid (e.g. delivery mode). */
+  headerBadges?: ReactNode;
 }
 
 export function MaterialCard({
@@ -93,11 +97,13 @@ export function MaterialCard({
   contentClassName,
   collapsible = false,
   deliveryLocation,
+  summaryStatus,
   defaultExpanded = false,
   refundAmount,
   refundStatus,
   cancellationNote,
   deliveryPaymentReminder,
+  headerBadges,
 }: MaterialCardProps) {
   const isPaid = status === 'paid';
   const isRefunded = status === 'refunded';
@@ -122,15 +128,22 @@ export function MaterialCard({
             <ShoppingCart className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
             <span className="font-semibold truncate text-[15px] leading-tight">{supplierName}</span>
           </div>
-          <Badge
-            variant={status === 'draft' ? 'outline' : 'default'}
-            className={cn('shrink-0', status !== 'draft' && statusBadgeClass(status))}
-          >
-            {STATUS_LABEL[status]}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {headerBadges}
+            <Badge
+              variant={status === 'draft' ? 'outline' : 'default'}
+              className={cn(status !== 'draft' && statusBadgeClass(status))}
+            >
+              {STATUS_LABEL[status]}
+            </Badge>
+          </div>
         </div>
 
         {!isCollapsiblePaid && meta}
+
+        {isCollapsiblePaid && summaryStatus ? (
+          <div className="space-y-1.5">{summaryStatus}</div>
+        ) : null}
 
         {isCollapsiblePaid && deliveryLocation ? (
           <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-sm leading-snug text-foreground [&_svg]:shrink-0">

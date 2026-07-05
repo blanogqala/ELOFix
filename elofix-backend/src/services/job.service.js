@@ -2389,7 +2389,6 @@ async function setStoreDeliveryOption(jobId, storeId, params, customerUserId) {
   if (!storeOrderBefore && Array.isArray(metaBefore?.storeOrders)) {
     const forStore = metaBefore.storeOrders.filter((o) => String(o.storeId) === String(storeId));
     storeOrderBefore =
-      forStore.find((o) => o.payment?.materialsPaid === true) ||
       forStore.filter((o) => !o.payment?.materialsPaid).pop() ||
       forStore[forStore.length - 1];
   }
@@ -2424,7 +2423,6 @@ async function setStoreDeliveryOption(jobId, storeId, params, customerUserId) {
     if (!order && Array.isArray(m.storeOrders)) {
       const forStore = m.storeOrders.filter((o) => String(o.storeId) === String(storeId));
       order =
-        forStore.find((o) => o.payment?.materialsPaid === true) ||
         forStore.filter((o) => !o.payment?.materialsPaid).pop() ||
         forStore[forStore.length - 1];
     }

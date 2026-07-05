@@ -651,6 +651,8 @@ export interface JobMaterialOrderSnapshot {
   delivery?: OrderDelivery;
   payment?: OrderPayment;
   deliveryStatus?: string;
+  courierJobId?: string | null;
+  courierFulfillmentStatus?: string | null;
 }
 
 export interface Job {

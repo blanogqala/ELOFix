@@ -1,18 +1,22 @@
 import type { Job, JobStoreOrder } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Truck } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { MaterialCard } from '@/components/materials/MaterialCard';
-import { MaterialTrackingMini } from '@/components/materials/MaterialTrackingMini';
-import { Button } from '@/components/ui/button';
 import {
-  fulfillmentStatusBadgeLabel,
+  MaterialOrderDeliveryModeBadge,
+  MaterialOrderStatusSummary,
+} from '@/components/materials/MaterialOrderStatusSummary';
+import { MaterialOrderExpandedDetails } from '@/components/materials/MaterialOrderExpandedDetails';
+import {
   isMaterialOrderRefunded,
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
-import { getStoreOrderDeliveryLine, isStoreDeliveryPaymentPending } from '@/lib/jobQuoteDisplay';
-import { cn } from '@/lib/utils';
+import {
+  getMaterialOrderDeliveryPaymentReminder,
+  getStoreOrderDeliveryLine,
+} from '@/lib/jobQuoteDisplay';
 
 export interface MaterialBatchesProps {
   job: Job;
@@ -98,7 +102,11 @@ export function MaterialBatches({
               );
 
             const deliveryLine = getStoreOrderDeliveryLine(card, mo);
-            const deliveryPayPending = isStoreDeliveryPaymentPending(card, mo);
+            const deliveryPaymentReminder = getMaterialOrderDeliveryPaymentReminder(
+              card,
+              mo,
+              'provider'
+            );
             const cardSubtotal =
               total + (deliveryLine?.includeInSubtotal && !deliveryLine.struck ? deliveryLine.amount : 0);
             const extraLines =
@@ -111,6 +119,7 @@ export function MaterialBatches({
                 key={card.orderId}
                 status={isRefunded ? 'refunded' : 'paid'}
                 collapsible
+                headerBadges={<MaterialOrderDeliveryModeBadge storeOrder={card} mo={mo} />}
                 refundAmount={isRefunded ? mo?.refundAmount : undefined}
                 refundStatus={isRefunded ? mo?.refundStatus : undefined}
                 cancellationNote={
@@ -124,10 +133,9 @@ export function MaterialBatches({
                 supplierName={card.storeName || card.storeId}
                 subtotal={cardSubtotal}
                 extraLines={extraLines}
-                deliveryPaymentReminder={
-                  deliveryPayPending
-                    ? 'Customer must pay the delivery fee before this order can be dispatched.'
-                    : undefined
+                deliveryPaymentReminder={deliveryPaymentReminder}
+                summaryStatus={
+                  <MaterialOrderStatusSummary storeOrder={card} mo={mo} batch={batch} />
                 }
                 items={card.items.map((item) => ({
                   rowKey: `${card.orderId}-${item.productId}`,
@@ -135,75 +143,19 @@ export function MaterialBatches({
                   qty: item.qty,
                   lineTotal: item.qty * item.unitPrice,
                 }))}
-                meta={
-                  <div className="space-y-2 w-full">
-                    {batchMeta ? (
-                      <p className="text-xs text-muted-foreground">
-                        Request {batchMeta.status === 'paid' ? 'paid' : batchMeta.status === 'submitted' ? 'awaiting payment' : batchMeta.status}{' '}
-                        · {new Date(batchMeta.createdAt).toLocaleString()}
-                      </p>
-                    ) : null}
-                    <p className="text-xs text-muted-foreground">
-                      Tracking:{' '}
-                      <span
-                        className={cn(
-                          'font-medium',
-                          isRefunded ? 'text-destructive' : 'text-foreground'
-                        )}
-                      >
-                        {isRefunded
-                          ? 'Cancelled'
-                          : fulfillmentStatusBadgeLabel(mo?.fulfillmentStatus)}
-                      </span>
-                    </p>
-                  </div>
-                }
                 footer={
                   isRefunded ? undefined : (
-                    <div className="space-y-3 border-t border-green-600/25 pt-3">
-                      <div className="space-y-1.5">
-                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Supplier</p>
-                        <p className="text-sm font-medium">{mo?.supplierName || card.storeName || card.storeId}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {card.deliveryType === 'SELF' && 'Pickup'}
-                          {card.deliveryType === 'STORE' && 'Store delivery'}
-                          {card.deliveryType === 'PROVIDER' && 'Courier'}
-                          {!(summaryIsPickup && batch?.pickupAddress) && batch?.pickupAddress
-                            ? ` · ${batch.pickupAddress}`
-                            : ''}
-                        </p>
-                        {!(!summaryIsPickup && batch?.deliveryAddress) && batch?.deliveryAddress ? (
-                          <p className="text-xs text-muted-foreground">Deliver to: {batch.deliveryAddress}</p>
-                        ) : null}
-                      </div>
-                      <MaterialTrackingMini batch={batch} />
-                      {card.deliveryType === 'PROVIDER' ? (
-                        <div className="mt-3 space-y-2 rounded-md border border-primary/25 bg-primary/5 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-primary">Courier (you)</p>
-                          {(() => {
-                            const courierJobId = mo?.courierJobId ?? card.courierJobId;
-                            if (courierJobId) {
-                              return (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  className="btn-accent w-full sm:w-auto"
-                                  onClick={() => navigate(`/provider/jobs/${courierJobId}`)}
-                                >
-                                  <Truck className="mr-2 h-4 w-4" aria-hidden />
-                                  View Delivery
-                                </Button>
-                              );
-                            }
-                            return (
-                              <p className="text-xs text-muted-foreground">
-                                Delivery job will appear once the courier request is set up.
-                              </p>
-                            );
-                          })()}
-                        </div>
-                      ) : null}
-                    </div>
+                    <MaterialOrderExpandedDetails
+                      variant="provider"
+                      storeOrder={card}
+                      mo={mo}
+                      batch={batch}
+                      summaryIsPickup={summaryIsPickup}
+                      batchMeta={batchMeta}
+                      storeDisplayName={card.storeName || card.storeId}
+                      courierJobId={mo?.courierJobId ?? card.courierJobId}
+                      onViewDelivery={(jobId) => navigate(`/provider/jobs/${jobId}`)}
+                    />
                   )
                 }
               />
