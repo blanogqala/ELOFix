@@ -48,6 +48,11 @@ function testResolveCustomerMetrosWithCoords() {
   assert.deepStrictEqual(metros, ["Cape Town"]);
 }
 
+function testResolveCustomerMetrosWithCoordsPrefersGpsOverText() {
+  const metros = resolveCustomerMetrosWithCoords({ city: "Sandton" }, -33.88, 18.49);
+  assert.deepStrictEqual(metros, ["Cape Town"]);
+}
+
 function testMilnertonCustomerCapeTownProvider() {
   const provider = { city: "Cape Town", serviceAreas: ["Cape Town"] };
   const customer = { metro: "Cape Town", city: "Milnerton", area: "Milnerton" };
@@ -97,12 +102,24 @@ function testResolveBranchMetrosFromName() {
   assert.deepStrictEqual(metros, ["Johannesburg"]);
 }
 
+function testMphozaBellvilleSandtonResolvesJohannesburgOnly() {
+  const metros = resolveBranchMetros({ name: "Mphoza - Bellville", city: "Sandton" });
+  assert.deepStrictEqual(metros, ["Johannesburg"]);
+}
+
+function testMphozaBellvilleSandtonExcludedForCapeTownCustomer() {
+  const branch = { name: "Mphoza - Bellville", displayName: "Mphoza - Bellville", city: "Sandton" };
+  const customer = { metro: "Cape Town", city: "Milnerton", area: "Milnerton" };
+  assert.strictEqual(branchMatchesCustomerLocation(branch, customer), false);
+}
+
 function run() {
   testExtractMetroFromText();
   testExtractMetroFromSuburb();
   testResolveMetroFromCoordinates();
   testResolveCustomerMetros();
   testResolveCustomerMetrosWithCoords();
+  testResolveCustomerMetrosWithCoordsPrefersGpsOverText();
   testMilnertonCustomerCapeTownProvider();
   testCapeTownCustomerJohannesburgProvider();
   testCustomAreaSandton();
@@ -111,6 +128,8 @@ function run() {
   testCapeTownCustomerBellvilleBranchIncluded();
   testMilnertonCustomerNoMetroCapeTownBranch();
   testResolveBranchMetrosFromName();
+  testMphozaBellvilleSandtonResolvesJohannesburgOnly();
+  testMphozaBellvilleSandtonExcludedForCapeTownCustomer();
   console.log("serviceAreaMatch.test.js: all tests passed");
 }
 

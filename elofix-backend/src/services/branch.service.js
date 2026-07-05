@@ -140,6 +140,10 @@ async function listBranchesForLocation(query = {}) {
   );
   const hasCustomerMetro = customerMetros.length > 0;
 
+  if (!hasCustomerMetro && !hasUserCoords) {
+    return [];
+  }
+
   const branches = await prisma.branch.findMany({
     where: { isActive: true },
     include: { supplier: true },

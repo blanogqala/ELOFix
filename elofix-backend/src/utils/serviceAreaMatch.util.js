@@ -153,12 +153,9 @@ function resolveCustomerMetros(location = {}) {
  * @returns {string[]}
  */
 function resolveCustomerMetrosWithCoords(location = {}, lat, lng) {
-  const metros = new Set(resolveCustomerMetros(location));
-  if (metros.size === 0) {
-    const fromCoords = resolveMetroFromCoordinates(lat, lng);
-    if (fromCoords) metros.add(fromCoords);
-  }
-  return [...metros];
+  const fromCoords = resolveMetroFromCoordinates(lat, lng);
+  if (fromCoords) return [fromCoords];
+  return resolveCustomerMetros(location);
 }
 
 /**
@@ -189,22 +186,19 @@ function resolveProviderMetros(serviceAreas) {
  */
 function resolveBranchMetros(branch = {}) {
   const metros = new Set();
-  const fields = [
-    branch.city,
-    branch.area,
-    branch.address,
-    branch.name,
-    branch.displayName,
-  ];
 
-  for (const field of fields) {
+  for (const field of [branch.city, branch.area, branch.address]) {
     const extracted = extractMetroFromText(field);
     if (extracted) metros.add(extracted);
   }
+  if (metros.size > 0) return [...metros];
 
-  if (metros.size === 0) {
-    const fromCoords = resolveMetroFromCoordinates(branch.latitude, branch.longitude);
-    if (fromCoords) metros.add(fromCoords);
+  const fromCoords = resolveMetroFromCoordinates(branch.latitude, branch.longitude);
+  if (fromCoords) return [fromCoords];
+
+  for (const field of [branch.name, branch.displayName]) {
+    const extracted = extractMetroFromText(field);
+    if (extracted) metros.add(extracted);
   }
 
   return [...metros];

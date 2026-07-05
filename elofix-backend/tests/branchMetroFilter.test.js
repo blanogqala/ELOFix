@@ -26,6 +26,10 @@ function simulateBranchList(branches, query) {
     hasUserCoords ? lng : undefined
   );
 
+  if (customerMetros.length === 0 && !hasUserCoords) {
+    return [];
+  }
+
   let list = [...branches];
   if (customerMetros.length > 0) {
     list = list.filter((s) =>
@@ -74,9 +78,34 @@ function testJohannesburgCustomerExcludesCapeTown() {
   assert.deepStrictEqual(names, ["ABC Build - Midrand"]);
 }
 
+function testMphozaBellvilleSandtonExcludedForMilnertonJob() {
+  const branches = [
+    { displayName: "ABC Build - Bellville", city: "Cape Town", name: "Bellville" },
+    { displayName: "Mphoza - Bellville", city: "Sandton", name: "Mphoza - Bellville" },
+  ];
+  const names = simulateBranchList(branches, {
+    metro: "Cape Town",
+    city: "Milnerton",
+    area: "Milnerton",
+    lat: -33.88,
+    lng: 18.49,
+  });
+  assert.deepStrictEqual(names, ["ABC Build - Bellville"]);
+}
+
+function testNoLocationContextReturnsEmpty() {
+  const branches = [
+    { displayName: "ABC Build - Bellville", city: "Cape Town", name: "Bellville" },
+  ];
+  const names = simulateBranchList(branches, {});
+  assert.deepStrictEqual(names, []);
+}
+
 function run() {
   testMilnertonJobExcludesMidrand();
   testJohannesburgCustomerExcludesCapeTown();
+  testMphozaBellvilleSandtonExcludedForMilnertonJob();
+  testNoLocationContextReturnsEmpty();
   console.log("branchMetroFilter.test.js: all tests passed");
 }
 
