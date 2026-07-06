@@ -49,6 +49,7 @@ router.patch(
 );
 router.patch("/providers/:userId/approve", asyncHandler(adminController.approveProvider));
 router.patch("/providers/:userId/reject", asyncHandler(adminController.rejectProvider));
+router.patch("/providers/:userId/unreject", asyncHandler(adminController.unrejectProvider));
 router.patch("/providers/:userId/block", asyncHandler(adminController.blockProvider));
 router.patch("/providers/:userId/unblock", asyncHandler(adminController.unblockProvider));
 router.patch("/providers/:userId/delete", asyncHandler(adminController.deleteProvider));

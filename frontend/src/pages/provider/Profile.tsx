@@ -26,6 +26,7 @@ import {
   type CategorySuggestion,
 } from '@/lib/api/categories';
 import { businessHoursComplete, evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
+import { SA_ID_CHECKSUM_ERROR, validateSaId } from '@/lib/saIdValidation';
 import {
   getProviderOnboardingStorageKey,
   type ProviderProfileLocationState,
@@ -343,7 +344,11 @@ export default function ProviderProfile() {
     const newErrors: ProfileInfoErrors = {};
 
     if (!phone.trim()) newErrors.phone = true;
-    if (!saIdNumber.trim() && !provider?.hasSaIdNumber) newErrors.saIdNumber = true;
+    if (!saIdNumber.trim() && !provider?.hasSaIdNumber) {
+      newErrors.saIdNumber = true;
+    } else if (saIdNumber.trim() && !validateSaId(saIdNumber.trim())) {
+      newErrors.saIdNumber = true;
+    }
     if (!companyRegistrationNumber.trim()) newErrors.companyRegistrationNumber = true;
     if ((bio?.trim().length || 0) < 20) newErrors.bio = true;
     if (serviceAreas.length === 0) newErrors.serviceAreas = true;
@@ -351,9 +356,10 @@ export default function ProviderProfile() {
     setErrors(newErrors);
 
     if (Object.keys(newErrors).length > 0) {
+      const saIdChecksumInvalid = Boolean(saIdNumber.trim() && !validateSaId(saIdNumber.trim()));
       toast({
-        title: 'Missing required fields',
-        description: 'Please complete all required fields',
+        title: saIdChecksumInvalid ? 'Invalid SA ID number' : 'Missing required fields',
+        description: saIdChecksumInvalid ? SA_ID_CHECKSUM_ERROR : 'Please complete all required fields',
         variant: 'destructive',
       });
       return;
@@ -962,6 +968,10 @@ export default function ProviderProfile() {
                     inputMode="numeric"
                     className={errors.saIdNumber ? 'border-destructive focus-visible:ring-destructive' : ''}
                   />
+                  <p className="text-xs text-muted-foreground">Enter all 13 digits from your ID document (numbers only).</p>
+                  {errors.saIdNumber && saIdNumber.trim() && !validateSaId(saIdNumber.trim()) ? (
+                    <p className="text-sm text-destructive">{SA_ID_CHECKSUM_ERROR}</p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">

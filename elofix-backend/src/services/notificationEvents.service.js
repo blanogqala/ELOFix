@@ -196,6 +196,16 @@ async function notifyProviderApplicationRejected(providerUserId, reason) {
   });
 }
 
+async function notifyProviderApplicationUnrejected(providerUserId) {
+  return notifyUser(providerUserId, {
+    type: "provider_application_unrejected",
+    title: "Application back under review",
+    message:
+      "Your provider application rejection was reversed. It is pending admin review again.",
+    dedupeKey: userDedupe(providerUserId, `provider_application_unrejected:${Date.now()}`),
+  });
+}
+
 async function notifyAdminFraudAlert(alert) {
   try {
     const admins = await require("../config/prisma").user.findMany({
@@ -685,6 +695,7 @@ module.exports = {
   notifyProviderApproved,
   notifyProviderApplicationSubmitted,
   notifyProviderApplicationRejected,
+  notifyProviderApplicationUnrejected,
   notifyAdminFraudAlert,
   notifyProviderFraudReview,
   notifyCategorySuggestion,

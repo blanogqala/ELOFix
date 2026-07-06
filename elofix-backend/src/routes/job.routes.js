@@ -34,6 +34,7 @@ router.post("/:id/notes", authenticate, asyncHandler(jobController.addJobNote));
 router.post("/:id/chat", authenticate, asyncHandler(jobController.addChatMessage));
 router.patch("/:id/status", authenticate, asyncHandler(jobController.updateJobStatus));
 router.patch("/:id/reject-by-provider", authenticate, asyncHandler(jobController.rejectJobByProvider));
+router.patch("/:id/reselect-provider", authenticate, asyncHandler(jobController.reselectJobProvider));
 router.delete(
   "/:id/provider-view/rejected",
   authenticate,

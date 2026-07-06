@@ -139,6 +139,12 @@ export async function rejectProvider(userId: string, reason: string): Promise<Pr
   return data.provider;
 }
 
+export async function unrejectProvider(userId: string): Promise<Provider> {
+  const { data } = await apiClient.patch<ProviderResponse>(`/admin/providers/${userId}/unreject`);
+  if (!data?.provider) throw new Error('Failed to unreject provider');
+  return data.provider;
+}
+
 export async function blockProvider(userId: string, reason: string): Promise<Provider> {
   const { data } = await apiClient.patch<ProviderResponse>(`/admin/providers/${userId}/block`, {
     reason,

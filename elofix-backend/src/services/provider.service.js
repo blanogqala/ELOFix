@@ -1424,6 +1424,49 @@ async function rejectProviderByUserId(targetUserId, reason, auditOpts = {}) {
   return getProviderById(targetUserId);
 }
 
+function isProviderApplicationRejected(profile) {
+  return Boolean(profile.rejectedAt || String(profile.rejectionReason || "").trim());
+}
+
+async function unrejectProviderByUserId(targetUserId, auditOpts = {}) {
+  const profile = await loadProviderBundleByUserId(targetUserId);
+  if (!profile) {
+    throw new AppError("Provider not found", 404);
+  }
+  if (profile.blocked) {
+    throw new AppError("Cannot unreject: provider is blocked", 400);
+  }
+  if (!isProviderApplicationRejected(profile)) {
+    throw new AppError("Cannot unreject: provider application is not rejected", 400);
+  }
+
+  await prisma.provider.update({
+    where: { id: profile.id },
+    data: {
+      rejectionReason: null,
+      rejectedAt: null,
+    },
+  });
+
+  await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_UNREJECTED, {
+    userId: auditOpts.userId,
+    actorType: ACTOR_TYPES.ADMIN,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: profile.id,
+    oldValue: {
+      rejectionReason: profile.rejectionReason,
+      rejectedAt: profile.rejectedAt,
+    },
+    newValue: { rejectionReason: null, rejectedAt: null },
+    ipAddress: auditOpts.ipAddress,
+    deviceFingerprint: auditOpts.deviceFingerprint,
+  });
+
+  await notificationEvents.notifyProviderApplicationUnrejected(targetUserId);
+
+  return getProviderById(targetUserId);
+}
+
 async function blockProviderByUserId(targetUserId, auditOpts = {}) {
   const profile = await loadProviderBundleByUserId(targetUserId);
   if (!profile) {
@@ -1525,6 +1568,7 @@ module.exports = {
   publicUrlFromUploadedFile,
   approveProviderByUserId,
   rejectProviderByUserId,
+  unrejectProviderByUserId,
   approveProviderDocumentByUserId,
   rejectProviderDocumentByUserId,
   blockProviderByUserId,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canAdminActOnProviderApplication,
+  canAdminUnrejectProvider,
   getProviderAccountStatus,
   getProviderAccountStatusLabel,
   isProviderApplicationRejected,
@@ -58,5 +59,17 @@ describe('providerAccountStatus', () => {
   it('maps status labels', () => {
     expect(getProviderAccountStatusLabel('rejected')).toBe('Rejected');
     expect(getProviderAccountStatusLabel('incomplete')).toBe('Incomplete');
+  });
+
+  it('allows admin unreject only for rejected unapproved unblocked providers', () => {
+    const rejected = {
+      ...base,
+      rejectionReason: 'Incomplete documents',
+      rejectedAt: '2026-07-03T12:00:00.000Z',
+    };
+    expect(canAdminUnrejectProvider(rejected)).toBe(true);
+    expect(canAdminUnrejectProvider({ ...rejected, approved: true })).toBe(false);
+    expect(canAdminUnrejectProvider({ ...rejected, blocked: true })).toBe(false);
+    expect(canAdminUnrejectProvider(base)).toBe(false);
   });
 });

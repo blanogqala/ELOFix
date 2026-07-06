@@ -25,6 +25,7 @@ import {
   dismissMaterialBatch,
   withdrawAcceptedUserSuggestion,
   purgeWithdrawnUserSuggestion,
+  reselectJobProvider,
 } from '@/lib/api/jobs';
 import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -39,6 +40,7 @@ import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
 import { MaterialPaymentSection } from '@/components/jobs/MaterialPaymentSection';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
+import { RejectedJobProviderSelectorDialog } from '@/components/jobs/RejectedJobProviderSelectorDialog';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { QuotationAttachmentCard } from '@/components/jobs/QuotationAttachmentCard';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -58,7 +60,8 @@ import {
   XCircle,
   X,
   Ban,
-  Trash2
+  Trash2,
+  UserSearch,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -172,6 +175,7 @@ export default function JobDetail() {
   const [deleteMaterialOpen, setDeleteMaterialOpen] = useState(false);
   const [materialToDelete, setMaterialToDelete] = useState<MaterialLine | null>(null);
   const [deleteJobOpen, setDeleteJobOpen] = useState(false);
+  const [reselectProviderOpen, setReselectProviderOpen] = useState(false);
   const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
   const [hoveredTimelineStep, setHoveredTimelineStep] = useState<number | null>(null);
   const [serviceInvoiceOpen, setServiceInvoiceOpen] = useState(false);
@@ -594,6 +598,32 @@ export default function JobDetail() {
     }
   };
 
+  const handleReselectProvider = async (selectedProviderId: string) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      await reselectJobProvider(job.id, selectedProviderId);
+      await syncJobsAfterMutation();
+      setReselectProviderOpen(false);
+      toast({
+        title: 'Request sent',
+        description: 'Your job has been sent to the new provider for review.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description:
+          error instanceof Error ? error.message : 'Could not assign a new provider. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const formatRejectionReason = (reason?: string) =>
+    reason ? reason.replace(/_/g, ' ') : '';
+
   const openDeleteMaterialDialog = (material: MaterialLine) => {
     setMaterialToDelete(material);
     setDeleteMaterialOpen(true);
@@ -749,7 +779,7 @@ export default function JobDetail() {
           
           {/* Action Buttons */}
           <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto sm:justify-end">
-            {job.status === 'CANCELLED' && (
+            {(job.status === 'CANCELLED' || job.status === 'REJECTED') && (
               <Button 
                 variant="outline" 
                 size="sm"
@@ -760,7 +790,7 @@ export default function JobDetail() {
                 Delete Job
               </Button>
             )}
-            {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && (
+            {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && job.status !== 'REJECTED' && (
               <Button 
                 variant="outline" 
                 size="sm"
@@ -1141,6 +1171,38 @@ export default function JobDetail() {
                       )}
                     </div>
                   </div>
+
+                    {job.status === 'REJECTED' && (job.rejectionReason || job.rejectionDetails) ? (
+                      <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                        <p className="text-sm font-medium text-destructive">Reason for rejection</p>
+                        {job.rejectionReason ? (
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {formatRejectionReason(job.rejectionReason)}
+                          </p>
+                        ) : null}
+                        {job.rejectionDetails ? (
+                          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                            {job.rejectionDetails}
+                          </p>
+                        ) : null}
+                        {job.rejectedAt ? (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Rejected on {new Date(job.rejectedAt).toLocaleDateString()}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {job.status === 'REJECTED' && !job.courierFlow ? (
+                      <Button
+                        type="button"
+                        className="btn-accent w-full"
+                        onClick={() => setReselectProviderOpen(true)}
+                      >
+                        <UserSearch className="mr-2 h-4 w-4" />
+                        Look for another provider
+                      </Button>
+                    ) : null}
 
                     {(awaitingUserConfirmation || jobDisputed) && (
                       <div className="space-y-3 border-t pt-4">
@@ -1526,6 +1588,16 @@ export default function JobDetail() {
         onConfirm={handleDeleteJob}
         jobId={job.id}
       />
+
+      {job.status === 'REJECTED' && !job.courierFlow ? (
+        <RejectedJobProviderSelectorDialog
+          open={reselectProviderOpen}
+          onOpenChange={setReselectProviderOpen}
+          job={job}
+          loading={isActionPending}
+          onConfirm={handleReselectProvider}
+        />
+      ) : null}
 
       {/* Service Invoice Modal */}
       <Dialog open={serviceInvoiceOpen} onOpenChange={setServiceInvoiceOpen}>

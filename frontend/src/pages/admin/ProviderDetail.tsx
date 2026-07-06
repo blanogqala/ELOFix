@@ -10,6 +10,7 @@ import {
   getProviderById,
   approveProvider,
   rejectProvider,
+  unrejectProvider,
   blockProvider,
   unblockProvider,
   deleteProvider,
@@ -42,6 +43,7 @@ import {
   Plus,
   MessageSquare,
   Loader2,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -53,9 +55,11 @@ import {
 } from '@/lib/providerDocuments';
 import {
   canAdminActOnProviderApplication,
+  canAdminUnrejectProvider,
   getProviderAccountStatus,
   getProviderAccountStatusBadgeClass,
   getProviderAccountStatusLabel,
+  isProviderApplicationRejected,
 } from '@/lib/providerAccountStatus';
 import {
   Dialog,
@@ -346,6 +350,24 @@ export default function AdminProviderDetail() {
     }
   };
 
+  const handleUnreject = async () => {
+    if (!provider || isMutating) return;
+    try {
+      setIsMutating(true);
+      await unrejectProvider(provider.id);
+      toast({
+        title: 'Provider unrejected',
+        description: 'The provider has been returned to pending review.',
+      });
+      await loadProvider();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to unreject provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
   const handleBlock = async () => {
     if (!provider || isMutating) return;
     if (!blockReason.trim()) {
@@ -512,7 +534,23 @@ export default function AdminProviderDetail() {
                     Approve
                   </Button>
                 )}
-                {!provider.approved && !provider.blocked && (
+                {canAdminUnrejectProvider(provider) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => void handleUnreject()}
+                    disabled={isMutating}
+                  >
+                    {isMutating ? (
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    ) : (
+                      <RotateCcw className="mr-1 h-3 w-3" />
+                    )}
+                    Unreject
+                  </Button>
+                )}
+                {!provider.approved && !provider.blocked && !isProviderApplicationRejected(provider) && (
                   <Button
                     size="sm"
                     variant="outline"

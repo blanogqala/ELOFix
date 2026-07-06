@@ -108,6 +108,14 @@ async function rejectProvider(req, res) {
   res.json({ success: true, provider });
 }
 
+async function unrejectProvider(req, res) {
+  const provider = await providerService.unrejectProviderByUserId(
+    req.params.userId,
+    getAdminAuditContext(req)
+  );
+  res.json({ success: true, provider });
+}
+
 async function blockProvider(req, res) {
   const provider = await providerService.blockProviderByUserId(
     req.params.userId,
@@ -588,6 +596,7 @@ module.exports = {
   getAnalytics,
   approveProvider,
   rejectProvider,
+  unrejectProvider,
   approveProviderDocument,
   rejectProviderDocument,
   blockProvider,

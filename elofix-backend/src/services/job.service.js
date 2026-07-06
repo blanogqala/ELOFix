@@ -1620,6 +1620,61 @@ async function rejectJob(jobId, reason, details) {
   return rejectJobByProvider(jobId, reason, details);
 }
 
+async function reselectJobProvider(jobId, selectedProviderId, customerUserId) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  if (!job) throw new AppError("Job not found", 404);
+  assertCustomerOwnsJob(job, customerUserId);
+
+  const metaBefore = await getJobMeta(jobId);
+  const frontendStatus = toFrontendStatus(job.status, metaBefore);
+  if (frontendStatus !== "REJECTED") {
+    throw new AppError("Only rejected jobs can be reassigned to another provider", 400);
+  }
+
+  const newProviderUserId = await resolveProviderUserId(selectedProviderId);
+  if (!newProviderUserId) {
+    throw new AppError("selectedProviderId is required", 400);
+  }
+
+  const rejectingProviderId = String(
+    metaBefore.rejectedByProviderUserId || job.providerId || ""
+  ).trim();
+  if (rejectingProviderId && String(newProviderUserId) === rejectingProviderId) {
+    throw new AppError("Please select a different provider", 400);
+  }
+
+  const updated = await prisma.job.update({
+    where: { id: jobId },
+    data: {
+      providerId: newProviderUserId,
+      status: "PENDING",
+    },
+    include: jobInclude,
+  });
+
+  const meta = await mutateJobMeta(jobId, (m) =>
+    withStatusAndProgress(
+      {
+        ...m,
+        rejectionReason: null,
+        rejectionDetails: null,
+        rejectedAt: null,
+        rejectedByProviderUserId: null,
+        progressStep: 0,
+        hasStarted: false,
+      },
+      "PENDING",
+      updated
+    )
+  );
+
+  const enriched = await finalizeJob(updated, meta);
+  if (updated.providerId) {
+    await notificationEvents.notifyJobRequest(updated.providerId, jobId, updated.title);
+  }
+  return enriched;
+}
+
 async function deleteRejectedRequestFromProviderView(jobId, actorUserId) {
   const meta = await getJobMeta(jobId);
   if (meta.statusOverride !== "REJECTED") {
@@ -3541,6 +3596,7 @@ module.exports = {
   submitMaterials,
   rejectJob,
   rejectJobByProvider,
+  reselectJobProvider,
   deleteRejectedRequestFromProviderView,
   getCancelledRequestsForProvider,
   deleteCancelledRequestFromProviderView,

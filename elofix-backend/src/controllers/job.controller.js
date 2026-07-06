@@ -203,6 +203,22 @@ async function rejectJobByProvider(req, res) {
   res.json({ success: true, job });
 }
 
+async function reselectJobProvider(req, res) {
+  if (String(req.user?.role) !== "CUSTOMER") {
+    throw new AppError("Only customers can reselect a provider", 403);
+  }
+  const selectedProviderId = req.body?.selectedProviderId;
+  if (!selectedProviderId || !String(selectedProviderId).trim()) {
+    throw new AppError("selectedProviderId is required", 400);
+  }
+  const job = await jobService.reselectJobProvider(
+    req.params.id,
+    selectedProviderId,
+    req.user.userId
+  );
+  res.json({ success: true, job });
+}
+
 async function deleteRejectedFromProviderView(req, res) {
   const result = await jobService.deleteRejectedRequestFromProviderView(req.params.id, req.user.userId);
   res.json({ success: true, ...result });
@@ -543,6 +559,7 @@ module.exports = {
   submitMaterials,
   rejectJob,
   rejectJobByProvider,
+  reselectJobProvider,
   deleteRejectedFromProviderView,
   getCancelledRequestsForProvider,
   deleteCancelledFromProviderView,

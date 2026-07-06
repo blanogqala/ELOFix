@@ -549,6 +549,13 @@ export async function rejectJobByProvider(
   return ensureJob(data, 'reject job by provider');
 }
 
+export async function reselectJobProvider(jobId: string, selectedProviderId: string): Promise<Job> {
+  const { data } = await apiClient.patch<BackendJobResponse>(`/jobs/${jobId}/reselect-provider`, {
+    selectedProviderId,
+  });
+  return ensureJob(data, 'reselect job provider');
+}
+
 export async function addProviderMaterialSuggestion(
   jobId: string,
   suggested: MaterialLine,

@@ -4,12 +4,12 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { getAdminProviders, approveProvider } from '@/lib/api/providers';
+import { getAdminProviders, approveProvider, unrejectProvider } from '@/lib/api/providers';
 import { getAdminProviderRevenueSummary } from '@/lib/api/admin';
 import { getCategories } from '@/lib/api/categories';
 import { Category, Provider } from '@/types';
 import { 
-  Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin, Users, TrendingUp, Percent, PackageCheck
+  Search, Check, X, Star, Briefcase, FileCheck, Clock, User, MapPin, Users, TrendingUp, Percent, PackageCheck, RotateCcw
 } from 'lucide-react';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -20,6 +20,7 @@ import {
   getProviderAccountStatusBadgeClass,
   getProviderAccountStatusLabel,
   isProviderAwaitingApproval,
+  canAdminUnrejectProvider,
   type ProviderAccountStatus,
 } from '@/lib/providerAccountStatus';
 
@@ -41,6 +42,7 @@ export default function AdminProviders() {
   >('all');
   const [cityFilter, setCityFilter] = useState<string>('all');
   const [approvingProviderId, setApprovingProviderId] = useState<string | null>(null);
+  const [unrejectingProviderId, setUnrejectingProviderId] = useState<string | null>(null);
   const [providerStatsById, setProviderStatsById] = useState<Record<string, ProviderJobStats>>({});
 
   useEffect(() => {
@@ -96,6 +98,24 @@ export default function AdminProviders() {
       toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setApprovingProviderId(null);
+    }
+  };
+
+  const handleUnreject = async (providerId: string) => {
+    if (unrejectingProviderId === providerId) return;
+    try {
+      setUnrejectingProviderId(providerId);
+      await unrejectProvider(providerId);
+      toast({
+        title: 'Provider unrejected',
+        description: 'The provider has been returned to pending review.',
+      });
+      await loadProviders();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to unreject provider.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setUnrejectingProviderId(null);
     }
   };
 
@@ -408,6 +428,17 @@ export default function AdminProviders() {
                               >
                                 <Check className="mr-1 h-2 w-2" />
                                 {approvingProviderId === provider.id ? 'Approving...' : 'Approve'}
+                              </Button>
+                            )}
+                            {canAdminUnrejectProvider(provider) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={unrejectingProviderId === provider.id}
+                                onClick={(e) => { e.stopPropagation(); void handleUnreject(provider.id); }}
+                              >
+                                <RotateCcw className="mr-1 h-2 w-2" />
+                                {unrejectingProviderId === provider.id ? 'Unrejecting...' : 'Unreject'}
                               </Button>
                             )}
                           </div>

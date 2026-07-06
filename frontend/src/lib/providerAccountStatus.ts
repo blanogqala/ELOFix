@@ -88,3 +88,11 @@ export function canAdminActOnProviderApplication(
     !provider.blocked
   );
 }
+
+export function canAdminUnrejectProvider(provider: ProviderAccountStatusInput): boolean {
+  return (
+    isProviderApplicationRejected(provider) &&
+    !provider.approved &&
+    !provider.blocked
+  );
+}

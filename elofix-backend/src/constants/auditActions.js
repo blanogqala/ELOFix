@@ -12,6 +12,7 @@ const AUDIT_ACTIONS = {
   // Provider verification
   VERIFICATION_PROVIDER_APPROVED: "verification.provider.approved",
   VERIFICATION_PROVIDER_REJECTED: "verification.provider.rejected",
+  VERIFICATION_PROVIDER_UNREJECTED: "verification.provider.unrejected",
   VERIFICATION_PROVIDER_DOC_APPROVED: "verification.provider.document_approved",
   VERIFICATION_PROVIDER_DOC_REJECTED: "verification.provider.document_rejected",
 
