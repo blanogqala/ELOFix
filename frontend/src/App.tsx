@@ -77,6 +77,7 @@ import ProviderJobBrowseMaterials from "./pages/provider/ProviderJobBrowseMateri
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderProfile from "./pages/provider/Profile";
 import ProviderDocuments from "./pages/provider/Documents";
+import ProviderTrustScoreDetails from "./pages/provider/TrustScoreDetails";
 // Admin pages
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminProviders from "./pages/admin/Providers";
@@ -203,6 +204,7 @@ const App = () => (
 
             {/* Provider Routes */}
             <Route path="/provider/dashboard" element={<AuthGuard allowedRoles={['provider']}><ProviderDashboard /></AuthGuard>} />
+            <Route path="/provider/trust-score" element={<AuthGuard allowedRoles={['provider']}><ProviderTrustScoreDetails /></AuthGuard>} />
             <Route path="/provider/requests" element={<AuthGuard allowedRoles={['provider']}><ProviderRequests /></AuthGuard>} />
             <Route path="/provider/requests/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderRequestDetail /></AuthGuard>} />
             <Route path="/provider/jobs" element={<AuthGuard allowedRoles={['provider']}><ProviderActiveJobs /></AuthGuard>} />

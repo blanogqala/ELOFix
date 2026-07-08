@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, TrendingUp, AlertCircle } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { TrustLevelBadge } from '@/components/fraud/TrustLevelBadge';
+import { Button } from '@/components/ui/button';
 import apiClient from '@/api/client';
 import { cn } from '@/lib/utils';
 
@@ -39,6 +41,13 @@ function formatHistoryDate(at: string) {
 export function ProviderTrustScoreCard({ className }: { className?: string }) {
   const [data, setData] = useState<TrustScoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  const historyPreview = useMemo(() => {
+    if (!data?.history?.length) return [];
+    // Keep the dashboard card neat; full list is available on details page.
+    return data.history.slice(0, 3);
+  }, [data?.history]);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,9 +113,20 @@ export function ProviderTrustScoreCard({ className }: { className?: string }) {
 
       {data.history && data.history.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm font-medium">Recent score changes</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium">Recent score changes</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2"
+              onClick={() => navigate('/provider/trust-score')}
+            >
+              View score changes results
+            </Button>
+          </div>
           <ul className="space-y-2 text-sm">
-            {data.history.map((entry) => (
+            {historyPreview.map((entry) => (
               <li
                 key={`${entry.reason}-${entry.at}-${entry.scoreAfter}`}
                 className="flex items-start justify-between gap-3 rounded-lg border p-2"
@@ -126,6 +146,11 @@ export function ProviderTrustScoreCard({ className }: { className?: string }) {
               </li>
             ))}
           </ul>
+          {data.history.length > historyPreview.length ? (
+            <p className="text-xs text-muted-foreground">
+              Showing {historyPreview.length} of {data.history.length} changes.
+            </p>
+          ) : null}
         </div>
       ) : data.score < 75 ? (
         <p className="text-sm text-muted-foreground">
