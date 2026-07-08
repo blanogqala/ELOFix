@@ -165,6 +165,8 @@ export function MaterialPaymentSection({
   const [purchaseFlowStep, setPurchaseFlowStep] = useState<1 | 2>(1);
   const [gatewayPayOpen, setGatewayPayOpen] = useState(false);
   const [gatewayPayAmount, setGatewayPayAmount] = useState(0);
+  const [gatewayPayCardId, setGatewayPayCardId] = useState('');
+  const [gatewayPayCvv, setGatewayPayCvv] = useState('');
   const [gatewayPayMeta, setGatewayPayMeta] = useState<{
     supplierId: string;
     deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
@@ -452,6 +454,18 @@ export function MaterialPaymentSection({
 
   const handlePurchaseFlowComplete = async () => {
     if (!purchaseFlowStore) return;
+    if (savedCards.length === 0) {
+      setError('Add a payment card on the Payments page before paying.');
+      return;
+    }
+    if (!selectedCardId) {
+      setError('Select a payment card to continue.');
+      return;
+    }
+    if (!validateCvc(cvc)) {
+      setError('Enter the 3 or 4 digit CVC code on your card.');
+      return;
+    }
     const supplier = getSupplierMeta(purchaseFlowStore.id);
     let fee = 0;
     if (selectedDeliveryType === 'STORE') {
@@ -475,6 +489,8 @@ export function MaterialPaymentSection({
         orderId: purchaseFlowStore.orderId,
       });
       setGatewayPayAmount(materialsTotal);
+      setGatewayPayCardId(selectedCardId);
+      setGatewayPayCvv(cvc);
       setPurchaseFlowOpen(false);
       setPurchaseFlowStore(null);
       setGatewayPayOpen(true);
@@ -1595,6 +1611,11 @@ export function MaterialPaymentSection({
 
                 <div>
                   <Label className="mb-2 block">Payment Method</Label>
+                  {savedCards.length === 0 ? (
+                    <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-sm text-destructive">
+                      <p>Add a payment card on the Payments page before paying.</p>
+                    </div>
+                  ) : (
                   <RadioGroup value={selectedCardId} onValueChange={setSelectedCardId}>
                     {savedCards.map(card => (
                       <div
@@ -1616,6 +1637,7 @@ export function MaterialPaymentSection({
                       </div>
                     ))}
                   </RadioGroup>
+                  )}
                 </div>
 
                 <div>
@@ -1644,7 +1666,12 @@ export function MaterialPaymentSection({
                 <Button variant="outline" onClick={() => setPurchaseFlowStep(1)}>Back</Button>
                 <Button
                   onClick={() => void handlePurchaseFlowComplete()}
-                  disabled={isProcessing}
+                  disabled={
+                    isProcessing ||
+                    savedCards.length === 0 ||
+                    !selectedCardId ||
+                    !validateCvc(cvc)
+                  }
                   className="btn-accent"
                 >
                   {isProcessing ? 'Preparing…' : `Continue to payment ${formatCurrency(purchaseFlowStore.materials.reduce((s, m) => s + m.qty * m.unitPrice, 0), { decimals: 2 })}`}
@@ -1665,6 +1692,8 @@ export function MaterialPaymentSection({
           kind="JOB_STORE_ORDER"
           jobId={job.id}
           metadata={gatewayPayMeta}
+          initialCardId={gatewayPayCardId}
+          initialCvv={gatewayPayCvv}
           breakdown={[
             {
               label: 'Materials',

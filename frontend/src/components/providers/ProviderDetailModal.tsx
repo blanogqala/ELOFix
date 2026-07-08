@@ -4,9 +4,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import {
   Star, Briefcase, Award, Calendar, Check,
-  ChevronLeft, ChevronRight, Image, ExternalLink,
+  Image, ExternalLink,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { Category, Provider } from '@/types';
 import { getCategories } from '@/lib/api/categories';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -14,6 +13,8 @@ import { ProviderReputationSummary } from './ProviderReputationSummary';
 import { ProviderVerificationBadges } from './ProviderVerificationBadges';
 import { RatingBreakdownChart } from './RatingBreakdownChart';
 import { ProviderReviewList } from './ProviderReviewList';
+import { PortfolioMediaGrid } from './MediaLightbox';
+import { hasPortfolioGalleryItems } from '@/lib/portfolioGallery';
 import { isNewProvider } from '@/lib/providerReputation';
 
 interface ProviderDetailModalProps {
@@ -28,7 +29,6 @@ export function ProviderDetailModal({
   provider, open, onOpenChange, onSelect, selectedCategory
 }: ProviderDetailModalProps) {
   const navigate = useNavigate();
-  const [activeGalleryIndex, setActiveGalleryIndex] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
@@ -47,9 +47,8 @@ export function ProviderDetailModal({
     ? categories.find(c => c.id === selectedCategory)?.name || selectedCategory
     : null;
 
-  const workPosts = (provider.workPosts || []).filter(
-    p => !selectedCategory || p.categoryId === selectedCategory
-  );
+  const workPosts = provider.workPosts || [];
+  const hasPortfolioItems = hasPortfolioGalleryItems(workPosts, [], selectedCategory);
   const profileAvatarUrl = resolveUploadUrl(provider.profileImage);
   const breakdown = provider.ratingBreakdown ?? { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   const reviewCount = provider.totalReviews ?? provider.reviews?.length ?? 0;
@@ -137,78 +136,12 @@ export function ProviderDetailModal({
             <h3 className="font-semibold mb-2">
               {categoryName ? `${categoryName} portfolio` : 'Portfolio'}
             </h3>
-            {workPosts.length > 0 ? (
-              <div className="space-y-4">
-                <div className="relative">
-                  <div className="aspect-video rounded-lg overflow-hidden bg-muted">
-                    <img 
-                      src={resolveUploadUrl(workPosts[activeGalleryIndex % workPosts.length]?.images[0]) || '/placeholder.svg'} 
-                      alt="Work sample"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  {workPosts.length > 1 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setActiveGalleryIndex(prev => 
-                          (prev - 1 + workPosts.length) % workPosts.length
-                        )}
-                        className="absolute left-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                      >
-                        <ChevronLeft className="h-5 w-5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveGalleryIndex(prev => 
-                          (prev + 1) % workPosts.length
-                        )}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                      >
-                        <ChevronRight className="h-5 w-5" />
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {workPosts[activeGalleryIndex % workPosts.length] && (
-                  <div className="p-3 bg-muted/50 rounded-lg">
-                    <p className="font-medium text-sm">
-                      {workPosts[activeGalleryIndex % workPosts.length].title}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {workPosts[activeGalleryIndex % workPosts.length].description}
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex gap-2 overflow-x-auto pb-2">
-                  {workPosts.map((post, idx) => (
-                    <button
-                      type="button"
-                      key={post.id}
-                      onClick={() => setActiveGalleryIndex(idx)}
-                      className={cn(
-                        "h-16 w-16 rounded-lg overflow-hidden shrink-0 border-2 transition-colors",
-                        idx === activeGalleryIndex % workPosts.length 
-                          ? "border-primary" 
-                          : "border-transparent hover:border-border"
-                      )}
-                    >
-                      <img src={resolveUploadUrl(post.images[0]) || '/placeholder.svg'} alt="" className="w-full h-full object-cover" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : provider.portfolioImages && provider.portfolioImages.length > 0 ? (
-              <div className="grid grid-cols-3 gap-2">
-                {provider.portfolioImages.map((img, idx) => (
-                  <div key={idx} className="aspect-square rounded-lg overflow-hidden bg-muted">
-                    <img src={resolveUploadUrl(img)} alt={`Work ${idx + 1}`} className="w-full h-full object-cover" />
-                  </div>
-                ))}
-              </div>
-            ) : (
+            <PortfolioMediaGrid
+              workPosts={workPosts}
+              portfolioImages={[]}
+              categoryId={selectedCategory}
+            />
+            {!hasPortfolioItems && (
               <div className="p-8 text-center bg-muted/50 rounded-lg">
                 <Image className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                 <p className="text-sm text-muted-foreground">
@@ -230,7 +163,9 @@ export function ProviderDetailModal({
               size="sm"
               onClick={() => {
                 onOpenChange(false);
-                navigate(`/user/providers/${provider.id}`);
+                navigate(`/user/providers/${provider.id}`, {
+                  state: selectedCategory ? { selectedCategory } : undefined,
+                });
               }}
             >
               <ExternalLink className="mr-2 h-4 w-4" />

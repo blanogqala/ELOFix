@@ -6,41 +6,108 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getAllMaterialOrdersForUser } from '@/lib/api/materialOrders';
+import { groupServiceMaterialOrdersByJob } from '@/lib/groupServiceMaterialOrders';
 import { Package, ShoppingCart } from 'lucide-react';
 import { OrderCard, OrderCardViewModel } from '@/components/orders/OrderCard';
-import { MaterialOrderCardSkeleton } from '@/components/common/loading';
+import { ServiceJobMaterialGroup } from '@/components/orders/ServiceJobMaterialGroup';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 
-function OrdersPanel(props: {
+function LoadingSkeletons() {
+  return (
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="card-elevated p-6 animate-pulse">
+          <div className="h-6 w-48 bg-muted rounded mb-4" />
+          <div className="h-4 w-full bg-muted rounded mb-2" />
+          <div className="h-4 w-2/3 bg-muted rounded" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState(props: {
+  title: string;
+  hint: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  const { title, hint, actionLabel, onAction } = props;
+  return (
+    <div className="card-elevated p-12 text-center">
+      <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+        <Package className="h-8 w-8 text-muted-foreground" />
+      </div>
+      <h3 className="mb-2 font-semibold">{title}</h3>
+      <p className="mb-4 text-sm text-muted-foreground">{hint}</p>
+      <Button onClick={onAction}>{actionLabel}</Button>
+    </div>
+  );
+}
+
+function ServiceMaterialsList(props: {
   isLoading: boolean;
   orders: OrderCardViewModel[];
-  emptyTitle: string;
-  emptyHint: string;
-  emptyActionLabel: string;
-  onEmptyAction: () => void;
   onOrderClick: (id: string) => void;
+  onEmptyAction: () => void;
 }) {
-  const { isLoading, orders, emptyTitle, emptyHint, emptyActionLabel, onEmptyAction, onOrderClick } = props;
+  const { isLoading, orders, onOrderClick, onEmptyAction } = props;
+
+  const groups = useMemo(() => groupServiceMaterialOrdersByJob(orders), [orders]);
+
+  if (isLoading) return <LoadingSkeletons />;
+
+  if (groups.length === 0) {
+    return (
+      <EmptyState
+        title="No service material orders"
+        hint="When you pay for materials on a job, they appear here with full tracking."
+        actionLabel="View jobs"
+        onAction={onEmptyAction}
+      />
+    );
+  }
+
   return (
-    <div className="card-elevated overflow-hidden p-4 md:p-6">
-      {isLoading ? (
-        <MaterialOrderCardSkeleton count={3} />
-      ) : orders.length > 0 ? (
-        <div className="grid gap-4">
-          {orders.map((order) => (
-            <OrderCard key={order.id} order={order} onClick={() => onOrderClick(order.id)} />
-          ))}
+    <div className="space-y-4">
+      {groups.map((group) => (
+        <ServiceJobMaterialGroup key={group.jobId} group={group} onOrderClick={onOrderClick} />
+      ))}
+    </div>
+  );
+}
+
+function StandaloneOrdersList(props: {
+  isLoading: boolean;
+  orders: OrderCardViewModel[];
+  onOrderClick: (id: string) => void;
+  onEmptyAction: () => void;
+}) {
+  const { isLoading, orders, onOrderClick, onEmptyAction } = props;
+
+  if (isLoading) return <LoadingSkeletons />;
+
+  if (orders.length === 0) {
+    return (
+      <EmptyState
+        title="No standalone orders"
+        hint="Order hardware from stores — deliveries appear here."
+        actionLabel="Order materials"
+        onAction={onEmptyAction}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {orders.map((order) => (
+        <div
+          key={order.id}
+          className="card-elevated overflow-hidden transition-shadow hover:shadow-lg"
+        >
+          <OrderCard order={order} variant="embedded" onClick={() => onOrderClick(order.id)} />
         </div>
-      ) : (
-        <div className="p-12 text-center">
-          <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-            <Package className="h-8 w-8 text-muted-foreground" />
-          </div>
-          <h3 className="font-semibold mb-2">{emptyTitle}</h3>
-          <p className="text-muted-foreground text-sm mb-4">{emptyHint}</p>
-          <Button onClick={onEmptyAction}>{emptyActionLabel}</Button>
-        </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -64,6 +131,8 @@ export default function MaterialOrders() {
     const standalone = orders.filter((o) => o.jobId == null || String(o.jobId).trim() === '');
     return { serviceMaterials: service, standaloneMaterials: standalone };
   }, [orders]);
+
+  const handleOrderClick = (id: string) => navigate(`/user/material-orders/${id}`);
 
   return (
     <DashboardLayout>
@@ -90,25 +159,19 @@ export default function MaterialOrders() {
             <TabsTrigger value="standalone">Standalone orders ({standaloneMaterials.length})</TabsTrigger>
           </TabsList>
           <TabsContent value="service" className="mt-0">
-            <OrdersPanel
+            <ServiceMaterialsList
               isLoading={isLoading}
               orders={serviceMaterials}
-              emptyTitle="No service material orders"
-              emptyHint="When you pay for materials on a job, they appear here with full tracking."
-              emptyActionLabel="View jobs"
+              onOrderClick={handleOrderClick}
               onEmptyAction={() => navigate('/user/jobs')}
-              onOrderClick={(id) => navigate(`/user/material-orders/${id}`)}
             />
           </TabsContent>
           <TabsContent value="standalone" className="mt-0">
-            <OrdersPanel
+            <StandaloneOrdersList
               isLoading={isLoading}
               orders={standaloneMaterials}
-              emptyTitle="No standalone orders"
-              emptyHint="Order hardware from stores — deliveries appear here."
-              emptyActionLabel="Order materials"
+              onOrderClick={handleOrderClick}
               onEmptyAction={() => navigate('/user/order-materials')}
-              onOrderClick={(id) => navigate(`/user/material-orders/${id}`)}
             />
           </TabsContent>
         </Tabs>

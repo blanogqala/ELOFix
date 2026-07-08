@@ -204,11 +204,13 @@ async function createDisputeRoundInTransaction(tx, disputeId, payload) {
     return tx.jobDisputeRound.create({
       data: {
         id: randomUUID(),
-        disputeId: String(disputeId),
+        // Some Prisma client generations require providing the relation explicitly.
+        dispute: { connect: { id: String(disputeId) } },
         roundNumber: count + 1,
         status: "OPEN",
         requestedResolution: payload.requestedResolution,
-        customerComment: payload.customerComment,
+        // Prisma schema requires customerComment (non-null).
+        customerComment: payload.customerComment != null ? String(payload.customerComment) : "",
         otherResolutionDetail: payload.otherResolutionDetail ?? null,
         customerImages: payload.customerImages || [],
         customerVideos: payload.customerVideos || [],

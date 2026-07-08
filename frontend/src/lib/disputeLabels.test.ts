@@ -21,7 +21,7 @@ describe('disputeLabels', () => {
         senderRole: 'PROVIDER',
         providerName: 'Arthur Nogqala',
       })
-    ).toBe('Arthur Nogqala · Provider ');
+    ).toBe('Arthur Nogqala · Provider');
   });
 
   it('formats admin fallback label', () => {
@@ -29,6 +29,6 @@ describe('disputeLabels', () => {
       formatMessageSenderLabel({
         senderRole: 'ADMIN',
       })
-    ).toBe('EloFix Admin · Admin perspective');
+    ).toBe('EloFix Admin · Admin');
   });
 });

@@ -121,6 +121,8 @@ interface BackendCancelResponse {
   success: boolean;
   job: BackendJob;
   refundAmount: number;
+  disputeOpened?: boolean;
+  disputeId?: string;
 }
 
 function numOrUndef(v: unknown): number | undefined {
@@ -650,10 +652,15 @@ export async function cancelJob(
   jobId: string,
   reason: string,
   details: string
-): Promise<{ job: Job; refundAmount: number }> {
+): Promise<{ job: Job; refundAmount: number; disputeOpened?: boolean; disputeId?: string }> {
   const { data } = await apiClient.post<BackendCancelResponse>(`/jobs/${jobId}/cancel`, { reason, details });
   if (!data?.job) throw new Error('Invalid cancel job response from server');
-  return { job: toFrontendJob(data.job), refundAmount: Number(data.refundAmount || 0) };
+  return {
+    job: toFrontendJob(data.job),
+    refundAmount: Number(data.refundAmount || 0),
+    disputeOpened: Boolean(data.disputeOpened),
+    disputeId: data.disputeId ? String(data.disputeId) : undefined,
+  };
 }
 
 export async function confirmJobCompletion(

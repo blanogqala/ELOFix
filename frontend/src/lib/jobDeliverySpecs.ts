@@ -1,5 +1,7 @@
 import type { DeliveryGeoPoint, DeliveryRequestItem, DeliveryRequestRecord, Job } from '@/types';
 
+export { formatGeoPointLabel } from '@/lib/formatAddress';
+
 export interface JobDeliverySpecItem {
   name: string;
   qty: number;
@@ -10,14 +12,6 @@ export interface JobDeliverySpecs {
   collection: DeliveryGeoPoint;
   destination: DeliveryGeoPoint;
   items: JobDeliverySpecItem[];
-}
-
-export function formatGeoPointLabel(point?: DeliveryGeoPoint | null): string {
-  if (!point) return '—';
-  const parts = [point.label, point.address, point.suburb, point.area, point.city].filter(
-    (p) => typeof p === 'string' && p.trim().length > 0
-  ) as string[];
-  return parts.length > 0 ? parts.join(', ') : '—';
 }
 
 function resolveCollectionPoint(job: Job, dr?: DeliveryRequestRecord | null): DeliveryGeoPoint {

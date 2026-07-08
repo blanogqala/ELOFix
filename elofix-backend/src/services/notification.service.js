@@ -251,6 +251,58 @@ async function markJobNotificationsRead(userId, jobId, section = "all") {
   return result.count;
 }
 
+const JOBS_NAV_TYPES = [
+  ...JOB_SECTION_TYPES.materials,
+  ...JOB_SECTION_TYPES.messages,
+  ...JOB_SECTION_TYPES.general.filter((t) => t !== "job_request"),
+];
+
+const NAV_PATH_TYPES = {
+  "/admin/providers": ["admin_provider_application_submitted"],
+  "/admin/categories": ["category_suggestion"],
+  "/admin/fraud-center": ["fraud_alert"],
+  "/admin/refund-repayments": ["admin_repayment_submitted", "admin_refund_debt_overdue"],
+  "/user/jobs": JOBS_NAV_TYPES,
+  "/provider/jobs": JOBS_NAV_TYPES,
+  "/provider/requests": ["job_request"],
+  "/provider/profile": [
+    "provider_application_submitted",
+    "provider_application_rejected",
+    "provider_document_rejected",
+    "provider_approved",
+  ],
+};
+
+const JOBS_NAV_PATHS = new Set(["/user/jobs", "/provider/jobs"]);
+
+/**
+ * Mark unread notifications read for a sidebar nav path (bulk clearance on page visit).
+ */
+async function markNavNotificationsRead(userId, navPath) {
+  const uid = String(userId);
+  const path = String(navPath || "").trim();
+  const types = NAV_PATH_TYPES[path];
+  if (!types?.length) {
+    return { count: 0, invalid: true };
+  }
+
+  const where = {
+    userId: uid,
+    read: false,
+    type: { in: types },
+  };
+  if (JOBS_NAV_PATHS.has(path)) {
+    where.jobId = { not: null };
+  }
+
+  const result = await prisma.notification.updateMany({
+    where,
+    data: { read: true },
+  });
+  emitToUserRoom(uid, "notification:nav-read", { navPath: path, count: result.count });
+  return { count: result.count, invalid: false };
+}
+
 /**
  * In-app notification for the supplier org owner (User row) for material-order events.
  */
@@ -282,6 +334,7 @@ module.exports = {
   markAllAsRead,
   getUnreadCount,
   markJobNotificationsRead,
+  markNavNotificationsRead,
   notifySupplierOrgOwnerMaterialEvent,
   emitToUserRoom,
   toApiShape,

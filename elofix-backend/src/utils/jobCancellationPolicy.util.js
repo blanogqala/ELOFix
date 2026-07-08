@@ -29,6 +29,11 @@ async function isProviderEnRouteToService(job, meta) {
   return s === "IN_PROGRESS" || s === "AWAITING_CONFIRMATION";
 }
 
+function isLaborPaid(job, meta) {
+  const safeMeta = meta && typeof meta === "object" ? meta : {};
+  return Boolean(job?.laborPaid) || Boolean(safeMeta.laborPaid);
+}
+
 function mapActorRole(role) {
   const r = String(role || "").toUpperCase();
   if (r === "CUSTOMER" || r === "USER") return "customer";
@@ -62,35 +67,58 @@ async function resolveJobCancellationPolicy(job, meta, actorUserId, actorRole) {
   }
 
   const providerEnRoute = await isProviderEnRouteToService(job, meta);
-  const fullRefund = job.laborPaid
-    ? paymentService.computeCancelRefundAmount(job, { courierFlow: Boolean(meta?.courierFlow) })
-    : 0;
+  const laborPaid = isLaborPaid(job, meta);
 
-  let refundAmount = fullRefund;
-  let refundKind = job.laborPaid ? "standard" : "none";
+  let refundAmount = 0;
+  let refundKind = laborPaid ? "standard" : "none";
   let customerForfeits = false;
+  let opensDisputeReview = false;
 
-  if (providerEnRoute && actor === "customer") {
+  if (!laborPaid) {
+    return {
+      cancelledBy: actor,
+      providerEnRoute,
+      refundAmount: 0,
+      refundKind: "none",
+      customerForfeits: false,
+      opensDisputeReview: false,
+      laborPaid: false,
+    };
+  }
+
+  if (actor === "customer" && providerEnRoute && meta?.courierFlow) {
     refundAmount = 0;
     refundKind = "forfeit_customer_en_route";
-    customerForfeits = job.laborPaid;
-  } else if (providerEnRoute && actor === "provider") {
-    refundAmount = fullRefund;
-    refundKind = "provider_late_cancel_full_refund";
+    customerForfeits = true;
+    return {
+      cancelledBy: actor,
+      providerEnRoute,
+      refundAmount,
+      refundKind,
+      customerForfeits,
+      opensDisputeReview: false,
+      laborPaid: true,
+    };
   }
+
+  opensDisputeReview = true;
+  refundAmount = 0;
+  refundKind = "dispute_review_pending";
 
   return {
     cancelledBy: actor,
     providerEnRoute,
     refundAmount,
     refundKind,
-    customerForfeits,
-    laborPaid: Boolean(job.laborPaid),
+    customerForfeits: false,
+    opensDisputeReview,
+    laborPaid: true,
   };
 }
 
 module.exports = {
   EN_ROUTE_COURIER_FULFILLMENT,
+  isLaborPaid,
   isProviderEnRouteToService,
   resolveJobCancellationPolicy,
 };

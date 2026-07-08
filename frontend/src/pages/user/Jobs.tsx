@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { JobCardSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,13 +28,21 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 
-type JobsView = 'jobs' | 'disputes';
+type JobsView = 'jobs' | 'review';
+
+function isCancellationReview(job: Job): boolean {
+  return (
+    job.status === 'DISPUTED' &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel')
+  );
+}
 
 export default function UserJobs() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const jobsView: JobsView = searchParams.get('view') === 'disputes' ? 'disputes' : 'jobs';
+  const viewParam = searchParams.get('view');
+  const jobsView: JobsView = viewParam === 'review' || viewParam === 'disputes' ? 'review' : 'jobs';
   const userId = user?.id ?? '';
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,6 +70,13 @@ export default function UserJobs() {
       .then((data) => setDisputes(data.disputes))
       .catch(() => setDisputes([]));
   }, []);
+
+  useEffect(() => {
+    if (viewParam !== 'disputes') return;
+    const next = new URLSearchParams(searchParams);
+    next.set('view', 'review');
+    setSearchParams(next, { replace: true });
+  }, [viewParam, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!isError || !loadError) return;
@@ -99,7 +113,7 @@ export default function UserJobs() {
   );
 
   const viewJobs = useMemo(() => {
-    if (jobsView === 'disputes') {
+    if (jobsView === 'review') {
       return searchFilteredJobs.filter((job) => job.status === 'DISPUTED');
     }
     return searchFilteredJobs.filter((job) => {
@@ -116,17 +130,19 @@ export default function UserJobs() {
 
   const setJobsView = (view: JobsView) => {
     if (view === 'jobs') {
-      searchParams.delete('view');
-      setSearchParams(searchParams, { replace: true });
+      const next = new URLSearchParams(searchParams);
+      next.delete('view');
+      setSearchParams(next, { replace: true });
     } else {
-      searchParams.set('view', 'disputes');
-      setSearchParams(searchParams, { replace: true });
+      const next = new URLSearchParams(searchParams);
+      next.set('view', 'review');
+      setSearchParams(next, { replace: true });
     }
   };
 
   const getStatusBadge = (job: Job) => (
     <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
-      {getJobDisplayStatusLabel(job)}
+      {jobsView === 'review' && isCancellationReview(job) ? 'Cancellation' : getJobDisplayStatusLabel(job)}
     </span>
   );
 
@@ -148,7 +164,7 @@ export default function UserJobs() {
       </div>
       <div className="text-right shrink-0 hidden sm:block">
         {(() => {
-          const { text, isPaid, refundAmount, refundStatus } = getJobPriceDisplay(job);
+          const { text, isPaid, refundAmount, refundStatus, underAdminReview } = getJobPriceDisplay(job);
           const showRefund = hasRefundDisplay({ refundAmount, refundStatus });
           const processedRefund = isJobRefunded({ refundAmount, refundStatus });
           return (
@@ -160,6 +176,9 @@ export default function UserJobs() {
                   <span className="ml-1 text-xs text-destructive">(Refunded)</span>
                 )}
               </p>
+              {underAdminReview && (
+                <p className="text-xs text-amber-700 dark:text-amber-200">Under admin review</p>
+              )}
               {showRefund && (
                 <p className="text-xs">
                   <RefundSummaryLine
@@ -186,13 +205,16 @@ export default function UserJobs() {
   const renderDisputeNote = (job: Job) => {
     const dispute = disputeByJobId.get(job.id);
     if (!dispute) return null;
+    const cancellation = isCancellationReview(job);
     return (
       <div className="border-b border-destructive/20 bg-destructive/5 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
             <div className="text-sm min-w-0">
-              <p className="font-medium text-destructive">Dispute in progress</p>
+              <p className="font-medium text-destructive">
+                {cancellation ? 'Cancellation in progress' : 'Dispute in progress'}
+              </p>
               <p className="text-muted-foreground mt-0.5">
                 {dispute.status} ·{' '}
                 {formatRequestedResolution(dispute.requestedResolution, dispute.otherResolutionDetail)}
@@ -207,7 +229,7 @@ export default function UserJobs() {
             className="shrink-0"
             onClick={(e) => {
               e.stopPropagation();
-              navigate(`/user/disputes/${dispute.id}`);
+              navigate(cancellation ? `/user/cancellations/${dispute.id}` : `/user/disputes/${dispute.id}`);
             }}
           >
             View case
@@ -218,21 +240,33 @@ export default function UserJobs() {
   };
 
   const disputedRowClass =
-    jobsView === 'disputes' ? 'border-l-4 border-destructive bg-destructive/5' : undefined;
+    jobsView === 'review' ? 'border-l-4 border-destructive bg-destructive/5' : undefined;
 
   const renderEntry = (entry: ReturnType<typeof groupJobsForList>[number]) => {
     const key = entry.kind === 'group' ? entry.parent.id : entry.job.id;
     const primaryJob = entry.kind === 'group' ? entry.parent : entry.job;
 
+    if (jobsView === 'review') {
+      return (
+        <div key={key}>
+          <JobListGroup
+            entry={entry}
+            className={disputedRowClass}
+            onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
+            renderRow={renderJobRow}
+          />
+          {renderDisputeNote(primaryJob)}
+        </div>
+      );
+    }
+
     return (
-      <div key={key}>
+      <div key={key} className="card-elevated overflow-hidden transition-shadow hover:shadow-lg">
         <JobListGroup
           entry={entry}
-          className={disputedRowClass}
           onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
           renderRow={renderJobRow}
         />
-        {jobsView === 'disputes' && renderDisputeNote(primaryJob)}
       </div>
     );
   };
@@ -244,7 +278,7 @@ export default function UserJobs() {
           <div className="min-w-0">
             <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">My Jobs</h1>
             <p className="text-sm text-muted-foreground sm:text-base">
-              Track service requests and open dispute cases
+              Track service requests and cases under review
             </p>
           </div>
           <Button className="btn-accent h-10 w-full shrink-0 whitespace-nowrap sm:w-auto" onClick={() => navigate('/user/new-request')}>
@@ -287,8 +321,8 @@ export default function UserJobs() {
           <Tabs value={jobsView} onValueChange={(v) => setJobsView(v as JobsView)}>
             <TabsList>
               <TabsTrigger value="jobs">My Jobs</TabsTrigger>
-              <TabsTrigger value="disputes" className="gap-2">
-                Dispute Center
+              <TabsTrigger value="review" className="gap-2">
+                Review Center
                 {disputedCount > 0 && (
                   <span className="rounded-full bg-destructive px-2 py-0.5 text-xs text-destructive-foreground">
                     {disputedCount}
@@ -298,56 +332,66 @@ export default function UserJobs() {
             </TabsList>
           </Tabs>
 
-          {/* {jobsView === 'disputes' && (
+          {/* {jobsView === 'review' && (
             <p className="text-sm text-muted-foreground">
               Jobs you flagged as not complete stay here until EloFix resolves the case.
             </p>
           )} */}
 
         {/* Jobs List */}
-        <div className="card-elevated w-full min-w-0 max-w-full overflow-hidden">
-          {isLoading ? (
-            <div className="p-6">
-              <JobCardSkeleton count={5} />
-            </div>
-          ) : loadError ? (
-            <div className="p-12 text-center">
-              <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
-                <Briefcase className="h-8 w-8 text-destructive" />
+        {isLoading ? (
+          <div className="space-y-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="card-elevated p-6 animate-pulse">
+                <div className="h-6 w-48 bg-muted rounded mb-4" />
+                <div className="h-4 w-full bg-muted rounded mb-2" />
+                <div className="h-4 w-2/3 bg-muted rounded" />
               </div>
-              <h3 className="font-semibold mb-2">Failed to load jobs</h3>
-              <p className="text-muted-foreground text-sm mb-4">{loadError}</p>
-              <Button onClick={() => void refetch()} variant="outline">
-                Retry
-              </Button>
+            ))}
+          </div>
+        ) : loadError ? (
+          <div className="card-elevated p-12 text-center">
+            <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
+              <Briefcase className="h-8 w-8 text-destructive" />
             </div>
-          ) : viewJobs.length > 0 ? (
-            <div className="divide-y divide-border">
-              {groupedEntries.map((entry) => renderEntry(entry))}
+            <h3 className="font-semibold mb-2">Failed to load jobs</h3>
+            <p className="text-muted-foreground text-sm mb-4">{loadError}</p>
+            <Button onClick={() => void refetch()} variant="outline">
+              Retry
+            </Button>
+          </div>
+        ) : viewJobs.length > 0 ? (
+          jobsView === 'review' ? (
+            <div className="card-elevated w-full min-w-0 max-w-full overflow-hidden">
+              <div className="divide-y divide-border">
+                {groupedEntries.map((entry) => renderEntry(entry))}
+              </div>
             </div>
           ) : (
-            <div className="p-12 text-center">
-              <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-                <Briefcase className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <h3 className="font-semibold mb-2">
-                {jobsView === 'disputes' ? 'No open disputes' : 'No jobs found'}
-              </h3>
-              <p className="text-muted-foreground text-sm mb-4">
-                {jobsView === 'disputes'
-                  ? 'When you flag work as not complete, the job appears here.'
-                  : searchQuery || statusFilter !== 'all'
-                    ? 'Try adjusting your filters'
-                    : 'No jobs available'}
-              </p>
-              {jobsView === 'jobs' && !searchQuery && statusFilter === 'all' && (
-                <Button onClick={() => navigate('/user/new-request')}>
-                  Create Request
-                </Button>
-              )}
+            <div className="space-y-4">{groupedEntries.map((entry) => renderEntry(entry))}</div>
+          )
+        ) : (
+          <div className="card-elevated p-12 text-center">
+            <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+              <Briefcase className="h-8 w-8 text-muted-foreground" />
             </div>
-          )}
-        </div>
+            <h3 className="font-semibold mb-2">
+              {jobsView === 'review' ? 'No cases under review' : 'No jobs found'}
+            </h3>
+            <p className="text-muted-foreground text-sm mb-4">
+              {jobsView === 'review'
+                ? 'Jobs that are cancelled or disputed will appear here while EloFix reviews the case.'
+                : searchQuery || statusFilter !== 'all'
+                  ? 'Try adjusting your filters'
+                  : 'No jobs available'}
+            </p>
+            {jobsView === 'jobs' && !searchQuery && statusFilter === 'all' && (
+              <Button onClick={() => navigate('/user/new-request')}>
+                Create Request
+              </Button>
+            )}
+          </div>
+        )}
         </div>
       </div>
     </DashboardLayout>

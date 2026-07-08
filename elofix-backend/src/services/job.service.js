@@ -49,40 +49,10 @@ const jobInclude = {
   },
 };
 
-function jobSiteAddressFromRow(job) {
-  const loc = job.locationDetails;
-  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
-    const parts = [loc.address, loc.suburb, loc.area, loc.city].filter(Boolean);
-    if (parts.length) return parts.join(", ");
-  }
-  const l = job.location;
-  if (l && String(l).trim() && String(l).trim() !== "UNKNOWN") return String(l).trim();
-  return "";
-}
-
-function jobSiteLocationFromRow(job) {
-  const loc = job.locationDetails;
-  const address = jobSiteAddressFromRow(job);
-  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
-    const coords =
-      loc.coordinates &&
-      typeof loc.coordinates === "object" &&
-      Number.isFinite(Number(loc.coordinates.lat)) &&
-      Number.isFinite(Number(loc.coordinates.lng))
-        ? { lat: Number(loc.coordinates.lat), lng: Number(loc.coordinates.lng) }
-        : Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))
-          ? { lat: Number(loc.lat), lng: Number(loc.lng) }
-          : undefined;
-    return {
-      address,
-      city: loc.city ? String(loc.city) : undefined,
-      area: loc.area ? String(loc.area) : undefined,
-      suburb: loc.suburb ? String(loc.suburb) : undefined,
-      coordinates: coords,
-    };
-  }
-  return { address };
-}
+const {
+  jobSiteAddressFromRow,
+  jobSiteLocationFromRow,
+} = require("../utils/address.util");
 
 function normalizeValue(value) {
   return String(value || "").trim().toLowerCase();
@@ -1434,6 +1404,9 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
   if (String(job.customerId) !== String(userId)) {
     throw new AppError("Only the customer can pay for labor", 403);
   }
+  if (job.status === "CANCELLED" || job.status === "REJECTED") {
+    throw new AppError("Cannot pay for a cancelled or rejected job", 400);
+  }
   let existingMeta = await getJobMeta(jobId);
 
   if (job.laborPaid) {
@@ -1978,12 +1951,48 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   if (!job) throw new AppError("Job not found", 404);
   const preMeta = await getJobMeta(jobId);
   const cancellationPolicy = require("../utils/jobCancellationPolicy.util");
+  const { isLaborPaid } = cancellationPolicy;
   const policy = await cancellationPolicy.resolveJobCancellationPolicy(
     job,
     preMeta,
     actorUserId,
     actorRole
   );
+
+  const laborPaidFlag = isLaborPaid(job, preMeta);
+  if (
+    laborPaidFlag &&
+    !policy.opensDisputeReview &&
+    !policy.customerForfeits &&
+    policy.refundKind !== "forfeit_customer_en_route"
+  ) {
+    throw new AppError(
+      "Paid jobs must be reviewed through a dispute before any refund is processed",
+      400
+    );
+  }
+
+  if (policy.opensDisputeReview) {
+    const jobDisputeService = require("./jobDispute.service");
+    const dispute = await jobDisputeService.openDisputeFromCancellation(jobId, actorUserId, {
+      reason,
+      details,
+      actorRole: policy.cancelledBy,
+    });
+    const meta = await getJobMeta(jobId);
+    const finalized = await finalizeJob(job, meta);
+    return {
+      job: finalized,
+      refundAmount: 0,
+      cancelledBy: policy.cancelledBy,
+      providerEnRoute: policy.providerEnRoute,
+      customerForfeits: false,
+      refundKind: policy.refundKind,
+      disputeOpened: true,
+      disputeId: dispute.id,
+    };
+  }
+
   const originalPaymentRef = preMeta?.servicePayment?.paymentRef || preMeta?.servicePayment?.reference || null;
   const providerRow = job.providerId
     ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
@@ -1994,7 +2003,8 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
       ? Number(policy.refundAmount) || 0
       : paymentService.computeCancelRefundAmount(job, { courierFlow: Boolean(preMeta?.courierFlow) });
   let refundStatusForMeta = "recorded";
-  if (expectedRefund > 0 && job.laborPaid) {
+  const laborPaidForRefund = isLaborPaid(job, preMeta);
+  if (expectedRefund > 0 && laborPaidForRefund) {
     const { attemptGatewayRefundFirst } = require("./providerRefundClawback.service");
     const gatewayPreflight = await attemptGatewayRefundFirst(jobId, expectedRefund);
     if (gatewayPreflight.failed) {

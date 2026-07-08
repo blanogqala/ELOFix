@@ -12,6 +12,10 @@ const branchService = require("./branch.service");
 const branchStaffNotificationService = require("./branchStaffNotification.service");
 const { assertCustomerNotBlocked } = require("./accountStatus.service");
 const { EN_ROUTE_COURIER_FULFILLMENT } = require("../utils/jobCancellationPolicy.util");
+const {
+  jobSiteAddressFromRow,
+  jobSiteLocationFromRow,
+} = require("../utils/address.util");
 
 async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
   const org = String(supplierOrgId || "").trim();
@@ -1063,41 +1067,6 @@ async function getMaterialOrderById(orderId) {
   }
 
   return base;
-}
-
-function jobSiteAddressFromRow(job) {
-  const loc = job?.locationDetails;
-  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
-    const parts = [loc.address, loc.suburb, loc.area, loc.city].filter(Boolean).map(String);
-    if (parts.length) return parts.join(", ");
-  }
-  const l = job?.location;
-  if (l && String(l).trim() && String(l).trim() !== "UNKNOWN") return String(l).trim();
-  return "";
-}
-
-function jobSiteLocationFromRow(job) {
-  const loc = job?.locationDetails;
-  const address = jobSiteAddressFromRow(job);
-  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
-    const coords =
-      loc.coordinates &&
-      typeof loc.coordinates === "object" &&
-      Number.isFinite(Number(loc.coordinates.lat)) &&
-      Number.isFinite(Number(loc.coordinates.lng))
-        ? { lat: Number(loc.coordinates.lat), lng: Number(loc.coordinates.lng) }
-        : Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))
-          ? { lat: Number(loc.lat), lng: Number(loc.lng) }
-          : undefined;
-    return {
-      address,
-      city: loc.city ? String(loc.city) : undefined,
-      area: loc.area ? String(loc.area) : undefined,
-      suburb: loc.suburb ? String(loc.suburb) : undefined,
-      coordinates: coords,
-    };
-  }
-  return { address };
 }
 
 /**

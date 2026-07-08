@@ -44,6 +44,14 @@ export async function markJobNotificationsRead(
   await apiClient.patch(`/notifications/job/${jobId}/read`, { section });
 }
 
+export async function markNavNotificationsRead(navPath: string): Promise<number> {
+  const { data } = await apiClient.patch<{ success: boolean; count: number }>(
+    '/notifications/nav/read',
+    { navPath }
+  );
+  return typeof data?.count === 'number' ? data.count : 0;
+}
+
 export async function getUnreadCount(): Promise<number> {
   const { data } = await apiClient.get<CountResponse>('/notifications/unread-count');
   return typeof data?.count === 'number' ? data.count : 0;

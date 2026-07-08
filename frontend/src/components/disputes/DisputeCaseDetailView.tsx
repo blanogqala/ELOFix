@@ -74,6 +74,7 @@ interface DisputeCaseDetailViewProps {
   rounds?: JobDisputeRound[];
   jobTitle?: string | null;
   footer?: ReactNode;
+  caseKind?: 'dispute' | 'cancellation';
 }
 
 export function DisputeCaseDetailView({
@@ -83,6 +84,7 @@ export function DisputeCaseDetailView({
   rounds: roundsProp,
   jobTitle,
   footer,
+  caseKind = 'dispute',
 }: DisputeCaseDetailViewProps) {
   const rounds = useMemo(() => {
     const list = roundsProp ?? dispute.rounds ?? [];
@@ -124,7 +126,9 @@ export function DisputeCaseDetailView({
           <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden />
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold sm:text-2xl">Dispute #{dispute.id.slice(-8)}</h1>
+              <h1 className="text-xl font-semibold sm:text-2xl">
+                {caseKind === 'cancellation' ? 'Cancellation' : 'Dispute'} #{dispute.id.slice(-8)}
+              </h1>
               <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', statusBadgeClass(dispute.status))}>
                 {formatDisputeStatus(dispute.status)}
               </span>
@@ -133,7 +137,9 @@ export function DisputeCaseDetailView({
 
             {hasMultipleRounds ? (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Disputes on this job ({rounds.length})</p>
+                <p className="text-sm font-medium">
+                  {caseKind === 'cancellation' ? 'Cases on this job' : 'Disputes on this job'} ({rounds.length})
+                </p>
                 <ul className="space-y-2">
                   {rounds.map((round) => {
                     const selected = round.roundNumber === selectedRound?.roundNumber;
@@ -155,7 +161,7 @@ export function DisputeCaseDetailView({
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-sm font-medium">
-                              Dispute {round.roundNumber}
+                              {caseKind === 'cancellation' ? 'Case' : 'Dispute'} {round.roundNumber}
                               {selected ? ' · viewing' : ''}
                             </span>
                             <span

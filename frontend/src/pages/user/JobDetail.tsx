@@ -75,7 +75,11 @@ import {
   getQuoteDeliveryLine,
   getQuoteLaborLine,
 } from '@/lib/jobQuoteDisplay';
-import { getCustomerCancelPreview } from '@/lib/jobCancellationPolicy';
+import {
+  getCustomerCancelPreview,
+  getCustomerCancelForfeitToastMessage,
+  getCancelDisputeSubmittedToastMessage,
+} from '@/lib/jobCancellationPolicy';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/jobProgressDisplay';
 import { getCourierJobDisplayStatusLabel, getCourierTimelineStepIndex } from '@/lib/courierJobTimeline';
@@ -97,6 +101,7 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSavedCards } from '@/lib/api/payments';
+import { guardLoadedPaymentCards } from '@/lib/paymentCardGuard';
 
 function addDaysIso(iso: string | null | undefined, days: number): string | null {
   if (!iso) return null;
@@ -333,9 +338,17 @@ export default function JobDetail() {
     if (!job || isActionPending) return;
     setIsActionPending(true);
     try {
-      const { refundAmount } = await cancelJob(job.id, reason, details);
+      const { refundAmount, disputeOpened, disputeId } = await cancelJob(job.id, reason, details);
       await syncJobsAfterMutation();
       setCancelDialogOpen(false);
+      if (disputeOpened && disputeId) {
+        toast({
+          title: 'Cancellation submitted',
+          description: getCancelDisputeSubmittedToastMessage(),
+        });
+        navigate(`/user/cancellations/${disputeId}`);
+        return;
+      }
       const matsPaid =
         job.materialPayments?.some((p) => p.status === 'paid') ||
         (job.jobMaterialOrders ?? []).some((o) => {
@@ -350,7 +363,7 @@ export default function JobDetail() {
       toast({
         title: 'Job Cancelled',
         description: forfeit
-          ? 'Your job was cancelled. Service payment is non-refundable because collection or delivery was already underway.'
+          ? getCustomerCancelForfeitToastMessage(job)
           : refundAmount > 0
             ? `Your job has been cancelled. Refund of ${formatCurrency(refundAmount, { decimals: 2 })} will be processed.`
             : 'Your job has been cancelled.',
@@ -715,6 +728,10 @@ export default function JobDetail() {
     (job.cancellationReason && job.cancellationReason.trim()) ||
     'No reason provided';
   const jobDisputed = job.status === 'DISPUTED';
+  const jobPaymentBlocked = job.status === 'CANCELLED' || job.status === 'REJECTED';
+  const isCancellationReview =
+    job.status === 'DISPUTED' &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel');
 
   const isCourierJob = Boolean(job.courierFlow);
   // Courier jobs reach the "awaiting confirmation" step via the linked delivery's
@@ -796,6 +813,12 @@ export default function JobDetail() {
                 size="sm"
                 className="h-9 flex-1 whitespace-nowrap text-muted-foreground border-muted-foreground hover:bg-accent/70 sm:flex-initial"
                 onClick={() => setCancelDialogOpen(true)}
+                disabled={job.status === 'DISPUTED'}
+                title={
+                  job.status === 'DISPUTED'
+                    ? 'This job is under review. Actions are disabled until the case is resolved.'
+                    : undefined
+                }
               >
                 <Ban className="mr-2 h-4 w-4" />
                 Cancel Job
@@ -928,7 +951,15 @@ export default function JobDetail() {
                   </Button>
                 ) : null}
                 {drStatusLower === 'approved' && !courierDeliveryPaid ? (
-                  <Button className="btn-accent" onClick={() => setPayCourierDeliveryModalOpen(true)}>
+                  <Button
+                    className="btn-accent"
+                    disabled={jobPaymentBlocked}
+                    onClick={() => {
+                      if (jobPaymentBlocked) return;
+                      if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                      setPayCourierDeliveryModalOpen(true);
+                    }}
+                  >
                     Pay service
                   </Button>
                 ) : null}
@@ -956,7 +987,15 @@ export default function JobDetail() {
                 serviceNote={job.servicePrice?.note}
               />
               <div className="flex justify-end">
-                <Button className="btn-accent" onClick={() => setPayLaborModalOpen(true)}>
+                <Button
+                  className="btn-accent"
+                  disabled={jobPaymentBlocked}
+                  onClick={() => {
+                    if (jobPaymentBlocked) return;
+                    if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                    setPayLaborModalOpen(true);
+                  }}
+                >
                   Pay service
                 </Button>
               </div>
@@ -1137,8 +1176,11 @@ export default function JobDetail() {
                   <div 
                     className="flex items-center gap-4 cursor-pointer hover:bg-muted/50 p-2 rounded-lg -m-2 transition-colors"
                     onClick={() => {
-                      if (job.providerId) navigate(`/user/providers/${job.providerId}`);
-                      else setProviderModalOpen(true);
+                      if (job.providerId) {
+                        navigate(`/user/providers/${job.providerId}`, {
+                          state: { selectedCategory: job.category },
+                        });
+                      } else setProviderModalOpen(true);
                     }}
                   >
                     <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full bg-primary/10 flex items-center justify-center">
@@ -1210,9 +1252,13 @@ export default function JobDetail() {
                           <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
                             <Clock className="h-5 w-5 shrink-0 text-destructive mt-0.5" aria-hidden />
                             <div>
-                              <p className="font-medium text-sm text-destructive">Dispute opened</p>
+                              <p className="font-medium text-sm text-destructive">
+                                {isCancellationReview ? 'Cancellation opened' : 'Dispute opened'}
+                              </p>
                               <p className="text-sm text-muted-foreground mt-1">
-                                EloFix is reviewing this case. View updates in your Dispute Center.
+                                {isCancellationReview
+                                  ? 'EloFix is reviewing this cancellation. View updates in your Review Center.'
+                                  : 'EloFix is reviewing this case. View updates in your Review Center.'}
                               </p>
                               <Button
                                 type="button"
@@ -1221,13 +1267,17 @@ export default function JobDetail() {
                                 className="mt-2"
                                 onClick={() => {
                                   if (job.disputeId) {
-                                    navigate(`/user/disputes/${job.disputeId}`);
+                                    navigate(
+                                      isCancellationReview
+                                        ? `/user/cancellations/${job.disputeId}`
+                                        : `/user/disputes/${job.disputeId}`
+                                    );
                                   } else {
-                                    navigate('/user/jobs?view=disputes');
+                                    navigate('/user/jobs?view=review');
                                   }
                                 }}
                               >
-                                View in Dispute Center
+                                View case
                               </Button>
                             </div>
                           </div>
@@ -1239,7 +1289,12 @@ export default function JobDetail() {
                             type="button"
                             variant="outline"
                             className="flex-1"
-                            disabled={isActionPending}
+                            disabled={isActionPending || job.status === 'DISPUTED'}
+                            title={
+                              job.status === 'DISPUTED'
+                                ? 'This job is under review. Actions are disabled until the case is resolved.'
+                                : undefined
+                            }
                             onClick={() => setDisputeDialogOpen(true)}
                           >
                             No, not complete
@@ -1247,7 +1302,12 @@ export default function JobDetail() {
                           <Button
                             type="button"
                             className="btn-accent flex-1"
-                            disabled={isActionPending}
+                            disabled={isActionPending || job.status === 'DISPUTED'}
+                            title={
+                              job.status === 'DISPUTED'
+                                ? 'This job is under review. Actions are disabled until the case is resolved.'
+                                : undefined
+                            }
                             onClick={() => setEvidenceDialogOpen(true)}
                           >
                             <CheckCircle className="mr-2 h-4 w-4" />

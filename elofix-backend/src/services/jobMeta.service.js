@@ -273,6 +273,7 @@ function enrichJob(job, meta) {
     userReview: safeMeta.userReview,
     cancellationReason: safeMeta.cancellationReason,
     cancellationDetails: safeMeta.cancellationDetails,
+    cancelledBy: safeMeta.cancelledBy || null,
     cancellationSource: safeMeta.cancellationSource || null,
     cancelledAt: safeMeta.cancelledAt,
     refundAmount:

@@ -36,12 +36,14 @@ export function useJobActivityIndicators() {
     socket.on('notification:new', onRefresh);
     socket.on('notification:read', onRefresh);
     socket.on('notification:read-all', onRefresh);
+    socket.on('notification:nav-read', onRefresh);
     socket.on('notification:job-read', onRefresh);
     socket.on('message:new', onRefresh);
     return () => {
       socket.off('notification:new', onRefresh);
       socket.off('notification:read', onRefresh);
       socket.off('notification:read-all', onRefresh);
+      socket.off('notification:nav-read', onRefresh);
       socket.off('notification:job-read', onRefresh);
       socket.off('message:new', onRefresh);
     };

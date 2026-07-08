@@ -22,6 +22,7 @@ import {
   setStoreDeliveryOption,
 } from '@/lib/api/jobs';
 import { getInvoiceById } from '@/lib/api/payments';
+import { guardPaymentCardsForUser } from '@/lib/paymentCardGuard';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { getDeliveryProviders } from '@/lib/api/specials';
 import { DeliveryProvider, MaterialOrder, Supplier } from '@/types';
@@ -692,8 +693,10 @@ export default function OrderDetails() {
     printWindow.document.close();
   };
 
-  const handlePayDelivery = () => {
-    if (!order || !effectiveOrderId) return;
+  const handlePayDelivery = async () => {
+    if (!order || !effectiveOrderId || !user) return;
+    const canPay = await guardPaymentCardsForUser(user.id, toast);
+    if (!canPay) return;
     const fee = resolveEffectiveDeliveryFee({
       deliveryFee: order.deliveryFee,
       deliveryType:

@@ -113,7 +113,9 @@ export function RejectedJobProviderSelectorDialog({
                   selected={selectedProvider === provider.id}
                   onSelect={setSelectedProvider}
                   onViewProfile={(providerId) =>
-                    navigate(`/user/providers/${providerId}`, { state: { fromJobDetail: true } })
+                    navigate(`/user/providers/${providerId}`, {
+                      state: { fromJobDetail: true, selectedCategory: job.category },
+                    })
                   }
                 />
               ))}

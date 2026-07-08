@@ -1,6 +1,7 @@
 {
   "watch": ["server.js", "src", ".env"],
   "ext": "js,cjs,mjs",
+  "signal": "SIGTERM",
   "env": {
     "NODE_ENV": "development"
   },

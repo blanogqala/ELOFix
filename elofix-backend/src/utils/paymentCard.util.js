@@ -16,6 +16,10 @@ function isValidCardLast4(last4) {
   return /^\d{4}$/.test(s) && !/^[*]+$/.test(s);
 }
 
+function isValidCvv(cvv) {
+  return /^\d{3,4}$/.test(String(cvv || ""));
+}
+
 function brandFromGatewayLabel(raw) {
   const b = String(raw || "").toLowerCase();
   if (b.includes("master")) return "mastercard";
@@ -68,5 +72,6 @@ module.exports = {
   detectBrand,
   parseMaskedLast4,
   isValidCardLast4,
+  isValidCvv,
   parsePaymentCardFromGatewayPayload,
 };

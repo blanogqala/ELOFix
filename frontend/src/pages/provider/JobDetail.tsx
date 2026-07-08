@@ -88,7 +88,12 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfillmentSocket';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
-import { getJobPriceDisplay, getQuoteMaterialsTotal, getQuoteMaterialsRefundTotal, jobHasRefundedMaterials } from '@/lib/jobUtils';
+import { getJobPriceDisplay, getQuoteMaterialsTotal, getQuoteMaterialsRefundTotal, getUserLaborGross, jobHasRefundedMaterials } from '@/lib/jobUtils';
+import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
+import {
+  getProviderCancelPreview,
+  getCancelDisputeSubmittedToastMessage,
+} from '@/lib/jobCancellationPolicy';
 import { RefundSummaryLine, isJobRefunded } from '@/components/payments/RefundSummaryLine';
 import {
   getCustomerQuoteTotal,
@@ -191,8 +196,6 @@ export default function ProviderJobDetail() {
     commTabParam === 'messages' || commTabParam === 'notes' ? commTabParam : 'messages'
   );
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [cancelReason, setCancelReason] = useState('');
-  const [cancelDetails, setCancelDetails] = useState('');
   const [materialsBuilder, setMaterialsBuilder] = useState<MaterialLine[]>([]);
   const [servicePriceAmount, setServicePriceAmount] = useState('');
   const [servicePriceNote, setServicePriceNote] = useState('');
@@ -508,13 +511,27 @@ export default function ProviderJobDetail() {
     }
   };
 
-  const handleCancel = async () => {
-    if (!job || !cancelReason) return;
+  const handleCancel = async (reason: string, details: string) => {
+    if (!job) return;
     try {
-      const result = await cancelJob(job.id, cancelReason, cancelDetails);
+      const result = await cancelJob(job.id, reason, details);
       await syncJobsAfterMutation();
       setCancelOpen(false);
-      toast({ title: 'Job cancelled', description: `Refund of ${formatCurrency(result.refundAmount)} will be processed.` });
+      if (result.disputeOpened && result.disputeId) {
+        toast({
+          title: 'Cancellation submitted',
+          description: getCancelDisputeSubmittedToastMessage(),
+        });
+        navigate(`/provider/cancellations/${result.disputeId}`);
+        return;
+      }
+      toast({
+        title: 'Job cancelled',
+        description:
+          result.refundAmount > 0
+            ? `Refund of ${formatCurrency(result.refundAmount, { decimals: 2 })} will be processed.`
+            : 'Your job has been cancelled.',
+      });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to cancel job.', variant: 'destructive' });
     }
@@ -769,6 +786,9 @@ export default function ProviderJobDetail() {
 
   const materialsTotal = getQuoteMaterialsTotal(job);
   const materialsRefundTotal = getQuoteMaterialsRefundTotal(job);
+  const laborTotal =
+    job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? job.laborEstimateRange.max;
+  const cancelPreview = getProviderCancelPreview(job, deliveryRequest ?? null, hasAnyMaterialPaid);
   const hasRefundedMaterials = jobHasRefundedMaterials(job);
   const quoteLaborLine = getQuoteLaborLine(job, deliveryRequest ?? null);
   const quoteDeliveryLine = getQuoteDeliveryLine(job, deliveryRequest ?? null);
@@ -813,10 +833,20 @@ export default function ProviderJobDetail() {
         {job.status === 'DISPUTED' && (
           <JobDisputeStatusBanner
             variant="provider"
+            caseKind={
+              job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel'
+                ? 'cancellation'
+                : 'dispute'
+            }
             disputeId={job.disputeId}
             onViewDisputeCase={
               job.disputeId
-                ? () => navigate(`/provider/disputes/${job.disputeId}`)
+                ? () =>
+                    navigate(
+                      job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel'
+                        ? `/provider/cancellations/${job.disputeId}`
+                        : `/provider/disputes/${job.disputeId}`
+                    )
                 : undefined
             }
           />
@@ -1512,9 +1542,11 @@ export default function ProviderJobDetail() {
               <Button
                 className="flex-1 h-12"
                 onClick={handleMarkComplete}
-                disabled={!canMarkJobComplete}
+                disabled={!canMarkJobComplete || job.status === 'DISPUTED'}
                 title={
-                  !canMarkJobComplete
+                  job.status === 'DISPUTED'
+                    ? 'This job is under review. Actions are disabled until the case is resolved.'
+                    : !canMarkJobComplete
                     ? 'Customer must pay the service price before you can mark this job complete.'
                     : undefined
                 }
@@ -1523,7 +1555,17 @@ export default function ProviderJobDetail() {
               </Button>
             )}
             {showCancel && (
-              <Button variant="destructive" className={showMarkComplete ? 'flex-1 h-12' : 'flex-1 h-12'} onClick={() => setCancelOpen(true)}>
+              <Button
+                variant="destructive"
+                className={showMarkComplete ? 'flex-1 h-12' : 'flex-1 h-12'}
+                onClick={() => setCancelOpen(true)}
+                disabled={job.status === 'DISPUTED'}
+                title={
+                  job.status === 'DISPUTED'
+                    ? 'This job is under review. Actions are disabled until the case is resolved.'
+                    : undefined
+                }
+              >
                 <XCircle className="mr-2 h-5 w-5" /> Cancel Job
               </Button>
             )}
@@ -1763,43 +1805,22 @@ export default function ProviderJobDetail() {
           </DialogContent>
         </Dialog>
 
-        {/* Cancel Dialog */}
-        <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-destructive" /> Cancel Job
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Reason</label>
-                <Select value={cancelReason} onValueChange={setCancelReason}>
-                  <SelectTrigger><SelectValue placeholder="Select a reason" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="scheduling_conflict">Scheduling conflict</SelectItem>
-                    <SelectItem value="unable_to_complete">Unable to complete work</SelectItem>
-                    <SelectItem value="client_unresponsive">Client unresponsive</SelectItem>
-                    <SelectItem value="safety_concern">Safety concern</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Details (optional)</label>
-                <Textarea
-                  value={cancelDetails}
-                  onChange={e => setCancelDetails(e.target.value)}
-                  placeholder="Provide more context..."
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setCancelOpen(false)}>Keep Job</Button>
-              <Button variant="destructive" onClick={handleCancel} disabled={!cancelReason}>Cancel Job</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <JobCancellationDialog
+          open={cancelOpen}
+          onOpenChange={setCancelOpen}
+          onConfirm={(reason, details) => void handleCancel(reason, details)}
+          hasMaterialsPaid={hasAnyMaterialPaid}
+          materialsAmount={materialsTotal}
+          laborAmount={job.laborPaid ? getUserLaborGross(job) : laborTotal}
+          cancelPreview={cancelPreview}
+          reasonOptions={[
+            { value: 'scheduling_conflict', label: 'Scheduling conflict' },
+            { value: 'unable_to_complete', label: 'Unable to complete work' },
+            { value: 'client_unresponsive', label: 'Client unresponsive' },
+            { value: 'safety_concern', label: 'Safety concern' },
+            { value: 'other', label: 'Other' },
+          ]}
+        />
       </div>
     </DashboardLayout>
   );

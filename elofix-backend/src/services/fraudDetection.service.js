@@ -85,6 +85,7 @@ async function assertSaIdAvailable(saIdNumber, providerId, providerProfileId = n
       description: `Duplicate SA ID detected for provider ${providerId}`,
       providerId: providerProfileId || providerId,
       metadata: { existingProviderId: existing.id, existingUserId: existing.userId },
+      applyTrustPenalty: false,
     });
     await providerTrustScore.onDuplicateRegistration(providerProfileId || providerId);
     throw new AppError(
@@ -128,6 +129,7 @@ async function checkCompanyRegistration(companyRegNumber, providerProfileId) {
       description: `Duplicate company registration: ${normalized}`,
       providerId: providerProfileId,
       metadata: { existingProviderId: existing.id, companyRegistrationNumber: normalized },
+      applyTrustPenalty: false,
     });
     await providerTrustScore.onDuplicateRegistration(providerProfileId);
     return { duplicate: true, hash, normalized };
@@ -154,6 +156,7 @@ async function checkBankAccountDuplicate(bankName, branchCode, accountNumber, pr
         existingProviderId: existing.providerId,
         existingUserId: existing.provider?.userId,
       },
+      applyTrustPenalty: false,
     });
     await providerTrustScore.onDuplicateRegistration(providerProfileId);
     return { duplicate: true, hash };
@@ -183,6 +186,7 @@ async function checkDocumentHashDuplicate(fileHash, providerProfileId) {
           description: `Duplicate document file hash detected (${key})`,
           providerId: providerProfileId,
           metadata: { existingProviderId: p.id, docType: key, fileHash },
+          applyTrustPenalty: false,
         });
         await providerTrustScore.onFakeDocumentation(providerProfileId);
         return true;

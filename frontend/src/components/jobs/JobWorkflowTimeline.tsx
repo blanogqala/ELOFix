@@ -44,9 +44,13 @@ export function JobWorkflowTimeline({
   const allComplete = job.status === 'COMPLETED';
   const isDisputed = job.status === 'DISPUTED';
   const isAwaitingConfirmation = job.status === 'AWAITING_CONFIRMATION';
+  const isCancellationReview =
+    job.status === 'DISPUTED' &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel');
 
   function stepLabel(index: number, defaultLabel: string): string {
-    if (index === 4 && isDisputed) return 'Dispute Opened';
+    if (isCancellationReview && index === currentIdx) return 'Cancellation opened';
+    if (!isCancellationReview && index === 4 && isDisputed) return 'Dispute opened';
     if (index === 4 && isAwaitingConfirmation) return 'Waiting for customer confirmation';
     if (index === 5 && job.status === 'COMPLETED') return 'Completed';
     return defaultLabel;
@@ -61,7 +65,8 @@ export function JobWorkflowTimeline({
             const insight = getStepInsight(index);
             const isTerminalStep = isTerminal && index === pinIndex;
             const isFutureTerminalStep = isTerminal && index > pinIndex;
-            const isDisputeStep = isDisputed && index === 4;
+            const isDisputeStep = isDisputed && !isCancellationReview && index === 4;
+            const isCancellationStep = isCancellationReview && index === currentIdx;
             const isAwaitingStep = isAwaitingConfirmation && index === 4;
 
             let isPast: boolean;
@@ -124,7 +129,8 @@ export function JobWorkflowTimeline({
                           disableInteraction && 'opacity-40 cursor-not-allowed',
                           isPast
                             ? 'bg-success text-success-foreground'
-                            : isDisputeStep && (isActive || isPast === false && index === currentIdx)
+                            : (isDisputeStep || isCancellationStep) &&
+                                (isActive || (isPast === false && index === currentIdx))
                               ? 'bg-destructive text-destructive-foreground ring-2 ring-destructive ring-offset-2'
                             : isAwaitingStep && isActive
                               ? 'bg-amber-500 text-white ring-2 ring-amber-500 ring-offset-2'
@@ -155,9 +161,11 @@ export function JobWorkflowTimeline({
                     className={cn(
                       'text-[10px] mt-1 text-center leading-tight max-w-[72px]',
                       isTerminalStep ? 'font-medium text-destructive' : '',
-                      isDisputeStep && isActive ? 'font-medium text-destructive' : '',
+                      (isDisputeStep || isCancellationStep) && isActive ? 'font-medium text-destructive' : '',
                       isAwaitingStep && isActive ? 'font-medium text-amber-700 dark:text-amber-400' : '',
-                      isActive && !isDisputeStep && !isAwaitingStep ? 'font-medium' : 'text-muted-foreground'
+                      isActive && !isDisputeStep && !isCancellationStep && !isAwaitingStep
+                        ? 'font-medium'
+                        : 'text-muted-foreground'
                     )}
                   >
                     {isTerminalStep

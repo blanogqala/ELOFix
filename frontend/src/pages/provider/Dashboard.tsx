@@ -183,11 +183,11 @@ export default function ProviderDashboard() {
           </div>
           <div
             className="card-elevated cursor-pointer p-4 transition-colors hover:border-destructive/30 sm:p-6"
-            onClick={() => navigate('/provider/jobs?view=disputes')}
+            onClick={() => navigate('/provider/jobs?view=review')}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                navigate('/provider/jobs?view=disputes');
+                navigate('/provider/jobs?view=review');
               }
             }}
             role="button"
@@ -199,7 +199,7 @@ export default function ProviderDashboard() {
               </div>
               <div className="min-w-0">
                 <p className="text-xl font-bold sm:text-2xl">{stats.disputed}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Flagged Jobs</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Under Review</p>
               </div>
             </div>
           </div>
@@ -207,7 +207,7 @@ export default function ProviderDashboard() {
 
         {/* <button
           type="button"
-          onClick={() => navigate('/provider/jobs?view=disputes')}
+          onClick={() => navigate('/provider/jobs?view=review')}
           className="card-elevated p-4 sm:p-6 w-full text-left hover:shadow-md transition-shadow"
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -232,7 +232,7 @@ export default function ProviderDashboard() {
                 <p className="text-xs text-muted-foreground">Trust impact</p>
               </div>
             </div>
-            <span className="text-sm font-medium text-primary shrink-0">Flagged Jobs →</span>
+            <span className="text-sm font-medium text-primary shrink-0">Under Review →</span>
           </div>
         </button> */}
 

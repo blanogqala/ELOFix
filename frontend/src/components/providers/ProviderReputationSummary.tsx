@@ -7,6 +7,7 @@ interface ProviderReputationSummaryProps {
   provider: Provider;
   className?: string;
   showCompletedJobs?: boolean;
+  showRating?: boolean;
   size?: 'sm' | 'md';
 }
 
@@ -14,6 +15,7 @@ export function ProviderReputationSummary({
   provider,
   className,
   showCompletedJobs = true,
+  showRating = true,
   size = 'sm',
 }: ProviderReputationSummaryProps) {
   const reviewCount = provider.totalReviews ?? provider.reviews?.length ?? 0;
@@ -23,18 +25,20 @@ export function ProviderReputationSummary({
 
   return (
     <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-1', textClass, className)}>
-      {isNew ? (
-        <div className="flex flex-col gap-0.5">
-          <span className="font-semibold text-primary">New Provider</span>
-          <span className="text-xs text-muted-foreground">Recently joined EloFix</span>
-          <span className="text-xs text-muted-foreground italic">No ratings yet</span>
-        </div>
-      ) : (
-        <span className="inline-flex items-center gap-1 tabular-nums">
-          <Star className={cn(starClass, 'fill-accent text-accent shrink-0')} aria-hidden />
-          <span className="font-semibold">{provider.rating.toFixed(1)}</span>
-          <span className="text-muted-foreground">· {formatReviewCount(reviewCount)}</span>
-        </span>
+      {showRating && (
+        isNew ? (
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold text-primary">New Provider</span>
+            <span className="text-xs text-muted-foreground">Recently joined EloFix</span>
+            <span className="text-xs text-muted-foreground italic">No ratings yet</span>
+          </div>
+        ) : (
+          <span className="inline-flex items-center gap-1 tabular-nums">
+            <Star className={cn(starClass, 'fill-accent text-accent shrink-0')} aria-hidden />
+            <span className="font-semibold">{provider.rating.toFixed(1)}</span>
+            <span className="text-muted-foreground">· {formatReviewCount(reviewCount)}</span>
+          </span>
+        )
       )}
       {showCompletedJobs && (
         <span className="inline-flex items-center gap-1 text-muted-foreground">

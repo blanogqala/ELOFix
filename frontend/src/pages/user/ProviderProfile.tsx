@@ -1,33 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Briefcase, ChevronLeft, ChevronRight, Image, Loader2, Star } from 'lucide-react';
+import { ArrowLeft, Briefcase, Image, Loader2, Star } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { ProviderProfileSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getProviderById } from '@/lib/api/providers';
 import { getProviderReviews } from '@/lib/api/providerReviews';
-import type { Provider, ProviderRatingBreakdown, ProviderReview } from '@/types';
+import { getCategories } from '@/lib/api/categories';
+import type { Category, Provider, ProviderRatingBreakdown, ProviderReview } from '@/types';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { hasPortfolioGalleryItems } from '@/lib/portfolioGallery';
 import { ProviderReputationSummary } from '@/components/providers/ProviderReputationSummary';
 import { ProviderVerificationBadges } from '@/components/providers/ProviderVerificationBadges';
 import { TrustLevelBadge } from '@/components/fraud/TrustLevelBadge';
 import { RatingBreakdownChart } from '@/components/providers/RatingBreakdownChart';
 import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
+import { PortfolioMediaGrid } from '@/components/providers/MediaLightbox';
 import { isNewProvider } from '@/lib/providerReputation';
 
 const emptyBreakdown = (): ProviderRatingBreakdown => ({ 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
 
 type ProviderProfileLocationState = {
   fromServiceRequest?: boolean;
+  fromJobDetail?: boolean;
+  selectedCategory?: string;
 };
 
 export default function UserProviderProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const fromServiceRequest = (location.state as ProviderProfileLocationState | null)?.fromServiceRequest;
+  const locationState = (location.state as ProviderProfileLocationState | null) ?? null;
+  const fromServiceRequest = locationState?.fromServiceRequest;
+  const selectedCategory = locationState?.selectedCategory;
   const [provider, setProvider] = useState<Provider | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [reviews, setReviews] = useState<ProviderReview[]>([]);
   const [breakdown, setBreakdown] = useState<ProviderRatingBreakdown>(emptyBreakdown());
   const [completedJobs, setCompletedJobs] = useState(0);
@@ -36,7 +44,6 @@ export default function UserProviderProfile() {
   const [loading, setLoading] = useState(true);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [galleryIndex, setGalleryIndex] = useState(0);
 
   useEffect(() => {
     if (!id) return;
@@ -68,6 +75,16 @@ export default function UserProviderProfile() {
   }, [id]);
 
   useEffect(() => {
+    void (async () => {
+      try {
+        setCategories(await getCategories());
+      } catch {
+        setCategories([]);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setReviewsLoading(true);
@@ -93,6 +110,10 @@ export default function UserProviderProfile() {
 
   const workPosts = provider?.workPosts ?? [];
   const portfolioFallback = provider?.portfolioImages ?? [];
+  const categoryName = selectedCategory
+    ? categories.find((category) => category.id === selectedCategory)?.name || selectedCategory
+    : null;
+  const hasPortfolioItems = hasPortfolioGalleryItems(workPosts, portfolioFallback, selectedCategory);
   const isNew = provider ? isNewProvider(provider) : false;
 
   return (
@@ -206,62 +227,22 @@ export default function UserProviderProfile() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Portfolio</CardTitle>
+                <CardTitle>{categoryName ? `${categoryName} portfolio` : 'Portfolio'}</CardTitle>
               </CardHeader>
               <CardContent>
-                {workPosts.length > 0 ? (
-                  <div className="space-y-4">
-                    <div className="relative aspect-video overflow-hidden rounded-lg bg-muted">
-                      <img
-                        src={
-                          resolveUploadUrl(workPosts[galleryIndex % workPosts.length]?.images[0]) ||
-                          '/placeholder.svg'
-                        }
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                      {workPosts.length > 1 && (
-                        <>
-                          <button
-                            type="button"
-                            className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white"
-                            onClick={() =>
-                              setGalleryIndex((i) => (i - 1 + workPosts.length) % workPosts.length)
-                            }
-                          >
-                            <ChevronLeft className="h-5 w-5" />
-                          </button>
-                          <button
-                            type="button"
-                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white"
-                            onClick={() => setGalleryIndex((i) => (i + 1) % workPosts.length)}
-                          >
-                            <ChevronRight className="h-5 w-5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    <p className="font-medium">{workPosts[galleryIndex % workPosts.length]?.title}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {workPosts[galleryIndex % workPosts.length]?.description}
-                    </p>
-                  </div>
-                ) : portfolioFallback.length > 0 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {portfolioFallback.map((src, idx) => (
-                      <div key={idx} className="aspect-square overflow-hidden rounded-lg bg-muted">
-                        <img
-                          src={resolveUploadUrl(src) || '/placeholder.svg'}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
+                <PortfolioMediaGrid
+                  workPosts={workPosts}
+                  portfolioImages={portfolioFallback}
+                  categoryId={selectedCategory}
+                />
+                {!hasPortfolioItems && (
                   <div className="py-10 text-center text-muted-foreground">
                     <Image className="mx-auto h-8 w-8 mb-2 opacity-60" />
-                    <p className="text-sm">No portfolio items yet</p>
+                    <p className="text-sm">
+                      {categoryName
+                        ? `No ${categoryName.toLowerCase()} work posts yet`
+                        : 'No portfolio items yet'}
+                    </p>
                   </div>
                 )}
               </CardContent>

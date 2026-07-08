@@ -9,6 +9,7 @@ import {
   getJobDisplayStatusLabel,
   SERVICE_STATUS_WAITING_PRICE,
 } from './jobProgressDisplay';
+import { getCourierTimelineViewState } from './courierJobTimeline';
 
 function courierJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -76,6 +77,17 @@ describe('getCourierJobDisplayStatusLabel', () => {
       )
     ).toBe('Collecting');
   });
+
+  it('shows Collecting when courier fulfillment is COLLECTING (even if job.status is awaiting payment)', () => {
+    expect(
+      getCourierJobDisplayStatusLabel(
+        courierJob({
+          status: 'SERVICE_PRICE_SUBMITTED',
+          deliverySummary: { status: 'approved', deliveryPaid: false, fulfillmentStatus: 'COLLECTING' },
+        })
+      )
+    ).toBe('Collecting');
+  });
 });
 
 describe('getCourierTimelineStepInsight', () => {
@@ -83,6 +95,18 @@ describe('getCourierTimelineStepInsight', () => {
     const job = courierJob({ status: 'ASSIGNED' });
     const insight = getCourierTimelineStepInsight(job, dr({ status: 'pending_quote' }), 1);
     expect(insight.nextAction).toBe('Waiting for the courier to submit a delivery quote.');
+  });
+});
+
+describe('getCourierTimelineViewState', () => {
+  it('maps COLLECTING fulfillment to the Collecting step', () => {
+    const job = courierJob({
+      status: 'SERVICE_PRICE_SUBMITTED',
+      progressStep: 0,
+      deliverySummary: { status: 'approved', deliveryPaid: false, fulfillmentStatus: 'COLLECTING' },
+    });
+    const view = getCourierTimelineViewState(job, null, []);
+    expect(view.currentIdx).toBe(2);
   });
 });
 

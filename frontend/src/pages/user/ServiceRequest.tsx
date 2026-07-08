@@ -445,7 +445,9 @@ export default function ServiceRequest() {
 
   const handleViewProviderProfile = (providerId: string) => {
     persistDraft();
-    navigate(`/user/providers/${providerId}`, { state: { fromServiceRequest: true } });
+    navigate(`/user/providers/${providerId}`, {
+      state: { fromServiceRequest: true, selectedCategory },
+    });
   };
 
   const submitLabel = useMemo(() => {

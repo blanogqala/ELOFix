@@ -43,6 +43,13 @@ export default function AdminDisputeDetail() {
       const d = await getAdminDisputeDetail(id);
       setData(d);
       setAdminNotes(d.dispute.adminNotes || '');
+      const jobMeta = d.job as { cancellationSource?: string } | null;
+      const isCancellation =
+        jobMeta?.cancellationSource === 'customer_cancel' ||
+        jobMeta?.cancellationSource === 'provider_cancel';
+      if (isCancellation) {
+        setResolveAction('FULL_REFUND');
+      }
     } catch {
       toast({ title: 'Error', description: 'Failed to load dispute', variant: 'destructive' });
     } finally {
@@ -105,12 +112,38 @@ export default function AdminDisputeDetail() {
     );
   }
 
-  const { dispute, messages, resolutionLogs, completionEvidence, rounds } = data;
+  const { dispute, messages, resolutionLogs, completionEvidence, rounds, job } = data;
   const open = isDisputeOpen(dispute.status);
   const customerRequestedRefund = ['REFUND', 'PARTIAL_REFUND', 'FULL_REFUND'].includes(
     dispute.requestedResolution
   );
   const jobTitle = dispute.jobTitle || dispute.jobCategory || null;
+  const cancellationJob = job as {
+    cancellationReason?: string;
+    cancellationDetails?: string;
+    cancelledBy?: string;
+    cancellationSource?: string;
+    cancelledAt?: string;
+  } | null;
+  const showCancellationContext =
+    cancellationJob?.cancellationSource === 'customer_cancel' ||
+    cancellationJob?.cancellationSource === 'provider_cancel';
+
+  const resolutionLabels: Record<string, string> = showCancellationContext
+    ? {
+        RELEASE_FUNDS: 'Cancel job — release remaining funds to provider (no customer refund)',
+        PARTIAL_REFUND: 'Cancel job — partial refund to customer',
+        FULL_REFUND: 'Cancel job — full refund to customer (clawback provider wallet if needed)',
+        CLOSE_CASE: 'Cancel job — no customer refund (release held funds to provider)',
+        RETURN_PROVIDER: 'Return provider to site',
+      }
+    : {
+        RELEASE_FUNDS: 'Release remaining funds to provider',
+        PARTIAL_REFUND: 'Partial refund to customer',
+        FULL_REFUND: 'Full refund to customer',
+        CLOSE_CASE: 'Close case',
+        RETURN_PROVIDER: 'Return provider to site',
+      };
 
   return (
     <DashboardLayout>
@@ -138,6 +171,40 @@ export default function AdminDisputeDetail() {
             )
           }
         />
+
+        {showCancellationContext && cancellationJob ? (
+          <div className="card-elevated space-y-2 border-amber-500/30 bg-amber-500/5 p-5 sm:p-6">
+            <h2 className="font-semibold text-amber-900 dark:text-amber-100">
+              Cancellation case — investigate before any card refund
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Cancelled by:{' '}
+              {cancellationJob.cancelledBy === 'provider'
+                ? 'Provider'
+                : cancellationJob.cancelledBy === 'customer'
+                  ? 'Customer'
+                  : cancellationJob.cancelledBy || 'Unknown'}
+            </p>
+            {cancellationJob.cancellationReason ? (
+              <p className="text-sm">
+                <span className="font-medium">Reason: </span>
+                {cancellationJob.cancellationReason.replace(/_/g, ' ')}
+              </p>
+            ) : null}
+            {cancellationJob.cancellationDetails ? (
+              <p className="text-sm text-muted-foreground">{cancellationJob.cancellationDetails}</p>
+            ) : null}
+            {cancellationJob.cancelledAt ? (
+              <p className="text-xs text-muted-foreground">
+                Submitted {new Date(cancellationJob.cancelledAt).toLocaleString()}
+              </p>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              No card refund is issued until you apply a resolution below. Full refunds claw back
+              from the provider&apos;s available balance; any shortfall becomes provider debt.
+            </p>
+          </div>
+        ) : null}
 
         {completionEvidence && (
           <div className="card-elevated p-5 sm:p-6">
@@ -167,18 +234,26 @@ export default function AdminDisputeDetail() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="RELEASE_FUNDS">Release remaining funds</SelectItem>
-                <SelectItem value="PARTIAL_REFUND">Partial refund</SelectItem>
-                <SelectItem value="FULL_REFUND">Full refund</SelectItem>
-                <SelectItem value="RETURN_PROVIDER">Return provider to site</SelectItem>
-                <SelectItem value="CLOSE_CASE">Close case</SelectItem>
+                <SelectItem value="RELEASE_FUNDS">{resolutionLabels.RELEASE_FUNDS}</SelectItem>
+                <SelectItem value="PARTIAL_REFUND">{resolutionLabels.PARTIAL_REFUND}</SelectItem>
+                <SelectItem value="FULL_REFUND">{resolutionLabels.FULL_REFUND}</SelectItem>
+                {!showCancellationContext ? (
+                  <SelectItem value="RETURN_PROVIDER">{resolutionLabels.RETURN_PROVIDER}</SelectItem>
+                ) : null}
+                <SelectItem value="CLOSE_CASE">{resolutionLabels.CLOSE_CASE}</SelectItem>
               </SelectContent>
             </Select>
-            {customerRequestedRefund && (
+            {showCancellationContext ? (
+              <p className="text-xs text-muted-foreground">
+                Partial refund: enter the gross amount (ZAR). The system nets commission and may
+                claw back released provider funds. Remaining escrow stays with the provider unless
+                you refund the customer.
+              </p>
+            ) : customerRequestedRefund ? (
               <p className="text-xs text-muted-foreground">
                 Customer requested a refund; you decide partial or full amount based on investigation.
               </p>
-            )}
+            ) : null}
             {resolveAction === 'PARTIAL_REFUND' && (
               <input
                 type="number"

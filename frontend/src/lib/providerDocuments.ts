@@ -117,6 +117,12 @@ export function requiredDocumentsComplete(documents: Provider['documents'] | und
     computeRequiredDocumentsProgress(documents).total;
 }
 
+export function hasRejectedRequiredDocuments(
+  documents: Provider['documents'] | undefined
+): boolean {
+  return REQUIRED_PROVIDER_DOCUMENTS.some((d) => documents?.[d.id]?.status === 'rejected');
+}
+
 export function adminCanApproveProviderAccount(provider: Provider): boolean {
   if (provider.approved || provider.blocked) return false;
   if (provider.profileCompleted !== true) return false;

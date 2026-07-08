@@ -9,6 +9,7 @@ const {
   detectBrand,
   parseMaskedLast4,
   isValidCardLast4,
+  isValidCvv,
   parsePaymentCardFromGatewayPayload,
 } = require("../utils/paymentCard.util");
 
@@ -102,11 +103,6 @@ async function syncSavedCardsFromPaymentHistory(userId) {
 
 async function getSavedCards(userId) {
   const uid = String(userId);
-  try {
-    await syncSavedCardsFromPaymentHistory(uid);
-  } catch (e) {
-    console.error("[getSavedCards] syncSavedCardsFromPaymentHistory", uid, e);
-  }
   const rows = await prisma.savedCard.findMany({
     where: { userId: uid },
     orderBy: { id: "asc" },
@@ -123,6 +119,9 @@ async function getSavedCards(userId) {
 
 async function addCard(userId, cardData) {
   const uid = String(userId);
+  if (!isValidCvv(cardData?.cvv)) {
+    throw new AppError("Valid CVC is required", 400);
+  }
   const card = {
     id: randomUUID(),
     last4: maskLast4(cardData?.number),
@@ -290,11 +289,20 @@ async function createRefundInvoiceInTransaction(tx, {
   return invoice;
 }
 
-async function assertCardExists(userId, cardId) {
-  const cards = await getSavedCards(userId);
-  const card = cards.find((c) => c.id === cardId);
-  if (!card) throw new AppError("Card not found", 404);
-  return card;
+async function assertCardExists(userId, cardId, tx = prisma) {
+  const uid = String(userId);
+  const row = await tx.savedCard.findFirst({
+    where: { userId: uid, id: String(cardId) },
+  });
+  if (!row) throw new AppError("Card not found", 404);
+  return {
+    id: row.id,
+    last4: row.last4,
+    brand: row.brand,
+    expiryMonth: row.expiryMonth,
+    expiryYear: row.expiryYear,
+    isDefault: row.isDefault,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -504,15 +512,6 @@ async function runSettleLaborInTransaction(
     releaseAmount: Number(firstTranche),
     idempotencyKey: t1Key,
   });
-
-  await ensureSavedCardFromPayment(
-    customerUserId,
-    {
-      last4: cardLast4,
-      brand: detectBrand(cardLast4),
-    },
-    tx
-  );
 
   return { jobRow, meta, commissionAmount, providerAmount, firstTranche, secondTranche };
 }
@@ -1109,6 +1108,7 @@ module.exports = {
   createRefundInvoice,
   createRefundInvoiceInTransaction,
   assertCardExists,
+  isValidCvv,
   // escrow / Paystack
   toPrismaDecimal,
   splitLaborTotalGross,

@@ -158,6 +158,8 @@ async function createPaymentIntent({
   returnUrl,
   cancelUrl,
   metadata,
+  cardId,
+  cvv,
   idempotencyKey,
   requestHash,
   route,
@@ -171,6 +173,27 @@ async function createPaymentIntent({
   if (!validKinds.includes(kindNorm)) {
     throw new AppError("Invalid payment kind", 400);
   }
+
+  let paymentCardMeta = null;
+  if (String(role) === "CUSTOMER") {
+    const cardCount = await prisma.savedCard.count({ where: { userId: String(userId) } });
+    if (cardCount === 0) {
+      throw new AppError("Add a payment card on the Payments page before paying.", 402);
+    }
+    if (!cardId) {
+      throw new AppError("A saved payment card is required", 400);
+    }
+    if (!paymentService.isValidCvv(cvv)) {
+      throw new AppError("Valid CVC is required", 400);
+    }
+    const card = await paymentService.assertCardExists(userId, cardId);
+    paymentCardMeta = { cardId: card.id, cardLast4: card.last4, cardBrand: card.brand };
+  }
+
+  const intentMetadata =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? { ...metadata, ...(paymentCardMeta || {}) }
+      : paymentCardMeta || metadata;
 
   const customerBlockKinds = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
   if (customerBlockKinds.has(kindNorm)) {
@@ -222,6 +245,9 @@ async function createPaymentIntent({
         if (!job) throw new AppError("Job not found", 404);
         if (String(job.customerId) !== String(userId)) {
           throw new AppError("Only the customer can pay for this job", 403);
+        }
+        if (job.status === "CANCELLED" || job.status === "REJECTED") {
+          throw new AppError("Cannot pay for a cancelled or rejected job", 400);
         }
       }
       if (materialOrderId) {
@@ -288,7 +314,9 @@ async function createPaymentIntent({
               returnUrl: returnUrl || reusable.returnUrl || null,
               cancelUrl: cancelUrl || reusable.cancelUrl || null,
               gatewayPayload:
-                metadata && typeof metadata === "object" ? metadata : reusable.gatewayPayload ?? undefined,
+                intentMetadata && typeof intentMetadata === "object"
+                  ? intentMetadata
+                  : reusable.gatewayPayload ?? undefined,
             },
           });
 
@@ -336,7 +364,7 @@ async function createPaymentIntent({
           idempotencyKey: idempotencyKey || null,
           returnUrl: returnUrl || null,
           cancelUrl: cancelUrl || null,
-          gatewayPayload: metadata && typeof metadata === "object" ? metadata : undefined,
+          gatewayPayload: intentMetadata && typeof intentMetadata === "object" ? intentMetadata : undefined,
         },
       });
 

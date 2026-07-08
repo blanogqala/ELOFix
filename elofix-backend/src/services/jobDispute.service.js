@@ -144,6 +144,319 @@ async function listDisputesForActor(actorUserId, actorRole, filters = {}) {
   return { disputes: rows.map((r) => toDisputeDto(r)) };
 }
 
+async function getExistingDisputeForJob(jobId, tx) {
+  const client = tx || prisma;
+  return client.jobDispute.findUnique({ where: { jobId: String(jobId) } });
+}
+
+function assertNoActiveDispute(existing) {
+  if (existing && ["OPEN", "UNDER_INVESTIGATION"].includes(existing.status)) {
+    throw new AppError("A dispute is already open for this job", 400);
+  }
+}
+
+async function createCustomerDisputeInTransaction(tx, params) {
+  const {
+    job,
+    customerUserId,
+    providerRow,
+    comment,
+    requestedResolution,
+    otherResolutionDetail = null,
+    images = [],
+    videos = [],
+    existing = null,
+    reopening = false,
+    metaExtras = {},
+  } = params;
+
+  const disputePayload = {
+    status: "OPEN",
+    requestedResolution,
+    customerComment: comment,
+    otherResolutionDetail: requestedResolution === "OTHER" ? otherResolutionDetail : null,
+    customerImages: images,
+    customerVideos: videos,
+    resolvedAt: null,
+    ...(reopening
+      ? {
+          providerComment: null,
+          providerImages: [],
+          providerVideos: [],
+        }
+      : {}),
+  };
+
+  const row = reopening
+    ? await tx.jobDispute.update({
+        where: { id: existing.id },
+        data: disputePayload,
+      })
+    : await tx.jobDispute.create({
+        data: {
+          id: randomUUID(),
+          jobId: job.id,
+          customerId: job.customerId,
+          providerId: job.providerId,
+          ...disputePayload,
+        },
+      });
+
+  await tx.disputeMessage.create({
+    data: {
+      id: randomUUID(),
+      disputeId: row.id,
+      senderId: customerUserId,
+      senderRole: "CUSTOMER",
+      body: comment,
+      attachments: [...images, ...videos],
+    },
+  });
+
+  await disputeRoundService.createDisputeRoundInTransaction(tx, row.id, {
+    requestedResolution,
+    customerComment: comment,
+    otherResolutionDetail: requestedResolution === "OTHER" ? otherResolutionDetail : null,
+    customerImages: images,
+    customerVideos: videos,
+  });
+
+  await mutateJobMetaInTransaction(tx, job.id, (m) => ({
+    ...m,
+    statusOverride: "DISPUTED",
+    escrowFrozen: true,
+    disputeId: row.id,
+    ...metaExtras,
+  }));
+
+  if (providerRow) {
+    await upsertDisputeReviewForJob(
+      {
+        jobId: job.id,
+        customerId: job.customerId,
+        providerProfileId: providerRow.id,
+        comment,
+        images,
+        videos,
+      },
+      tx
+    );
+  }
+
+  return row;
+}
+
+async function createCancellationDisputeInTransaction(tx, params) {
+  const {
+    job,
+    actorUserId,
+    actorRole,
+    providerRow,
+    comment,
+    existing = null,
+    reopening = false,
+    metaExtras = {},
+  } = params;
+
+  const isProvider = actorRole === "provider";
+  const disputePayload = {
+    status: "OPEN",
+    requestedResolution: "REFUND",
+    // Prisma schema requires customerComment (non-null). For provider-initiated cancellations,
+    // preserve an existing customer comment if present; otherwise store an empty string.
+    customerComment: isProvider ? existing?.customerComment ?? "" : comment,
+    providerComment: isProvider ? comment : reopening ? null : existing?.providerComment ?? null,
+    otherResolutionDetail: null,
+    customerImages: isProvider ? existing?.customerImages ?? [] : [],
+    customerVideos: isProvider ? existing?.customerVideos ?? [] : [],
+    providerImages: isProvider ? [] : reopening ? [] : existing?.providerImages ?? [],
+    providerVideos: isProvider ? [] : reopening ? [] : existing?.providerVideos ?? [],
+    resolvedAt: null,
+  };
+
+  const row = reopening
+    ? await tx.jobDispute.update({
+        where: { id: existing.id },
+        data: disputePayload,
+      })
+    : await tx.jobDispute.create({
+        data: {
+          id: randomUUID(),
+          // Some Prisma client generations require providing the relation explicitly.
+          job: { connect: { id: job.id } },
+          customerId: job.customerId,
+          providerId: job.providerId,
+          ...disputePayload,
+        },
+      });
+
+  await tx.disputeMessage.create({
+    data: {
+      id: randomUUID(),
+      disputeId: row.id,
+      senderId: actorUserId,
+      senderRole: isProvider ? "PROVIDER" : "CUSTOMER",
+      body: comment,
+      attachments: [],
+    },
+  });
+
+  await disputeRoundService.createDisputeRoundInTransaction(tx, row.id, {
+    requestedResolution: "REFUND",
+    customerComment: isProvider ? null : comment,
+    otherResolutionDetail: null,
+    customerImages: isProvider ? [] : [],
+    customerVideos: isProvider ? [] : [],
+    providerComment: isProvider ? comment : null,
+    providerImages: isProvider ? [] : [],
+    providerVideos: isProvider ? [] : [],
+  });
+
+  await mutateJobMetaInTransaction(tx, job.id, (m) => ({
+    ...m,
+    statusOverride: "DISPUTED",
+    escrowFrozen: true,
+    disputeId: row.id,
+    ...metaExtras,
+  }));
+
+  if (providerRow) {
+    await upsertDisputeReviewForJob(
+      {
+        jobId: job.id,
+        customerId: job.customerId,
+        providerProfileId: providerRow.id,
+        comment: isProvider ? null : comment,
+        images: isProvider ? [] : [],
+        videos: isProvider ? [] : [],
+      },
+      tx
+    );
+  }
+
+  return row;
+}
+
+async function postCreateDisputeSideEffects(dispute, job, actorUserId, options = {}) {
+  const { reopening = false, requestedResolution = dispute.requestedResolution } = options;
+  const providerRow = job.providerId
+    ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
+    : null;
+
+  try {
+    const escrowSettlement = require("./payments/escrowSettlement.service");
+    const intents = await prisma.paymentIntent.findMany({
+      where: { jobId: String(job.id), kind: "LABOR" },
+      select: { id: true },
+    });
+    for (const intent of intents) {
+      await escrowSettlement.markIntentDisputed(intent.id);
+    }
+  } catch (e) {
+    console.warn("[jobDispute] markIntentDisputed failed", e?.message || e);
+  }
+
+  if (providerRow) {
+    await syncProviderAggregateRating(providerRow.id);
+  }
+
+  await logAudit(reopening ? AUDIT_ACTIONS.DISPUTE_REOPENED : AUDIT_ACTIONS.DISPUTE_OPENED, {
+    userId: actorUserId,
+    entityType: ENTITY_TYPES.DISPUTE,
+    entityId: dispute.id,
+    newValue: { jobId: job.id, requestedResolution, reopened: reopening },
+  });
+
+  await notificationEvents.notifyDisputeOpened({
+    customerId: job.customerId,
+    providerId: job.providerId,
+    jobId: job.id,
+    disputeId: dispute.id,
+    jobTitle: job.title,
+  });
+}
+
+async function openDisputeFromCancellation(jobId, actorUserId, payload, tx) {
+  const reason = String(payload?.reason || "").trim();
+  const details = payload?.details != null ? String(payload.details).trim() : "";
+  const comment = [reason, details].filter(Boolean).join(". ").trim();
+  if (!comment) throw new AppError("Cancellation reason is required", 400);
+
+  const actorRole = String(payload?.actorRole || "customer").toLowerCase();
+  if (!["customer", "provider"].includes(actorRole)) {
+    throw new AppError("Invalid cancellation actor", 400);
+  }
+
+  const job = await (tx || prisma).job.findUnique({ where: { id: jobId } });
+  if (!job) throw new AppError("Job not found", 404);
+  if (!job.providerId) throw new AppError("No provider assigned", 400);
+  if (actorRole === "customer" && String(job.customerId) !== String(actorUserId)) {
+    throw new AppError("Only the customer can cancel this job", 403);
+  }
+  if (actorRole === "provider" && String(job.providerId) !== String(actorUserId)) {
+    throw new AppError("Only the assigned provider can cancel this job", 403);
+  }
+  const meta = await getJobMeta(jobId);
+  const { isLaborPaid } = require("../utils/jobCancellationPolicy.util");
+  if (!isLaborPaid(job, meta)) {
+    throw new AppError("Cancellation disputes require paid labor", 400);
+  }
+
+  const status = String(toFrontendStatus(job.status, meta) || "").toUpperCase();
+  if (["COMPLETED", "CANCELLED", "DISPUTED"].includes(status)) {
+    throw new AppError("This job cannot be cancelled through dispute review", 400);
+  }
+
+  const client = tx || prisma;
+  const existing = await getExistingDisputeForJob(jobId, client);
+  assertNoActiveDispute(existing);
+  const reopening = Boolean(existing && ["RESOLVED", "CLOSED"].includes(existing.status));
+  if (reopening) {
+    await disputeRoundService.ensureDisputeRounds(existing.id);
+  }
+
+  const providerRow = await client.provider.findUnique({
+    where: { userId: job.providerId },
+    select: { id: true },
+  });
+
+  const metaExtras = {
+    cancellationReason: reason || null,
+    cancellationDetails: details || null,
+    cancelledBy: actorRole,
+    cancellationProviderEnRoute: Boolean(meta?.cancellationProviderEnRoute),
+    cancellationSource: actorRole === "provider" ? "provider_cancel" : "customer_cancel",
+    cancelledAt: new Date().toISOString(),
+  };
+
+  const runInTx = async (innerTx) =>
+    createCancellationDisputeInTransaction(innerTx, {
+      job,
+      actorUserId,
+      actorRole,
+      providerRow,
+      comment,
+      existing,
+      reopening,
+      metaExtras,
+    });
+
+  const dispute = tx ? await runInTx(tx) : await prisma.$transaction(runInTx, {
+    maxWait: 5000,
+    timeout: 15000,
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  });
+
+  if (!tx) {
+    await postCreateDisputeSideEffects(dispute, job, actorUserId, {
+      reopening,
+      requestedResolution: "REFUND",
+    });
+  }
+
+  return dispute;
+}
+
 async function openDispute(jobId, customerUserId, payload) {
   const comment = String(payload?.comment || "").trim();
   if (!comment) throw new AppError("Comment is required", 400);
@@ -173,10 +486,8 @@ async function openDispute(jobId, customerUserId, payload) {
     throw new AppError("Disputes can only be opened while awaiting confirmation", 400);
   }
 
-  const existing = await prisma.jobDispute.findUnique({ where: { jobId } });
-  if (existing && ["OPEN", "UNDER_INVESTIGATION"].includes(existing.status)) {
-    throw new AppError("A dispute is already open for this job", 400);
-  }
+  const existing = await getExistingDisputeForJob(jobId);
+  assertNoActiveDispute(existing);
   const reopening = Boolean(existing && ["RESOLVED", "CLOSED"].includes(existing.status));
   if (reopening) {
     await disputeRoundService.ensureDisputeRounds(existing.id);
@@ -187,111 +498,24 @@ async function openDispute(jobId, customerUserId, payload) {
     select: { id: true },
   });
 
-  const disputePayload = {
-    status: "OPEN",
-    requestedResolution,
-    customerComment: comment,
-    otherResolutionDetail: requestedResolution === "OTHER" ? otherResolutionDetail : null,
-    customerImages: images,
-    customerVideos: videos,
-    resolvedAt: null,
-    ...(reopening
-      ? {
-          providerComment: null,
-          providerImages: [],
-          providerVideos: [],
-        }
-      : {}),
-  };
-
   const dispute = await prisma.$transaction(
-    async (tx) => {
-      const row = reopening
-        ? await tx.jobDispute.update({
-            where: { id: existing.id },
-            data: disputePayload,
-          })
-        : await tx.jobDispute.create({
-            data: {
-              id: randomUUID(),
-              jobId,
-              customerId: job.customerId,
-              providerId: job.providerId,
-              ...disputePayload,
-            },
-          });
-      await tx.disputeMessage.create({
-        data: {
-          id: randomUUID(),
-          disputeId: row.id,
-          senderId: customerUserId,
-          senderRole: "CUSTOMER",
-          body: comment,
-          attachments: [...images, ...videos],
-        },
-      });
-      await disputeRoundService.createDisputeRoundInTransaction(tx, row.id, {
+    async (tx) =>
+      createCustomerDisputeInTransaction(tx, {
+        job,
+        customerUserId,
+        providerRow,
+        comment,
         requestedResolution,
-        customerComment: comment,
-        otherResolutionDetail: requestedResolution === "OTHER" ? otherResolutionDetail : null,
-        customerImages: images,
-        customerVideos: videos,
-      });
-      await mutateJobMetaInTransaction(tx, jobId, (m) => ({
-        ...m,
-        statusOverride: "DISPUTED",
-        escrowFrozen: true,
-        disputeId: row.id,
-      }));
-      if (providerRow) {
-        await upsertDisputeReviewForJob(
-          {
-            jobId,
-            customerId: job.customerId,
-            providerProfileId: providerRow.id,
-            comment,
-            images,
-            videos,
-          },
-          tx
-        );
-      }
-      return row;
-    },
+        otherResolutionDetail,
+        images,
+        videos,
+        existing,
+        reopening,
+      }),
     { maxWait: 5000, timeout: 15000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );
 
-  try {
-    const escrowSettlement = require("./payments/escrowSettlement.service");
-    const intents = await prisma.paymentIntent.findMany({
-      where: { jobId: String(jobId), kind: "LABOR" },
-      select: { id: true },
-    });
-    for (const intent of intents) {
-      await escrowSettlement.markIntentDisputed(intent.id);
-    }
-  } catch (e) {
-    console.warn("[jobDispute] markIntentDisputed failed", e?.message || e);
-  }
-
-  if (providerRow) {
-    await syncProviderAggregateRating(providerRow.id);
-  }
-
-  await logAudit(reopening ? AUDIT_ACTIONS.DISPUTE_REOPENED : AUDIT_ACTIONS.DISPUTE_OPENED, {
-    userId: customerUserId,
-    entityType: ENTITY_TYPES.DISPUTE,
-    entityId: dispute.id,
-    newValue: { jobId, requestedResolution, reopened: reopening },
-  });
-
-  await notificationEvents.notifyDisputeOpened({
-    customerId: job.customerId,
-    providerId: job.providerId,
-    jobId,
-    disputeId: dispute.id,
-    jobTitle: job.title,
-  });
+  await postCreateDisputeSideEffects(dispute, job, customerUserId, { reopening, requestedResolution });
 
   const full = await prisma.jobDispute.findUnique({
     where: { id: dispute.id },
@@ -368,6 +592,9 @@ async function getProviderDisputeStats(providerUserId) {
 
 module.exports = {
   openDispute,
+  openDisputeFromCancellation,
+  createCustomerDisputeInTransaction,
+  postCreateDisputeSideEffects,
   getDisputeById,
   listDisputesForActor,
   addProviderEvidence,

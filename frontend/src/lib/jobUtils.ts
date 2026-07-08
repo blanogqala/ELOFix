@@ -86,7 +86,7 @@ export function getUserLaborGross(job: Job): number {
 }
 
 /** Provider job list / cards — full customer-facing gross price (not net after commission). */
-export function getProviderJobPriceDisplay(job: Job): { text: string; isPaid?: boolean } {
+export function getProviderJobPriceDisplay(job: Job): ReturnType<typeof getJobPriceDisplay> {
   return getJobPriceDisplay(job);
 }
 
@@ -96,10 +96,17 @@ export function getJobPriceDisplay(job: Job): {
   refundAmount?: number;
   refundStatus?: string;
   refundLabel?: string;
+  underAdminReview?: boolean;
 } {
+  const isDisputed = job.status === 'DISPUTED';
   const refundAmount =
-    job.refundAmount != null && Number.isFinite(Number(job.refundAmount)) ? Number(job.refundAmount) : undefined;
-  const refundStatus = job.refundStatus;
+    !isDisputed && job.refundAmount != null && Number.isFinite(Number(job.refundAmount))
+      ? Number(job.refundAmount)
+      : undefined;
+  const refundStatus = isDisputed ? undefined : job.refundStatus;
+  const underAdminReview =
+    isDisputed &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel');
 
   const settled = job.totalPrice != null && Number.isFinite(Number(job.totalPrice)) ? Number(job.totalPrice) : null;
   if (settled != null && settled > 0) {
@@ -109,6 +116,7 @@ export function getJobPriceDisplay(job: Job): {
       refundAmount,
       refundStatus,
       refundLabel: refundAmount && refundAmount > 0 ? 'Refunded' : undefined,
+      underAdminReview,
     };
   }
   if (job.servicePrice?.amount != null) {
@@ -118,6 +126,7 @@ export function getJobPriceDisplay(job: Job): {
       refundAmount,
       refundStatus,
       refundLabel: refundAmount && refundAmount > 0 ? 'Refunded' : undefined,
+      underAdminReview,
     };
   }
   if (job.courierFlow && job.deliverySummary?.quotedFee != null) {
@@ -128,8 +137,9 @@ export function getJobPriceDisplay(job: Job): {
         isPaid: Boolean(job.deliverySummary.deliveryPaid),
         refundAmount,
         refundStatus,
+        underAdminReview,
       };
     }
   }
-  return { text: 'Price pending inspection', refundAmount, refundStatus };
+  return { text: 'Price pending inspection', refundAmount, refundStatus, underAdminReview };
 }

@@ -39,7 +39,38 @@ const VALID_ACTIONS = new Set([
   "CLOSE_CASE",
 ]);
 
+function isCancellationDispute(meta) {
+  const src = String(meta?.cancellationSource || "").toLowerCase();
+  return src === "customer_cancel" || src === "provider_cancel";
+}
+
+async function releaseHeldEscrowToProviderInTransaction(tx, jobId, providerProfileId) {
+  const j0 = await tx.job.findUnique({ where: { id: jobId } });
+  if (!j0 || !providerProfileId) return j0;
+  if (!j0.escrowSecondReleaseDone) {
+    await paymentService.runSecondTrancheInTransaction(tx, {
+      job: j0,
+      providerProfileId,
+      jobId,
+    });
+    const escrowSettlement = require("./payments/escrowSettlement.service");
+    await escrowSettlement.markLaborEscrowFullyReleased(jobId, tx);
+  }
+  return j0;
+}
+
+async function cancelJobAfterCancellationDisputeInTransaction(tx, jobId) {
+  await tx.job.update({ where: { id: jobId }, data: { status: "CANCELLED" } });
+  await mutateJobMetaInTransaction(tx, jobId, (m) => ({
+    ...m,
+    statusOverride: "CANCELLED",
+    disputeId: null,
+    escrowFrozen: false,
+  }));
+}
+
 function toAdminDisputeDto(row) {
+  const cancellationSource = row?.job?.meta?.cancellationSource ?? null;
   return {
     id: row.id,
     jobId: row.jobId,
@@ -61,6 +92,15 @@ function toAdminDisputeDto(row) {
     providerName: row.provider?.name,
     jobTitle: row.job?.title,
     jobCategory: row.job?.category,
+    job: row.job
+      ? {
+          id: row.jobId,
+          title: row.job?.title ?? null,
+          categoryName: row.job?.category ?? null,
+          status: row.job?.status ?? null,
+          cancellationSource: cancellationSource ? String(cancellationSource) : null,
+        }
+      : null,
   };
 }
 
@@ -88,7 +128,7 @@ async function listDisputes(filters = {}) {
     where,
     orderBy: { openedAt: "desc" },
     include: {
-      job: { select: { title: true, category: true } },
+      job: { select: { title: true, category: true, status: true, meta: true } },
     },
   });
 
@@ -209,6 +249,13 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
   await disputeRoundService.ensureDisputeRounds(dispute.id);
 
   const job = dispute.job;
+  const metaBefore = normalizeMeta(job.meta);
+  const cancellationDispute = isCancellationDispute(metaBefore);
+
+  if (cancellationDispute && action === "RETURN_PROVIDER") {
+    throw new AppError("Return provider is not available for cancellation disputes", 400);
+  }
+
   const providerRow = await prisma.provider.findUnique({
     where: { userId: job.providerId },
     select: { id: true },
@@ -222,9 +269,9 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
       action === "FULL_REFUND"
         ? Number(job.totalPrice) || Number(job.price) || 0
         : Math.max(0, Number(amount) || 0);
-    const metaBefore = normalizeMeta(job.meta);
     refundLaborNet = disputeGrossToLaborNet(action, refundGross, job, metaBefore);
-    if (refundLaborNet > 0 && job.laborPaid) {
+    const laborPaidFlag = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);
+    if (refundLaborNet > 0 && laborPaidFlag) {
       const split = providerRow
         ? await refundRecoveryService.previewProviderRefundSplit(job, providerRow.id, refundLaborNet)
         : { immediateCustomerRefund: refundLaborNet, pendingCustomerRefund: 0 };
@@ -269,28 +316,33 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
       });
 
       if (action === "RELEASE_FUNDS" && providerRow) {
-        const j0 = await tx.job.findUnique({ where: { id: job.id } });
-        if (!j0.escrowSecondReleaseDone) {
-          await paymentService.runSecondTrancheInTransaction(tx, {
-            job: j0,
-            providerProfileId: providerRow.id,
-            jobId: job.id,
+        if (cancellationDispute) {
+          await releaseHeldEscrowToProviderInTransaction(tx, job.id, providerRow.id);
+          await cancelJobAfterCancellationDisputeInTransaction(tx, job.id);
+        } else {
+          const j0 = await tx.job.findUnique({ where: { id: job.id } });
+          if (!j0.escrowSecondReleaseDone) {
+            await paymentService.runSecondTrancheInTransaction(tx, {
+              job: j0,
+              providerProfileId: providerRow.id,
+              jobId: job.id,
+            });
+            const escrowSettlement = require("./payments/escrowSettlement.service");
+            await escrowSettlement.markLaborEscrowFullyReleased(job.id, tx);
+          }
+          await tx.job.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
+          await mutateJobMetaInTransaction(tx, job.id, (m) => {
+            const next = {
+              ...m,
+              completionConfirmedByUser: true,
+              disputeId: null,
+              statusOverride: "COMPLETED",
+              escrowFrozen: false,
+            };
+            next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, job);
+            return next;
           });
-          const escrowSettlement = require("./payments/escrowSettlement.service");
-          await escrowSettlement.markLaborEscrowFullyReleased(job.id, tx);
         }
-        await tx.job.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
-        await mutateJobMetaInTransaction(tx, job.id, (m) => {
-          const next = {
-            ...m,
-            completionConfirmedByUser: true,
-            disputeId: null,
-            statusOverride: "COMPLETED",
-            escrowFrozen: false,
-          };
-          next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, job);
-          return next;
-        });
       } else if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
         const laborNet = refundLaborNet;
         const clawbackIdempotencyKey = `dispute-refund:${dispute.id}:${action}`;
@@ -303,7 +355,8 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           isFullRefund,
         });
 
-        if (providerRow && job.laborPaid && laborNet > 0) {
+        const laborPaidFlag = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);
+        if (providerRow && laborPaidFlag && laborNet > 0) {
           await applyProviderRefundClawbackInTransaction(tx, {
             job,
             providerProfileId: providerRow.id,
@@ -341,11 +394,16 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           progressStep: 3,
         }));
       } else if (action === "CLOSE_CASE") {
-        await mutateJobMetaInTransaction(tx, job.id, (m) => ({
-          ...m,
-          disputeId: null,
-          escrowFrozen: false,
-        }));
+        if (cancellationDispute && providerRow) {
+          await releaseHeldEscrowToProviderInTransaction(tx, job.id, providerRow.id);
+          await cancelJobAfterCancellationDisputeInTransaction(tx, job.id);
+        } else {
+          await mutateJobMetaInTransaction(tx, job.id, (m) => ({
+            ...m,
+            disputeId: null,
+            escrowFrozen: false,
+          }));
+        }
       }
 
       await disputeRoundService.closeActiveDisputeRoundInTransaction(tx, dispute.id, {
@@ -488,4 +546,5 @@ module.exports = {
   resolveDispute,
   exportJobCompletionEvidence,
   streamEvidenceZip,
+  isCancellationDispute,
 };

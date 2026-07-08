@@ -26,6 +26,7 @@ import {
   type CategorySuggestion,
 } from '@/lib/api/categories';
 import { businessHoursComplete, evaluateProviderCoreSections } from '@/lib/providerProfileCompletion';
+import { hasRejectedRequiredDocuments } from '@/lib/providerDocuments';
 import { SA_ID_CHECKSUM_ERROR, validateSaId } from '@/lib/saIdValidation';
 import {
   getProviderOnboardingStorageKey,
@@ -843,7 +844,14 @@ export default function ProviderProfile() {
               <span className="truncate">Skills &amp; Pricing {coreSections.skillsAndPrices ? '✅' : '⚠️'}</span>
             </TabsTrigger>
             <TabsTrigger value="docs" className="gap-1.5 text-xs sm:text-sm">
-              Documents {coreSections.documents ? '✅' : '⚠️'}
+              Documents{' '}
+              {hasRejectedRequiredDocuments(provider?.documents) ? (
+                <span className="text-destructive">· Rejected</span>
+              ) : coreSections.documents ? (
+                '✅'
+              ) : (
+                '⚠️'
+              )}
             </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
               <span className="truncate">Work Posts</span>

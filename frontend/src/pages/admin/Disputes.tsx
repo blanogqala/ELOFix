@@ -44,7 +44,9 @@ export default function AdminDisputes() {
       <div className="space-y-6 animate-fade-in">
         <div>
           <h1 className="text-2xl font-semibold">Disputes</h1>
-          <p className="text-muted-foreground">Investigate and resolve customer–provider disputes</p>
+          <p className="text-muted-foreground">
+            Investigate and resolve cases under review (cancellations and disputes)
+          </p>
         </div>
 
         <div className="relative max-w-md">
@@ -66,10 +68,18 @@ export default function AdminDisputes() {
             ) : (
               <div className="space-y-3">
                 {rows.map((row) => (
+                  // Cancellation-review disputes are stored as JobDispute rows with job.meta.cancellationSource.
                   <button
                     key={row.id}
                     type="button"
-                    onClick={() => navigate(`/admin/disputes/${row.id}`)}
+                    onClick={() =>
+                      navigate(
+                        row.job?.cancellationSource === 'customer_cancel' ||
+                          row.job?.cancellationSource === 'provider_cancel'
+                          ? `/admin/cancellations/${row.id}`
+                          : `/admin/disputes/${row.id}`
+                      )
+                    }
                     className="card-elevated w-full p-4 text-left hover:shadow-md transition-shadow"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -79,7 +89,15 @@ export default function AdminDisputes() {
                           {row.customerName} vs {row.providerName}
                         </p>
                       </div>
-                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted">{row.status}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted">
+                          {row.job?.cancellationSource === 'customer_cancel' ||
+                          row.job?.cancellationSource === 'provider_cancel'
+                            ? 'Cancellation'
+                            : 'Dispute'}
+                        </span>
+                        <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted">{row.status}</span>
+                      </div>
                     </div>
                     <p className="text-sm mt-2 line-clamp-2">{row.customerComment}</p>
                     <p className="text-xs text-muted-foreground mt-2">

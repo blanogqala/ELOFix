@@ -252,6 +252,25 @@ async function markJobNotificationsRead(req, res) {
   res.json({ success: true, count });
 }
 
+async function markNavNotificationsRead(req, res) {
+  if (req.user.role === "BRANCH_STAFF") {
+    return res.status(400).json({ success: false, message: "Not supported for branch staff" });
+  }
+  const userId = String(req.body?.userId || req.user.userId);
+  if (req.user.role !== "ADMIN" && userId !== req.user.userId) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+  const navPath = String(req.body?.navPath || "").trim();
+  if (!navPath) {
+    return res.status(400).json({ success: false, message: "navPath is required" });
+  }
+  const result = await notificationService.markNavNotificationsRead(userId, navPath);
+  if (result.invalid) {
+    return res.status(400).json({ success: false, message: "Invalid navPath" });
+  }
+  res.json({ success: true, count: result.count });
+}
+
 async function getUnreadCount(req, res) {
   if (req.user.role === "BRANCH_STAFF") {
     const count = await branchStaffNotificationService.getUnreadCount(req.user.userId);
@@ -273,5 +292,6 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   markJobNotificationsRead,
+  markNavNotificationsRead,
   getUnreadCount,
 };

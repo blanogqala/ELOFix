@@ -162,11 +162,11 @@ export default function UserDashboard() {
 
           <div
             className="card-elevated cursor-pointer p-4 transition-colors hover:border-destructive/30 sm:p-6"
-            onClick={() => navigate('/user/jobs?view=disputes')}
+            onClick={() => navigate('/user/jobs?view=review')}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                navigate('/user/jobs?view=disputes');
+                navigate('/user/jobs?view=review');
               }
             }}
             role="button"
@@ -178,7 +178,7 @@ export default function UserDashboard() {
               </div>
               <div className="min-w-0">
                 <p className="text-xl font-bold sm:text-2xl">{stats.disputed}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Disputed Jobs</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Under Review</p>
               </div>
             </div>
           </div>
@@ -262,14 +262,14 @@ export default function UserDashboard() {
           </div>
           <div
           className="card-elevated cursor-pointer p-4 transition-colors hover:border-destructive/30 sm:p-6"
-          onClick={() => navigate('/user/jobs?view=disputes')}
+          onClick={() => navigate('/user/jobs?view=review')}
         >
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
               <AlertCircle className="h-4 w-4 text-destructive" />
             </div>
             <div>
-              <p className="font-medium">Dispute Center</p>
+              <p className="font-medium">Review Center</p>
               <p className="text-sm text-muted-foreground">Open cases, refunds, and admin decisions</p>
             </div>
           </div>

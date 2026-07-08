@@ -37,6 +37,15 @@ export default function UserDisputeDetail() {
     void load();
   }, [load]);
 
+  const isCancellation =
+    dispute?.job?.cancellationSource === 'customer_cancel' || dispute?.job?.cancellationSource === 'provider_cancel';
+
+  useEffect(() => {
+    if (!id || !dispute) return;
+    if (!isCancellation) return;
+    navigate(`/user/cancellations/${id}`, { replace: true });
+  }, [dispute, id, isCancellation, navigate]);
+
   const handleSendMessage = async (body: string) => {
     if (!id) return;
     const updated = await addDisputeMessage(id, body);
@@ -58,9 +67,9 @@ export default function UserDisputeDetail() {
     return (
       <DashboardLayout>
         <div className="space-y-4">
-          <Button variant="ghost" onClick={() => navigate('/user/jobs?view=disputes')}>
+          <Button variant="ghost" onClick={() => navigate('/user/jobs?view=review')}>
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dispute Center
+            Back to Review Center
           </Button>
           <p className="text-muted-foreground">Dispute not found.</p>
         </div>
@@ -77,7 +86,7 @@ export default function UserDisputeDetail() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate(dispute.jobId ? `/user/jobs/${dispute.jobId}` : '/user/jobs?view=disputes')}
+            onClick={() => navigate(dispute.jobId ? `/user/jobs/${dispute.jobId}` : '/user/jobs?view=review')}
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to job
@@ -87,6 +96,7 @@ export default function UserDisputeDetail() {
         <DisputeCaseDetailView
           dispute={dispute}
           jobTitle={jobTitle}
+          caseKind="dispute"
           footer={
             isDisputeOpen(dispute.status) ? (
               <DisputeMessageComposer

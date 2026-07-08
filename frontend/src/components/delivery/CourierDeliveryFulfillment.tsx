@@ -9,6 +9,7 @@ import { Navigation, Package, MapPin, Star, CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { ApiHttpError } from '@/api/client';
+import { formatDeliveryPointLabel } from '@/lib/formatAddress';
 
 function mapsUrl(lat?: number, lng?: number, address?: string) {
   if (lat != null && lng != null) return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
@@ -97,7 +98,7 @@ export function CourierDeliveryFulfillment({
           ) : null}
           <p className="text-sm flex items-start gap-2">
             <MapPin className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
-            <span>{collection.address || '—'}</span>
+            <span>{formatDeliveryPointLabel(collection)}</span>
           </p>
           {collectUrl ? (
             <Button asChild size="sm" variant="outline" className="w-full sm:w-auto">
@@ -155,7 +156,7 @@ export function CourierDeliveryFulfillment({
           </p>
           <p className="text-sm flex items-start gap-2">
             <MapPin className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
-            <span>{destination.address || '—'}</span>
+            <span>{formatDeliveryPointLabel(destination)}</span>
           </p>
           {destUrl ? (
             <Button asChild size="sm" variant="outline" className="w-full sm:w-auto">

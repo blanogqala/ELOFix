@@ -115,6 +115,8 @@ export async function createPaymentIntent(input: {
   returnUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, unknown>;
+  cardId: string;
+  cvv: string;
 }): Promise<{ intentId: string; merchantReference: string; intent: PaymentIntent; checkout: CheckoutPayload }> {
   const { data } = await apiClient.post<{
     success: boolean;

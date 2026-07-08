@@ -48,6 +48,11 @@ import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import {
+  COURIER_TIMELINE_STEPS,
+  getCourierTimelineStepInsight,
+  getCourierTimelineViewState,
+} from '@/lib/courierJobTimeline';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -236,7 +241,10 @@ export default function AdminJobDetail() {
   const hasMaterials = Object.keys(materialsByStore).length > 0;
   const quoteBreakdown = getAdminJobQuoteBreakdown(job);
   const showQuoteSummary = quoteBreakdown.labor > 0 || quoteBreakdown.material > 0;
-  const timelineView = getUserTimelineViewState(job, materialRequests);
+  const isCourierJob = Boolean(job.courierFlow);
+  const timelineView = isCourierJob
+    ? getCourierTimelineViewState(job, null, materialRequests)
+    : getUserTimelineViewState(job, materialRequests);
   const cancellationReasonText =
     (job.cancellationDetails && job.cancellationDetails.trim()) ||
     (job.cancellationReason && job.cancellationReason.trim()) ||
@@ -266,7 +274,12 @@ export default function AdminJobDetail() {
             job={job}
             view={timelineView}
             variant="user"
-            getStepInsight={(stepIndex) => getTimelineStepInsight(job, stepIndex, materialRequests)}
+            steps={isCourierJob ? COURIER_TIMELINE_STEPS : undefined}
+            getStepInsight={(stepIndex) =>
+              isCourierJob
+                ? getCourierTimelineStepInsight(job, null, stepIndex)
+                : getTimelineStepInsight(job, stepIndex, materialRequests)
+            }
             cancellationReasonText={cancellationReasonText}
             lockedTimelineStep={lockedTimelineStep}
             setLockedTimelineStep={setLockedTimelineStep}
@@ -278,6 +291,11 @@ export default function AdminJobDetail() {
         {(job.status === 'DISPUTED' || job.disputeId) && (
           <JobDisputeStatusBanner
             variant="admin"
+            caseKind={
+              job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel'
+                ? 'cancellation'
+                : 'dispute'
+            }
             customerRequested={
               openDispute
                 ? formatRequestedResolution(
@@ -290,7 +308,12 @@ export default function AdminJobDetail() {
             disputeId={job.disputeId}
             onOpenDisputeCase={
               job.disputeId
-                ? () => navigate(`/admin/disputes/${job.disputeId}`)
+                ? () =>
+                    navigate(
+                      job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel'
+                        ? `/admin/cancellations/${job.disputeId}`
+                        : `/admin/disputes/${job.disputeId}`
+                    )
                 : undefined
             }
           />

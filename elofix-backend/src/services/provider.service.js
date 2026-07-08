@@ -788,6 +788,9 @@ async function updateProviderForUser(requestUserId, body) {
       },
     });
     await notificationEvents.notifyProviderApplicationSubmitted(requestUserId);
+    const providerName =
+      String(profile.businessName || profile.user?.name || "A provider").trim() || "A provider";
+    await notificationEvents.notifyAdminProviderApplicationSubmitted(requestUserId, providerName);
   }
 
   return getProviderByUserId(requestUserId);
@@ -1332,6 +1335,18 @@ async function rejectProviderDocumentByUserId(targetUserId, docType, feedback, a
     data: { documents: next },
   });
   await persistProfileCompleted(profile.id);
+  const docLabels = {
+    idDoc: "ID document",
+    companyReg: "Company registration",
+    proofOfAddress: "Proof of address",
+    proofOfSkill: "Proof of skill",
+    certifications: "Certifications",
+  };
+  await notificationEvents.notifyProviderDocumentRejected(
+    targetUserId,
+    docLabels[docType] || docType,
+    feedback
+  );
   await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_DOC_REJECTED, {
     userId: auditOpts.userId,
     actorType: ACTOR_TYPES.ADMIN,

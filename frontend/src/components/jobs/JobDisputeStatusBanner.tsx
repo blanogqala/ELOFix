@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 type JobDisputeStatusBannerProps =
   | {
       variant: 'admin';
+      caseKind?: 'dispute' | 'cancellation';
       customerRequested?: string;
       customerComment?: string;
       disputeId?: string | null;
@@ -11,13 +12,20 @@ type JobDisputeStatusBannerProps =
     }
   | {
       variant: 'provider';
+      caseKind?: 'dispute' | 'cancellation';
       disputeId?: string | null;
       onViewDisputeCase?: () => void;
     };
 
 export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
   if (props.variant === 'admin') {
-    const { customerRequested, customerComment, disputeId, onOpenDisputeCase } = props;
+    const {
+      customerRequested,
+      customerComment,
+      disputeId,
+      onOpenDisputeCase,
+      caseKind = 'dispute',
+    } = props;
     return (
       <div className="card-elevated border-l-4 border-l-destructive p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -25,10 +33,14 @@ export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden />
             <div className="min-w-0 space-y-1">
               <p className="font-semibold text-destructive">
-                Dispatched — customer flagged work as not complete
+                {caseKind === 'cancellation'
+                  ? 'Cancellation opened — under review'
+                  : 'Dispatched — customer flagged work as not complete'}
               </p>
               <p className="text-sm text-muted-foreground">
-                Payment is on hold until this case is investigated and resolved.
+                {caseKind === 'cancellation'
+                  ? 'Payment is on hold until this cancellation is reviewed and resolved.'
+                  : 'Payment is on hold until this case is investigated and resolved.'}
               </p>
               {(customerRequested || customerComment) && (
                 <div className="mt-3 space-y-1 text-sm">
@@ -47,7 +59,7 @@ export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
           </div>
           {disputeId && onOpenDisputeCase && (
             <Button variant="outline" size="sm" className="shrink-0" onClick={onOpenDisputeCase}>
-              Open dispute case
+              Open case
             </Button>
           )}
         </div>
@@ -55,22 +67,26 @@ export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
     );
   }
 
-  const { disputeId, onViewDisputeCase } = props;
+  const { disputeId, onViewDisputeCase, caseKind = 'dispute' } = props;
   return (
     <div className="card-elevated border-l-4 border-l-destructive p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 gap-3">
           <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden />
           <div className="min-w-0 space-y-1">
-            <p className="font-semibold text-destructive">Dispute opened</p>
+            <p className="font-semibold text-destructive">
+              {caseKind === 'cancellation' ? 'Cancellation opened' : 'Dispute opened'}
+            </p>
             <p className="text-sm text-muted-foreground">
-              A customer has disputed this job. Payment on hold until EloFix resolves the case.
+              {caseKind === 'cancellation'
+                ? 'This job was cancelled and is under review. Payment on hold until EloFix resolves the case.'
+                : 'A customer has disputed this job. Payment on hold until EloFix resolves the case.'}
             </p>
           </div>
         </div>
         {disputeId && onViewDisputeCase && (
           <Button variant="outline" size="sm" className="shrink-0" onClick={onViewDisputeCase}>
-            View dispute case
+            View case
           </Button>
         )}
       </div>

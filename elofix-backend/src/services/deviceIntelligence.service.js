@@ -164,6 +164,7 @@ async function evaluateDeviceRules(deviceProfileId) {
             reason: "shared_device_fingerprint",
             providerUserIds,
           },
+          applyTrustPenalty: false,
         });
       }
     }

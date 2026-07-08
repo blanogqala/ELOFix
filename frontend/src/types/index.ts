@@ -860,6 +860,11 @@ export type AppNotificationType =
   | 'provider_approved'
   | 'provider_application_submitted'
   | 'provider_application_rejected'
+  | 'provider_document_rejected'
+  | 'admin_provider_application_submitted'
+  | 'fraud_alert'
+  | 'admin_repayment_submitted'
+  | 'admin_refund_debt_overdue'
   | 'category_suggestion'
   | 'support_contact'
   | 'job_chat'
@@ -968,6 +973,7 @@ export interface JobDispute {
     title?: string;
     categoryName?: string;
     status?: string;
+    cancellationSource?: string | null;
   } | null;
 }
 

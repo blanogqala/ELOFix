@@ -29,6 +29,14 @@ const GENERAL_TYPES: AppNotificationType[] = [
   'material_tracking',
 ];
 
+export const JOBS_NAV_TYPES: AppNotificationType[] = [
+  ...MATERIAL_TYPES,
+  ...MESSAGE_TYPES,
+  ...GENERAL_TYPES,
+];
+
+export const REQUESTS_NAV_TYPES: AppNotificationType[] = REQUEST_TYPES;
+
 export function notificationSection(n: AppNotification): JobActivitySection | null {
   if (!n.jobId || n.read) return null;
   if (MESSAGE_TYPES.includes(n.type)) return 'messages';

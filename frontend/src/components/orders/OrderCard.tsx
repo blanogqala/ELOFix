@@ -32,19 +32,29 @@ export interface OrderCardViewModel {
 interface OrderCardProps {
   order: OrderCardViewModel;
   onClick?: () => void;
+  variant?: 'default' | 'embedded';
+  hideServiceContext?: boolean;
 }
 
-export function OrderCard({ order, onClick }: OrderCardProps) {
+export function OrderCard({
+  order,
+  onClick,
+  variant = 'default',
+  hideServiceContext = false,
+}: OrderCardProps) {
   const isService = Boolean(order.jobId);
   const isRefunded = Boolean(order.isRefunded || (order.refundAmount != null && order.refundAmount > 0));
   const deliveryFeePaymentDue = isCustomerDeliveryFeePaymentDue(order);
 
+  const isEmbedded = variant === 'embedded';
+
   return (
     <div
       className={cn(
-        'rounded-xl border border-border bg-card p-4 shadow-sm hover:bg-muted/40 transition-colors cursor-pointer',
-        'flex flex-col gap-2',
-        isRefunded && 'border-destructive/30 bg-destructive/[0.03]'
+        'flex flex-col gap-2 cursor-pointer transition-colors hover:bg-muted/40',
+        isEmbedded ? 'p-4' : 'rounded-xl border border-border bg-card p-4 shadow-sm',
+        !isEmbedded && isRefunded && 'border-destructive/30 bg-destructive/[0.03]',
+        isEmbedded && isRefunded && 'bg-destructive/[0.03]'
       )}
       onClick={onClick}
       role="presentation"
@@ -73,7 +83,7 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
               {order.deliveryTypeLabel}
             </Badge>
           </div>
-          {isService && (order.jobTitle || order.providerName) && (
+          {isService && !hideServiceContext && (order.jobTitle || order.providerName) && (
             <p className="text-xs text-muted-foreground mb-1">
               {order.jobTitle ? <span className="font-medium text-foreground">{order.jobTitle}</span> : null}
               {order.jobTitle && order.providerName ? ' · ' : null}

@@ -97,6 +97,8 @@ async function createPaymentIntent(req, res) {
     returnUrl: body.returnUrl,
     cancelUrl: body.cancelUrl,
     metadata: body.metadata,
+    cardId: body.cardId,
+    cvv: body.cvv,
     idempotencyKey: req.financialIdempotencyKey,
     requestHash: req.financialRequestHash,
     route: req.financialIdempotencyRoute,

@@ -38,6 +38,15 @@ describe('getCustomerCourierTrackingBanner', () => {
     });
     expect(banner.title).toBe('Delivery completed');
   });
+
+  it('shows collecting banner when receipt confirmed on linked order but courier is still collecting', () => {
+    const banner = getCustomerCourierTrackingBanner('COLLECTING', baseJob, {
+      ...baseDr,
+      deliveryConfirmed: true,
+    });
+    expect(banner.title).toBe('Courier heading to collection');
+    expect(banner.title).not.toBe('Receipt confirmed — share feedback');
+  });
 });
 
 describe('getCourierMapRoutePhase', () => {

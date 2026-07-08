@@ -53,6 +53,7 @@ import UserProviderProfile from "./pages/user/ProviderProfile";
 import UserJobs from "./pages/user/Jobs";
 import JobDetail from "./pages/user/JobDetail";
 import UserDisputeDetail from "./pages/user/DisputeDetail";
+import UserCancellationDetail from "./pages/user/CancellationDetail";
 import UserProfile from "./pages/user/Profile";
 import UserPayments from "./pages/user/Payments";
 import UserNotifications from "./pages/user/Notifications";
@@ -71,6 +72,7 @@ import ProviderRequestDetail from "./pages/provider/RequestDetail";
 import ProviderActiveJobs from "./pages/provider/ActiveJobs";
 import ProviderJobDetail from "./pages/provider/JobDetail";
 import ProviderDisputeDetail from "./pages/provider/DisputeDetail";
+import ProviderCancellationDetail from "./pages/provider/CancellationDetail";
 import ProviderJobBrowseMaterials from "./pages/provider/ProviderJobBrowseMaterials";
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderProfile from "./pages/provider/Profile";
@@ -96,6 +98,7 @@ import FraudDeviceDetail from "./pages/admin/FraudDeviceDetail";
 import AdminWithdrawals from "./pages/admin/Withdrawals";
 import AdminRefundRepayments from "./pages/admin/RefundRepayments";
 import AdminDisputeDetail from "./pages/admin/DisputeDetail";
+import AdminCancellationDetail from "./pages/admin/CancellationDetail";
 import AdminCustomers from "./pages/admin/Customers";
 import AdminCustomerDetail from "./pages/admin/CustomerDetail";
 
@@ -175,8 +178,9 @@ const App = () => (
             <Route path="/user/payments" element={<AuthGuard allowedRoles={['user']}><UserPayments /></AuthGuard>} />
             <Route path="/payments/return" element={<AuthGuard allowedRoles={['user']}><PaymentReturn /></AuthGuard>} />
             <Route path="/payments/cancel" element={<AuthGuard allowedRoles={['user']}><PaymentCancel /></AuthGuard>} />
-            <Route path="/user/disputes" element={<Navigate to="/user/jobs?view=disputes" replace />} />
+            <Route path="/user/disputes" element={<Navigate to="/user/jobs?view=review" replace />} />
             <Route path="/user/disputes/:id" element={<AuthGuard allowedRoles={['user']}><UserDisputeDetail /></AuthGuard>} />
+            <Route path="/user/cancellations/:id" element={<AuthGuard allowedRoles={['user']}><UserCancellationDetail /></AuthGuard>} />
             <Route path="/user/profile" element={<AuthGuard allowedRoles={['user']}><UserProfile /></AuthGuard>} />
             <Route path="/user/notifications" element={<AuthGuard allowedRoles={['user']}><UserNotifications /></AuthGuard>} />
             <Route path="/provider/notifications" element={<AuthGuard allowedRoles={['provider']}><UserNotifications /></AuthGuard>} />
@@ -205,8 +209,9 @@ const App = () => (
             <Route path="/provider/jobs/:id/materials/browse" element={<AuthGuard allowedRoles={['provider']}><ProviderJobBrowseMaterials /></AuthGuard>} />
             <Route path="/provider/jobs/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderJobDetail /></AuthGuard>} />
             <Route path="/provider/earnings" element={<AuthGuard allowedRoles={['provider']}><ProviderEarnings /></AuthGuard>} />
-            <Route path="/provider/disputes" element={<Navigate to="/provider/jobs?view=disputes" replace />} />
+            <Route path="/provider/disputes" element={<Navigate to="/provider/jobs?view=review" replace />} />
             <Route path="/provider/disputes/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderDisputeDetail /></AuthGuard>} />
+            <Route path="/provider/cancellations/:id" element={<AuthGuard allowedRoles={['provider']}><ProviderCancellationDetail /></AuthGuard>} />
             <Route path="/provider/profile" element={<AuthGuard allowedRoles={['provider']}><ProviderProfile /></AuthGuard>} />
             <Route path="/provider/documents" element={<AuthGuard allowedRoles={['provider']}><ProviderDocuments /></AuthGuard>} />
             <Route
@@ -264,6 +269,7 @@ const App = () => (
             <Route path="/admin/refund-repayments" element={<AuthGuard allowedRoles={['admin']}><AdminRefundRepayments /></AuthGuard>} />
             <Route path="/admin/disputes" element={<Navigate to="/admin/jobs?view=dispatched" replace />} />
             <Route path="/admin/disputes/:id" element={<AuthGuard allowedRoles={['admin']}><AdminDisputeDetail /></AuthGuard>} />
+            <Route path="/admin/cancellations/:id" element={<AuthGuard allowedRoles={['admin']}><AdminCancellationDetail /></AuthGuard>} />
 
             {/* Catch-all */}
             <Route path="*" element={<NotFound />} />

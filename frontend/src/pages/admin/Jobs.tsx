@@ -10,7 +10,8 @@ import { getCategories } from '@/lib/api/categories';
 import { Category, Job } from '@/types';
 import { Search, Briefcase, ArrowRight, X, CheckCircle, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass, jobMatchesAdminStatusFilter, ADMIN_JOB_STATUS_FILTER_LABELS } from '@/lib/jobStatusMapping';
+import { jobMatchesAdminStatusFilter, ADMIN_JOB_STATUS_FILTER_LABELS } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { countAdminJobsByStatus } from '@/lib/adminJobStatus';
 import {
   ADMIN_FILTER_SELECT_CLASS,
@@ -25,6 +26,13 @@ import { JobListRowVariant } from '@/components/jobs/JobListGroup';
 
 type SortKey = 'newest' | 'oldest' | 'status' | 'category';
 type JobsView = 'list' | 'dispatched';
+
+function isCancellationReview(job: Job): boolean {
+  return (
+    job.status === 'DISPUTED' &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel')
+  );
+}
 
 export default function AdminJobs() {
   const navigate = useNavigate();
@@ -140,8 +148,8 @@ export default function AdminJobs() {
   }, [jobs]);
 
   const getStatusBadge = (job: Job) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(job.status))}>
-      {getStandardizedStatusLabel(job.status)}
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
+      {jobsView === 'dispatched' && isCancellationReview(job) ? 'Cancellation' : getJobDisplayStatusLabel(job)}
     </span>
   );
 
@@ -192,13 +200,16 @@ export default function AdminJobs() {
   const renderDispatchedNote = (job: Job) => {
     const dispute = disputeByJobId.get(job.id);
     if (!dispute) return null;
+    const cancellation = isCancellationReview(job);
     return (
       <tr key={`${job.id}-dispute`} className="bg-destructive/5">
         <td colSpan={8} className="px-6 py-3 text-sm border-b border-destructive/20">
           <div className="flex flex-wrap items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium text-destructive">Customer flagged work as not complete</p>
+              <p className="font-medium text-destructive">
+                {cancellation ? 'Cancellation in progress' : 'Customer flagged work as not complete'}
+              </p>
               <p className="text-muted-foreground mt-0.5">
                 Requested: {formatRequestedResolution(dispute.requestedResolution, dispute.otherResolutionDetail)}
               </p>
@@ -215,7 +226,7 @@ export default function AdminJobs() {
       <div className="space-y-6 animate-fade-in">
         <div>
           <h1 className="text-2xl font-bold">Jobs</h1>
-          <p className="text-muted-foreground">Monitor active jobs and dispatched dispute cases</p>
+          <p className="text-muted-foreground">Monitor active jobs and cases under review</p>
         </div>
 
         {/* Jobs overview stats (scoped to current filters) */}
@@ -364,7 +375,7 @@ export default function AdminJobs() {
             <TabsList>
               <TabsTrigger value="list">List of Jobs</TabsTrigger>
               <TabsTrigger value="dispatched" className="gap-2">
-                Dispatched Jobs
+                Under Review
                 {dispatchedCount > 0 && (
                   <span className="rounded-full bg-destructive px-2 py-0.5 text-xs text-destructive-foreground">
                     {dispatchedCount}
@@ -376,7 +387,7 @@ export default function AdminJobs() {
 
           {jobsView === 'dispatched' && (
             <p className="text-sm text-muted-foreground">
-              Jobs flagged by customers as not complete. They stay here until the dispute is resolved and the job moves forward.
+              Jobs under review due to cancellation or dispute. They stay here until resolved.
             </p>
           )}
 
@@ -458,7 +469,7 @@ export default function AdminJobs() {
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {jobsView === 'dispatched'
-                          ? 'When a customer flags work as not complete, the job appears here.'
+                          ? 'When a job is cancelled or disputed, it appears here while under review.'
                           : activeFilters.length > 0 || searchQuery
                             ? 'Try adjusting your filters'
                             : 'No jobs have been created yet'}

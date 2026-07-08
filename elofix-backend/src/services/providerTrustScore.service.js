@@ -1,6 +1,14 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const { getTrustLevel, isHighRisk } = require("../utils/trustLevel.util");
+const {
+  reasonToLabel,
+  sanitizeHistoryForProvider,
+  stripDoublePenaltyEntries,
+  recomputeTrustMetricsFromHistory,
+  rebuildHistoryScoreChain,
+  REASON_LABELS,
+} = require("../utils/trustScoreHistory.util");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
@@ -279,6 +287,7 @@ async function getTrustScoreForProviderProfile(providerProfileId, providerExtra 
     lastCalculatedAt: row.lastCalculatedAt.toISOString(),
     recommendations: buildRecommendations(row, provider),
     isHighRisk: isHighRisk(row.score),
+    history: sanitizeHistoryForProvider(row.history),
   };
 }
 
@@ -329,4 +338,10 @@ module.exports = {
   buildRecommendations,
   isHighRisk,
   DELTAS,
+  reasonToLabel,
+  sanitizeHistoryForProvider,
+  stripDoublePenaltyEntries,
+  recomputeTrustMetricsFromHistory,
+  rebuildHistoryScoreChain,
+  REASON_LABELS,
 };

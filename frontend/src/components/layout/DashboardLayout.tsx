@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getUnreadCount } from '@/lib/api/notifications';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { useAdminActivityIndicators } from '@/hooks/useAdminActivityIndicators';
+import { useNavNotificationClearance } from '@/hooks/useNavNotificationClearance';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSupplierMe } from '@/lib/api/supplierPortal';
 import { socket } from '@/lib/socket';
@@ -198,6 +200,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   });
 
   const { hasJobsNavActivity, hasRequestsNavActivity } = useJobActivityIndicators();
+  const { hasNavActivity: hasAdminNavActivity, hasGroupActivity: hasAdminGroupActivity } =
+    useAdminActivityIndicators();
+  useNavNotificationClearance();
   const jobsNavPath =
     user?.role === 'provider' ? '/provider/jobs' : user?.role === 'user' ? '/user/jobs' : null;
   const requestsNavPath = user?.role === 'provider' ? '/provider/requests' : null;
@@ -215,7 +220,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       const isProviderStatusChange =
         type === 'provider_approved' ||
         type === 'provider_application_rejected' ||
-        type === 'provider_application_submitted';
+        type === 'provider_application_submitted' ||
+        type === 'provider_document_rejected';
 
       if (
         (user.role === 'provider' && (isAccountBlockChange || isProviderStatusChange)) ||
@@ -233,6 +239,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     socket.on('message:new', refreshUnread);
     socket.on('notification:read', refreshUnread);
     socket.on('notification:read-all', refreshUnread);
+    socket.on('notification:nav-read', refreshUnread);
     socket.on('notification:job-read', refreshUnread);
 
     return () => {
@@ -240,6 +247,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       socket.off('message:new', refreshUnread);
       socket.off('notification:read', refreshUnread);
       socket.off('notification:read-all', refreshUnread);
+      socket.off('notification:nav-read', refreshUnread);
       socket.off('notification:job-read', refreshUnread);
     };
   }, [queryClient, refreshProfile, user?.id, user?.role]);
@@ -434,6 +442,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     >
                       {entry.icon}
                       <span>{entry.label}</span>
+                      {hasAdminNavActivity(entry.path) && (
+                        <ActivityDot className="ml-1" aria-label="Action required" />
+                      )}
                       {active && <ChevronRight className="ml-auto h-4 w-4" />}
                     </Link>
                   );
@@ -456,6 +467,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     >
                       {entry.icon}
                       <span>{entry.label}</span>
+                      {hasAdminGroupActivity(entry.label) && (
+                        <ActivityDot className="ml-1" aria-label="Action required" />
+                      )}
                       <ChevronDown
                         className={cn(
                           'ml-auto h-4 w-4 shrink-0 transition-transform',
@@ -496,6 +510,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                               <Tags className="h-4 w-4 shrink-0" />
                             )}
                             <span>{child.label}</span>
+                            {hasAdminNavActivity(child.path) && (
+                              <ActivityDot className="ml-1" aria-label="Action required" />
+                            )}
                             {childActive && <ChevronRight className="ml-auto h-4 w-4" />}
                           </Link>
                         );

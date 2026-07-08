@@ -206,6 +206,46 @@ async function notifyProviderApplicationUnrejected(providerUserId) {
   });
 }
 
+async function notifyAdminProviderApplicationSubmitted(providerUserId, providerName) {
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN", deletedAt: null },
+      select: { id: true },
+    });
+    const name = String(providerName || "A provider").trim() || "A provider";
+    const uid = String(providerUserId);
+    const dedupeSuffix = Date.now();
+    for (const admin of admins) {
+      await notificationService.addNotification({
+        userId: admin.id,
+        type: "admin_provider_application_submitted",
+        title: "Provider application submitted",
+        message: `${name} submitted their profile for verification.`,
+        senderId: uid,
+        senderName: name,
+        senderRole: "provider",
+        dedupeKey: `admin_provider_application:${uid}:${dedupeSuffix}`,
+      });
+    }
+  } catch (err) {
+    console.error("[notifications] notifyAdminProviderApplicationSubmitted failed", err);
+  }
+}
+
+async function notifyProviderDocumentRejected(providerUserId, docLabel, feedback) {
+  const label = String(docLabel || "document").trim() || "document";
+  const trimmedFeedback = String(feedback || "").trim();
+  const message = trimmedFeedback
+    ? `Your ${label} was rejected. Reason: ${trimmedFeedback}`
+    : `Your ${label} was rejected. Please re-upload it from your profile.`;
+  return notifyUser(providerUserId, {
+    type: "provider_document_rejected",
+    title: "Document rejected",
+    message,
+    dedupeKey: userDedupe(providerUserId, `provider_document_rejected:${Date.now()}`),
+  });
+}
+
 async function notifyAdminFraudAlert(alert) {
   try {
     const admins = await require("../config/prisma").user.findMany({
@@ -696,6 +736,8 @@ module.exports = {
   notifyProviderApplicationSubmitted,
   notifyProviderApplicationRejected,
   notifyProviderApplicationUnrejected,
+  notifyAdminProviderApplicationSubmitted,
+  notifyProviderDocumentRejected,
   notifyAdminFraudAlert,
   notifyProviderFraudReview,
   notifyCategorySuggestion,

@@ -23,7 +23,12 @@ function isAwaitingServicePrice(job: Job): boolean {
 export function getJobDisplayStatusLabel(job: Job): string {
   if (job.status === 'CANCELLED') return 'Cancelled';
   if (job.status === 'REJECTED') return 'Rejected';
-  if (job.status === 'DISPUTED') return 'Disputed';
+  if (job.status === 'DISPUTED') {
+    if (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel') {
+      return 'Cancellation';
+    }
+    return 'Disputed';
+  }
   if (job.courierFlow) {
     return getCourierJobDisplayStatusLabel(job);
   }
@@ -147,7 +152,15 @@ export function getStepIndexFromJobState(job: Job): number {
   if (st === 'CANCELLED' || st === 'REJECTED') return 0;
 
   if (job.completionConfirmedByUser === true || st === 'COMPLETED') return 5;
-  if (st === 'AWAITING_CONFIRMATION' || st === 'DISPUTED') return 4;
+  if (st === 'AWAITING_CONFIRMATION') return 4;
+  if (st === 'DISPUTED') {
+    // Cancellation-review cases open while work may still be "In Progress" (step 4).
+    // Keep true disputes on the dedicated dispute step (step 5).
+    if (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel') {
+      return 3;
+    }
+    return 4;
+  }
 
   if (jobHasStarted(job)) return 3;
 

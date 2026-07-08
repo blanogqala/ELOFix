@@ -12,6 +12,20 @@ export interface CustomerCourierTrackingBanner {
   tone: string;
 }
 
+const ACTIVE_COURIER_DELIVERY_STATUSES = new Set([
+  'READY',
+  'COLLECTING',
+  'COLLECTED',
+  'OUT_FOR_DELIVERY',
+  'AT_DESTINATION',
+]);
+
+const receiptFeedbackBanner = (): CustomerCourierTrackingBanner => ({
+  title: 'Receipt confirmed — share feedback',
+  description: 'Open your order details to rate the delivery when you have a moment.',
+  tone: 'border-amber-500/30 bg-amber-500/10',
+});
+
 /** Customer-facing status banner for courier job delivery tracking. */
 export function getCustomerCourierTrackingBanner(
   fs: string,
@@ -29,13 +43,6 @@ export function getCustomerCourierTrackingBanner(
       title: 'Delivery completed',
       description: 'Thank you — your delivery has been confirmed and closed.',
       tone: 'border-emerald-500/30 bg-emerald-500/10',
-    };
-  }
-  if (dr.deliveryConfirmed === true && !dr.customerRating) {
-    return {
-      title: 'Receipt confirmed — share feedback',
-      description: 'Open your order details to rate the delivery when you have a moment.',
-      tone: 'border-amber-500/30 bg-amber-500/10',
     };
   }
   if (status === 'FAILED') {
@@ -88,11 +95,21 @@ export function getCustomerCourierTrackingBanner(
     };
   }
   if (status === 'COMPLETED') {
+    if (dr.deliveryConfirmed === true && !dr.customerRating) {
+      return receiptFeedbackBanner();
+    }
     return {
       title: 'Delivered — please confirm',
       description: 'Confirm receipt when everything looks good to close this job.',
       tone: 'border-success/30 bg-success/5',
     };
+  }
+  if (
+    dr.deliveryConfirmed === true &&
+    !dr.customerRating &&
+    !ACTIVE_COURIER_DELIVERY_STATUSES.has(status)
+  ) {
+    return receiptFeedbackBanner();
   }
   return {
     title: 'Delivery',

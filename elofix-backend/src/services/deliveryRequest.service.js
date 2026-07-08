@@ -6,6 +6,15 @@ const trackingService = require("./tracking.service");
 const { createDefaultJobMeta } = require("./jobMeta.service");
 const notificationEvents = require("./notificationEvents.service");
 const { assertCustomerNotBlocked } = require("./accountStatus.service");
+const { sanitizeGeoPointForResponse } = require("../utils/address.util");
+
+const ACTIVE_COURIER_FULFILLMENT = new Set([
+  "READY",
+  "COLLECTING",
+  "COLLECTED",
+  "OUT_FOR_DELIVERY",
+  "AT_DESTINATION",
+]);
 
 function roundMoney2(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -75,6 +84,9 @@ function enrichDeliveryRequest(row, materialContext = null) {
           createdAt: customerCompletion.ratedAt || customerCompletion.confirmedAt,
         }
       : undefined);
+  const fulfillmentStatus = String(row.fulfillmentStatus || "READY").toUpperCase();
+  const deliveryConfirmed =
+    ctx.deliveryConfirmed === true && !ACTIVE_COURIER_FULFILLMENT.has(fulfillmentStatus);
   return {
     id: row.id,
     customerId: row.customerId,
@@ -86,8 +98,8 @@ function enrichDeliveryRequest(row, materialContext = null) {
     description: row.description || undefined,
     photos: Array.isArray(row.photos) ? row.photos : [],
     items: Array.isArray(row.items) ? row.items : row.items,
-    collectionPoint: row.collectionPoint,
-    destinationPoint: row.destinationPoint,
+    collectionPoint: sanitizeGeoPointForResponse(row.collectionPoint),
+    destinationPoint: sanitizeGeoPointForResponse(row.destinationPoint),
     status: row.status,
     quotedFee: row.quotedFee != null ? Number(row.quotedFee) : undefined,
     quoteNote: row.quoteNote || undefined,
@@ -103,8 +115,10 @@ function enrichDeliveryRequest(row, materialContext = null) {
         ? payload.driverLocation
         : undefined,
     courierPhase: payload.courierPhase ? String(payload.courierPhase) : undefined,
-    deliveryConfirmed: ctx.deliveryConfirmed === true,
-    deliveryConfirmedAt: ctx.deliveryConfirmedAt || customerCompletion?.confirmedAt || undefined,
+    deliveryConfirmed,
+    deliveryConfirmedAt: deliveryConfirmed
+      ? ctx.deliveryConfirmedAt || customerCompletion?.confirmedAt || undefined
+      : undefined,
     customerRating,
     customerCompletion,
   };

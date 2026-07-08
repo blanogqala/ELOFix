@@ -22,9 +22,12 @@ import {
   getCourierMapRoutePhase,
   getCustomerCourierTrackingBanner,
 } from '@/lib/customerCourierTracking';
+import { formatDeliveryPointLabel } from '@/lib/formatAddress';
 import { ensureSocketAuthAndConnect, socket } from '@/lib/socket';
 import { resolveLinkedMaterialOrderId } from '@/lib/resolveLinkedMaterialOrderId';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { guardPaymentCardsForUser } from '@/lib/paymentCardGuard';
 
 function resolveCollectionPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
   if (dr.collectionPoint?.address?.trim()) return dr.collectionPoint;
@@ -43,13 +46,6 @@ function resolveDestinationPoint(job: Job, dr: DeliveryRequestRecord): DeliveryG
     return { address: job.location.address, city: job.location.city };
   }
   return { address: '—' };
-}
-
-function formatDeliveryPointLabel(point: DeliveryGeoPoint): string {
-  const address = point.address?.trim();
-  if (!address) return '—';
-  const locality = [point.suburb, point.area, point.city].filter(Boolean).join(', ');
-  return locality ? `${address}, ${locality}` : address;
 }
 
 const LIVE_TRACKING_FS = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
@@ -74,6 +70,7 @@ export function JobDeliverySection({
   onDeliveryUpdated,
   className,
 }: JobDeliverySectionProps) {
+  const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -332,7 +329,12 @@ export function JobDeliverySection({
         <Button
           type="button"
           className="btn-accent w-full sm:w-auto"
-          onClick={() => setPayModalOpen(true)}
+          onClick={async () => {
+            if (!user) return;
+            const canPay = await guardPaymentCardsForUser(user.id, toast);
+            if (!canPay) return;
+            setPayModalOpen(true);
+          }}
         >
           Pay delivery fee
         </Button>
