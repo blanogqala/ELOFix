@@ -52,6 +52,8 @@ export default function ProviderDashboard() {
   });
 
   const isBlocked = isBlockedFromAuth || Boolean(provider?.blocked);
+  const providerLoaded = !loadingProvider && Boolean(provider);
+  const showPendingApproval = providerLoaded && !isBlocked && provider?.approved === false;
 
   const isLoading = loadingProvider || loadingJobs || loadingPending;
   const loadError = providerError
@@ -117,7 +119,7 @@ export default function ProviderDashboard() {
               <AlertCircle className="h-4 w-4" />
               <span className="text-sm font-medium">Profile Blocked</span>
             </div>
-          ) : !provider?.approved ? (
+          ) : showPendingApproval ? (
             <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning rounded-lg">
               <AlertCircle className="h-4 w-4" />
               <span className="text-sm font-medium">Pending Approval</span>
@@ -126,7 +128,7 @@ export default function ProviderDashboard() {
         </div>
 
         {/* Approval Alert */}
-        {!isBlocked && !provider?.approved && (
+        {showPendingApproval && (
           <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
             <div className="flex items-start gap-4">
               <AlertCircle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
