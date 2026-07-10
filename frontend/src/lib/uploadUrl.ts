@@ -1,7 +1,27 @@
+function resolveApiOrigin(): string {
+  const explicit =
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_ORIGIN
+      ? String(import.meta.env.VITE_API_ORIGIN).trim()
+      : '';
+  if (explicit) return explicit;
+
+  const apiBase =
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL
+      ? String(import.meta.env.VITE_API_BASE_URL).trim()
+      : '';
+  if (apiBase) {
+    try {
+      return new URL(apiBase).origin;
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return 'http://localhost:5000';
+}
+
 /** API server origin (files are served at /uploads on this host) */
-export const API_ORIGIN =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_ORIGIN) ||
-  'http://localhost:5000';
+export const API_ORIGIN = resolveApiOrigin();
 
 /**
  * Turn stored paths like `/uploads/...` into absolute URLs for <img src>.

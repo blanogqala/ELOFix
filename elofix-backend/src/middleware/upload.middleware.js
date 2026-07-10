@@ -3,7 +3,10 @@ const path = require("path");
 const fs = require("fs");
 const AppError = require("../utils/AppError");
 
-const UPLOAD_ROOT = path.join(__dirname, "..", "..", "uploads");
+/** Local dev: elofix-backend/uploads. Production (Render): set UPLOAD_ROOT to a persistent disk mount. */
+const UPLOAD_ROOT = process.env.UPLOAD_ROOT
+  ? path.resolve(process.env.UPLOAD_ROOT)
+  : path.join(__dirname, "..", "..", "uploads");
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
