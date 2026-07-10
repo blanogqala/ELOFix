@@ -9,6 +9,33 @@ export interface AnalyticsDayPoint {
   amount?: number;
 }
 
+export interface DisputesDayPoint {
+  date: string;
+  opened: number;
+  resolved: number;
+}
+
+export interface AdminAnalyticsSummary {
+  totalJobs: number;
+  totalRevenue: number;
+  totalProviderSignupsInRange: number;
+  activeApprovedProviders: number;
+  totalLaborCommission?: number;
+  totalMaterialCommission?: number;
+  totalCommission?: number;
+  totalCustomers?: number;
+  totalProviders?: number;
+  verifiedProviders?: number;
+  pendingVerification?: number;
+  totalSuppliers?: number;
+  openDisputes?: number;
+  disputesOpenedInRange?: number;
+  averageRating?: number;
+  activeUsers?: number;
+  escrowBalance?: number;
+  deltas?: Record<string, number>;
+}
+
 export interface AdminAnalyticsResponse {
   success: boolean;
   from: string;
@@ -16,19 +43,59 @@ export interface AdminAnalyticsResponse {
   jobsByDay: { date: string; count: number }[];
   revenueByDay: { date: string; amount: number }[];
   providersByDay: { date: string; count: number }[];
-  summary: {
-    totalJobs: number;
-    totalRevenue: number;
-    totalProviderSignupsInRange: number;
-    activeApprovedProviders: number;
-    totalLaborCommission?: number;
-    totalMaterialCommission?: number;
-    totalCommission?: number;
-  };
+  customersByDay?: { date: string; count: number }[];
+  suppliersByDay?: { date: string; count: number }[];
+  disputesByDay?: DisputesDayPoint[];
+  verificationQueueByDay?: { date: string; count: number }[];
+  commissionByDay?: { date: string; amount: number }[];
+  summary: AdminAnalyticsSummary;
 }
 
-export async function getAdminAnalytics(params?: { from?: string; to?: string }): Promise<AdminAnalyticsResponse> {
+export interface AdminAnalyticsParams {
+  from?: string;
+  to?: string;
+  city?: string;
+  province?: string;
+  role?: string;
+  category?: string;
+  search?: string;
+}
+
+export async function getAdminAnalytics(params?: AdminAnalyticsParams): Promise<AdminAnalyticsResponse> {
   const { data } = await apiClient.get<AdminAnalyticsResponse>('/admin/analytics', { params });
+  return data;
+}
+
+export interface AdminAnalyticsFilterOptions {
+  success: boolean;
+  cities: string[];
+  provinces: string[];
+  categories: string[];
+}
+
+export async function getAdminAnalyticsFilterOptions(): Promise<AdminAnalyticsFilterOptions> {
+  const { data } = await apiClient.get<AdminAnalyticsFilterOptions>('/admin/analytics/filter-options');
+  return data;
+}
+
+export type PlatformHealthStatus = 'healthy' | 'degraded' | 'down';
+
+export interface PlatformHealthComponent {
+  id: string;
+  label: string;
+  status: PlatformHealthStatus;
+  detail: string;
+  latencyMs?: number;
+}
+
+export interface AdminPlatformHealthResponse {
+  success: boolean;
+  checkedAt: string;
+  components: PlatformHealthComponent[];
+}
+
+export async function getAdminPlatformHealth(): Promise<AdminPlatformHealthResponse> {
+  const { data } = await apiClient.get<AdminPlatformHealthResponse>('/admin/platform-health');
   return data;
 }
 

@@ -1,5 +1,14 @@
 import apiClient from '@/api/client';
 
+export type AuditSeverity = 'critical' | 'warning' | 'info';
+
+export interface AdminAuditDeviceInfo {
+  os?: string | null;
+  city?: string | null;
+  country?: string | null;
+  userAgent?: string | null;
+}
+
 export interface AdminAuditLogRow {
   id: string;
   userId?: string | null;
@@ -15,6 +24,8 @@ export interface AdminAuditLogRow {
   ipAddress?: string | null;
   deviceFingerprint?: string | null;
   metadata?: Record<string, unknown> | null;
+  severity?: AuditSeverity;
+  device?: AdminAuditDeviceInfo | null;
   createdAt: string;
 }
 
@@ -22,6 +33,9 @@ export interface ListAdminAuditLogsParams {
   search?: string;
   entityType?: string;
   actionCategory?: string;
+  severity?: string;
+  actorType?: string;
+  actorRole?: string;
   userId?: string;
   from?: string;
   to?: string;

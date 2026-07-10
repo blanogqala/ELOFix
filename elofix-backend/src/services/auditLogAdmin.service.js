@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const { ACTION_CATEGORIES } = require("../constants/auditActions");
+const { deriveSeverity } = require("../utils/auditSeverity.util");
 
 const EXPORT_MAX_ROWS = 10000;
 
@@ -44,6 +45,16 @@ function buildWhere(query = {}) {
     and.push({ userId });
   }
 
+  const actorType = String(query.actorType || "").trim().toUpperCase();
+  if (actorType && actorType !== "ALL") {
+    and.push({ actorType });
+  }
+
+  const actorRole = String(query.actorRole || query.userRole || "").trim().toUpperCase();
+  if (actorRole && actorRole !== "ALL") {
+    and.push({ user: { role: actorRole } });
+  }
+
   const from = parseDateStart(query.from);
   const to = parseDateEnd(query.to);
   if (from || to) {
@@ -79,7 +90,15 @@ function buildWhere(query = {}) {
   return where;
 }
 
-function toRowDto(row) {
+function toRowDto(row, deviceProfile = null) {
+  const device = deviceProfile
+    ? {
+        os: deviceProfile.os || null,
+        city: deviceProfile.city || null,
+        country: deviceProfile.country || null,
+        userAgent: deviceProfile.userAgent || null,
+      }
+    : null;
   return {
     id: row.id,
     userId: row.userId,
@@ -95,8 +114,46 @@ function toRowDto(row) {
     ipAddress: row.ipAddress,
     deviceFingerprint: row.deviceFingerprint,
     metadata: row.metadata,
+    severity: deriveSeverity(row.action),
+    device,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
+}
+
+async function loadDeviceProfilesForRows(rows) {
+  const fingerprints = [
+    ...new Set(
+      rows
+        .map((r) => String(r.deviceFingerprint || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  if (fingerprints.length === 0) return new Map();
+  const profiles = await prisma.deviceProfile.findMany({
+    where: { deviceFingerprint: { in: fingerprints } },
+    select: {
+      deviceFingerprint: true,
+      os: true,
+      city: true,
+      country: true,
+      userAgent: true,
+    },
+  });
+  return new Map(profiles.map((p) => [p.deviceFingerprint, p]));
+}
+
+function mapRowsToDtos(rows, deviceMap) {
+  return rows.map((row) => {
+    const fp = String(row.deviceFingerprint || "").trim();
+    const deviceProfile = fp ? deviceMap.get(fp) || null : null;
+    return toRowDto(row, deviceProfile);
+  });
+}
+
+function filterBySeverity(dtos, severity) {
+  const s = String(severity || "").trim().toLowerCase();
+  if (!s || s === "all") return dtos;
+  return dtos.filter((d) => d.severity === s);
 }
 
 function filterByCategory(rows, category) {
@@ -108,14 +165,16 @@ async function listAuditLogs(query = {}) {
   const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
   const offset = Math.max(Number(query.offset) || 0, 0);
   const category = query.actionCategory;
+  const severity = query.severity;
 
   const where = buildWhere(query);
+  const needsPostFilter = (category && category !== "all") || (severity && severity !== "all");
 
   let items = await prisma.auditLog.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    take: category && category !== "all" ? limit + offset + 500 : limit,
-    skip: category && category !== "all" ? 0 : offset,
+    take: needsPostFilter ? limit + offset + 500 : limit,
+    skip: needsPostFilter ? 0 : offset,
     include: {
       user: { select: { id: true, name: true, email: true, role: true } },
     },
@@ -123,13 +182,20 @@ async function listAuditLogs(query = {}) {
 
   if (category && category !== "all") {
     items = filterByCategory(items, category);
-    const total = items.length;
-    items = items.slice(offset, offset + limit);
-    return { items: items.map(toRowDto), total };
+  }
+
+  const deviceMap = await loadDeviceProfilesForRows(items);
+  let dtos = mapRowsToDtos(items, deviceMap);
+  dtos = filterBySeverity(dtos, severity);
+
+  if (needsPostFilter) {
+    const total = dtos.length;
+    dtos = dtos.slice(offset, offset + limit);
+    return { items: dtos, total };
   }
 
   const total = await prisma.auditLog.count({ where });
-  return { items: items.map(toRowDto), total };
+  return { items: dtos, total };
 }
 
 function csvEscape(value) {
@@ -193,12 +259,17 @@ async function exportAuditLogsCsv(query = {}) {
     rows = filterByCategory(rows, category);
   }
 
-  const truncated = rows.length > EXPORT_MAX_ROWS;
+  const deviceMap = await loadDeviceProfilesForRows(rows);
+  let dtos = mapRowsToDtos(rows, deviceMap);
+  dtos = filterBySeverity(dtos, query.severity);
+
+  const truncated = dtos.length > EXPORT_MAX_ROWS;
   if (truncated) {
-    rows = rows.slice(0, EXPORT_MAX_ROWS);
+    dtos = dtos.slice(0, EXPORT_MAX_ROWS);
+  } else if (rows.length > EXPORT_MAX_ROWS) {
+    dtos = dtos.slice(0, EXPORT_MAX_ROWS);
   }
 
-  const dtos = rows.map(toRowDto);
   return { csv: rowsToCsv(dtos), truncated, rowCount: dtos.length };
 }
 
@@ -206,4 +277,5 @@ module.exports = {
   listAuditLogs,
   exportAuditLogsCsv,
   EXPORT_MAX_ROWS,
+  deriveSeverity,
 };

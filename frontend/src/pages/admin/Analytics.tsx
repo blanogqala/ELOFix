@@ -1,273 +1,142 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { AdminAuditCenterPanel } from '@/components/admin/AdminAuditCenterPanel';
-import { getAdminAnalytics, AdminAnalyticsResponse } from '@/lib/api/admin';
-import { getAdminFinancialSummary, reconcileAdminProvider, type FinancialSummary } from '@/lib/api/adminFinancial';
-import { useToast } from '@/hooks/use-toast';
+import { AnalyticsFilterBar } from '@/components/admin/analytics/AnalyticsFilterBar';
+import { ExecutiveKpiGrid } from '@/components/admin/analytics/ExecutiveKpiGrid';
+import { AnalyticsChartsGrid } from '@/components/admin/analytics/AnalyticsChartsGrid';
+import { PlatformHealthPanel } from '@/components/admin/analytics/PlatformHealthPanel';
+import { SecurityActivityCenter } from '@/components/admin/analytics/SecurityActivityCenter';
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-} from 'recharts';
-import { Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+  getAdminAnalytics,
+  getAdminAnalyticsFilterOptions,
+  getAdminPlatformHealth,
+} from '@/lib/api/admin';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatCurrency } from '@/lib/formatCurrency';
+import { Loader2 } from 'lucide-react';
+import {
+  type AnalyticsFilterState,
+  applyPresetDates,
+  filtersFromSearchParams,
+  filtersToSearchParams,
+  toAnalyticsApiParams,
+} from '@/components/admin/analytics/analyticsFilters';
 
-function PlatformMetricsPanel({
-  data,
-  financial,
-  reconcileId,
-  setReconcileId,
-  reconcileBusy,
-  reconcileMsg,
-  runReconcile,
-}: {
-  data: AdminAnalyticsResponse;
-  financial: FinancialSummary | null;
-  reconcileId: string;
-  setReconcileId: (v: string) => void;
-  reconcileBusy: boolean;
-  reconcileMsg: string | null;
-  runReconcile: () => void;
-}) {
-  const { jobsByDay, revenueByDay, providersByDay, summary, from, to } = data;
+function useAnalyticsFilters() {
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  return (
-    <div className="space-y-8">
-      <p className="text-muted-foreground">
-        {from} — {to} (UTC days). Revenue = gross customer payments (labor + materials, by payment date).
-      </p>
+  const filters = useMemo(() => {
+    const f = filtersFromSearchParams(searchParams);
+    if (!f.from || !f.to) {
+      const { from, to } = applyPresetDates(f.preset || '30d');
+      return { ...f, from: f.from || from, to: f.to || to };
+    }
+    return f;
+  }, [searchParams]);
 
-      {financial && (
-        <div className="space-y-3">
-          <h2 className="text-lg font-semibold">Financial summary (ledger)</h2>
-          <p className="text-xs text-muted-foreground">
-            Volume ≈ released provider credits (available) + paid-out debits. Payouts from withdrawal requests.
-          </p>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="card-elevated p-4">
-              <p className="text-sm text-muted-foreground">Platform volume</p>
-              <p className="text-2xl font-bold">{formatCurrency(financial.totalPlatformVolume)}</p>
-            </div>
-            <div className="card-elevated p-4">
-              <p className="text-sm text-muted-foreground">Pending payouts</p>
-              <p className="text-2xl font-bold">{formatCurrency(financial.totalPendingPayouts)}</p>
-            </div>
-            <div className="card-elevated p-4">
-              <p className="text-sm text-muted-foreground">Completed payouts</p>
-              <p className="text-2xl font-bold">{formatCurrency(financial.totalCompletedPayouts)}</p>
-            </div>
-            <div className="card-elevated p-4">
-              <p className="text-sm text-muted-foreground">Released to balance (component)</p>
-              <p className="text-2xl font-bold">{formatCurrency(financial.breakdown.releasedToBalance)}</p>
-            </div>
-          </div>
-          <div className="card-elevated p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
-            <div className="flex-1">
-              <p className="text-sm font-medium mb-1">Reconcile provider</p>
-              <p className="text-xs text-muted-foreground mb-2">Use Provider.id from withdrawals list.</p>
-              <Input
-                placeholder="Provider UUID"
-                value={reconcileId}
-                onChange={(e) => setReconcileId(e.target.value)}
-              />
-            </div>
-            <Button type="button" onClick={() => void runReconcile()} disabled={reconcileBusy}>
-              {reconcileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Run reconcile'}
-            </Button>
-          </div>
-          {reconcileMsg && <p className="text-sm text-muted-foreground">{reconcileMsg}</p>}
-        </div>
-      )}
-
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-        <div className="card-elevated p-4">
-          <p className="text-sm text-muted-foreground">Jobs created</p>
-          <p className="text-2xl font-bold">{summary.totalJobs}</p>
-        </div>
-        <div className="card-elevated p-4">
-          <p className="text-sm text-muted-foreground">Revenue (range)</p>
-          <p className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Gross customer payments</p>
-        </div>
-        <div className="card-elevated p-4">
-          <p className="text-sm text-muted-foreground">Total commission</p>
-          <p className="text-2xl font-bold text-accent">{formatCurrency(summary.totalCommission ?? 0)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Labor + material (7%, all paid)</p>
-        </div>
-        <div className="card-elevated p-4">
-          <p className="text-sm text-muted-foreground">New provider signups</p>
-          <p className="text-2xl font-bold">{summary.totalProviderSignupsInRange}</p>
-        </div>
-        <div className="card-elevated p-4">
-          <p className="text-sm text-muted-foreground">Active approved providers</p>
-          <p className="text-2xl font-bold">{summary.activeApprovedProviders}</p>
-        </div>
-      </div>
-
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="card-elevated p-4 space-y-2">
-          <h2 className="font-semibold">Jobs per day</h2>
-          <div className="h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={jobsByDay}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Line type="monotone" dataKey="count" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="card-elevated p-4 space-y-2">
-          <h2 className="font-semibold">Revenue per day</h2>
-          <div className="h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={revenueByDay}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v: number) => [formatCurrency(v), 'Amount']} />
-                <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div className="card-elevated p-4 space-y-2">
-        <h2 className="font-semibold">New provider registrations per day</h2>
-        <p className="text-xs text-muted-foreground">Users with role provider who registered on each day.</p>
-        <div className="h-[280px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={providersByDay}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="count" stroke="hsl(142 70% 40%)" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    </div>
+  const setFilters = useCallback(
+    (next: AnalyticsFilterState) => {
+      const sp = filtersToSearchParams(next);
+      const tab = searchParams.get('tab');
+      if (tab === 'security') sp.set('tab', 'security');
+      setSearchParams(sp, { replace: true });
+    },
+    [searchParams, setSearchParams]
   );
+
+  return { filters, setFilters };
 }
 
 export default function AdminAnalytics() {
-  const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') === 'audit' ? 'audit' : 'metrics';
+  const activeTab =
+    searchParams.get('tab') === 'security' || searchParams.get('tab') === 'audit'
+      ? 'security'
+      : 'overview';
+  const { filters, setFilters } = useAnalyticsFilters();
 
-  const [data, setData] = useState<AdminAnalyticsResponse | null>(null);
-  const [financial, setFinancial] = useState<FinancialSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [reconcileId, setReconcileId] = useState('');
-  const [reconcileBusy, setReconcileBusy] = useState(false);
-  const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
+  const apiParams = useMemo(() => toAnalyticsApiParams(filters), [filters]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await getAdminAnalytics();
-      setData(res);
-      try {
-        const fin = await getAdminFinancialSummary();
-        setFinancial(fin.summary);
-      } catch {
-        setFinancial(null);
-      }
-    } catch (e) {
-      toast({
-        title: 'Failed to load analytics',
-        description: e instanceof Error ? e.message : 'Try again later.',
-        variant: 'destructive',
-      });
-      setData(null);
-      setFinancial(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  const {
+    data: analytics,
+    isLoading: analyticsLoading,
+    isFetching: analyticsFetching,
+    refetch: refetchAnalytics,
+  } = useQuery({
+    queryKey: ['admin', 'analytics', apiParams],
+    queryFn: () => getAdminAnalytics(apiParams),
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const { data: filterOptions } = useQuery({
+    queryKey: ['admin', 'analytics-filter-options'],
+    queryFn: getAdminAnalyticsFilterOptions,
+    staleTime: 5 * 60 * 1000,
+  });
 
-  const runReconcile = async () => {
-    const id = reconcileId.trim();
-    if (!id) {
-      setReconcileMsg('Enter provider id (internal UUID).');
-      return;
-    }
-    setReconcileBusy(true);
-    setReconcileMsg(null);
-    try {
-      const r = await reconcileAdminProvider(id);
-      setReconcileMsg(
-        r.ok ? 'Ledger OK' : 'Mismatch logged to audit — view in Audit Center tab.'
-      );
-    } catch (e) {
-      setReconcileMsg(e instanceof Error ? e.message : 'Reconcile failed');
-    } finally {
-      setReconcileBusy(false);
-    }
-  };
+  const { data: health, isLoading: healthLoading } = useQuery({
+    queryKey: ['admin', 'platform-health'],
+    queryFn: getAdminPlatformHealth,
+    refetchInterval: 60_000,
+  });
 
   const setTab = (tab: string) => {
-    if (tab === 'audit') {
-      setSearchParams({ tab: 'audit' });
+    const sp = new URLSearchParams(searchParams);
+    if (tab === 'security') {
+      sp.set('tab', 'security');
     } else {
-      setSearchParams({});
+      sp.delete('tab');
     }
+    setSearchParams(sp, { replace: true });
   };
+
+  const rangeLabel =
+    analytics?.from && analytics?.to ? `${analytics.from} — ${analytics.to}` : 'Loading range…';
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
         <div>
-          <h1 className="text-2xl font-bold">Analytics</h1>
-          <p className="text-muted-foreground">Platform metrics and enterprise audit trail.</p>
+          <h1 className="text-2xl font-bold tracking-tight">Executive Dashboard</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Business KPIs and platform intelligence · {rangeLabel}
+          </p>
         </div>
 
         <Tabs value={activeTab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="metrics">Platform metrics</TabsTrigger>
-            <TabsTrigger value="audit">Audit Center</TabsTrigger>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="security">Security & Activity</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="metrics" className="mt-6">
-            {loading || !data ? (
+          <TabsContent value="overview" className="mt-6 space-y-6">
+            <AnalyticsFilterBar
+              filters={filters}
+              onChange={setFilters}
+              filterOptions={filterOptions ?? null}
+              onRefresh={() => void refetchAnalytics()}
+              isRefreshing={analyticsFetching}
+            />
+
+            {analyticsLoading || !analytics ? (
               <div className="flex items-center justify-center min-h-[40vh] text-muted-foreground gap-2">
                 <Loader2 className="h-6 w-6 animate-spin" />
-                Loading analytics…
+                Loading dashboard…
               </div>
             ) : (
-              <PlatformMetricsPanel
-                data={data}
-                financial={financial}
-                reconcileId={reconcileId}
-                setReconcileId={setReconcileId}
-                reconcileBusy={reconcileBusy}
-                reconcileMsg={reconcileMsg}
-                runReconcile={() => void runReconcile()}
-              />
+              <>
+                <ExecutiveKpiGrid summary={analytics.summary} />
+                <AnalyticsChartsGrid data={analytics} />
+                <PlatformHealthPanel
+                  components={health?.components ?? []}
+                  checkedAt={health?.checkedAt}
+                  isLoading={healthLoading}
+                />
+              </>
             )}
           </TabsContent>
 
-          <TabsContent value="audit" className="mt-6">
-            <AdminAuditCenterPanel />
+          <TabsContent value="security" className="mt-6">
+            <SecurityActivityCenter />
           </TabsContent>
         </Tabs>
       </div>

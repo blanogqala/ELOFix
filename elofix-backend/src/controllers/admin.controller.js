@@ -1,5 +1,7 @@
 const providerService = require("../services/provider.service");
 const adminAnalyticsService = require("../services/adminAnalytics.service");
+const adminAnalyticsFilterOptionsService = require("../services/adminAnalyticsFilterOptions.service");
+const platformHealthService = require("../services/platformHealth.service");
 const categoryService = require("../services/category.service");
 const withdrawalAdminService = require("../services/withdrawalAdmin.service");
 const disputeAdminService = require("../services/disputeAdmin.service");
@@ -150,6 +152,16 @@ async function approveProviderDocument(req, res) {
 async function getAnalytics(req, res) {
   const data = await adminAnalyticsService.getAnalytics(req.query || {});
   res.json({ success: true, ...data });
+}
+
+async function getAnalyticsFilterOptions(_req, res) {
+  const options = await adminAnalyticsFilterOptionsService.getFilterOptions();
+  res.json({ success: true, ...options });
+}
+
+async function getPlatformHealth(_req, res) {
+  const health = await platformHealthService.getPlatformHealth();
+  res.json({ success: true, ...health });
 }
 
 async function rejectProviderDocument(req, res) {
@@ -594,6 +606,8 @@ module.exports = {
   unblockCustomer,
   deleteCustomer,
   getAnalytics,
+  getAnalyticsFilterOptions,
+  getPlatformHealth,
   approveProvider,
   rejectProvider,
   unrejectProvider,
