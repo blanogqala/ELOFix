@@ -4,6 +4,7 @@ const { randomUUID } = require("crypto");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const { UPLOAD_ROOT } = require("../middleware/upload.middleware");
+const objectStorage = require("./objectStorage.service");
 
 const FILES_URL_PREFIX = "/api/files/";
 const DOC_TYPES = new Set([
@@ -84,6 +85,12 @@ async function registerFilePath(absolutePath, metadata = {}) {
     },
   });
 
+  try {
+    await objectStorage.putLocalFile(record.relPath, absolutePath, record.mimeType);
+  } catch (err) {
+    console.error("[fileStorage] object storage upload failed:", err instanceof Error ? err.message : err);
+  }
+
   return {
     fileId,
     url: toApiFileUrl(fileId),
@@ -108,7 +115,9 @@ async function getRegisteredFile(fileId) {
   const rec = await prisma.storedFile.findUnique({ where: { id: fileId } });
   if (!rec) return null;
   const abs = path.resolve(UPLOAD_ROOT, rec.relPath || "");
-  if (!(await existsFile(abs))) return null;
+  const localExists = await existsFile(abs);
+  const remoteExists = !localExists && (await objectStorage.existsObject(rec.relPath));
+  if (!localExists && !remoteExists) return null;
   return {
     fileId: rec.id,
     relPath: rec.relPath,
@@ -117,7 +126,8 @@ async function getRegisteredFile(fileId) {
     ownerUserId: rec.ownerUserId || undefined,
     type: rec.type || undefined,
     createdAt: rec.createdAt,
-    absolutePath: abs,
+    absolutePath: localExists ? abs : undefined,
+    remoteOnly: !localExists && remoteExists,
     url: toApiFileUrl(rec.id),
   };
 }
@@ -254,6 +264,13 @@ async function resolveExistingFileReference(reference, context = {}) {
         type: context.type || context.docType,
       });
     }
+    if (await objectStorage.existsObject(rel)) {
+      return {
+        url: raw.startsWith("/") ? raw : `/${raw}`,
+        originalName: path.basename(rel),
+        type: context.type || context.docType,
+      };
+    }
   }
 
   const token = extractTokenFromAny(raw);
@@ -276,10 +293,22 @@ async function resolveFileForDownload(fileIdParam) {
   return getRegisteredFile(legacy.fileId);
 }
 
+async function mirrorMulterFile(file) {
+  if (!file?.path) return;
+  const rel = safeRelativeToUploads(file.path);
+  if (!rel) return;
+  try {
+    await objectStorage.putLocalFile(rel, file.path, file.mimetype);
+  } catch (err) {
+    console.error("[fileStorage] mirror upload failed:", err instanceof Error ? err.message : err);
+  }
+}
+
 module.exports = {
   FILES_URL_PREFIX,
   toApiFileUrl,
   registerUploadedFile,
+  mirrorMulterFile,
   resolveExistingFileReference,
   resolveFileForDownload,
 };

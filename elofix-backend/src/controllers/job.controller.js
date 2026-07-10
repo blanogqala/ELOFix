@@ -1,5 +1,6 @@
 const AppError = require("../utils/AppError");
 const { filePathToPublicUrl } = require("../middleware/upload.middleware");
+const { mirrorMulterFile } = require("../services/fileStorage.service");
 const { resolveUserDisplayName } = require("../utils/displayName.util");
 const { validateUploadedImageFile, validateUploadedCompletionMedia } = require("../utils/uploadSecurity.util");
 const jobService = require("../services/job.service");
@@ -21,6 +22,7 @@ async function uploadJobImage(req, res) {
     throw new AppError("File is required", 400);
   }
   await validateUploadedImageFile(req.file);
+  await mirrorMulterFile(req.file);
   res.json({ success: true, url: filePathToPublicUrl(req.file.path) });
 }
 
@@ -341,6 +343,7 @@ async function openJobDispute(req, res) {
 async function uploadCompletionEvidence(req, res) {
   if (!req.file) throw new AppError("File is required", 400);
   await validateUploadedCompletionMedia(req.file);
+  await mirrorMulterFile(req.file);
   const url = filePathToPublicUrl(req.file.path);
   const kind = req.file.mimetype && req.file.mimetype.startsWith("video/") ? "video" : "image";
   res.json({ success: true, url, kind });

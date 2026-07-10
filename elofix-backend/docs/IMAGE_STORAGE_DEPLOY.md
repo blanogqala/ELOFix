@@ -1,56 +1,94 @@
 # Image storage on Render (production)
 
-## Problem
+## What you're seeing
 
-EloFix stores uploads on the API server's local disk (`elofix-backend/uploads/`). Render's **default filesystem is ephemeral**: every deploy or restart wipes that folder. The database still references files (`/api/files/{uuid}` or `/uploads/...`), so the UI shows broken images (404).
+When you open an image URL on `elofix-6136.onrender.com` and get:
 
-This affects portfolio photos, job images, review media, supplier product images, branch logos, and avatars.
+```json
+{"success":false,"message":"File not found","code":"NOT_FOUND"}
+```
 
-## Fix: persistent disk (recommended)
+the frontend is correct — the **file no longer exists on the API server**. Render wipes local disk on every deploy. The database still has the file id (`/api/files/8534b2d0-...`) but the bytes are gone.
 
-1. **Upgrade** the `elofix-api` service to at least **Starter** (persistent disks are not available on Free).
-2. In Render → **elofix-api** → **Disks** → **Add disk**:
-   - **Mount path:** `/opt/render/project/src/uploads`
-   - **Size:** start with 10 GB (can increase later, not decrease)
-3. In **Environment**, set:
+**Already-uploaded images cannot be recovered** unless you have a backup. Users must re-upload after storage is fixed.
+
+---
+
+## Fix option A — Cloudflare R2 (recommended, works on Render Free)
+
+R2 is S3-compatible object storage. New uploads are mirrored there automatically when env vars are set.
+
+### 1. Create R2 bucket
+
+1. [Cloudflare Dashboard](https://dash.cloudflare.com) → **R2** → **Create bucket** (e.g. `elofix-uploads`)
+2. **Manage R2 API tokens** → Create token with Object Read & Write on that bucket
+3. Note: Account ID, Access Key ID, Secret Access Key
+4. Optional: enable **Public access** on the bucket and note the public URL (`https://pub-xxx.r2.dev`)
+
+### 2. Set Render environment variables
+
+On **elofix-api** → **Environment**:
+
+```
+S3_BUCKET=elofix-uploads
+S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+S3_ACCESS_KEY_ID=<your key>
+S3_SECRET_ACCESS_KEY=<your secret>
+S3_REGION=auto
+# Optional — direct public URLs (not required; API still serves files):
+# S3_PUBLIC_URL=https://pub-xxx.r2.dev
+```
+
+### 3. Deploy backend
+
+Push/deploy the latest `elofix-backend` code, then **Manual Deploy** on Render.
+
+### 4. Re-upload images
+
+Providers, suppliers, and customers must **upload photos again**. New uploads will persist across deploys.
+
+---
+
+## Fix option B — Render persistent disk (Starter+ plan)
+
+1. Upgrade **elofix-api** to **Starter** or higher
+2. **Disks** → Add disk:
+   - Mount path: `/opt/render/project/src/uploads`
+   - Size: 10 GB
+3. Environment:
    ```
    UPLOAD_ROOT=/opt/render/project/src/uploads
    ```
-4. **Redeploy** the API service.
+4. Redeploy, then re-upload all images
 
-New uploads will survive future deploys.
+---
 
 ## Netlify (frontend)
 
-Confirm these are set before each production build:
+Confirm before each production build:
 
 ```
-VITE_API_BASE_URL=https://YOUR-RENDER-API.onrender.com/api
-VITE_API_ORIGIN=https://YOUR-RENDER-API.onrender.com
+VITE_API_BASE_URL=https://elofix-6136.onrender.com/api
+VITE_API_ORIGIN=https://elofix-6136.onrender.com
 ```
 
-`VITE_API_ORIGIN` is used for `<img src>` URLs. If only `VITE_API_BASE_URL` is set, the frontend now falls back to its origin — but set both explicitly.
+Redeploy Netlify after changing env vars.
 
-Redeploy Netlify after changing env vars so CSP `_headers` includes your API host.
+---
 
-## Already broken images
+## Verify after fix
 
-Files lost before adding the disk **cannot be recovered** from the server. Affected users must **re-upload**:
-
-- Provider portfolio / work posts
-- Job request photos
-- Supplier product & branch images
-- Customer completion / review photos
-
-## Verify
+1. Upload a new portfolio image as a provider
+2. Open the image URL directly — should return image bytes (200), not JSON 404
+3. Trigger a Render redeploy
+4. Image should still load
 
 ```bash
-# Should return 200 with image content-type (use a known file id from the API)
-curl -I "https://YOUR-RENDER-API.onrender.com/api/files/{uuid}"
+curl -I "https://elofix-6136.onrender.com/api/files/<new-file-uuid>"
 ```
 
-In browser DevTools → Network, failed images should request your Render host, not `localhost:5000`.
+---
 
-## Long-term
+## Local development
 
-For scale and backups, consider object storage (AWS S3, Cloudflare R2, Cloudinary) instead of local disk.
+Object storage is optional locally. Without `S3_*` vars, files stay in `elofix-backend/uploads/` as before.

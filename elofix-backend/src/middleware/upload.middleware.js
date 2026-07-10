@@ -4,8 +4,8 @@ const fs = require("fs");
 const AppError = require("../utils/AppError");
 
 /** Local dev: elofix-backend/uploads. Production (Render): set UPLOAD_ROOT to a persistent disk mount. */
-const UPLOAD_ROOT = process.env.UPLOAD_ROOT
-  ? path.resolve(process.env.UPLOAD_ROOT)
+const UPLOAD_ROOT = process.env.UPLOAD_ROOT?.trim()
+  ? path.resolve(process.env.UPLOAD_ROOT.trim())
   : path.join(__dirname, "..", "..", "uploads");
 
 function ensureDir(dir) {
