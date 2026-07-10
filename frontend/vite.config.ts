@@ -24,7 +24,6 @@ export default defineConfig(({ mode }) => ({
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
 
-          if (id.includes("recharts") || id.includes("d3-")) return "charts";
           if (id.includes("jspdf") || id.includes("xlsx") || id.includes("html2canvas")) return "export-tools";
           if (id.includes("firebase")) return "firebase";
           if (id.includes("@react-google-maps")) return "google-maps";
