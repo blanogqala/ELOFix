@@ -307,13 +307,14 @@ async function createDeliveryRequest(customerId, body = {}) {
   const row = await prisma.deliveryRequest.findUnique({ where: { id: createdRow.id } });
 
   try {
-    await notificationEvents.notifyCourierDeliveryRequest(courierId, createdRow.id);
     if (linkedJobId) {
       await notificationEvents.notifyJobRequest(
         courierId,
         linkedJobId,
         category === "moving" ? "Moving" : "Delivery / Courier"
       );
+    } else {
+      await notificationEvents.notifyCourierDeliveryRequest(courierId, createdRow.id);
     }
   } catch (e) {
     console.error("notifyCourierDeliveryRequest", e);
@@ -1165,7 +1166,6 @@ async function createCourierJobForDeliveryRequest(dr, params) {
   });
 
   try {
-    await notificationEvents.notifyCourierDeliveryRequest(courierId, dr.id);
     await notificationEvents.notifyJobRequest(courierId, job.id, `Material delivery — ${storeLabel}`);
   } catch (e) {
     console.error("createCourierJobForDeliveryRequest notify", e);
@@ -1382,7 +1382,6 @@ async function ensureMaterialCourierJobRequest(params) {
   });
 
   try {
-    await notificationEvents.notifyCourierDeliveryRequest(courierId, deliveryRequestId);
     await notificationEvents.notifyJobRequest(
       courierId,
       courierJobId,

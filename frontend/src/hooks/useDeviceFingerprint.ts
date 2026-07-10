@@ -1,12 +1,11 @@
-import FingerprintJS from '@fingerprintjs/fingerprintjs';
-
-let agentPromise: ReturnType<typeof FingerprintJS.load> | null = null;
+let agentPromise: ReturnType<Awaited<typeof import('@fingerprintjs/fingerprintjs')>['default']['load']> | null = null;
 
 export async function collectDeviceFingerprints(): Promise<{
   deviceFingerprint: string;
   browserFingerprint?: string;
 }> {
   if (!agentPromise) {
+    const FingerprintJS = (await import('@fingerprintjs/fingerprintjs')).default;
     agentPromise = FingerprintJS.load();
   }
   const agent = await agentPromise;

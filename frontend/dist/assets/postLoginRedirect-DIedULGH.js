@@ -1,0 +1,1 @@
+function r(a){switch(a){case"admin":return"/admin/dashboard";case"provider":return"/provider/dashboard";case"supplier":case"branch_staff":return"/supplier/dashboard";default:return"/user/dashboard"}}export{r as g};

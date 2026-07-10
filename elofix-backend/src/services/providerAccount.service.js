@@ -6,6 +6,7 @@ const earningService = require("./earning.service");
 const bankCrypto = require("../utils/bankCrypto");
 const fraudDetection = require("./fraudDetection.service");
 const providerTrustScore = require("./providerTrustScore.service");
+const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
@@ -380,6 +381,13 @@ async function requestWithdrawal(userId, body, idempotencyKey, requestHash, rout
     entityId: row.id,
     newValue: { providerId: provider.id, amount, autoPaid: true },
   });
+  await notificationEvents.notifyWithdrawalStatus(
+    provider.userId,
+    row.id,
+    row.status || "paid",
+    row.amount,
+    "provider"
+  );
 
   return {
     withdrawal: {

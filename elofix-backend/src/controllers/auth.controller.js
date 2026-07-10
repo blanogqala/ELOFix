@@ -2,6 +2,7 @@ const authService = require("../services/auth.service");
 const googleAuthService = require("../services/googleAuth.service");
 const passwordResetService = require("../services/passwordReset.service");
 const { getRequestAuditContext } = require("../utils/auditContext.util");
+const AppError = require("../utils/AppError");
 
 async function register(req, res) {
   const result = await authService.register(req.body);
@@ -42,7 +43,10 @@ async function googleCallback(req, res) {
 }
 
 async function exchangeGoogleAuth(req, res) {
-  const exchange = req.body?.exchange || req.query?.exchange;
+  const exchange = req.body?.exchange;
+  if (!exchange) {
+    throw new AppError("Exchange token is required in request body", 400);
+  }
   const auditContext = getRequestAuditContext(req);
   const result = await googleAuthService.exchangeGoogleSession(exchange, auditContext);
   res.json({ success: true, ...result });

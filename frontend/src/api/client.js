@@ -5,6 +5,23 @@ const BASE_URL =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) ||
   'http://localhost:5000/api';
 const AUTH_PATHS = new Set(['/login', '/register']);
+const SENSITIVE_QUERY_PARAMS = new Set(['token', 'access_token', 'exchange']);
+
+function buildSafeLoginNext(pathname, search) {
+  const path = pathname || '/';
+  if (!search) return path;
+  try {
+    const raw = search.startsWith('?') ? search.slice(1) : search;
+    const params = new URLSearchParams(raw);
+    for (const key of SENSITIVE_QUERY_PARAMS) {
+      params.delete(key);
+    }
+    const qs = params.toString();
+    return qs ? `${path}?${qs}` : path;
+  } catch {
+    return path;
+  }
+}
 
 class ApiHttpError extends Error {
   constructor(message, status, data) {
@@ -94,7 +111,7 @@ apiClient.interceptors.response.use(
       if (forbiddenAdmin) {
         localStorage.removeItem(STORAGE_KEYS.AUTH);
         localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-        const next = path + (window.location.search || '');
+        const next = buildSafeLoginNext(path, window.location.search || '');
         window.location.assign(`/login?next=${encodeURIComponent(next)}&reason=admin_required`);
       }
     }
@@ -108,7 +125,7 @@ apiClient.interceptors.response.use(
         localStorage.removeItem(STORAGE_KEYS.AUTH);
         localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
         if (!AUTH_PATHS.has(path)) {
-          const next = path + (window.location.search || '');
+          const next = buildSafeLoginNext(path, window.location.search || '');
           const loginUrl = `/login?next=${encodeURIComponent(next)}`;
           window.location.assign(loginUrl);
         }

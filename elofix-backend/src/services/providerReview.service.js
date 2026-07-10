@@ -2,6 +2,7 @@ const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+const notificationEvents = require("./notificationEvents.service");
 
 const RATING_MIN = 1;
 const RATING_MAX = 5;
@@ -210,6 +211,15 @@ async function upsertProviderReviewForJob({
   });
 
   await syncProviderAggregateRating(pid);
+  if (!existing) {
+    const provider = await prisma.provider.findUnique({
+      where: { id: pid },
+      select: { userId: true },
+    });
+    if (provider?.userId) {
+      await notificationEvents.notifyProviderReviewReceived(provider.userId, jid, row.job?.title);
+    }
+  }
   return mapReviewRow(row);
 }
 

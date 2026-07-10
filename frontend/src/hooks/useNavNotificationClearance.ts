@@ -4,7 +4,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { markNavNotificationsRead } from '@/lib/api/notifications';
 import { resolveNavClearancePath } from '@/lib/navNotificationClearance';
-import { socket } from '@/lib/socket';
 
 export function useNavNotificationClearance() {
   const { user } = useAuth();
@@ -17,16 +16,6 @@ export function useNavNotificationClearance() {
     void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user.id] });
     void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
   }, [queryClient, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const onNavRead = () => invalidateNotifications();
-    socket.on('notification:nav-read', onNavRead);
-    return () => {
-      socket.off('notification:nav-read', onNavRead);
-    };
-  }, [user?.id, invalidateNotifications]);
 
   useEffect(() => {
     if (!user?.id) return;

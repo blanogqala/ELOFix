@@ -6,6 +6,8 @@ const bankCrypto = require("../utils/bankCrypto");
 const { hashBankAccount } = require("../utils/identityHash.util");
 const materialOrderService = require("./materialOrder.service");
 const supplierService = require("./supplier.service");
+const notificationEvents = require("./notificationEvents.service");
+const branchStaffNotificationService = require("./branchStaffNotification.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
@@ -285,6 +287,26 @@ async function requestWithdrawal(reqUser, branchId, body, idempotencyKey, reques
     entityType: ENTITY_TYPES.WITHDRAWAL,
     entityId: row.id,
     newValue: { branchId: br.id, amount, autoPaid: true, kind: "branch" },
+  });
+  const supplier = await prisma.supplier.findUnique({
+    where: { id: actor.supplierOrgId },
+    select: { userId: true },
+  });
+  if (supplier?.userId) {
+    await notificationEvents.notifyWithdrawalStatus(
+      supplier.userId,
+      row.id,
+      row.status || "paid",
+      row.amount,
+      "supplier"
+    );
+  }
+  await branchStaffNotificationService.createForBranchUsers(br.id, {
+    category: "STAFF",
+    type: `withdrawal_${String(row.status || "paid").toLowerCase()}`,
+    title: "Withdrawal update",
+    message: `Branch withdrawal of R ${Number(row.amount || 0).toFixed(2)} is ${String(row.status || "paid").toLowerCase()}.`,
+    dedupeKey: `branch_withdrawal:${row.id}:${String(row.status || "paid").toLowerCase()}`,
   });
 
   return {

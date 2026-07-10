@@ -165,8 +165,6 @@ export function MaterialPaymentSection({
   const [purchaseFlowStep, setPurchaseFlowStep] = useState<1 | 2>(1);
   const [gatewayPayOpen, setGatewayPayOpen] = useState(false);
   const [gatewayPayAmount, setGatewayPayAmount] = useState(0);
-  const [gatewayPayCardId, setGatewayPayCardId] = useState('');
-  const [gatewayPayCvv, setGatewayPayCvv] = useState('');
   const [gatewayPayMeta, setGatewayPayMeta] = useState<{
     supplierId: string;
     deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
@@ -214,7 +212,7 @@ export function MaterialPaymentSection({
 
   /** When Prisma JSON is briefly empty client-side after submit, still show MR + unpaid storeOrders. */
   const jobMaterialsOnly = uniqueMaterialLines(job.materials || []);
-  let supplementalMaterials: MaterialLine[] = [];
+  const supplementalMaterials: MaterialLine[] = [];
   if (jobMaterialsOnly.length === 0) {
     for (const r of materialRequests) {
       if (r.status !== 'submitted' || !Array.isArray(r.items)) continue;
@@ -454,18 +452,6 @@ export function MaterialPaymentSection({
 
   const handlePurchaseFlowComplete = async () => {
     if (!purchaseFlowStore) return;
-    if (savedCards.length === 0) {
-      setError('Add a payment card on the Payments page before paying.');
-      return;
-    }
-    if (!selectedCardId) {
-      setError('Select a payment card to continue.');
-      return;
-    }
-    if (!validateCvc(cvc)) {
-      setError('Enter the 3 or 4 digit CVC code on your card.');
-      return;
-    }
     const supplier = getSupplierMeta(purchaseFlowStore.id);
     let fee = 0;
     if (selectedDeliveryType === 'STORE') {
@@ -489,11 +475,9 @@ export function MaterialPaymentSection({
         orderId: purchaseFlowStore.orderId,
       });
       setGatewayPayAmount(materialsTotal);
-      setGatewayPayCardId(selectedCardId);
-      setGatewayPayCvv(cvc);
       setPurchaseFlowOpen(false);
       setPurchaseFlowStore(null);
-      setGatewayPayOpen(true);
+      window.setTimeout(() => setGatewayPayOpen(true), 150);
     } catch {
       setError('Could not prepare payment. Please try again.');
     } finally {
@@ -1609,51 +1593,9 @@ export function MaterialPaymentSection({
                   )}
                 </div>
 
-                <div>
-                  <Label className="mb-2 block">Payment Method</Label>
-                  {savedCards.length === 0 ? (
-                    <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-sm text-destructive">
-                      <p>Add a payment card on the Payments page before paying.</p>
-                    </div>
-                  ) : (
-                  <RadioGroup value={selectedCardId} onValueChange={setSelectedCardId}>
-                    {savedCards.map(card => (
-                      <div
-                        key={card.id}
-                        className={cn(
-                          "flex items-center space-x-3 p-3 border rounded-lg transition-colors",
-                          selectedCardId === card.id ? "border-primary bg-primary/5" : "border-border"
-                        )}
-                      >
-                        <RadioGroupItem value={card.id} id={`purchase-pay-${card.id}`} />
-                        <Label htmlFor={`purchase-pay-${card.id}`} className="flex-1 cursor-pointer">
-                          <div className="flex items-center gap-2">
-                            <CreditCard className="h-4 w-4" />
-                            <span className="capitalize">{card.brand}</span>
-                            <span>•••• {card.last4}</span>
-                            {card.isDefault && <Badge variant="secondary" className="text-xs">Default</Badge>}
-                          </div>
-                        </Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
-                  )}
-                </div>
-
-                <div>
-                  <Label htmlFor="purchase-cvc" className="mb-2 block">CVC / Security Code</Label>
-                  <Input
-                    id="purchase-cvc"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={4}
-                    placeholder="123"
-                    value={cvc}
-                    onChange={(e) => setCvc(e.target.value.replace(/\D/g, ''))}
-                    className="max-w-[120px]"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">Enter the 3 or 4 digit code on your card</p>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  Payment details are entered on the secure payment step after this review.
+                </p>
 
                 {error && (
                   <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-sm text-destructive">
@@ -1666,12 +1608,7 @@ export function MaterialPaymentSection({
                 <Button variant="outline" onClick={() => setPurchaseFlowStep(1)}>Back</Button>
                 <Button
                   onClick={() => void handlePurchaseFlowComplete()}
-                  disabled={
-                    isProcessing ||
-                    savedCards.length === 0 ||
-                    !selectedCardId ||
-                    !validateCvc(cvc)
-                  }
+                  disabled={isProcessing}
                   className="btn-accent"
                 >
                   {isProcessing ? 'Preparing…' : `Continue to payment ${formatCurrency(purchaseFlowStore.materials.reduce((s, m) => s + m.qty * m.unitPrice, 0), { decimals: 2 })}`}
@@ -1685,15 +1622,19 @@ export function MaterialPaymentSection({
       {gatewayPayMeta && (
         <PaymentModal
           open={gatewayPayOpen}
-          onOpenChange={setGatewayPayOpen}
+          onOpenChange={(open) => {
+            setGatewayPayOpen(open);
+            if (!open) {
+              setGatewayPayMeta(null);
+              setGatewayPayAmount(0);
+            }
+          }}
           title="Pay for materials"
           description="Complete payment to confirm your material order."
           amount={gatewayPayAmount}
           kind="JOB_STORE_ORDER"
           jobId={job.id}
           metadata={gatewayPayMeta}
-          initialCardId={gatewayPayCardId}
-          initialCvv={gatewayPayCvv}
           breakdown={[
             {
               label: 'Materials',

@@ -6,6 +6,7 @@ const NOTIFICATION_PREFERENCE_MAP = {
   job_request: "jobRequests",
   courier_delivery_request: "jobRequests",
   payment_made: "payments",
+  material_paid: "payments",
   payment_released: "payments",
 };
 
@@ -122,13 +123,35 @@ async function notifyProposedPriceAccepted(providerId, jobId, jobTitle) {
   });
 }
 
-async function notifyPaymentMade(recipientId, jobId, jobTitle, detail) {
+async function notifyPaymentMade(recipientId, jobId, jobTitle, detail, paymentKind = "general") {
+  const kind = String(paymentKind || "general").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
   return notifyUser(recipientId, {
-    type: "payment_made",
+    type: kind === "materials" ? "material_paid" : "payment_made",
     title: "Payment received",
     message: detail || `A payment was recorded for "${jobTitle || "a job"}".`,
     jobId,
-    dedupeKey: jobDedupe(jobId, `payment_made:${recipientId}`),
+    dedupeKey: jobDedupe(jobId, `payment_made:${kind}:${recipientId}`),
+  });
+}
+
+async function notifyJobRejected(customerId, jobId, jobTitle) {
+  return notifyUser(customerId, {
+    type: "provider_rejected",
+    title: "Job request rejected",
+    message: `A provider rejected your job request: ${jobTitle || "Job"}.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, "provider_rejected"),
+  });
+}
+
+async function notifyJobCancelled(userId, jobId, jobTitle, roleLabel) {
+  const role = String(roleLabel || "user").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  return notifyUser(userId, {
+    type: "job_cancelled",
+    title: "Job cancelled",
+    message: `"${jobTitle || "The job"}" has been cancelled.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `job_cancelled:${role}`),
   });
 }
 
@@ -372,7 +395,27 @@ async function notifyPaymentReleased(providerId, jobId, jobTitle) {
   });
 }
 
-async function notifyDisputeOpened({ customerId, providerId, jobId, disputeId, jobTitle }) {
+async function notifyAdminEscrowReleased(providerId, jobId, jobTitle, amount) {
+  const suffix = Number(amount) > 0 ? `admin:${Number(amount).toFixed(2)}` : "admin";
+  await notifyUser(providerId, {
+    type: "payment_released",
+    title: "Escrow released",
+    message: `Escrow payment${Number(amount) > 0 ? ` of R ${Number(amount).toFixed(2)}` : ""} for "${jobTitle || "your job"}" has been released.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `payment_released:${suffix}`),
+  });
+}
+
+async function notifyDisputeOpened({ customerId, providerId, jobId, disputeId, jobTitle, cancellationActorRole }) {
+  if (String(cancellationActorRole || "").toLowerCase() === "provider") {
+    await notifyUser(customerId, {
+      type: "dispute_opened",
+      title: "Cancellation under review",
+      message: `The provider cancelled "${jobTitle || "a job"}". EloFix opened a dispute review.`,
+      jobId,
+      dedupeKey: disputeUserDedupe(disputeId, customerId),
+    });
+  }
   await notifyUser(providerId, {
     type: "dispute_opened",
     title: "Dispute opened",
@@ -438,6 +481,66 @@ async function notifyCustomerRefundProcessed(customerId, jobId, amount) {
     message: `Your refund of R ${Number(amount || 0).toFixed(2)} has been processed.`,
     jobId,
     dedupeKey: jobDedupe(jobId, "refund_processed"),
+  });
+}
+
+async function notifyMaterialSuggestionReceived(providerId, jobId, suggestionId, jobTitle) {
+  await notifyUser(providerId, {
+    type: "material_suggestion_received",
+    title: "Material suggestion received",
+    message: `The customer suggested a material for "${jobTitle || "your job"}".`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `suggestion:${suggestionId}:received`),
+  });
+}
+
+async function notifyProviderSuggestion(customerId, jobId, suggestionId, jobTitle) {
+  await notifyUser(customerId, {
+    type: "provider_suggestion",
+    title: "Provider material suggestion",
+    message: `Your provider suggested a material for "${jobTitle || "your job"}".`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `suggestion:${suggestionId}:provider`),
+  });
+}
+
+async function notifyMaterialSuggestionResolved(userId, jobId, suggestionId, status, jobTitle) {
+  const resolved = String(status || "").toLowerCase() === "accepted" ? "accepted" : "rejected";
+  await notifyUser(userId, {
+    type: resolved === "accepted" ? "material_suggestion_accepted" : "material_suggestion_rejected",
+    title: `Material suggestion ${resolved}`,
+    message: `A material suggestion for "${jobTitle || "your job"}" was ${resolved}.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `suggestion:${suggestionId}:${resolved}`),
+  });
+}
+
+async function notifyProviderReviewReceived(providerUserId, jobId, jobTitle) {
+  await notifyUser(providerUserId, {
+    type: "provider_review_received",
+    title: "New review received",
+    message: `A customer reviewed "${jobTitle || "your completed job"}".`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, "provider_review_received"),
+  });
+}
+
+async function notifyWithdrawalStatus(userId, withdrawalId, status, amount, roleLabel = "provider") {
+  const normalized = String(status || "updated").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  await notifyUser(userId, {
+    type: `withdrawal_${normalized}`,
+    title: "Withdrawal update",
+    message: `Your withdrawal of R ${Number(amount || 0).toFixed(2)} is ${normalized.replace(/_/g, " ")}.`,
+    dedupeKey: `withdrawal:${roleLabel}:${withdrawalId}:${normalized}`,
+  });
+}
+
+async function notifySupplierAccountReady(userId, supplierName) {
+  await notifyUser(userId, {
+    type: "supplier_account_ready",
+    title: "Supplier account ready",
+    message: `${supplierName || "Your supplier account"} is ready to use on EloFix.`,
+    dedupeKey: userDedupe(userId, "supplier_account_ready"),
   });
 }
 
@@ -725,6 +828,8 @@ module.exports = {
   notifyUser,
   notifyJobRequest,
   notifyJobAccepted,
+  notifyJobRejected,
+  notifyJobCancelled,
   notifyInspectionCompleted,
   notifyPriceSubmitted,
   notifyProposedPriceAccepted,
@@ -747,12 +852,19 @@ module.exports = {
   notifyJobMarkedComplete,
   notifyJobCompleted,
   notifyPaymentReleased,
+  notifyAdminEscrowReleased,
   notifyDisputeOpened,
   notifyDisputeUnderInvestigation,
   notifyRefundApproved,
   notifyCustomerRefundProcessed,
   notifyProviderRefundClawback,
   notifyProviderRefundOutcome,
+  notifyMaterialSuggestionReceived,
+  notifyProviderSuggestion,
+  notifyMaterialSuggestionResolved,
+  notifyProviderReviewReceived,
+  notifyWithdrawalStatus,
+  notifySupplierAccountReady,
   notifyCaseClosed,
   notifyStagedRefundApproved,
   notifyProviderStagedRefundOutcome,

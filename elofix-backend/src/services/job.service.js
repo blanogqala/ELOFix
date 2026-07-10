@@ -1516,7 +1516,8 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
       job.providerId,
       jobId,
       job.title,
-      "The customer paid for labor / service."
+      "The customer paid for labor / service.",
+      "labor"
     );
   }
   return enriched;
@@ -1543,7 +1544,11 @@ async function submitMaterials(jobId, materials, providerUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   const meta = await getJobMeta(jobId);
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (!isOpenPool && job.customerId) {
+    await notificationEvents.notifyJobRejected(job.customerId, jobId, job.title);
+  }
+  return enriched;
 }
 
 async function rejectJobByProvider(jobId, reason, details, rejectingProviderUserId) {
@@ -1784,7 +1789,16 @@ async function addUserMaterialSuggestion(jobId, suggested, message, actorUserId)
     ...m,
     userMaterialSuggestions: [...m.userMaterialSuggestions, suggestion],
   }));
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.providerId) {
+    await notificationEvents.notifyMaterialSuggestionReceived(
+      job.providerId,
+      jobId,
+      suggestion.id,
+      job.title
+    );
+  }
+  return enriched;
 }
 
 async function acceptUserSuggestion(jobId, suggestionId, actorUserId) {
@@ -1839,7 +1853,15 @@ async function acceptUserSuggestion(jobId, suggestionId, actorUserId) {
     }
     return { ...m, userMaterialSuggestions: suggestions, storeOrders };
   });
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  await notificationEvents.notifyMaterialSuggestionResolved(
+    job.customerId,
+    jobId,
+    suggestionId,
+    "accepted",
+    job.title
+  );
+  return enriched;
 }
 
 async function rejectUserSuggestion(jobId, suggestionId, actorUserId) {
@@ -1853,7 +1875,15 @@ async function rejectUserSuggestion(jobId, suggestionId, actorUserId) {
       s.id === suggestionId ? { ...s, status: "rejected", withdrawnAfterAccept: false } : s
     ),
   }));
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  await notificationEvents.notifyMaterialSuggestionResolved(
+    job.customerId,
+    jobId,
+    suggestionId,
+    "rejected",
+    job.title
+  );
+  return enriched;
 }
 
 async function addProviderMaterialSuggestion(jobId, suggested, message, actorUserId) {
@@ -1874,7 +1904,9 @@ async function addProviderMaterialSuggestion(jobId, suggested, message, actorUse
     ...m,
     providerSuggestions: [...m.providerSuggestions, suggestion],
   }));
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  await notificationEvents.notifyProviderSuggestion(job.customerId, jobId, suggestion.id, job.title);
+  return enriched;
 }
 
 async function acceptProviderSuggestion(jobId, suggestionId, actorUserId) {
@@ -1888,7 +1920,17 @@ async function acceptProviderSuggestion(jobId, suggestionId, actorUserId) {
       s.id === suggestionId ? { ...s, status: "accepted" } : s
     ),
   }));
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.providerId) {
+    await notificationEvents.notifyMaterialSuggestionResolved(
+      job.providerId,
+      jobId,
+      suggestionId,
+      "accepted",
+      job.title
+    );
+  }
+  return enriched;
 }
 
 async function rejectProviderSuggestion(jobId, suggestionId, actorUserId) {
@@ -1902,7 +1944,17 @@ async function rejectProviderSuggestion(jobId, suggestionId, actorUserId) {
       s.id === suggestionId ? { ...s, status: "rejected" } : s
     ),
   }));
-  return await finalizeJob(job, meta);
+  const enriched = await finalizeJob(job, meta);
+  if (job.providerId) {
+    await notificationEvents.notifyMaterialSuggestionResolved(
+      job.providerId,
+      jobId,
+      suggestionId,
+      "rejected",
+      job.title
+    );
+  }
+  return enriched;
 }
 
 async function proposeNewLaborPrice(jobId, amount, reason, actorUserId) {
@@ -2084,6 +2136,14 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   if (Number(refundAmount) > 0 && providerRow) {
     const providerTrustScore = require("./providerTrustScore.service");
     await providerTrustScore.onRefundResolved(providerRow.id, "PARTIAL_REFUND");
+  }
+
+  await notificationEvents.notifyJobCancelled(job.customerId, jobId, job.title, "customer");
+  if (job.providerId) {
+    await notificationEvents.notifyJobCancelled(job.providerId, jobId, job.title, "provider");
+  }
+  if (Number(refundAmount) > 0) {
+    await notificationEvents.notifyCustomerRefundProcessed(job.customerId, jobId, refundAmount);
   }
 
   return {
@@ -2821,7 +2881,8 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, customerUse
       job.providerId,
       jobId,
       job.title,
-      "The customer paid for delivery."
+      "The customer paid for delivery.",
+      "delivery"
     );
   }
   return enriched;
@@ -2978,7 +3039,8 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, 
         job.providerId,
         jobId,
         job.title,
-        "The customer paid for materials."
+        "The customer paid for materials.",
+        "materials"
       );
     }
     return legacyEnriched;
@@ -3091,7 +3153,8 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, 
       job.providerId,
       jobId,
       job.title,
-      "The customer paid for materials."
+      "The customer paid for materials.",
+      "materials"
     );
   }
   return enriched;
@@ -3250,6 +3313,7 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
     entityId: jobId,
     newValue: { jobId, amount: release, providerId: providerRow.id },
   });
+  await notificationEvents.notifyAdminEscrowReleased(job.providerId, jobId, job.title, release);
 
   return finalizeJob(jobRow, meta);
 }

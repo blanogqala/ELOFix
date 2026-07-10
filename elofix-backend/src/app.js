@@ -1,16 +1,28 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const routes = require("./routes");
 const errorMiddleware = require("./middleware/error.middleware");
 const asyncHandler = require("./middleware/asyncHandler");
 const paymentController = require("./controllers/payment.controller");
 const uploadsStaticMiddleware = require("./middleware/uploadsStatic.middleware");
+const { getAllowedOrigins, createCorsOriginChecker } = require("./utils/corsOrigins.util");
 
 const app = express();
 
+const allowedOrigins = getAllowedOrigins();
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
 app.use(
   cors({
-    origin: true,
+    origin: createCorsOriginChecker(allowedOrigins),
     allowedHeaders: [
       "Content-Type",
       "Authorization",

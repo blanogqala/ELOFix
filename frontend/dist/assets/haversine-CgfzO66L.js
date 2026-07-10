@@ -1,0 +1,1 @@
+function e(t,i,a,h){const n=M=>M*Math.PI/180,s=n(a-t),r=n(h-i),o=Math.sin(s/2)*Math.sin(s/2)+Math.cos(n(t))*Math.cos(n(a))*Math.sin(r/2)*Math.sin(r/2);return 6371*(2*Math.atan2(Math.sqrt(o),Math.sqrt(1-o)))}function u(t){return!Number.isFinite(t)||t<0?"":t<1?`${Math.round(t*1e3)} m`:t<10?`${t.toFixed(1)} km`:`${Math.round(t)} km`}export{u as f,e as h};

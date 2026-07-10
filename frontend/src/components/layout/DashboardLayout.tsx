@@ -9,9 +9,9 @@ import { getUnreadCount } from '@/lib/api/notifications';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { useAdminActivityIndicators } from '@/hooks/useAdminActivityIndicators';
 import { useNavNotificationClearance } from '@/hooks/useNavNotificationClearance';
+import { useNotificationSocketSync } from '@/hooks/useNotificationSocketSync';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSupplierMe } from '@/lib/api/supplierPortal';
-import { socket } from '@/lib/socket';
 import { ProfileAvatar } from '@/components/common/ProfileAvatar';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
 import { 
@@ -207,50 +207,29 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     user?.role === 'provider' ? '/provider/jobs' : user?.role === 'user' ? '/user/jobs' : null;
   const requestsNavPath = user?.role === 'provider' ? '/provider/requests' : null;
 
-  useEffect(() => {
+  const handleNotificationNew = useCallback((notification?: { type?: string }) => {
     if (!user?.id) return;
 
-    const refreshUnread = () => {
-      void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
-    };
-    const refreshAuthOnAccountChange = (notification?: { type?: string }) => {
-      refreshUnread();
-      const type = notification?.type;
-      const isAccountBlockChange = type === 'account_unblocked' || type === 'account_blocked';
-      const isProviderStatusChange =
-        type === 'provider_approved' ||
-        type === 'provider_application_rejected' ||
-        type === 'provider_application_submitted' ||
-        type === 'provider_document_rejected';
+    const type = notification?.type;
+    const isAccountBlockChange = type === 'account_unblocked' || type === 'account_blocked';
+    const isProviderStatusChange =
+      type === 'provider_approved' ||
+      type === 'provider_application_rejected' ||
+      type === 'provider_application_submitted' ||
+      type === 'provider_document_rejected';
 
-      if (
-        (user.role === 'provider' && (isAccountBlockChange || isProviderStatusChange)) ||
-        (user.role === 'user' && isAccountBlockChange)
-      ) {
-        void refreshProfile().then(() => {
-          if (user.role === 'provider') {
-            void queryClient.invalidateQueries({ queryKey: ['provider', 'profile', user.id] });
-          }
-        });
-      }
-    };
-
-    socket.on('notification:new', refreshAuthOnAccountChange);
-    socket.on('message:new', refreshUnread);
-    socket.on('notification:read', refreshUnread);
-    socket.on('notification:read-all', refreshUnread);
-    socket.on('notification:nav-read', refreshUnread);
-    socket.on('notification:job-read', refreshUnread);
-
-    return () => {
-      socket.off('notification:new', refreshAuthOnAccountChange);
-      socket.off('message:new', refreshUnread);
-      socket.off('notification:read', refreshUnread);
-      socket.off('notification:read-all', refreshUnread);
-      socket.off('notification:nav-read', refreshUnread);
-      socket.off('notification:job-read', refreshUnread);
-    };
+    if (
+      (user.role === 'provider' && (isAccountBlockChange || isProviderStatusChange)) ||
+      (user.role === 'user' && isAccountBlockChange)
+    ) {
+      void refreshProfile().then(() => {
+        if (user.role === 'provider') {
+          void queryClient.invalidateQueries({ queryKey: ['provider', 'profile', user.id] });
+        }
+      });
+    }
   }, [queryClient, refreshProfile, user?.id, user?.role]);
+  useNotificationSocketSync({ onNotificationNew: handleNotificationNew });
 
   useEffect(() => {
     if (user?.role !== 'provider' && user?.role !== 'user') return;

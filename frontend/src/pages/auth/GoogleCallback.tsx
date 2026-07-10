@@ -7,6 +7,16 @@ import { EloFixLogo } from '@/components/EloFixLogo';
 import { getCurrentSession } from '@/lib/api/auth';
 import { getDefaultDashboardPath } from '@/lib/postLoginRedirect';
 
+function stripExchangeFromBrowserUrl() {
+  if (typeof window === 'undefined') return;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has('exchange')) return;
+  params.delete('exchange');
+  const qs = params.toString();
+  const clean = `${window.location.pathname}${qs ? `?${qs}` : ''}`;
+  window.history.replaceState({}, '', clean);
+}
+
 export default function GoogleCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -46,6 +56,8 @@ export default function GoogleCallback() {
         navigate('/login', { replace: true });
         return;
       }
+
+      stripExchangeFromBrowserUrl();
 
       const existingSession = getCurrentSession();
       if (existingSession?.user && existingSession.token) {

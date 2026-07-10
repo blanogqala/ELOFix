@@ -2,7 +2,7 @@ import { GoogleMap, Marker, DirectionsRenderer } from '@react-google-maps/api';
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { cn } from '@/lib/utils';
 import { haversineMeters } from '@/lib/geolocationSendGate';
-import { useGoogleMapsContext } from '@/components/map/GoogleMapsProvider';
+import { GoogleMapsProvider, useGoogleMapsContext } from '@/components/map/GoogleMapsProvider';
 import { ELOFIX_MAP_OPTIONS } from '@/lib/map/googleMapStyles';
 import {
   bearingBetween,
@@ -395,4 +395,12 @@ function DeliveryMapComponent(props: DeliveryMapProps) {
   return <MapBody {...props} />;
 }
 
-export const DeliveryMap = memo(DeliveryMapComponent);
+function DeliveryMapWithProvider(props: DeliveryMapProps) {
+  return (
+    <GoogleMapsProvider>
+      <DeliveryMapComponent {...props} />
+    </GoogleMapsProvider>
+  );
+}
+
+export const DeliveryMap = memo(DeliveryMapWithProvider);

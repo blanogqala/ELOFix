@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { getNotifications, markJobNotificationsRead } from '@/lib/api/notifications';
@@ -10,7 +10,6 @@ import {
   unreadForJob,
   type JobActivitySection,
 } from '@/lib/jobActivityIndicators';
-import { socket } from '@/lib/socket';
 
 export function useJobActivityIndicators() {
   const { user } = useAuth();
@@ -29,25 +28,6 @@ export function useJobActivityIndicators() {
     void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user.id] });
     void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
   }, [queryClient, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    const onRefresh = () => refresh();
-    socket.on('notification:new', onRefresh);
-    socket.on('notification:read', onRefresh);
-    socket.on('notification:read-all', onRefresh);
-    socket.on('notification:nav-read', onRefresh);
-    socket.on('notification:job-read', onRefresh);
-    socket.on('message:new', onRefresh);
-    return () => {
-      socket.off('notification:new', onRefresh);
-      socket.off('notification:read', onRefresh);
-      socket.off('notification:read-all', onRefresh);
-      socket.off('notification:nav-read', onRefresh);
-      socket.off('notification:job-read', onRefresh);
-      socket.off('message:new', onRefresh);
-    };
-  }, [user?.id, refresh]);
 
   const activeJobIds = useMemo(() => jobIdsWithActivity(notifications), [notifications]);
 

@@ -257,20 +257,44 @@ const JOBS_NAV_TYPES = [
   ...JOB_SECTION_TYPES.general.filter((t) => t !== "job_request"),
 ];
 
+const MATERIAL_ORDER_NAV_TYPES = [
+  "material_tracking",
+  "delivery_update",
+  "delivery_quote",
+  "material_list_submitted",
+];
+
+const SUPPLIER_ORDER_NAV_TYPES = [
+  "supplier_material_order_new",
+  "supplier_material_order_cancelled",
+  "material_order_new",
+  "material_order_cancelled",
+];
+
+const WITHDRAWAL_NAV_TYPES = [
+  "withdrawal_approved",
+  "withdrawal_paid",
+  "withdrawal_failed",
+];
+
 const NAV_PATH_TYPES = {
   "/admin/providers": ["admin_provider_application_submitted"],
   "/admin/categories": ["category_suggestion"],
   "/admin/fraud-center": ["fraud_alert"],
   "/admin/refund-repayments": ["admin_repayment_submitted", "admin_refund_debt_overdue"],
   "/user/jobs": JOBS_NAV_TYPES,
+  "/user/material-orders": MATERIAL_ORDER_NAV_TYPES,
   "/provider/jobs": JOBS_NAV_TYPES,
   "/provider/requests": ["job_request"],
+  "/provider/earnings": WITHDRAWAL_NAV_TYPES,
   "/provider/profile": [
     "provider_application_submitted",
     "provider_application_rejected",
     "provider_document_rejected",
     "provider_approved",
   ],
+  "/supplier/orders": SUPPLIER_ORDER_NAV_TYPES,
+  "/supplier/earnings": WITHDRAWAL_NAV_TYPES,
 };
 
 const JOBS_NAV_PATHS = new Set(["/user/jobs", "/provider/jobs"]);
@@ -339,4 +363,6 @@ module.exports = {
   emitToUserRoom,
   toApiShape,
   buildNotificationData,
+  NAV_PATH_TYPES,
+  JOB_SECTION_TYPES,
 };

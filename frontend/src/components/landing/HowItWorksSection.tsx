@@ -1,25 +1,29 @@
-import howItWorksStep1 from '@/assets/how-it-works-step-1.png';
-import howItWorksStep2 from '@/assets/how-it-works-step-2.png';
-import howItWorksStep3 from '@/assets/how-it-works-step-3.png';
-import { cn } from '@/lib/utils';
+import howItWorksStep1 from '@/assets/how-it-works-step-1.webp';
+import howItWorksStep2 from '@/assets/how-it-works-step-2.webp';
+import howItWorksStep3 from '@/assets/how-it-works-step-3.webp';import { cn } from '@/lib/utils';
 import { HOW_IT_WORKS_STEPS } from './landingData';
 import { LandingSection, SectionHeader } from './LandingSection';
 
-const STEP_IMAGES: Record<number, { src: string; alt: string }> = {
+const STEP_IMAGES: Record<number, { src: string; alt: string; width: number; height: number }> = {
   1: {
     src: howItWorksStep1,
     alt: 'Create a service request in the EloFix app with photos, measurements, and location',
+    width: 1024,
+    height: 682,
   },
   2: {
     src: howItWorksStep2,
     alt: 'Compare quotes, supplier branches, and delivery options before confirming your choice',
+    width: 1024,
+    height: 682,
   },
   3: {
     src: howItWorksStep3,
     alt: 'Pay securely with escrow protection until work is completed and approved',
+    width: 1024,
+    height: 546,
   },
 };
-
 export function HowItWorksSection() {
   return (
     <LandingSection id="how-it-works" className="bg-primary/10 border-y-2 border-accent/60">
@@ -64,9 +68,12 @@ export function HowItWorksSection() {
                     <img
                       src={STEP_IMAGES[step.step].src}
                       alt={STEP_IMAGES[step.step].alt}
+                      width={STEP_IMAGES[step.step].width}
+                      height={STEP_IMAGES[step.step].height}
+                      loading="lazy"
+                      decoding="async"
                       className="h-auto w-full object-cover"
-                    />
-                  </div>
+                    />                  </div>
                 </div>
 
                 <div className="absolute left-8 top-1/2 hidden h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-background bg-accent md:block lg:left-1/2" />

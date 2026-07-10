@@ -1,6 +1,7 @@
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const notificationEvents = require("./notificationEvents.service");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 
@@ -84,6 +85,13 @@ async function approveWithdrawal(adminUserId, withdrawalId) {
     entityId: id,
     newValue: { providerId: row.providerId, amount: Number(row.amount) },
   });
+  await notificationEvents.notifyWithdrawalStatus(
+    row.provider?.userId,
+    row.id,
+    "approved",
+    row.amount,
+    "provider"
+  );
   return { withdrawal: toWithdrawalDto(row) };
 }
 
@@ -136,6 +144,13 @@ async function markWithdrawalPaid(adminUserId, withdrawalId) {
     entityId: id,
     newValue: { providerId: row.providerId, amount: Number(row.amount) },
   });
+  await notificationEvents.notifyWithdrawalStatus(
+    row.provider?.userId,
+    row.id,
+    "paid",
+    row.amount,
+    "provider"
+  );
   return { withdrawal: toWithdrawalDto(row) };
 }
 
@@ -190,6 +205,13 @@ async function markWithdrawalFailed(adminUserId, withdrawalId, reason) {
       reason: note,
     },
   });
+  await notificationEvents.notifyWithdrawalStatus(
+    updated.provider?.userId,
+    updated.id,
+    "failed",
+    updated.amount,
+    "provider"
+  );
   return { withdrawal: toWithdrawalDto(updated) };
 }
 

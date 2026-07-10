@@ -77,6 +77,8 @@ const { startRefundDebtEnforcementJob } = require("./src/jobs/refundDebtEnforcem
 const trackingService = require("./src/services/tracking.service");
 const materialOrderService = require("./src/services/materialOrder.service");
 const { ensureProviderTotalReviewsColumn } = require("./src/utils/ensureDbSchemaPatches");
+const { getAllowedOrigins, isOriginAllowed } = require("./src/utils/corsOrigins.util");
+const { canJoinUserRoom } = require("./src/utils/socketAuth.util");
 
 const PORT = Number(process.env.PORT) || 5000;
 
@@ -99,9 +101,16 @@ process.on("uncaughtException", (err) => {
 });
 
 const server = http.createServer(app);
+const socketAllowedOrigins = getAllowedOrigins();
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin, socketAllowedOrigins)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Not allowed by CORS"));
+    },
   },
 });
 global.io = io;
@@ -130,7 +139,7 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   socket.on("join", (userId) => {
-    if (!userId) return;
+    if (!canJoinUserRoom(socket.userId, userId)) return;
     socket.join(String(userId));
     if (String(socket.userRole || "") === "BRANCH_STAFF" && socket.branchId) {
       socket.join(`branch:${String(socket.branchId)}`);

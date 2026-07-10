@@ -42,7 +42,6 @@ import { useNavigate, useLocation, type NavigateFunction } from 'react-router-do
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { socket } from '@/lib/socket';
 
 function dateGroupLabel(iso: string): string {
   const d = parseISO(iso);
@@ -301,27 +300,6 @@ export default function NotificationsPage() {
     if (user?.id) {
       void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
     }
-  }, [queryClient, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const refreshNotifications = () => {
-      void queryClient.invalidateQueries({ queryKey: ['notifications', 'list', user.id] });
-      void queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count', user.id] });
-    };
-
-    socket.on('notification:new', refreshNotifications);
-    socket.on('message:new', refreshNotifications);
-    socket.on('notification:read', refreshNotifications);
-    socket.on('notification:read-all', refreshNotifications);
-
-    return () => {
-      socket.off('notification:new', refreshNotifications);
-      socket.off('message:new', refreshNotifications);
-      socket.off('notification:read', refreshNotifications);
-      socket.off('notification:read-all', refreshNotifications);
-    };
   }, [queryClient, user?.id]);
 
   const handleMarkAsRead = async (notificationId: string) => {

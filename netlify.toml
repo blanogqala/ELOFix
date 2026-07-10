@@ -12,3 +12,6 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Security headers (CSP, HSTS, etc.) are generated at build time into frontend/public/_headers
+# by frontend/scripts/generate-security-headers.mjs (runs before vite build).

@@ -2,6 +2,20 @@ const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const outboxService = require("./notificationDeliveryOutbox.service");
 
+const BRANCH_NAV_PATH_TYPES = {
+  "/supplier/orders": [
+    "material_order_new",
+    "material_order_cancelled",
+    "supplier_material_order_new",
+    "supplier_material_order_cancelled",
+  ],
+  "/supplier/earnings": [
+    "withdrawal_approved",
+    "withdrawal_paid",
+    "withdrawal_failed",
+  ],
+};
+
 function emitToUserRoom(userId, event, payload) {
   if (!userId || !global.io) return;
   try {
@@ -150,6 +164,26 @@ async function markAllAsRead(branchUserId) {
   });
 }
 
+async function markNavNotificationsRead(branchUserId, navPath) {
+  const uid = String(branchUserId);
+  const path = String(navPath || "").trim();
+  const types = BRANCH_NAV_PATH_TYPES[path];
+  if (!types?.length) {
+    return { count: 0, invalid: true };
+  }
+
+  const result = await prisma.branchStaffNotification.updateMany({
+    where: {
+      branchUserId: uid,
+      read: false,
+      type: { in: types },
+    },
+    data: { read: true },
+  });
+  emitToUserRoom(uid, "notification:nav-read", { navPath: path, count: result.count });
+  return { count: result.count, invalid: false };
+}
+
 module.exports = {
   createForBranchUsers,
   createForBranchUser,
@@ -157,5 +191,7 @@ module.exports = {
   getUnreadCount,
   markAsRead,
   markAllAsRead,
+  markNavNotificationsRead,
   toApiShape,
+  BRANCH_NAV_PATH_TYPES,
 };

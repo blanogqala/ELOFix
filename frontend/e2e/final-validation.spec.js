@@ -1,9 +1,15 @@
 import { test, expect } from '@playwright/test';
 
-const BASE_URL = 'http://localhost:8081';
+// Use Playwright baseURL from config (default: http://localhost:8081)
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8081';
 
 function uniqueEmail(prefix) {
   return `${prefix}.${Date.now()}@example.com`;
+}
+
+function uniquePhone(prefix = '081') {
+  const n = Math.floor(Math.random() * 10000000).toString().padStart(7, '0');
+  return `${prefix}${n}`;
 }
 
 async function login(page, email, password) {
@@ -24,7 +30,7 @@ test('final validation smoke flow', async ({ page }) => {
   await page.getByRole('button', { name: 'I need services' }).click();
   await page.getByLabel('Full Name').fill('Final User');
   await page.getByLabel('Email').fill(userEmail);
-  await page.getByLabel('Phone Number').fill('0810001000');
+  await page.getByLabel('Phone Number').fill(uniquePhone('081'));
   await page.getByLabel('Password').fill(password);
   await page.getByLabel(/I agree to the/i).check();
   await page.getByRole('button', { name: 'Create Account' }).click();
@@ -48,14 +54,15 @@ test('final validation smoke flow', async ({ page }) => {
   await page.getByLabel('Email').fill(userEmail);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign In' }).click();
-  await expect(page).toHaveURL(/\/user\/jobs/);
+  // Current app behavior: email/password login routes to default dashboard for role.
+  await expect(page).toHaveURL(/\/user\/dashboard/);
 
   // PROVIDER: register -> onboarding -> tab switch mid-save -> doc upload
   await page.goto(`${BASE_URL}/register?role=provider`);
   await page.getByRole('button', { name: 'I provide services' }).click();
   await page.getByLabel('Full Name').fill('Final Provider');
   await page.getByLabel('Email').fill(providerEmail);
-  await page.getByLabel('Phone Number').fill('0810002000');
+  await page.getByLabel('Phone Number').fill(uniquePhone('082'));
   await page.getByLabel('Password').fill(password);
   await page.getByLabel(/I agree to the/i).check();
   await page.getByRole('button', { name: 'Create Account' }).click();

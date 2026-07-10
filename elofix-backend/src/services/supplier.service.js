@@ -4,6 +4,7 @@ const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const branchService = require("./branch.service");
+const notificationEvents = require("./notificationEvents.service");
 
 const PLATFORM_COMMISSION_RATE = 0.07;
 const SUPPLIER_SHARE_RATE = 0.93;
@@ -426,6 +427,7 @@ async function provisionSupplierByAdmin(body) {
 
   const hashed = await bcrypt.hash(String(password), 12);
   const supplierId = randomUUID();
+  let createdUserId = null;
 
   try {
     await prisma.$transaction(
@@ -439,6 +441,7 @@ async function provisionSupplierByAdmin(body) {
             role: "SUPPLIER",
           },
         });
+        createdUserId = user.id;
         await tx.supplier.create({
           data: {
             id: supplierId,
@@ -483,6 +486,13 @@ async function provisionSupplierByAdmin(body) {
         : "";
     console.error("[provisionSupplierByAdmin]", err);
     throw new AppError(`Could not create supplier account.${hint}`, 400);
+  }
+
+  if (createdUserId) {
+    await notificationEvents.notifySupplierAccountReady(
+      createdUserId,
+      businessName || name || "Your supplier account"
+    );
   }
 
   return getSupplierDetailsForAdmin(supplierId);

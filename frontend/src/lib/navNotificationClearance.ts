@@ -5,17 +5,23 @@ import { ADMIN_NAV_TYPE_MAP } from '@/lib/adminActivityIndicators';
 export const NAV_CLEARANCE_PATHS = [
   ...Object.keys(ADMIN_NAV_TYPE_MAP),
   '/user/jobs',
+  '/user/material-orders',
   '/provider/jobs',
   '/provider/requests',
+  '/provider/earnings',
   '/provider/profile',
+  '/supplier/orders',
+  '/supplier/earnings',
 ] as const;
 
 export type NavClearancePath = (typeof NAV_CLEARANCE_PATHS)[number];
 
 const ROLE_ALLOWED_PATHS: Record<string, NavClearancePath[]> = {
   admin: Object.keys(ADMIN_NAV_TYPE_MAP) as NavClearancePath[],
-  user: ['/user/jobs'],
-  provider: ['/provider/jobs', '/provider/requests', '/provider/profile'],
+  user: ['/user/jobs', '/user/material-orders'],
+  provider: ['/provider/jobs', '/provider/requests', '/provider/earnings', '/provider/profile'],
+  supplier: ['/supplier/orders', '/supplier/earnings'],
+  branch_staff: ['/supplier/orders', '/supplier/earnings'],
 };
 
 function matchesPrefix(pathname: string, prefix: NavClearancePath): boolean {

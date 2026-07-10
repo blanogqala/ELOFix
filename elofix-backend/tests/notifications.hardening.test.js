@@ -7,7 +7,7 @@ const assert = require("assert");
 const { randomUUID } = require("crypto");
 
 const notificationEvents = require("../src/services/notificationEvents.service");
-const { buildNotificationData } = require("../src/services/notification.service");
+const { buildNotificationData, NAV_PATH_TYPES } = require("../src/services/notification.service");
 const outboxService = require("../src/services/notificationDeliveryOutbox.service");
 const { AUDIT_ACTIONS } = require("../src/constants/auditActions");
 
@@ -19,6 +19,14 @@ function testRefundHandlersExported() {
 
 function testDedupeKeyHelpers() {
   assert.strictEqual(notificationEvents.jobDedupe("job-1", "payment_made"), "job:job-1:payment_made");
+  assert.strictEqual(
+    notificationEvents.jobDedupe("job-1", "payment_made:labor:user-1"),
+    "job:job-1:payment_made:labor:user-1"
+  );
+  assert.strictEqual(
+    notificationEvents.jobDedupe("job-1", "payment_made:materials:user-1"),
+    "job:job-1:payment_made:materials:user-1"
+  );
   assert.strictEqual(
     notificationEvents.materialOrderDedupe("ord-1", "delivery_quote"),
     "material_order:ord-1:delivery_quote"
@@ -50,6 +58,14 @@ function testAuditActionsPresent() {
 function testOutboxBackoffSchedule() {
   assert.strictEqual(outboxService.BACKOFF_MS.length, 5);
   assert.ok(outboxService.BACKOFF_MS[0] >= 30_000);
+}
+
+function testNavPathTypesIncludeSupplierOrders() {
+  assert.ok(NAV_PATH_TYPES["/supplier/orders"].includes("supplier_material_order_new"));
+  assert.ok(NAV_PATH_TYPES["/supplier/orders"].includes("material_order_cancelled"));
+  assert.ok(NAV_PATH_TYPES["/supplier/earnings"].includes("withdrawal_paid"));
+  assert.ok(NAV_PATH_TYPES["/provider/earnings"].includes("withdrawal_paid"));
+  assert.ok(NAV_PATH_TYPES["/user/material-orders"].includes("delivery_quote"));
 }
 
 async function testSocketEmitRequiresIo() {
@@ -123,6 +139,44 @@ async function runDbIntegrationTests() {
     notificationIds.push(quote.id);
     assert.strictEqual(quote.materialOrderId, `mo-${suffix}`);
 
+    const laborPayment = await notificationService.addNotification({
+      userId,
+      type: "payment_made",
+      title: "Labor paid",
+      message: "Labor payment",
+      dedupeKey: notificationEvents.jobDedupe(`job-${suffix}`, `payment_made:labor:${userId}`),
+    });
+    const materialsPayment = await notificationService.addNotification({
+      userId,
+      type: "material_paid",
+      title: "Materials paid",
+      message: "Materials payment",
+      dedupeKey: notificationEvents.jobDedupe(`job-${suffix}`, `payment_made:materials:${userId}`),
+    });
+    const duplicateLaborPayment = await notificationService.addNotification({
+      userId,
+      type: "payment_made",
+      title: "Labor paid again",
+      message: "Duplicate labor payment",
+      dedupeKey: notificationEvents.jobDedupe(`job-${suffix}`, `payment_made:labor:${userId}`),
+    });
+    notificationIds.push(laborPayment.id, materialsPayment.id, duplicateLaborPayment.id);
+    assert.notStrictEqual(laborPayment.id, materialsPayment.id, "payment kinds should not dedupe together");
+    assert.strictEqual(laborPayment.id, duplicateLaborPayment.id, "same payment kind should dedupe");
+
+    const paymentCount = await prisma.notification.count({
+      where: {
+        userId,
+        dedupeKey: {
+          in: [
+            notificationEvents.jobDedupe(`job-${suffix}`, `payment_made:labor:${userId}`),
+            notificationEvents.jobDedupe(`job-${suffix}`, `payment_made:materials:${userId}`),
+          ],
+        },
+      },
+    });
+    assert.strictEqual(paymentCount, 2, "labor and materials payments should create two rows");
+
     const outbox = await outboxService.enqueueSocketDelivery({
       notificationId: quote.id,
       userId,
@@ -161,6 +215,7 @@ async function main() {
   testBuildNotificationDataMaterialOrderId();
   testAuditActionsPresent();
   testOutboxBackoffSchedule();
+  testNavPathTypesIncludeSupplierOrders();
   await testSocketEmitRequiresIo();
 
   if (process.env.DATABASE_URL) {

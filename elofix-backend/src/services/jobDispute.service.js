@@ -338,7 +338,11 @@ async function createCancellationDisputeInTransaction(tx, params) {
 }
 
 async function postCreateDisputeSideEffects(dispute, job, actorUserId, options = {}) {
-  const { reopening = false, requestedResolution = dispute.requestedResolution } = options;
+  const {
+    reopening = false,
+    requestedResolution = dispute.requestedResolution,
+    cancellationActorRole = null,
+  } = options;
   const providerRow = job.providerId
     ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
     : null;
@@ -373,6 +377,7 @@ async function postCreateDisputeSideEffects(dispute, job, actorUserId, options =
     jobId: job.id,
     disputeId: dispute.id,
     jobTitle: job.title,
+    cancellationActorRole,
   });
 }
 
@@ -451,6 +456,7 @@ async function openDisputeFromCancellation(jobId, actorUserId, payload, tx) {
     await postCreateDisputeSideEffects(dispute, job, actorUserId, {
       reopening,
       requestedResolution: "REFUND",
+      cancellationActorRole: actorRole,
     });
   }
 
