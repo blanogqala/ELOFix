@@ -54,13 +54,35 @@ async function testPaidServiceProviderOpensDispute() {
   assert.strictEqual(policy.cancelledBy, "provider");
 }
 
-async function testCourierEnRouteCustomerForfeits() {
+async function testCourierPostPickupCustomerBlocked() {
   prisma.deliveryRequest.findFirst = async () => ({
     fulfillmentStatus: "OUT_FOR_DELIVERY",
     status: "paid",
   });
+  let threw = false;
+  try {
+    await resolveJobCancellationPolicy(
+      { id: "j4", customerId: "c1", providerId: "p1", laborPaid: true, status: "IN_PROGRESS" },
+      { courierFlow: true },
+      "c1",
+      "CUSTOMER"
+    );
+  } catch (e) {
+    threw = true;
+    assert.strictEqual(e.statusCode, 409);
+    assert.match(e.message, /cannot be cancelled after items have been collected/i);
+  }
+  assert.strictEqual(threw, true);
+  prisma.deliveryRequest.findFirst = originalFindFirst;
+}
+
+async function testCourierCollectingCustomerForfeits() {
+  prisma.deliveryRequest.findFirst = async () => ({
+    fulfillmentStatus: "COLLECTING",
+    status: "paid",
+  });
   const policy = await resolveJobCancellationPolicy(
-    { id: "j4", customerId: "c1", providerId: "p1", laborPaid: true, status: "IN_PROGRESS" },
+    { id: "j4b", customerId: "c1", providerId: "p1", laborPaid: true, status: "IN_PROGRESS" },
     { courierFlow: true },
     "c1",
     "CUSTOMER"
@@ -68,6 +90,66 @@ async function testCourierEnRouteCustomerForfeits() {
   assert.strictEqual(policy.opensDisputeReview, false);
   assert.strictEqual(policy.customerForfeits, true);
   assert.strictEqual(policy.refundKind, "forfeit_customer_en_route");
+  prisma.deliveryRequest.findFirst = originalFindFirst;
+}
+
+async function testCourierPostPickupProviderBlocked() {
+  prisma.deliveryRequest.findFirst = async () => ({
+    fulfillmentStatus: "COLLECTED",
+    status: "paid",
+  });
+  let threw = false;
+  try {
+    await resolveJobCancellationPolicy(
+      { id: "j4c", customerId: "c1", providerId: "p1", laborPaid: true, status: "IN_PROGRESS" },
+      { courierFlow: true },
+      "p1",
+      "PROVIDER"
+    );
+  } catch (e) {
+    threw = true;
+    assert.strictEqual(e.statusCode, 409);
+    assert.match(e.message, /cannot cancel after picking up items/i);
+  }
+  assert.strictEqual(threw, true);
+  prisma.deliveryRequest.findFirst = originalFindFirst;
+}
+
+async function testCourierCollectingProviderOpensDispute() {
+  prisma.deliveryRequest.findFirst = async () => ({
+    fulfillmentStatus: "COLLECTING",
+    status: "paid",
+  });
+  const policy = await resolveJobCancellationPolicy(
+    { id: "j4d", customerId: "c1", providerId: "p1", laborPaid: true, status: "IN_PROGRESS" },
+    { courierFlow: true },
+    "p1",
+    "PROVIDER"
+  );
+  assert.strictEqual(policy.opensDisputeReview, true);
+  assert.strictEqual(policy.cancelledBy, "provider");
+  prisma.deliveryRequest.findFirst = originalFindFirst;
+}
+
+async function testCourierAwaitingConfirmationCustomerBlocked() {
+  prisma.deliveryRequest.findFirst = async () => ({
+    fulfillmentStatus: "COMPLETED",
+    status: "completed",
+  });
+  let threw = false;
+  try {
+    await resolveJobCancellationPolicy(
+      { id: "j4e", customerId: "c1", providerId: "p1", laborPaid: true, status: "AWAITING_CONFIRMATION" },
+      { courierFlow: true, statusOverride: "AWAITING_CONFIRMATION" },
+      "c1",
+      "CUSTOMER"
+    );
+  } catch (e) {
+    threw = true;
+    assert.strictEqual(e.statusCode, 409);
+    assert.match(e.message, /cannot be cancelled after items have been collected/i);
+  }
+  assert.strictEqual(threw, true);
   prisma.deliveryRequest.findFirst = originalFindFirst;
 }
 
@@ -111,7 +193,11 @@ async function run() {
   await testUnpaidLaborNoDispute();
   await testPaidServiceCustomerOpensDispute();
   await testPaidServiceProviderOpensDispute();
-  await testCourierEnRouteCustomerForfeits();
+  await testCourierPostPickupCustomerBlocked();
+  await testCourierCollectingCustomerForfeits();
+  await testCourierPostPickupProviderBlocked();
+  await testCourierCollectingProviderOpensDispute();
+  await testCourierAwaitingConfirmationCustomerBlocked();
   await testCourierNotEnRouteCustomerOpensDispute();
   await testServiceEnRouteDetection();
   await testMetaLaborPaidOnlyOpensDispute();

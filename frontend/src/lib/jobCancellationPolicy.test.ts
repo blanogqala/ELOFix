@@ -7,6 +7,7 @@ import {
   getProviderCancelPreview,
   getCustomerCancelFreeWarningMessage,
   getCustomerCancelForfeitWarningMessage,
+  isCourierJobCancellationBlocked,
   netCourierCancelRefundFromGross,
 } from '@/lib/jobCancellationPolicy';
 
@@ -37,7 +38,7 @@ describe('jobCancellationPolicy', () => {
     expect(preview.customerForfeits).toBe(false);
   });
 
-  it('getCustomerCancelPreview forfeits labor when courier is en route', () => {
+  it('getCustomerCancelPreview blocks cancel after pickup', () => {
     const job = {
       id: 'job-2',
       courierFlow: true,
@@ -51,11 +52,77 @@ describe('jobCancellationPolicy', () => {
       { fulfillmentStatus: 'OUT_FOR_DELIVERY' } as never,
       false
     );
+    expect(preview.cancellationBlocked).toBe(true);
+    expect(preview.warning).toContain('cannot be cancelled after items have been collected');
+    expect(preview.customerForfeits).toBe(false);
+    expect(preview.opensDisputeReview).toBeUndefined();
+  });
+
+  it('getCustomerCancelPreview forfeits labor when courier is collecting', () => {
+    const job = {
+      id: 'job-2b',
+      courierFlow: true,
+      laborPaid: true,
+      totalPrice: 600,
+      status: 'IN_PROGRESS',
+    } as Job;
+
+    const preview = getCustomerCancelPreview(
+      job,
+      { fulfillmentStatus: 'COLLECTING' } as never,
+      false
+    );
     expect(preview.laborRefund).toBe(0);
     expect(preview.customerForfeits).toBe(true);
     expect(preview.opensDisputeReview).toBeUndefined();
     expect(preview.laborGross).toBeUndefined();
     expect(preview.warning).toContain('collecting or delivering');
+  });
+
+  it('isCourierJobCancellationBlocked returns true for post-pickup and awaiting confirmation', () => {
+    const courierJob = { courierFlow: true, status: 'IN_PROGRESS' } as Job;
+    expect(
+      isCourierJobCancellationBlocked(
+        courierJob,
+        { fulfillmentStatus: 'COLLECTED' } as never,
+        'customer'
+      )
+    ).toBe(true);
+    expect(
+      isCourierJobCancellationBlocked(
+        { ...courierJob, status: 'AWAITING_CONFIRMATION' },
+        { fulfillmentStatus: 'COMPLETED' } as never,
+        'customer'
+      )
+    ).toBe(true);
+    expect(
+      isCourierJobCancellationBlocked(
+        courierJob,
+        { fulfillmentStatus: 'COLLECTING' } as never,
+        'customer'
+      )
+    ).toBe(false);
+    expect(isCourierJobCancellationBlocked({ courierFlow: false } as Job, null, 'customer')).toBe(
+      false
+    );
+  });
+
+  it('getProviderCancelPreview blocks cancel after pickup', () => {
+    const job = {
+      id: 'job-2c',
+      courierFlow: true,
+      laborPaid: true,
+      totalPrice: 600,
+      status: 'IN_PROGRESS',
+    } as Job;
+
+    const preview = getProviderCancelPreview(
+      job,
+      { fulfillmentStatus: 'COLLECTED' } as never,
+      false
+    );
+    expect(preview.cancellationBlocked).toBe(true);
+    expect(preview.warning).toContain('cannot cancel after picking up items');
   });
 
   it('getCustomerCancelPreview opens dispute with commission for paid service jobs', () => {

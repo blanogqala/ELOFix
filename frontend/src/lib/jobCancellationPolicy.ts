@@ -2,6 +2,7 @@ import type { DeliveryRequestRecord, Job } from '@/types';
 import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
 
 const EN_ROUTE_COURIER = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
+const COURIER_POST_PICKUP = new Set(['COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION', 'COMPLETED']);
 const CANCEL_COMMISSION_RATE = 0.07;
 
 function roundMoney(n: number): number {
@@ -20,6 +21,29 @@ export function computeCancelCommission(gross: number): number {
 
 export function computeEstimatedNetRefund(gross: number): number {
   return netCourierCancelRefundFromGross(gross);
+}
+
+export function getCourierCancellationBlockedMessage(actor: 'customer' | 'provider'): string {
+  if (actor === 'provider') {
+    return 'You cannot cancel after picking up items.';
+  }
+  return 'This delivery cannot be cancelled after items have been collected.';
+}
+
+export function isCourierJobCancellationBlocked(
+  job: Job,
+  deliveryRequest?: DeliveryRequestRecord | null,
+  actor: 'customer' | 'provider' = 'customer'
+): boolean {
+  if (!job.courierFlow) return false;
+
+  const status = String(job.status || '').toUpperCase();
+  if (status === 'AWAITING_CONFIRMATION') return true;
+
+  const fs = String(deliveryRequest?.fulfillmentStatus || '').toUpperCase();
+  if (COURIER_POST_PICKUP.has(fs)) return true;
+
+  return false;
 }
 
 export function isProviderEnRouteToService(
@@ -75,6 +99,7 @@ export interface CustomerCancelPreview {
   materialsRefundable: boolean;
   customerForfeits: boolean;
   opensDisputeReview?: boolean;
+  cancellationBlocked?: boolean;
   warning?: string;
 }
 
@@ -118,6 +143,14 @@ export function getCustomerCancelPreview(
   deliveryRequest?: DeliveryRequestRecord | null,
   hasMaterialsPaid?: boolean
 ): CustomerCancelPreview {
+  if (isCourierJobCancellationBlocked(job, deliveryRequest, 'customer')) {
+    return {
+      ...EMPTY_CUSTOMER_CANCEL_PREVIEW,
+      cancellationBlocked: true,
+      warning: getCourierCancellationBlockedMessage('customer'),
+    };
+  }
+
   const providerEnRoute = isProviderEnRouteToService(job, deliveryRequest);
   const laborPaid = Boolean(job.laborPaid);
   const laborGross = laborPaid ? getUserLaborGross(job) : 0;
@@ -162,6 +195,14 @@ export function getProviderCancelPreview(
   deliveryRequest?: DeliveryRequestRecord | null,
   hasMaterialsPaid?: boolean
 ): ProviderCancelPreview {
+  if (isCourierJobCancellationBlocked(job, deliveryRequest, 'provider')) {
+    return {
+      ...EMPTY_CUSTOMER_CANCEL_PREVIEW,
+      cancellationBlocked: true,
+      warning: getCourierCancellationBlockedMessage('provider'),
+    };
+  }
+
   const providerEnRoute = isProviderEnRouteToService(job, deliveryRequest);
   const laborPaid = Boolean(job.laborPaid);
   const laborGross = laborPaid ? getUserLaborGross(job) : 0;

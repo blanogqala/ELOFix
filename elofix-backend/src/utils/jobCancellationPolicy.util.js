@@ -9,6 +9,48 @@ const EN_ROUTE_COURIER_FULFILLMENT = new Set([
   "AT_DESTINATION",
 ]);
 
+/** Courier jobs cannot be cancelled once items are picked up (COLLECTED+). */
+const COURIER_POST_PICKUP_FULFILLMENT = new Set([
+  "COLLECTED",
+  "OUT_FOR_DELIVERY",
+  "AT_DESTINATION",
+  "COMPLETED",
+]);
+
+function getCourierCancellationBlockedMessage(actor) {
+  if (actor === "provider") {
+    return "You cannot cancel after picking up items.";
+  }
+  return "This delivery cannot be cancelled after items have been collected.";
+}
+
+/**
+ * Hard-block courier cancellation after pickup or when awaiting customer confirmation.
+ */
+async function assertCourierCancellationAllowed(job, meta, actorRole) {
+  const safeMeta = meta && typeof meta === "object" ? meta : {};
+  if (!safeMeta.courierFlow) return;
+
+  const actor = mapActorRole(actorRole);
+  if (!actor || actor === "admin") return;
+
+  const frontendStatus = String(safeMeta.statusOverride || job.status || "").toUpperCase();
+  if (frontendStatus === "AWAITING_CONFIRMATION") {
+    throw new AppError(getCourierCancellationBlockedMessage(actor), 409);
+  }
+
+  const dr = await prisma.deliveryRequest.findFirst({
+    where: { jobId: String(job.id) },
+    select: { fulfillmentStatus: true },
+  });
+  if (!dr) return;
+
+  const fs = String(dr.fulfillmentStatus || "").toUpperCase();
+  if (COURIER_POST_PICKUP_FULFILLMENT.has(fs)) {
+    throw new AppError(getCourierCancellationBlockedMessage(actor), 409);
+  }
+}
+
 /**
  * Provider has left for pickup / active service is underway (cancellation penalties may apply).
  */
@@ -66,6 +108,8 @@ async function resolveJobCancellationPolicy(job, meta, actorUserId, actorRole) {
     throw new AppError("Forbidden", 403);
   }
 
+  await assertCourierCancellationAllowed(job, meta, actorRole);
+
   const providerEnRoute = await isProviderEnRouteToService(job, meta);
   const laborPaid = isLaborPaid(job, meta);
 
@@ -118,6 +162,9 @@ async function resolveJobCancellationPolicy(job, meta, actorUserId, actorRole) {
 
 module.exports = {
   EN_ROUTE_COURIER_FULFILLMENT,
+  COURIER_POST_PICKUP_FULFILLMENT,
+  assertCourierCancellationAllowed,
+  getCourierCancellationBlockedMessage,
   isLaborPaid,
   isProviderEnRouteToService,
   resolveJobCancellationPolicy,

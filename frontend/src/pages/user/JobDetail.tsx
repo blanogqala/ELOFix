@@ -79,6 +79,7 @@ import {
   getCustomerCancelPreview,
   getCustomerCancelForfeitToastMessage,
   getCancelDisputeSubmittedToastMessage,
+  isCourierJobCancellationBlocked,
 } from '@/lib/jobCancellationPolicy';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { getMonotonicTimelineStepIndex, getJobDisplayStatusLabel } from '@/lib/jobProgressDisplay';
@@ -718,6 +719,7 @@ export default function JobDetail() {
     }) ||
     false;
   const cancelPreview = getCustomerCancelPreview(job, deliveryRequest ?? null, hasMaterialsPaid);
+  const courierCancelBlocked = isCourierJobCancellationBlocked(job, deliveryRequest ?? null, 'customer');
   const showDeliveryRequirements = isDeliveryOrMovingJob(job);
   const providerReqText = job.providerAdjustedRequirements?.requirementText?.trim();
   const specsCardTitle = categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
@@ -807,7 +809,7 @@ export default function JobDetail() {
                 Delete Job
               </Button>
             )}
-            {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && job.status !== 'REJECTED' && (
+            {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && job.status !== 'REJECTED' && !courierCancelBlocked && (
               <Button 
                 variant="outline" 
                 size="sm"

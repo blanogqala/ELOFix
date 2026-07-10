@@ -93,6 +93,7 @@ import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
 import {
   getProviderCancelPreview,
   getCancelDisputeSubmittedToastMessage,
+  isCourierJobCancellationBlocked,
 } from '@/lib/jobCancellationPolicy';
 import { RefundSummaryLine, isJobRefunded } from '@/components/payments/RefundSummaryLine';
 import {
@@ -747,7 +748,8 @@ export default function ProviderJobDetail() {
     job && !isCourierJob ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) : false;
   const canMarkJobComplete = Boolean(job?.laborPaid);
   const showCancel = job
-    ? ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION'
+    ? (ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION') &&
+      !isCourierJobCancellationBlocked(job, deliveryRequest ?? null, 'provider')
     : false;
 
   const getStatusBadge = (current: Job) => (
