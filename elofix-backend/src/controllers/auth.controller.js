@@ -28,7 +28,9 @@ async function changePassword(req, res) {
 
 async function logout(req, res) {
   const auditContext = getRequestAuditContext(req);
-  await authService.logout(req.user, auditContext);
+  if (req.user) {
+    await authService.logout(req.user, auditContext);
+  }
   res.json({ success: true });
 }
 

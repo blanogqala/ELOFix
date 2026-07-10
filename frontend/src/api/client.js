@@ -59,7 +59,8 @@ function isAuthAttemptUrl(url) {
     path.includes('/auth/login') ||
     path.includes('/auth/register') ||
     path.includes('/auth/forgot-password') ||
-    path.includes('/auth/reset-password')
+    path.includes('/auth/reset-password') ||
+    path.includes('/auth/logout')
   );
 }
 

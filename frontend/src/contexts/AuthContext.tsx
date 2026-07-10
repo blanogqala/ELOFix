@@ -43,11 +43,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         invalidateJobQueries();
         return session.user;
       }
-      authApi.logout();
+      authApi.logout({ notifyServer: false });
       setUser(null);
     } catch {
       // Expired/invalid token: clear stale session so guards can redirect cleanly.
-      authApi.logout();
+      authApi.logout({ notifyServer: false });
       setUser(null);
     }
     return null;
@@ -59,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(true);
         try {
           if (!fbUser) {
-            authApi.logout();
+            authApi.logout({ notifyServer: false });
             setUser(null);
             return;
           }
@@ -76,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             invalidateJobQueries();
             return;
           }
-          authApi.logout();
+          authApi.logout({ notifyServer: false });
           setUser(null);
         } finally {
           setIsLoading(false);

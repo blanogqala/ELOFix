@@ -386,9 +386,10 @@ export function getCurrentSession(): AuthSession | null {
   return getFromStorage<AuthSession | null>(STORAGE_KEYS.AUTH, null);
 }
 
-export function logout(): void {
+export function logout(options: { notifyServer?: boolean } = {}): void {
   const session = getFromStorage<AuthSession | null>(STORAGE_KEYS.AUTH, null);
-  if (session?.token) {
+  const notifyServer = options.notifyServer !== false;
+  if (notifyServer && session?.token) {
     void apiClient.post('/auth/logout').catch(() => {
       /* best-effort audit on sign-out */
     });
