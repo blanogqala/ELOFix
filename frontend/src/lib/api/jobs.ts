@@ -33,8 +33,8 @@ interface BackendJob {
   id: string;
   title: string;
   category?: string;
-  /** Category step3Type from server (measurements vs items/issue). */
-  categoryStep3Type?: 'measurements' | 'items' | 'issue';
+  /** Category step3Type from server (measurements vs items/issue/none). */
+  categoryStep3Type?: 'measurements' | 'items' | 'issue' | 'none';
   description: string;
   price: number;
   status: JobStatus | string;
@@ -148,7 +148,7 @@ function toFrontendJob(job: BackendJob): Job {
     typeof job.requiresMaterials === 'boolean' ? job.requiresMaterials : false;
   const category = String(job.category || job.title || '').trim();
   const categoryDisplayName = String(job.categoryDisplayName || category).trim() || category;
-  const measurements =
+  const measurements: Measurements =
     job.measurements && typeof job.measurements === 'object'
       ? job.measurements
       : { source: 'MANUAL', values: {} };

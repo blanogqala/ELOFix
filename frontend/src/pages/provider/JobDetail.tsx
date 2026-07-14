@@ -106,6 +106,7 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import {
   categoryUsesMeasurementFields,
+  categorySkipsStep3Specs,
   getJobCategoryStep3Type,
   jobWorkflowSpecsCompleteForProvider,
   measurementsHaveStructuredSpecs,
@@ -676,11 +677,12 @@ export default function ProviderJobDetail() {
   const canProceedWithSpecs = job ? jobWorkflowSpecsCompleteForProvider(job) : false;
   const requirementNotes = job?.providerAdjustedRequirements?.requirementNotes;
   const providerRequirementText = job?.providerAdjustedRequirements?.requirementText?.trim();
+  const skipStep3Specs = job ? categorySkipsStep3Specs(getJobCategoryStep3Type(job)) : false;
   const specsSectionLabel =
     job && categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
       ? 'Measurements & Requirements'
       : 'Requirements';
-  const canProviderEditRequirements = job?.requiresInspection !== false;
+  const canProviderEditRequirements = job?.requiresInspection !== false && !skipStep3Specs;
   const measurementRows = formatMeasurementRows(effectiveMeasurements?.values);
   const isCancelledJob = job?.status === 'CANCELLED';
   const cancellationReasonText =
@@ -940,6 +942,7 @@ export default function ProviderJobDetail() {
           )}
 
           <div className="grid gap-4 md:grid-cols-2 items-start">
+          {!skipStep3Specs ? (
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-muted-foreground text-sm">{specsSectionLabel}</p>
@@ -1023,6 +1026,7 @@ export default function ProviderJobDetail() {
               </div>
             )}
           </div>
+          ) : null}
 
           {!isCourierJob ? (
           <div

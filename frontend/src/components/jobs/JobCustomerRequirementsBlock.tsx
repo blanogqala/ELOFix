@@ -1,6 +1,7 @@
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import {
   categoryUsesMeasurementFields,
+  categorySkipsStep3Specs,
   getJobCategoryStep3Type,
   measurementsHaveStructuredSpecs,
 } from '@/lib/jobSpecifications';
@@ -49,6 +50,10 @@ interface JobCustomerRequirementsBlockProps {
 
 export function JobCustomerRequirementsBlock({ job, measurements }: JobCustomerRequirementsBlockProps) {
   const step3 = getJobCategoryStep3Type(job);
+  if (categorySkipsStep3Specs(step3)) {
+    return null;
+  }
+
   const rows = formatMeasurementRows(measurements.values);
   const hasStructured = measurementsHaveStructuredSpecs(measurements);
   const hasMovingItems =

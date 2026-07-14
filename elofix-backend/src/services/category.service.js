@@ -11,7 +11,7 @@ const SERVICE_AREAS = [
   "Bloemfontein",
 ];
 
-const ALLOWED_STEP3_TYPES = new Set(["measurements", "items", "issue"]);
+const ALLOWED_STEP3_TYPES = new Set(["measurements", "items", "issue", "none"]);
 
 function emitSuggestionEvent(event, payload, userIds = []) {
   if (!global.io) return;

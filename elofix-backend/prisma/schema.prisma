@@ -40,6 +40,7 @@ enum CategoryStep3Type {
   measurements
   items
   issue
+  none
 }
 
 enum SuggestionStatus {

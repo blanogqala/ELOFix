@@ -94,6 +94,7 @@ import { getDeliveryRequestByJobId, acceptDeliveryRequestQuote } from '@/lib/api
 import { JobDeliverySection } from '@/components/delivery/JobDeliverySection';
 import {
   categoryUsesMeasurementFields,
+  categorySkipsStep3Specs,
   getJobCategoryStep3Type,
   measurementsHaveStructuredSpecs,
 } from '@/lib/jobSpecifications';
@@ -722,6 +723,8 @@ export default function JobDetail() {
   const courierCancelBlocked = isCourierJobCancellationBlocked(job, deliveryRequest ?? null, 'customer');
   const showDeliveryRequirements = isDeliveryOrMovingJob(job);
   const providerReqText = job.providerAdjustedRequirements?.requirementText?.trim();
+  const skipStep3Specs = categorySkipsStep3Specs(getJobCategoryStep3Type(job));
+  const showSpecsCard = showDeliveryRequirements || !skipStep3Specs;
   const specsCardTitle = categoryUsesMeasurementFields(getJobCategoryStep3Type(job))
     ? 'Measurements & Requirements'
     : 'Requirements';
@@ -1328,6 +1331,7 @@ export default function JobDetail() {
             </Card>
 
             {/* Measurements / Requirements */}
+            {showSpecsCard ? (
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">{specsCardTitle}</CardTitle>
@@ -1382,6 +1386,7 @@ export default function JobDetail() {
                 )}
               </CardContent>
             </Card>
+            ) : null}
 
             {/* Quote */}
             <Card>

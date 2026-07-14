@@ -135,6 +135,7 @@ export function CategoryEditorForm({
             <option value="measurements">measurements</option>
             <option value="items">items</option>
             <option value="issue">issue</option>
+            <option value="none">none</option>
           </select>
         </div>
         <div className="space-y-2">

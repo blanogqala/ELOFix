@@ -981,6 +981,9 @@ async function assertJobCategoryAllowsMaterials(job) {
 async function assertSpecificationsReadyForPricing(job, meta) {
   const slug = String(job?.category || "").trim();
   const { step3Type } = await resolveCategorySettings(slug);
+  if (step3Type === "none") {
+    return;
+  }
   const providerAdjusted = meta?.providerAdjustedRequirements?.measurements;
   const mergedMeasurements = {
     ...(job?.measurements && typeof job.measurements === "object" ? job.measurements : {}),

@@ -232,10 +232,11 @@ export default function ServiceRequest() {
   }, [jobIdParam, courierFlow]);
 
   useEffect(() => {
-    if (!courierFlow && currentCategory?.requiresInspection === false) {
+    if (courierFlow || currentCategory?.step3Type === 'none') return;
+    if (currentCategory?.requiresInspection === false) {
       setUseMeasurements(true);
     }
-  }, [courierFlow, currentCategory?.id, currentCategory?.requiresInspection]);
+  }, [courierFlow, currentCategory?.id, currentCategory?.requiresInspection, currentCategory?.step3Type]);
 
   const persistDraft = useCallback(() => {
     writeServiceRequestDraft({
@@ -315,7 +316,8 @@ export default function ServiceRequest() {
     setIsSubmitting(true);
     try {
       const measurementsPayload =
-        !useMeasurements && currentCategory?.requiresInspection !== false
+        currentCategory?.step3Type === 'none' ||
+        (!useMeasurements && currentCategory?.requiresInspection !== false)
           ? undefined
           : currentCategory?.step3Type === 'issue' && measurements.plumbingIssue
             ? {
@@ -402,6 +404,7 @@ export default function ServiceRequest() {
       case 3: {
         if (description.length <= 10) return false;
         if (!currentCategory) return false;
+        if (currentCategory.step3Type === 'none') return true;
         const detailsRequired = currentCategory.requiresInspection === false;
         if (detailsRequired && !useMeasurements) return false;
         if (!useMeasurements) return true;
@@ -640,43 +643,47 @@ export default function ServiceRequest() {
                 )}
               </div>
 
-              <div className="rounded-lg border border-primary bg-primary/10 p-3">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={useMeasurements}
-                    onChange={(e) => setUseMeasurements(e.target.checked)}
-                    disabled={currentCategory?.requiresInspection === false}
-                  />
-                  Add measurements or detailed requirements
-                </label>
-                <p className="mt-1 text-xs font-bold text-accent">
-                  {currentCategory?.requiresInspection === false
-                    ? 'Required for this category. Provide complete details now because the provider will price without inspection.'
-                    : 'Optional for request submission. You can submit now and your provider can add/update measurements after inspection (This can give better understanding of the task).'}
-                </p>
-              </div>
+              {currentCategory?.step3Type !== 'none' && (
+                <>
+                  <div className="rounded-lg border border-primary bg-primary/10 p-3">
+                    <label className="flex items-center gap-2 text-sm font-medium">
+                      <input
+                        type="checkbox"
+                        checked={useMeasurements}
+                        onChange={(e) => setUseMeasurements(e.target.checked)}
+                        disabled={currentCategory?.requiresInspection === false}
+                      />
+                      Add measurements or detailed requirements
+                    </label>
+                    <p className="mt-1 text-xs font-bold text-accent">
+                      {currentCategory?.requiresInspection === false
+                        ? 'Required for this category. Provide complete details now because the provider will price without inspection.'
+                        : 'Optional for request submission. You can submit now and your provider can add/update measurements after inspection (This can give better understanding of the task).'}
+                    </p>
+                  </div>
 
-              {useMeasurements && currentCategory && (
-                <Step3DynamicInput
-                  category={currentCategory}
-                  measurements={measurements}
-                  setMeasurements={setMeasurements}
-                  images={images}
-                  isLoading={isLoading}
-                  setIsLoading={setIsLoading}
-                  appendImageUrls={async (files, options) => {
-                    const urls: string[] = [];
-                    for (const file of files) {
-                      urls.push(await uploadJobImage(file));
-                    }
-                    if (urls.length && options?.appendToJobImages !== false) {
-                      setImages((prev) => [...prev, ...urls]);
-                    }
-                    return urls;
-                  }}
-                  setImages={setImages}
-                />
+                  {useMeasurements && currentCategory && (
+                    <Step3DynamicInput
+                      category={currentCategory}
+                      measurements={measurements}
+                      setMeasurements={setMeasurements}
+                      images={images}
+                      isLoading={isLoading}
+                      setIsLoading={setIsLoading}
+                      appendImageUrls={async (files, options) => {
+                        const urls: string[] = [];
+                        for (const file of files) {
+                          urls.push(await uploadJobImage(file));
+                        }
+                        if (urls.length && options?.appendToJobImages !== false) {
+                          setImages((prev) => [...prev, ...urls]);
+                        }
+                        return urls;
+                      }}
+                      setImages={setImages}
+                    />
+                  )}
+                </>
               )}
             </div>
           )}

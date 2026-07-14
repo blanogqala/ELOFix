@@ -268,7 +268,7 @@ export interface Category {
   description: string;
   requiresMaterials: boolean;
   skills: string[];
-  step3Type: 'measurements' | 'items' | 'issue';
+  step3Type: 'measurements' | 'items' | 'issue' | 'none';
   issueTypes?: string[];
   commonItems?: { id: string; name: string; icon: string; defaultWeight?: number }[];
   isActive?: boolean;
