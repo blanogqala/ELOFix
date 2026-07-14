@@ -29,6 +29,7 @@ import {
 } from '@/lib/api/jobs';
 import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { ReviewMediaGrid } from '@/components/providers/MediaLightbox';
 import { getStores } from '@/lib/api/stores';
 import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
@@ -1121,19 +1122,7 @@ export default function JobDetail() {
                 {job.images.length > 0 && (
                   <div className="border-b-2 border-primary/20 pb-3">
                     <p className="text-sm text-muted-foreground mb-2">Photos</p>
-                    <div className="flex flex-wrap gap-2">
-                      {job.images.map((img, i) => (
-                        <a
-                          key={`${img}-${i}`}
-                          href={resolveUploadUrl(img)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block h-24 w-24 overflow-hidden rounded-lg bg-muted"
-                        >
-                          <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
-                        </a>
-                      ))}
-                    </div>
+                    <ReviewMediaGrid images={job.images} className="mt-0" thumbClassName="h-24 w-24" />
                   </div>
                 )}
                 {job.location && (

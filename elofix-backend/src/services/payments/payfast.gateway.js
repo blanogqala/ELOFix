@@ -153,7 +153,14 @@ function createCheckout(intent, customer) {
   if (intent.jobId) fields.custom_str3 = String(intent.jobId);
   if (intent.materialOrderId) fields.custom_str4 = String(intent.materialOrderId);
 
-  fields.signature = buildSignature(fields, passphrase);
+  // Shared docs sandbox merchant (10000100): any signature is rejected (old
+  // passphrase jt7NOE43FZPn is obsolete). Omit signature → checkout works.
+  // Own merchant accounts: set PAYFAST_PASSPHRASE to dashboard Salt Passphrase.
+  const isSharedSandboxMerchant = String(merchantId) === "10000100";
+  const obsoleteDocsPassphrase = passphrase === "jt7NOE43FZPn";
+  if (passphrase && !isSharedSandboxMerchant && !obsoleteDocsPassphrase) {
+    fields.signature = buildSignature(fields, passphrase);
+  }
 
   return {
     type: "redirect",

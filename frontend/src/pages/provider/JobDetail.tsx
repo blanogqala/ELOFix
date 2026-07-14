@@ -102,7 +102,7 @@ import {
   getQuoteLaborLine,
 } from '@/lib/jobQuoteDisplay';
 import { ActivityDot } from '@/components/ui/ActivityDot';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { ReviewMediaGrid } from '@/components/providers/MediaLightbox';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
 import {
   categoryUsesMeasurementFields,
@@ -931,13 +931,7 @@ export default function ProviderJobDetail() {
           {job.images.length > 0 && (
             <div>
               <p className="text-muted-foreground text-sm mb-2">Uploaded Images</p>
-              <div className="flex gap-2 flex-wrap">
-                {job.images.map((img, i) => (
-                  <div key={i} className="h-20 w-20 rounded-lg bg-muted overflow-hidden">
-                    <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
-                  </div>
-                ))}
-              </div>
+              <ReviewMediaGrid images={job.images} className="mt-0" />
             </div>
           )}
 

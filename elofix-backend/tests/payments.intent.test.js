@@ -26,6 +26,35 @@ function testPayfastSignature() {
   assert.strictEqual(sig.length, 32);
   // Hash for PayFast docs sample payload (document field order + passphrase).
   assert.strictEqual(sig, "1aa4b46a099e63fc9135c3dc602c8609");
+
+  // Shared sandbox merchant: omit signature even if obsolete docs passphrase is set.
+  const prevId = process.env.PAYFAST_MERCHANT_ID;
+  const prevKey = process.env.PAYFAST_MERCHANT_KEY;
+  const prevPass = process.env.PAYFAST_PASSPHRASE;
+  const prevMode = process.env.PAYFAST_MODE;
+  process.env.PAYFAST_MERCHANT_ID = "10000100";
+  process.env.PAYFAST_MERCHANT_KEY = "46f0cd694581a";
+  process.env.PAYFAST_PASSPHRASE = "jt7NOE43FZPn";
+  process.env.PAYFAST_MODE = "sandbox";
+  try {
+    const checkout = payfast.createCheckout(
+      {
+        id: "intent-1",
+        merchantReference: "EF-TEST",
+        amount: 100,
+        kind: "SERVICE",
+        returnUrl: "http://www.yourdomain.co.za/return.php",
+        cancelUrl: "http://www.yourdomain.co.za/cancel.php",
+      },
+      { name: "Test User", email: "test@test.com" }
+    );
+    assert.strictEqual(checkout.formFields.signature, undefined);
+  } finally {
+    process.env.PAYFAST_MERCHANT_ID = prevId;
+    process.env.PAYFAST_MERCHANT_KEY = prevKey;
+    process.env.PAYFAST_PASSPHRASE = prevPass;
+    process.env.PAYFAST_MODE = prevMode;
+  }
 }
 
 function testNormalizeProvider() {

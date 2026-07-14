@@ -23,7 +23,7 @@ import { useProviderStatus } from '@/hooks/useProviderStatus';
 import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
 import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
+import { ReviewMediaGrid } from '@/components/providers/MediaLightbox';
 import {
   Select,
   SelectContent,
@@ -217,15 +217,9 @@ export default function ProviderRequestDetail() {
             </div>
           </div>
 
-          {/* Images */}
+          {/* Images — click to enlarge */}
           {job.images.length > 0 && (
-            <div className="flex gap-2 flex-wrap">
-              {job.images.map((img, i) => (
-                <div key={i} className="h-20 w-20 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-                  <img src={resolveUploadUrl(img)} alt="" className="h-full w-full object-cover" />
-                </div>
-              ))}
-            </div>
+            <ReviewMediaGrid images={job.images} className="mt-0" />
           )}
 
           {/* Courier route */}

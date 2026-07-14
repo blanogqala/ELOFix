@@ -142,9 +142,16 @@ interface ReviewMediaGridProps {
   images?: string[];
   videos?: string[];
   className?: string;
+  /** Override thumbnail size classes (default h-20 w-20). */
+  thumbClassName?: string;
 }
 
-export function ReviewMediaGrid({ images = [], videos = [], className }: ReviewMediaGridProps) {
+export function ReviewMediaGrid({
+  images = [],
+  videos = [],
+  className,
+  thumbClassName,
+}: ReviewMediaGridProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
@@ -168,7 +175,10 @@ export function ReviewMediaGrid({ images = [], videos = [], className }: ReviewM
             key={`${item.kind}-${item.url}`}
             type="button"
             onClick={() => openAt(idx)}
-            className="group relative h-20 w-20 overflow-hidden rounded-lg border border-border bg-muted transition hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={cn(
+              'group relative h-20 w-20 overflow-hidden rounded-lg border border-border bg-muted transition hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              thumbClassName
+            )}
             aria-label={item.kind === 'video' ? 'Play video' : 'View image'}
           >
             {item.kind === 'video' ? (
