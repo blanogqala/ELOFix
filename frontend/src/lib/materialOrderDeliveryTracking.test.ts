@@ -72,7 +72,7 @@ describe('resolveMaterialOrderDeliveryTrackingBadge', () => {
     ).toBe('Out for delivery');
   });
 
-  it('keeps pickup tracking on the pickup material batch', () => {
+  it('does not show delivery tracking badge for pickup', () => {
     expect(
       resolveMaterialOrderDeliveryTrackingBadge({
         deliveryPayPending: false,
@@ -81,7 +81,7 @@ describe('resolveMaterialOrderDeliveryTrackingBadge', () => {
         mo: materialOrder({ fulfillmentStatus: 'READY' }),
         batch: batch({ status: 'ready', deliveryType: 'pickup' }),
       })
-    ).toBe('Ready');
+    ).toBeNull();
   });
 
   it('does not fall back to supplier batch status for courier delivery', () => {

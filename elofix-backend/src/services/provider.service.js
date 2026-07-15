@@ -199,7 +199,7 @@ function businessHoursComplete(settings) {
   });
 }
 
-function checkProviderProfileCompletion(profile, user) {
+function checkProviderProfileCompletion(profile, user, opts = {}) {
   const phone = String(user?.phone || "").trim();
   const bio = String(profile.bio || "").trim();
   const serviceAreas = Array.isArray(profile.serviceAreas) ? profile.serviceAreas : [];
@@ -210,40 +210,44 @@ function checkProviderProfileCompletion(profile, user) {
     profile.settings && typeof profile.settings === "object" && !Array.isArray(profile.settings)
       ? profile.settings
       : null;
+  const hasPendingSkillSuggestion = Boolean(opts.hasPendingSkillSuggestion);
 
   if (!phone) return false;
   if (!profile.saIdNumberHash) return false;
   if (!profile.companyRegistrationHash) return false;
   if (bio.length < 20) return false;
   if (serviceAreas.length < 1) return false;
-  if (skills.length < 1) return false;
 
-  for (const sk of skills) {
-    const raw = laborPricing[sk];
-    const pr = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-    const low = pr.jobFeeLow != null && pr.jobFeeLow !== "" ? Number(pr.jobFeeLow) : null;
-    const high = pr.jobFeeHigh != null && pr.jobFeeHigh !== "" ? Number(pr.jobFeeHigh) : null;
-    const hasLow = low != null && !Number.isNaN(low) && low > 0;
-    const hasHigh = high != null && !Number.isNaN(high) && high > 0;
-    const legacyOk = Number(pr.rate) > 0;
+  if (skills.length < 1) {
+    if (!hasPendingSkillSuggestion) return false;
+  } else {
+    for (const sk of skills) {
+      const raw = laborPricing[sk];
+      const pr = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+      const low = pr.jobFeeLow != null && pr.jobFeeLow !== "" ? Number(pr.jobFeeLow) : null;
+      const high = pr.jobFeeHigh != null && pr.jobFeeHigh !== "" ? Number(pr.jobFeeHigh) : null;
+      const hasLow = low != null && !Number.isNaN(low) && low > 0;
+      const hasHigh = high != null && !Number.isNaN(high) && high > 0;
+      const legacyOk = Number(pr.rate) > 0;
 
-    if (hasLow !== hasHigh) {
+      if (hasLow !== hasHigh) {
+        return false;
+      }
+      if (hasLow && hasHigh && low > high) {
+        return false;
+      }
+      if (!hasLow && !hasHigh && !legacyOk) {
+        /* empty range allowed for new providers */
+        continue;
+      }
+      if (hasLow && hasHigh) {
+        continue;
+      }
+      if (legacyOk) {
+        continue;
+      }
       return false;
     }
-    if (hasLow && hasHigh && low > high) {
-      return false;
-    }
-    if (!hasLow && !hasHigh && !legacyOk) {
-      /* empty range allowed for new providers */
-      continue;
-    }
-    if (hasLow && hasHigh) {
-      continue;
-    }
-    if (legacyOk) {
-      continue;
-    }
-    return false;
   }
 
   for (const docType of REQUIRED_DOCUMENT_TYPES) {
@@ -479,7 +483,13 @@ async function persistProfileCompleted(profileId) {
   });
   if (!profile) return false;
 
-  const complete = checkProviderProfileCompletion(profile, profile.user);
+  const pendingSuggestionCount = await prisma.categorySuggestion.count({
+    where: { providerId: profile.id, status: "PENDING" },
+  });
+
+  const complete = checkProviderProfileCompletion(profile, profile.user, {
+    hasPendingSkillSuggestion: pendingSuggestionCount > 0,
+  });
 
   if (complete !== profile.profileCompleted) {
     await prisma.provider.update({

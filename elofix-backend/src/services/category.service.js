@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const notificationEvents = require("./notificationEvents.service");
+const { persistProfileCompleted } = require("./provider.service");
 
 const SERVICE_AREAS = [
   "Johannesburg",
@@ -202,6 +203,10 @@ async function createCategorySuggestion(userId, payload) {
     [created.userId]
   );
 
+  if (providerRow) {
+    await persistProfileCompleted(providerRow.id);
+  }
+
   return created;
 }
 
@@ -361,6 +366,11 @@ async function rejectCategorySuggestion(suggestionId) {
     },
     [updated.userId]
   );
+
+  if (updated.providerId) {
+    await persistProfileCompleted(updated.providerId);
+  }
+
   return { suggestionId: updated.id, providerId: updated.providerId || null };
 }
 

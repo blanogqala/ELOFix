@@ -32,6 +32,7 @@ export function businessHoursComplete(settings?: ProviderSettings | null): boole
 /**
  * Core onboarding sections used for guided UX and progress bar.
  * Work posts are optional. Backend `profileCompleted` follows the same rules.
+ * Pending service suggestions count toward skills & pricing until admin approves.
  */
 export function evaluateProviderCoreSections(
   provider: Provider | null | undefined,
@@ -42,6 +43,7 @@ export function evaluateProviderCoreSections(
     selectedSkills: string[];
     pricing: Provider['laborPricing'];
     settings?: ProviderSettings | null;
+    hasPendingSkillSuggestion?: boolean;
   }
 ): ProviderProfileSectionStatus {
   const phone = local ? local.phone.trim() : String(provider?.phone || '').trim();
@@ -62,13 +64,15 @@ export function evaluateProviderCoreSections(
       ? provider.laborPricing
       : {};
   const settings = local?.settings ?? provider?.settings;
+  const hasPendingSkillSuggestion = Boolean(local?.hasPendingSkillSuggestion);
 
   const profileInfo =
     phone.length > 0 && bio.length >= 20 && serviceAreas.length >= 1;
 
-  const skillsAndPrices =
+  const selectedSkillsOk =
     selectedSkills.length > 0 &&
     selectedSkills.every((s) => skillLaborPricingPassesOnboarding(pricing[s] ?? {}));
+  const skillsAndPrices = selectedSkillsOk || hasPendingSkillSuggestion;
 
   const documents =
     requiredDocumentsComplete(provider?.documents) &&

@@ -757,6 +757,9 @@ function ProductRowCart({
                 </span>
               </Badge>
             </div>
+            {product.description ? (
+              <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+            ) : null}
           </div>
           <div className="mt-auto flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border pt-3">
             <div className="min-w-0">
@@ -829,6 +832,9 @@ function ProductRowSuggest({
             </Badge>
             <Badge variant="secondary" className="truncate text-[10px] font-normal">{product.category}</Badge>
           </div>
+          {product.description ? (
+            <p className="text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+          ) : null}
           <div className="mt-auto pt-3">
             <p className="text-sm font-semibold tabular-nums">{formatCurrency(product.price, { decimals: 2 })}</p>
             <p className="text-[10px] text-muted-foreground">/{product.unit}</p>

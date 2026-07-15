@@ -620,6 +620,9 @@ export default function OrderMaterials() {
                             <Badge variant="secondary" className="text-xs capitalize">{product.qualityTier}</Badge>
                             {product.special && <Badge className="bg-accent text-accent-foreground text-xs">Special</Badge>}
                           </div>
+                          {product.description ? (
+                            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+                          ) : null}
                         </div>
                       </div>
                       <div className="mt-3 flex justify-end">

@@ -413,6 +413,9 @@ export function SupplierInventory({ userId }: { userId: string }) {
       <CardHeader className="space-y-1 py-3">
         <p className="text-xs text-muted-foreground">{formatCategoryLabel(String(p.category || 'general'))}</p>
         <CardTitle className="text-base leading-tight">{p.name}</CardTitle>
+        {p.description ? (
+          <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
+        ) : null}
         <p className="text-lg font-bold">{formatCurrency(p.price)}</p>
         <p className="text-xs text-muted-foreground">Qty: {p.inStock ? p.quantity ?? '—' : 0}</p>
       </CardHeader>

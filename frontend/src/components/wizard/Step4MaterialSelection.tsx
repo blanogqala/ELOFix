@@ -532,6 +532,9 @@ export function Step4MaterialSelection({
                     <p className="text-sm text-muted-foreground">
                       {formatCurrency(product.price, { decimals: 2 })}/{product.unit} • {product.qualityTier} quality
                     </p>
+                    {product.description ? (
+                      <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+                    ) : null}
                   </div>
 
                   {inCart ? (
@@ -660,6 +663,9 @@ export function Step4MaterialSelection({
                   <p className="text-xs text-muted-foreground">
                     {product.supplier.name} • {formatCurrency(product.price, { decimals: 2 })}/{product.unit} • {product.category}
                   </p>
+                  {product.description ? (
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+                  ) : null}
                 </div>
                 {inCart ? (
                   <div className="flex items-center gap-1">

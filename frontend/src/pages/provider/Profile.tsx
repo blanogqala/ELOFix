@@ -387,6 +387,7 @@ export default function ProviderProfile() {
         selectedSkills,
         pricing,
         settings,
+        hasPendingSkillSuggestion: suggestedServices.length > 0,
       });
       if (refreshed.profileInfo) {
         setProfileTab('pricing');
@@ -473,6 +474,7 @@ export default function ProviderProfile() {
         selectedSkills,
         pricing,
         settings: savedSet,
+        hasPendingSkillSuggestion: suggestedServices.length > 0,
       });
       if (refreshed.skillsAndPrices) {
         setProfileTab('docs');
@@ -568,8 +570,9 @@ export default function ProviderProfile() {
         selectedSkills,
         pricing,
         settings,
+        hasPendingSkillSuggestion: suggestedServices.length > 0,
       }),
-    [provider, phone, bio, serviceAreas, selectedSkills, pricing, settings]
+    [provider, phone, bio, serviceAreas, selectedSkills, pricing, settings, suggestedServices.length]
   );
 
   const completionPercent = coreSections.percentCore;
@@ -621,6 +624,8 @@ export default function ProviderProfile() {
       setSuggestText('');
       setSuggestDescription('');
       await loadMySuggestions();
+      await refreshProfile();
+      await loadProvider({ force: true });
       toast({ title: 'Suggestion sent', description: 'An admin will review your category request.' });
     } catch {
       toast({ title: 'Error', description: 'Could not send suggestion.', variant: 'destructive' });
@@ -1616,6 +1621,7 @@ export default function ProviderProfile() {
                     selectedSkills,
                     pricing,
                     settings: savedSettings,
+                    hasPendingSkillSuggestion: suggestedServices.length > 0,
                   });
                   if (refreshed.percentCore === 100) {
                     toast({

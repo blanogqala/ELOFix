@@ -1,5 +1,4 @@
 import type { JobMaterialOrderSnapshot, JobStoreOrder, MaterialBatch } from '@/types';
-import { currentTrackingStepBadgeLabel } from '@/lib/materialBatchTracking';
 
 function normalizeStatus(value?: string | null): string {
   return String(value || '').trim().toUpperCase();
@@ -61,9 +60,7 @@ export function resolveMaterialOrderDeliveryTrackingBadge(params: {
   }
 
   if (params.displayDeliveryType === 'SELF') {
-    return params.batch?.deliveryType === 'pickup'
-      ? currentTrackingStepBadgeLabel(params.batch)
-      : null;
+    return null;
   }
 
   return null;
