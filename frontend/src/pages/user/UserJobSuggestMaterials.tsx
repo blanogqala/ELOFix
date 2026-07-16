@@ -69,13 +69,13 @@ export default function UserJobSuggestMaterials() {
           jobLocation={job.location ?? undefined}
           jobCategory={job.category}
           onBack={() => navigate(`/user/jobs/${jobId}`, { replace: true })}
-          onSendSuggestion={async (suggested: MaterialLine, message: string) => {
+          onSendSuggestion={async (suggestedItems: MaterialLine[], message: string) => {
             try {
-              await addUserMaterialSuggestion(jobId, suggested, message);
+              await addUserMaterialSuggestion(jobId, suggestedItems, message);
               await sync();
               toast({
                 title: 'Suggestion sent',
-                description: 'Your provider will review your alternative.',
+                description: 'Your provider will review your alternatives.',
               });
             } catch {
               toast({

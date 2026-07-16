@@ -12,6 +12,7 @@ import {
 } from '@/types';
 import apiClient from '@/api/client';
 import { areaSquareMetersFromAssist } from '@/lib/measurements';
+import { normalizeUserMaterialSuggestion } from '@/lib/userMaterialSuggestions';
 
 function idempotencyHeaders(): { 'Idempotency-Key': string } {
   const uuid =
@@ -197,7 +198,7 @@ function toFrontendJob(job: BackendJob): Job {
     servicePayment: job.servicePayment,
     providerAdjustedRequirements: job.providerAdjustedRequirements,
     userMaterialSuggestions: Array.isArray(job.userMaterialSuggestions)
-      ? job.userMaterialSuggestions
+      ? job.userMaterialSuggestions.map((s) => normalizeUserMaterialSuggestion(s))
       : [],
     providerSuggestions: Array.isArray(job.providerSuggestions) ? job.providerSuggestions : [],
     materialPayments: Array.isArray(job.materialPayments) ? job.materialPayments : [],
@@ -324,11 +325,11 @@ export async function releaseEscrowPayment(jobId: string, amount: number): Promi
 
 export async function addUserMaterialSuggestion(
   jobId: string,
-  suggested: MaterialLine,
+  suggestedItems: MaterialLine[],
   message: string
 ): Promise<Job> {
   const { data } = await apiClient.post<BackendJobResponse>(`/jobs/${jobId}/user-material-suggestions`, {
-    suggested,
+    suggestedItems,
     message,
   });
   return ensureJob(data, 'add user material suggestion');

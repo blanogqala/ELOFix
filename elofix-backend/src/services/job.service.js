@@ -1774,17 +1774,37 @@ async function updateProviderRequirements(jobId, updates, actorUserId, actorRole
   return await finalizeJob(job, meta);
 }
 
-async function addUserMaterialSuggestion(jobId, suggested, message, actorUserId) {
+function normalizeUserSuggestionItemsInput(rawItems) {
+  if (!Array.isArray(rawItems)) return [];
+  return rawItems.filter((item) => item && typeof item === "object" && item.productId && item.name);
+}
+
+function getUserSuggestionItemsFromRecord(suggestion) {
+  if (!suggestion || typeof suggestion !== "object") return [];
+  if (Array.isArray(suggestion.suggestedItems) && suggestion.suggestedItems.length > 0) {
+    return suggestion.suggestedItems;
+  }
+  if (suggestion.suggested && typeof suggestion.suggested === "object") {
+    return [suggestion.suggested];
+  }
+  return [];
+}
+
+async function addUserMaterialSuggestion(jobId, suggestedItems, message, actorUserId) {
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
+  const items = normalizeUserSuggestionItemsInput(suggestedItems);
+  if (items.length === 0) {
+    throw new AppError("At least one material is required", 400);
+  }
   const suggestion = {
     id: randomUUID(),
-    productId: suggested.productId,
-    originalProductId: suggested.originalProductId,
+    productId: items[0].productId,
+    originalProductId: items[0].originalProductId,
     message: String(message || ""),
-    suggested,
+    suggestedItems: items,
     status: "pending",
     createdAt: new Date().toISOString(),
   };
@@ -1816,15 +1836,19 @@ async function acceptUserSuggestion(jobId, suggestionId, actorUserId) {
     const accepted = suggestions.find((s) => s.id === suggestionId);
     let storeOrders = Array.isArray(m.storeOrders) ? [...m.storeOrders] : [];
     if (accepted) {
-      const storeId = accepted.suggested.branchId ?? accepted.suggested.supplierId;
-      const lineItem = {
-        productId: accepted.suggested.productId,
-        name: accepted.suggested.name,
-        qty: accepted.suggested.qty,
-        unitPrice: accepted.suggested.unitPrice,
-        qualityTier: accepted.suggested.qualityTier,
-        imageUrl: accepted.suggested.imageUrl,
-      };
+      const items = getUserSuggestionItemsFromRecord(accepted);
+      if (items.length === 0) {
+        throw new AppError("Suggestion has no materials", 400);
+      }
+      const storeId = items[0].branchId ?? items[0].supplierId;
+      const lineItems = items.map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        qty: item.qty,
+        unitPrice: item.unitPrice,
+        qualityTier: item.qualityTier,
+        imageUrl: item.imageUrl,
+      }));
 
       /** Never merge customer suggestions into a provider material-request store order — that duplicated pending + suggestion tabs.
        * Stay on a dedicated order tagged with sourceUserSuggestionId until the customer pays. */
@@ -1835,15 +1859,15 @@ async function acceptUserSuggestion(jobId, suggestionId, actorUserId) {
         const o = storeOrders[existingSuggestionOrderIdx];
         storeOrders[existingSuggestionOrderIdx] = {
           ...o,
-          items: [...(Array.isArray(o.items) ? o.items : []), lineItem],
+          items: lineItems,
         };
       } else {
         storeOrders.push({
           storeId,
           orderId: randomUUID(),
           sourceUserSuggestionId: suggestionId,
-          items: [lineItem],
-          storeName: accepted.suggested.supplierName,
+          items: lineItems,
+          storeName: items[0].supplierName,
           deliveryType: "SELF",
           deliveryFee: 0,
           deliveryStatus: "SelfCollect",

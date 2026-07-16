@@ -3,6 +3,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import type { JobStoreOrder, UserMaterialSuggestion } from '@/types';
 import { MaterialCard } from '@/components/materials/MaterialCard';
+import {
+  getUserSuggestionItems,
+  getUserSuggestionStoreInfo,
+  getUserSuggestionSubtotal,
+} from '@/lib/userMaterialSuggestions';
 
 export interface CustomerSuggestionsListProps {
   suggestions: UserMaterialSuggestion[];
@@ -50,8 +55,9 @@ export function CustomerSuggestionsList({
     >
       <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
         {suggestions.map((s) => {
-          const line = s.suggested;
-          const subtotal = line.qty * line.unitPrice;
+          const items = getUserSuggestionItems(s);
+          const { storeName } = getUserSuggestionStoreInfo(s);
+          const subtotal = getUserSuggestionSubtotal(s);
           const linked = getPendingOrderForAcceptedSuggestion(s);
           const st = String(s.status || '').toLowerCase();
           const isPending = st === 'pending';
@@ -76,16 +82,14 @@ export function CustomerSuggestionsList({
             <MaterialCard
               key={s.id}
               status={isPending ? 'suggested' : withdrawnRecord ? 'pending' : 'approved'}
-              supplierName={line.supplierName || 'Store'}
+              supplierName={storeName}
               subtotal={subtotal}
-              items={[
-                {
-                  rowKey: s.id,
-                  name: line.name,
-                  qty: line.qty,
-                  lineTotal: subtotal,
-                },
-              ]}
+              items={items.map((line) => ({
+                rowKey: `${s.id}-${line.productId}`,
+                name: line.name,
+                qty: line.qty,
+                lineTotal: line.qty * line.unitPrice,
+              }))}
               meta={
                 <>
                   {s.message ? <p className="text-sm text-muted-foreground">{s.message}</p> : null}

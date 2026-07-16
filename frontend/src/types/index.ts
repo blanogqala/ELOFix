@@ -500,7 +500,10 @@ export interface UserMaterialSuggestion {
   productId: string;
   originalProductId?: string;
   message: string;
-  suggested: MaterialLine;
+  /** Grouped materials in one customer suggestion. */
+  suggestedItems: MaterialLine[];
+  /** @deprecated Legacy single-item shape; normalized into suggestedItems on read. */
+  suggested?: MaterialLine;
   status: 'pending' | 'accepted' | 'rejected';
   createdAt: string;
   /** Set when suggestion was withdrawn after acceptance (before payment); allows purge UX. */

@@ -247,9 +247,15 @@ async function updateProviderRequirements(req, res) {
 }
 
 async function addUserMaterialSuggestion(req, res) {
+  const suggestedItems =
+    Array.isArray(req.body?.suggestedItems) && req.body.suggestedItems.length > 0
+      ? req.body.suggestedItems
+      : req.body?.suggested
+        ? [req.body.suggested]
+        : [];
   const job = await jobService.addUserMaterialSuggestion(
     req.params.id,
-    req.body?.suggested,
+    suggestedItems,
     req.body?.message,
     req.user.userId
   );

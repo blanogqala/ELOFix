@@ -17,6 +17,11 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Job, MaterialLine, SavedCard, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { MaterialCard } from '@/components/materials/MaterialCard';
+import {
+  getUserSuggestionItems,
+  getUserSuggestionStoreInfo,
+  getUserSuggestionSubtotal,
+} from '@/lib/userMaterialSuggestions';
 import { MaterialOrderDeliveryModeBadge, MaterialOrderStatusSummary } from '@/components/materials/MaterialOrderStatusSummary';
 import { MaterialOrderExpandedDetails } from '@/components/materials/MaterialOrderExpandedDetails';
 import { LoadingOverlay } from '@/components/common/loading';
@@ -974,10 +979,9 @@ export function MaterialPaymentSection({
                 {suggestionTabSuggestions.length > 0 ? (
                   <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
                     {suggestionTabSuggestions.map((suggestion) => {
-                      const storeName = suggestion.suggested.supplierName || 'Store';
-                      const storeId =
-                        suggestion.suggested.branchId ?? suggestion.suggested.supplierId ?? '';
-                      const lineTotal = suggestion.suggested.qty * suggestion.suggested.unitPrice;
+                      const items = getUserSuggestionItems(suggestion);
+                      const { storeName, storeId } = getUserSuggestionStoreInfo(suggestion);
+                      const lineTotal = getUserSuggestionSubtotal(suggestion);
                       const stLow = String(suggestion.status || '').toLowerCase();
                       const isPendingApproval = stLow === 'pending';
                       const withdrawnRecord = Boolean(suggestion.withdrawnAfterAccept) && stLow === 'rejected';
@@ -1061,14 +1065,12 @@ export function MaterialPaymentSection({
                           }
                           supplierName={storeName}
                           subtotal={lineTotal}
-                          items={[
-                            {
-                              rowKey: suggestion.id,
-                              name: suggestion.suggested.name,
-                              qty: suggestion.suggested.qty,
-                              lineTotal,
-                            },
-                          ]}
+                          items={items.map((line) => ({
+                            rowKey: `${suggestion.id}-${line.productId}`,
+                            name: line.name,
+                            qty: line.qty,
+                            lineTotal: line.qty * line.unitPrice,
+                          }))}
                           meta={
                             <>
                               {isPendingApproval ? (

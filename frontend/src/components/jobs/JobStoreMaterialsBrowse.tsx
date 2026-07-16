@@ -57,7 +57,7 @@ export type JobStoreMaterialsBrowseProps =
       jobLocation?: JobLocation | null;
       jobCategory: string;
       onBack: () => void;
-      onSendSuggestion: (material: MaterialLine, message: string) => Promise<void>;
+      onSendSuggestion: (materials: MaterialLine[], message: string) => Promise<void>;
     };
 
 /** Mirrors AddMaterialsModal + SuggestAlternativeMaterialsModal filtering before category dropdown. */
@@ -116,8 +116,6 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
   const [cart, setCart] = useState<Record<string, { product: Product; qty: number; supplier: Supplier }>>({});
-  const [selectedProduct, setSelectedProduct] = useState<{ product: Product; supplier: Supplier } | null>(null);
-  const [qtySuggest, setQtySuggest] = useState(1);
   const [message, setMessage] = useState('');
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [isSavingCart, setIsSavingCart] = useState(false);
@@ -231,15 +229,19 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const resetProductsUi = useCallback(() => {
     setSearchQuery('');
     setCategoryFilter(ALL_CATEGORIES_VALUE);
-    setSelectedProduct(null);
-    setQtySuggest(1);
     setMessage('');
-  }, []);
+    if (variant === 'user_suggestion') {
+      setCart({});
+    }
+  }, [variant]);
 
   const handleSelectSupplier = (supplier: Supplier) => {
     setSelectedSupplier(supplier);
     setView('products');
     resetProductsUi();
+    if (variant === 'user_suggestion') {
+      setCart({});
+    }
   };
 
   const storeTitle = (s: StoreRow) => s.displayName || s.name;
@@ -333,25 +335,13 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   };
 
   const handleSubmitSuggestion = async () => {
-    if (!selectedProduct || variant !== 'user_suggestion' || !suggestFn) return;
+    if (cartItemCount === 0 || variant !== 'user_suggestion' || !suggestFn) return;
     setIsSubmittingUser(true);
     try {
-      const storeRow = selectedProduct.supplier as StoreRow;
-      const branchId = storeRow.branchId ?? storeRow.id;
-      const label = selectedProduct.supplier.displayName || selectedProduct.supplier.name;
-      const material: MaterialLine = {
-        branchId,
-        supplierId: branchId,
-        supplierName: label,
-        productId: selectedProduct.product.id,
-        name: selectedProduct.product.name,
-        qty: qtySuggest,
-        unitPrice: selectedProduct.product.price,
-        qualityTier: selectedProduct.product.qualityTier,
-        unit: selectedProduct.product.unit,
-        ...(selectedProduct.product.image && { imageUrl: selectedProduct.product.image }),
-      };
-      await suggestFn(material, message || 'I found this alternative — please consider it.');
+      await suggestFn(
+        linesFromCart(),
+        message.trim() || 'I found these alternatives — please consider them.'
+      );
       onBack();
     } finally {
       setIsSubmittingUser(false);
@@ -385,7 +375,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
         : 'Pick an in-stock branch near the job. Your provider will review your suggestion.'
       : variant === 'provider_cart'
         ? 'Search and filter by category, then add items to send to your customer.'
-        : 'Pick one product, set quantity and an optional note, then send.';
+        : 'Add items with quantities, then send your suggestion to the provider.';
 
   return (
     <>
@@ -566,64 +556,26 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
             )}
 
             <ul className="m-0 grid list-none grid-cols-2 gap-3 p-0 sm:gap-4 lg:grid-cols-3">
-              {filteredProducts.map((product) =>
-                variant === 'provider_cart' ? (
-                  <ProductRowCart
-                    key={product.id}
-                    product={product}
-                    qty={getCartQty(product.id, selectedSupplier.id)}
-                    getQualityColor={getQualityColor}
-                    onAdd={() => handleAddToCart(product, selectedSupplier)}
-                    onRemove={() => handleRemoveFromCart(product, selectedSupplier)}
-                  />
-                ) : (
-                  <ProductRowSuggest
-                    key={product.id}
-                    product={product}
-                    selected={selectedProduct?.product.id === product.id}
-                    getQualityColor={getQualityColor}
-                    onPick={() =>
-                      setSelectedProduct({
-                        product,
-                        supplier: selectedSupplier,
-                      })
-                    }
-                  />
-                )
-              )}
+              {filteredProducts.map((product) => (
+                <ProductRowCart
+                  key={product.id}
+                  product={product}
+                  qty={getCartQty(product.id, selectedSupplier.id)}
+                  getQualityColor={getQualityColor}
+                  onAdd={() => handleAddToCart(product, selectedSupplier)}
+                  onRemove={() => handleRemoveFromCart(product, selectedSupplier)}
+                />
+              ))}
             </ul>
 
-            {variant === 'user_suggestion' && selectedProduct && (
+            {variant === 'user_suggestion' && cartItemCount > 0 && (
               <section className="rounded-xl border border-border bg-muted/20 p-4 space-y-4 mt-8">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected</p>
-                    <p className="font-medium">{selectedProduct.product.name}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground whitespace-nowrap">Qty</span>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-9 w-9"
-                      onClick={() => setQtySuggest((q) => Math.max(1, q - 1))}
-                      aria-label="Decrease quantity"
-                    >
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                    <span className="w-10 text-center font-medium">{qtySuggest}</span>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-9 w-9"
-                      onClick={() => setQtySuggest((q) => q + 1)}
-                      aria-label="Increase quantity"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected items</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {cartItemCount} item{cartItemCount === 1 ? '' : 's'} ·{' '}
+                    <span className="font-semibold text-foreground">{formatCurrency(cartTotal, { decimals: 2 })}</span>
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="browse-suggest-msg" className="text-muted-foreground">
@@ -631,7 +583,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                   </Label>
                   <Textarea
                     id="browse-suggest-msg"
-                    placeholder="Why you’re suggesting this alternative…"
+                    placeholder="Why you're suggesting these alternatives…"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     rows={3}
@@ -683,19 +635,39 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
               </Button>
             </div>
           </div>
+        ) : variant === 'user_suggestion' && view === 'products' ? (
+          <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-h-[2.5rem] flex-1 flex-wrap items-center gap-2 text-sm text-muted-foreground sm:max-w-xl">
+              {cartItemCount > 0 ? (
+                <>
+                  <ShoppingCart className="h-4 w-4 shrink-0 text-foreground opacity-70" aria-hidden />
+                  <span className="tabular-nums leading-snug text-foreground">
+                    <span className="text-muted-foreground">{cartItemCount} items · </span>
+                    <span className="font-semibold">{formatCurrency(cartTotal, { decimals: 2 })}</span>
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm italic text-muted-foreground">Add items to your suggestion list.</span>
+              )}
+            </div>
+            <div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
+              <Button type="button" variant="outline" onClick={onBack} className="min-[480px]:flex-1 sm:flex-none">
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="min-[480px]:flex-1 sm:flex-none"
+                onClick={() => void handleSubmitSuggestion()}
+                disabled={cartItemCount === 0 || isSubmittingUser}
+              >
+                {isSubmittingUser ? 'Sending…' : 'Send suggestion'}
+              </Button>
+            </div>
+          </div>
         ) : variant === 'provider_cart' ? (
           <div className="flex w-full justify-end sm:flex-initial">
             <Button type="button" variant="outline" onClick={onBack}>
               Cancel
-            </Button>
-          </div>
-        ) : view === 'products' && selectedProduct ? (
-          <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2">
-            <Button type="button" variant="outline" onClick={onBack} className="w-full sm:w-auto">
-              Cancel
-            </Button>
-            <Button type="button" className="w-full sm:w-auto" onClick={() => void handleSubmitSuggestion()} disabled={isSubmittingUser}>
-              {isSubmittingUser ? 'Sending…' : 'Send suggestion'}
             </Button>
           </div>
         ) : (
@@ -786,61 +758,6 @@ function ProductRowCart({
           </div>
         </div>
       </div>
-    </li>
-  );
-}
-
-function ProductRowSuggest({
-  product,
-  selected,
-  getQualityColor,
-  onPick,
-}: {
-  product: Product;
-  selected: boolean;
-  getQualityColor: (tier: string) => string;
-  onPick: () => void;
-}) {
-  return (
-    <li className="flex min-h-0 h-full list-none">
-      <button
-        type="button"
-        className={cn(
-          'flex h-full min-h-[260px] w-full flex-col overflow-hidden rounded-xl border-2 bg-card text-left shadow-sm ring-1 ring-border transition-all',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          selected ? 'border-primary ring-primary/30 shadow-md' : 'border-primary hover:border-primary'
-        )}
-        onClick={onPick}
-      >
-        <div className="relative aspect-square w-full shrink-0 bg-muted">
-          {product.image ? (
-            <img src={resolveUploadUrl(product.image)} alt="" className="absolute inset-0 size-full object-cover" />
-          ) : (
-            <div className="flex size-full items-center justify-center p-3 text-center text-[10px] text-muted-foreground">No image</div>
-          )}
-          {selected && (
-            <span className="absolute left-2 top-2 rounded-md bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground shadow-sm">
-              Selected
-            </span>
-          )}
-        </div>
-        <div className="flex flex-1 flex-col gap-2 p-3">
-          <p className="text-sm font-medium leading-snug line-clamp-2">{product.name}</p>
-          <div className="flex flex-wrap gap-1.5">
-            <Badge variant="outline" className={cn('text-[10px] font-normal', getQualityColor(product.qualityTier))}>
-              {product.qualityTier}
-            </Badge>
-            <Badge variant="secondary" className="truncate text-[10px] font-normal">{product.category}</Badge>
-          </div>
-          {product.description ? (
-            <p className="text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-          ) : null}
-          <div className="mt-auto pt-3">
-            <p className="text-sm font-semibold tabular-nums">{formatCurrency(product.price, { decimals: 2 })}</p>
-            <p className="text-[10px] text-muted-foreground">/{product.unit}</p>
-          </div>
-        </div>
-      </button>
     </li>
   );
 }
