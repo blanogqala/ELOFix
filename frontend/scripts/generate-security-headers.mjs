@@ -77,6 +77,15 @@ function buildCsp(env) {
     firebaseEnabled ? 'https://www.gstatic.com' : null,
   ]);
 
+  // MapLibre basemap: MapTiler (prod) or OpenFreeMap (fallback). Style JSON,
+  // vector tiles, and glyphs use fetch → connect-src; sprites may use img-src.
+  const mapTileConnect = [
+    'https://api.maptiler.com',
+    'https://*.maptiler.com',
+    'https://tiles.openfreemap.org',
+    'https://*.openfreemap.org',
+  ];
+
   const connectSrc = uniq([
     "'self'",
     apiOrigin,
@@ -84,6 +93,7 @@ function buildCsp(env) {
     'https://maps.googleapis.com',
     'https://*.googleapis.com',
     'https://m1.openfpcdn.io',
+    ...mapTileConnect,
     firebaseEnabled ? 'https://identitytoolkit.googleapis.com' : null,
     firebaseEnabled ? 'https://securetoken.googleapis.com' : null,
     firebaseEnabled ? 'https://www.googleapis.com' : null,
@@ -101,12 +111,16 @@ function buildCsp(env) {
     'https://*.gstatic.com',
     'https://*.googleusercontent.com',
     'https://lh3.googleusercontent.com',
+    ...mapTileConnect,
   ]);
 
   const frameSrc = uniq([
     firebaseEnabled ? 'https://accounts.google.com' : null,
     firebaseEnabled ? 'https://*.firebaseapp.com' : null,
   ]);
+
+  // MapLibre creates Web Workers from blob: URLs; without this, the canvas stays blank.
+  const workerSrc = uniq(["'self'", 'blob:']);
 
   const directives = [
     `default-src 'self'`,
@@ -115,6 +129,8 @@ function buildCsp(env) {
     `img-src ${imgSrc.join(' ')}`,
     `font-src 'self' https://fonts.gstatic.com data:`,
     `connect-src ${connectSrc.join(' ')}`,
+    `worker-src ${workerSrc.join(' ')}`,
+    `child-src ${workerSrc.join(' ')}`,
     frameSrc.length ? `frame-src ${frameSrc.join(' ')}` : `frame-src 'none'`,
     `frame-ancestors 'none'`,
     `base-uri 'self'`,
