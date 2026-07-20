@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => ({
 
           if (id.includes("jspdf") || id.includes("xlsx") || id.includes("html2canvas")) return "export-tools";
           if (id.includes("firebase")) return "firebase";
-          if (id.includes("@react-google-maps")) return "google-maps";
+          if (id.includes("maplibre-gl")) return "maplibre";
           if (id.includes("@fingerprintjs")) return "fingerprint";
           if (id.includes("socket.io")) return "socket";
           if (id.includes("@radix-ui") || id.includes("lucide-react")) return "ui-vendor";

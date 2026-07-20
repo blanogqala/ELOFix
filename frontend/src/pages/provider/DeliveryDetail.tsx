@@ -18,14 +18,10 @@ import { ProviderCourierActions } from '@/components/tracking/ProviderCourierAct
 import { formatCurrency } from '@/lib/formatCurrency';
 import { ArrowLeft, MapPin, Navigation, Package, Truck } from 'lucide-react';
 
+import { buildExternalDirectionsUrl } from '@/lib/map/externalNavigationUrl';
+
 function mapsDirectionsUrl(lat?: number, lng?: number, address?: string) {
-  if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
-    return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-  }
-  if (address?.trim()) {
-    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address.trim())}`;
-  }
-  return null;
+  return buildExternalDirectionsUrl({ lat, lng, address });
 }
 
 export default function ProviderDeliveryDetail() {

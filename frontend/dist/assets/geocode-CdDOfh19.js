@@ -1,0 +1,1 @@
+import{e as s}from"./index-DbrCAbeH.js";async function n(o,e){const{data:r}=await s.get("/geocode/reverse",{params:{lat:o,lng:e}});if(!(r!=null&&r.success))throw new Error("Geocoding failed");return r}async function a(o){const{data:e}=await s.get("/geocode/forward",{params:{q:o}});if(!(e!=null&&e.success))throw new Error("Geocoding failed");return e}export{a as f,n as r};

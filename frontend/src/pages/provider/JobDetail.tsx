@@ -45,7 +45,7 @@ import {
   quotationFileIcon,
   validateQuotationFileClient,
 } from '@/lib/quotationFile';
-import { cn } from '@/lib/utils';
+import { buildExternalSearchUrl } from '@/lib/map/externalNavigationUrl';
 import { formatCurrency } from '@/lib/formatCurrency';
 import {
   Select,
@@ -112,6 +112,7 @@ import {
   measurementsHaveStructuredSpecs,
   mergeJobMeasurementPayload,
 } from '@/lib/jobSpecifications';
+import { cn } from '@/lib/utils';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
   if (!values) return undefined;
@@ -693,9 +694,7 @@ export default function ProviderJobDetail() {
     ? [job.location.address, job.location.city, job.location.area, job.location.suburb].filter(Boolean)
     : [];
   const fullAddress = locationParts.join(', ');
-  const mapsUrl = fullAddress
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`
-    : null;
+  const mapsUrl = fullAddress ? buildExternalSearchUrl(fullAddress) : null;
 
   const rawStoreOrders = job?.storeOrders && job.storeOrders.length > 0 ? job.storeOrders : [];
   const seenMaterialOrderIds = new Set<string>();

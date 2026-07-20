@@ -17,6 +17,20 @@ async function reverse(req, res) {
   res.json({ success: true, ...result });
 }
 
+async function forward(req, res) {
+  const q = req.query?.q ?? req.body?.q;
+  const result = await geocodeService.forwardGeocode(q);
+  res.json({ success: true, ...result });
+}
+
+async function search(req, res) {
+  const q = req.query?.q ?? req.body?.q;
+  const result = await geocodeService.searchAddresses(q);
+  res.json({ success: true, ...result });
+}
+
 module.exports = {
   reverse,
+  forward,
+  search,
 };

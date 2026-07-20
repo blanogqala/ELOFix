@@ -195,6 +195,153 @@ async function reverseGeocode(lat, lng) {
   return mapNominatim(data, lat, lng);
 }
 
+const CACHE_MAX = 200;
+const CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** @type {Map<string, { value: unknown; expiresAt: number }>} */
+const queryCache = new Map();
+
+function cacheGet(key) {
+  const entry = queryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    queryCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function cacheSet(key, value) {
+  if (queryCache.size >= CACHE_MAX) {
+    const first = queryCache.keys().next().value;
+    if (first) queryCache.delete(first);
+  }
+  queryCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+function sanitizeQuery(raw) {
+  const q = String(raw || "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .trim()
+    .slice(0, 256);
+  if (!q || q.length < 2) {
+    throw new AppError("Query must be at least 2 characters", 400);
+  }
+  return q;
+}
+
+function nominatimHeaders() {
+  return {
+    Accept: "application/json",
+    "User-Agent": UA,
+  };
+}
+
+async function nominatimSearch(query, limit = 5) {
+  const emailQuery = CONTACT ? `&email=${encodeURIComponent(CONTACT)}` : "";
+  const url =
+    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}` +
+    `&format=json&addressdetails=1&limit=${limit}&countrycodes=za${emailQuery}`;
+  const res = await fetch(url, {
+    headers: nominatimHeaders(),
+    signal: AbortSignal.timeout(FETCH_MS),
+  });
+  if (!res.ok) {
+    throw new AppError("Unable to search addresses", 502);
+  }
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    throw new AppError("Invalid geocoder response", 502);
+  }
+  return data;
+}
+
+function mapNominatimSearchItem(item) {
+  const lat = Number(item.lat);
+  const lng = Number(item.lon);
+  const label = String(item.display_name || "").trim();
+  return {
+    label,
+    lat,
+    lng,
+    coordinates: { lat, lng },
+  };
+}
+
+function normalizeForwardQuery(raw) {
+  let q = sanitizeQuery(raw);
+  const fixes = [
+    [/\bbelliville\b/gi, 'Bellville'],
+    [/\bbellville\b/gi, 'Bellville'],
+    [/\bcapetown\b/gi, 'Cape Town'],
+    [/\bjhb\b/gi, 'Johannesburg'],
+  ];
+  for (const [pattern, replacement] of fixes) {
+    q = q.replace(pattern, replacement);
+  }
+  return q;
+}
+
+function forwardQueryVariants(query) {
+  const base = normalizeForwardQuery(query);
+  const variants = [base];
+  if (!/\bsouth africa\b/i.test(base)) {
+    variants.push(`${base}, South Africa`);
+  }
+  const parts = base.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    variants.push(`${parts[0]}, ${parts[parts.length - 1]}, South Africa`);
+  }
+  return [...new Set(variants)];
+}
+
+async function forwardGeocode(query) {
+  const variants = forwardQueryVariants(query);
+
+  for (const variant of variants) {
+    const cacheKey = `forward:${variant.toLowerCase()}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return cached;
+
+    const results = await nominatimSearch(variant, 3);
+    const first = results[0];
+    if (!first) continue;
+
+    const lat = Number(first.lat);
+    const lng = Number(first.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+    const payload = {
+      lat,
+      lng,
+      coordinates: { lat, lng },
+      label: String(first.display_name || variant).trim(),
+    };
+    cacheSet(cacheKey, payload);
+    return payload;
+  }
+
+  throw new AppError("No location found for this address", 404);
+}
+
+async function searchAddresses(query) {
+  const q = sanitizeQuery(query);
+  const cacheKey = `search:${q.toLowerCase()}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const results = await nominatimSearch(q, 8);
+  const suggestions = results
+    .map(mapNominatimSearchItem)
+    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng) && s.label);
+  const payload = { suggestions };
+  cacheSet(cacheKey, payload);
+  return payload;
+}
+
 module.exports = {
   reverseGeocode,
+  forwardGeocode,
+  searchAddresses,
 };

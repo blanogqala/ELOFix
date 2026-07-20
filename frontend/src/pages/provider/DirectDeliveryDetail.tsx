@@ -16,10 +16,10 @@ import {
 import { formatCurrency } from '@/lib/formatCurrency';
 import { ArrowLeft, MapPin, Navigation, Package } from 'lucide-react';
 
+import { buildExternalDirectionsUrl } from '@/lib/map/externalNavigationUrl';
+
 function mapsUrl(lat?: number, lng?: number, address?: string) {
-  if (lat != null && lng != null) return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-  if (address?.trim()) return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
-  return null;
+  return buildExternalDirectionsUrl({ lat, lng, address });
 }
 
 export default function ProviderDirectDeliveryDetail() {

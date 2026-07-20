@@ -1,16 +1,20 @@
-import { GoogleMap, Marker, DirectionsRenderer } from '@react-google-maps/api';
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
+import type maplibregl from 'maplibre-gl';
 import { cn } from '@/lib/utils';
 import { haversineMeters } from '@/lib/geolocationSendGate';
-import { GoogleMapsProvider, useGoogleMapsContext } from '@/components/map/GoogleMapsProvider';
-import { ELOFIX_MAP_OPTIONS } from '@/lib/map/googleMapStyles';
-import {
-  bearingBetween,
-  destinationMarkerIcon,
-  vehicleMarkerIcon,
-  type DestinationPinKind,
-} from '@/lib/map/mapMarkerIcons';
+import { MapProvider, useMapLibre } from '@/components/maps/MapProvider';
+import { MapView } from '@/components/maps/MapView';
+import { MapMarker } from '@/components/maps/Marker';
+import { RouteRenderer } from '@/components/maps/RouteRenderer';
+import { MapControls } from '@/components/maps/MapControls';
+import { MapSkeleton } from '@/components/maps/MapSkeleton';
+import { MapErrorState } from '@/components/maps/MapErrorState';
+import { useMap } from '@/hooks/maps/useMap';
+import { useForwardGeocode } from '@/hooks/maps/useGeocoder';
+import { useRoute } from '@/hooks/maps/useRoute';
+import { bearingBetween, type DestinationPinKind } from '@/lib/map/mapMarkerIcons';
 import { useSmoothedLatLng } from '@/lib/map/smoothCoords';
+import { MAP_DEFAULT_CENTER, MAP_DRIVER_ZOOM } from '@/lib/map/mapStyles';
 
 const DRIVER_NEAR_METERS = 500;
 const DRIVER_ARRIVING_METERS = 120;
@@ -41,22 +45,16 @@ export type DriverProximityPayload = {
   distanceMeters: number | null;
 };
 
-const defaultCenter = { lat: -26.2, lng: 28.05 };
-
 export interface DeliveryMapProps {
   lat?: number | null;
   lng?: number | null;
   destination?: string;
   destinationCoords?: { lat: number; lng: number } | null;
-  /** Collection pickup vs customer drop-off — drives route label and pin style. */
   routePhase?: DeliveryRoutePhase;
   className?: string;
   mapContainerClassName?: string;
-  /** Live map expected but driver position not yet available */
   showWaitingBanner?: boolean;
-  /** Session no longer valid (customer view) */
   trackingEnded?: boolean;
-  /** Completed delivery — show static destination map, not live GPS placeholder */
   completedMode?: boolean;
   onProximityChange?: (v: DriverProximityPayload) => void;
   onEtaChange?: (etaText: string | null) => void;
@@ -72,25 +70,20 @@ function MapBody({
   mapContainerClassName = 'h-64 w-full min-h-[220px]',
   showWaitingBanner,
   trackingEnded,
-  completedMode,
   onProximityChange,
   onEtaChange,
 }: Omit<DeliveryMapProps, 'className'> & { className?: string }) {
-  const mapRef = useRef<google.maps.Map | null>(null);
   const prevDriverRef = useRef<{ lat: number; lng: number } | null>(null);
   const [headingDeg, setHeadingDeg] = useState(0);
+  const [mapReady, setMapReady] = useState(false);
   const proximityRef = useRef({ near: false, arriving: false, distanceMeters: null as number | null });
   const onProximityChangeRef = useRef(onProximityChange);
   onProximityChangeRef.current = onProximityChange;
   const onEtaChangeRef = useRef(onEtaChange);
   onEtaChangeRef.current = onEtaChange;
 
-  const { isLoaded, loadError, authFailed } = useGoogleMapsContext();
-
-  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
-  const [geocodedDest, setGeocodedDest] = useState<google.maps.LatLngLiteral | null>(null);
-  const [geocoding, setGeocoding] = useState(false);
-  const [etaText, setEtaText] = useState<string | null>(null);
+  const { isLoaded, loadError } = useMapLibre();
+  const { mapRef, fitBounds, fitPoints, setCenter } = useMap();
 
   const rawDriverPos =
     lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
@@ -103,16 +96,32 @@ function MapBody({
       ? { lat: smoothed.lat, lng: smoothed.lng }
       : null;
 
+  const hasExplicitDest =
+    destinationCoords &&
+    Number.isFinite(destinationCoords.lat) &&
+    Number.isFinite(destinationCoords.lng);
+
+  const { point: geocodedDest, loading: geocoding, error: geocodeError } = useForwardGeocode(
+    destination,
+    Boolean(destination?.trim()) && !hasExplicitDest
+  );
+
   const destForRoute = useMemo(() => {
-    if (destinationCoords && Number.isFinite(destinationCoords.lat) && Number.isFinite(destinationCoords.lng)) {
-      return { lat: Number(destinationCoords.lat), lng: Number(destinationCoords.lng) };
+    if (hasExplicitDest) {
+      return { lat: Number(destinationCoords!.lat), lng: Number(destinationCoords!.lng) };
     }
     if (geocodedDest) return geocodedDest;
     return null;
-  }, [destinationCoords, geocodedDest]);
+  }, [hasExplicitDest, destinationCoords, geocodedDest]);
 
   const pinKind: DestinationPinKind =
     routePhase === 'to_collection' || routePhase === 'at_collection' ? 'collection' : 'delivery';
+
+  const { route, etaText } = useRoute(rawDriverPos, destForRoute);
+
+  useEffect(() => {
+    onEtaChangeRef.current?.(etaText);
+  }, [etaText]);
 
   useEffect(() => {
     if (!rawDriverPos) {
@@ -135,79 +144,22 @@ function MapBody({
   const center = useMemo(() => {
     if (driverPos) return driverPos;
     if (destForRoute) return destForRoute;
-    return defaultCenter;
+    return MAP_DEFAULT_CENTER;
   }, [driverPos, destForRoute]);
 
   useEffect(() => {
-    if (!isLoaded || !window.google?.maps) return;
-    const addr = destination?.trim();
-    if (!addr || destinationCoords) {
-      setGeocodedDest(null);
-      setGeocoding(false);
+    if (!mapReady || !mapRef.current) return;
+    if (route?.bounds) {
+      fitBounds(route.bounds);
       return;
     }
-    setGeocoding(true);
-    const geo = new google.maps.Geocoder();
-    geo.geocode({ address: addr }, (results, status) => {
-      if (status === 'OK' && results?.[0]?.geometry?.location) {
-        setGeocodedDest(results[0].geometry.location.toJSON());
-      } else {
-        setGeocodedDest(null);
-      }
-      setGeocoding(false);
-    });
-  }, [isLoaded, destination, destinationCoords]);
-
-  useEffect(() => {
-    if (!isLoaded || !rawDriverPos || !destForRoute) {
-      setDirections(null);
-      setEtaText(null);
-      onEtaChangeRef.current?.(null);
-      return;
-    }
-    const svc = new google.maps.DirectionsService();
-    svc.route(
-      {
-        origin: rawDriverPos,
-        destination: destForRoute,
-        travelMode: google.maps.TravelMode.DRIVING,
-      },
-      (result, status) => {
-        if (status === 'OK' && result) {
-          setDirections(result);
-          const leg = result.routes[0]?.legs[0];
-          const eta = leg?.duration?.text ?? null;
-          setEtaText(eta);
-          onEtaChangeRef.current?.(eta);
-        } else {
-          setDirections(null);
-          setEtaText(null);
-          onEtaChangeRef.current?.(null);
-        }
-      }
-    );
-  }, [isLoaded, rawDriverPos?.lat, rawDriverPos?.lng, destForRoute?.lat, destForRoute?.lng]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !window.google?.maps) return;
-    if (directions?.routes?.[0]?.bounds) {
-      map.fitBounds(directions.routes[0].bounds, 48);
-      return;
-    }
-    if (driverPos && destForRoute) {
-      const b = new google.maps.LatLngBounds();
-      b.extend(driverPos);
-      b.extend(destForRoute);
-      map.fitBounds(b, 48);
-    } else if (driverPos) {
-      map.setCenter(driverPos);
-      map.setZoom(14);
+    const points = [driverPos, destForRoute].filter(Boolean) as { lat: number; lng: number }[];
+    if (points.length > 0) {
+      fitPoints(points);
     } else if (destForRoute) {
-      map.setCenter(destForRoute);
-      map.setZoom(12);
+      setCenter(destForRoute, MAP_DRIVER_ZOOM);
     }
-  }, [directions, driverPos, destForRoute]);
+  }, [mapReady, route, driverPos, destForRoute, fitBounds, fitPoints, setCenter, mapRef]);
 
   useEffect(() => {
     if (!driverPos || !destForRoute) {
@@ -242,35 +194,18 @@ function MapBody({
     destForRoute &&
     haversineMeters(driverPos.lat, driverPos.lng, destForRoute.lat, destForRoute.lng) < DRIVER_ARRIVING_METERS;
 
-  if (loadError || authFailed) {
+  if (loadError) {
     return (
-      <div
-        className={cn(
-          'rounded-lg border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground',
-          className
-        )}
-      >
-        <p className="font-medium text-foreground">Live map unavailable</p>
-        <p className="mt-1 leading-relaxed">
-          {authFailed
-            ? 'Google Maps rejected this site. In Google Cloud Console, allow your app URL under API key HTTP referrers (e.g. http://localhost:8080/*) and enable Maps JavaScript API + Directions API with billing on.'
-            : 'Could not load Google Maps. Check VITE_GOOGLE_MAPS_API_KEY and restart the dev server.'}
-        </p>
-        {driverPos && (
-          <p className="mt-2 text-xs tabular-nums">
-            Last position: {driverPos.lat.toFixed(5)}, {driverPos.lng.toFixed(5)}
-          </p>
-        )}
-      </div>
+      <MapErrorState
+        className={className}
+        message="Could not load the map library. Check your network connection and try again."
+        lastPosition={driverPos}
+      />
     );
   }
 
   if (!isLoaded) {
-    return (
-      <div className={cn('rounded-lg border border-border bg-muted/20 p-6 text-sm text-muted-foreground', className)}>
-        Loading map…
-      </div>
-    );
+    return <MapSkeleton className={className} />;
   }
 
   const hasDestinationHint = Boolean(destination?.trim() || destinationCoords);
@@ -289,6 +224,8 @@ function MapBody({
     );
   }
 
+  const mapInstance = mapRef.current;
+
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
       {trackingEnded ? (
@@ -300,17 +237,16 @@ function MapBody({
         <p className="border-b border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           {geocoding
             ? 'Loading route destination…'
-            : destForRoute
-              ? 'Waiting for driver location…'
-              : 'Waiting for driver location and a routable destination…'}
+            : geocodeError && !destForRoute
+              ? 'Could not locate the address on the map — waiting for driver location…'
+              : destForRoute
+                ? 'Waiting for driver location…'
+                : 'Waiting for driver location and a routable destination…'}
         </p>
       ) : null}
       {destination ? (
         <p className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">
-            {routePhaseSubtitle(routePhase)}
-          </span>{' '}
-          {destination}
+          <span className="font-medium text-foreground">{routePhaseSubtitle(routePhase)}</span> {destination}
         </p>
       ) : null}
       {arrivingBanner ? (
@@ -327,79 +263,32 @@ function MapBody({
           ETA {etaText}
         </p>
       ) : null}
-      <GoogleMap
-        mapContainerClassName={mapContainerClassName}
-        center={center}
-        zoom={driverPos ? 14 : 12}
-        options={ELOFIX_MAP_OPTIONS}
-        onLoad={(m) => {
-          mapRef.current = m;
-        }}
-      >
-        {directions ? (
-          <DirectionsRenderer
-            directions={directions}
-            options={{
-              suppressMarkers: true,
-              polylineOptions: { strokeColor: '#1a73e8', strokeOpacity: 0.95, strokeWeight: 5 },
-            }}
-          />
+      <div className={cn('relative elofix-map-surface', mapContainerClassName)}>
+        <MapView
+          className="h-full w-full"
+          center={center}
+          zoom={driverPos ? MAP_DRIVER_ZOOM : 12}
+          mapRef={mapRef}
+          onMapReady={() => setMapReady(true)}
+        />
+        {mapReady && mapInstance ? (
+          <>
+            <RouteRenderer map={mapInstance} geometry={route?.geometry ?? null} />
+            <MapMarker map={mapInstance} position={driverPos} kind="vehicle" headingDeg={headingDeg} />
+            <MapMarker map={mapInstance} position={destForRoute} kind="destination" pinKind={pinKind} />
+            <MapControls map={mapInstance} focusPoint={driverPos ?? destForRoute} />
+          </>
         ) : null}
-        {driverPos ? (
-          <Marker position={driverPos} icon={vehicleMarkerIcon(headingDeg)} zIndex={1000} />
-        ) : null}
-        {destForRoute ? (
-          <Marker position={destForRoute} icon={destinationMarkerIcon(pinKind)} zIndex={900} />
-        ) : null}
-      </GoogleMap>
+      </div>
     </div>
   );
 }
 
-function DeliveryMapComponent(props: DeliveryMapProps) {
-  const { apiKey } = useGoogleMapsContext();
-  if (!apiKey) {
-    const driverPos =
-      props.lat != null &&
-      props.lng != null &&
-      Number.isFinite(Number(props.lat)) &&
-      Number.isFinite(Number(props.lng))
-        ? { lat: Number(props.lat), lng: Number(props.lng) }
-        : null;
-    return (
-      <div
-        className={cn(
-          'rounded-lg border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground',
-          props.className
-        )}
-      >
-        <p className="font-medium text-foreground">Live map</p>
-        {props.trackingEnded ? <p className="mt-1 text-destructive">Tracking session ended</p> : null}
-        {props.showWaitingBanner && !driverPos ? (
-          <p className="mt-1">Waiting for driver location…</p>
-        ) : null}
-        <p className="mt-1">
-          {props.destination
-            ? `Destination: ${props.destination}`
-            : 'Add VITE_GOOGLE_MAPS_API_KEY to enable the map.'}
-        </p>
-        {driverPos && (
-          <p className="mt-2 text-xs tabular-nums">
-            Last position: {driverPos.lat.toFixed(5)}, {driverPos.lng.toFixed(5)}
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  return <MapBody {...props} />;
-}
-
 function DeliveryMapWithProvider(props: DeliveryMapProps) {
   return (
-    <GoogleMapsProvider>
-      <DeliveryMapComponent {...props} />
-    </GoogleMapsProvider>
+    <MapProvider>
+      <MapBody {...props} />
+    </MapProvider>
   );
 }
 
