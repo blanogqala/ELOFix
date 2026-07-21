@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import {
   Dialog,
   DialogContent,
@@ -379,10 +379,10 @@ export default function AdminCustomerDetail() {
                             <span
                               className={cn(
                                 'status-badge',
-                                getUserStatusBadgeClass(job.status),
+                                getUserJobBadgeClassForJob(job),
                               )}
                             >
-                              {getStandardizedStatusLabel(job.status)}
+                              {getJobDisplayStatusLabel(job)}
                             </span>
                           </td>
                           <td

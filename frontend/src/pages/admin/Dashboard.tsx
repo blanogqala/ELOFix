@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { getStandardizedStatusLabel, getUserStatusBadgeClass } from '@/lib/jobStatusMapping';
+import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { countAdminJobsByStatus, isAdminJobWorkflowCompleted } from '@/lib/adminJobStatus';
 import { formatAdminCommissionBreakdown, getAdminJobDisplayTotal } from '@/lib/adminJobFinancial';
 
@@ -101,8 +101,8 @@ export default function AdminDashboard() {
   };
 
   const getStatusBadge = (job: Job) => (
-    <span className={cn('status-badge', getUserStatusBadgeClass(job.status))}>
-      {getStandardizedStatusLabel(job.status)}
+    <span className={cn('status-badge', getUserJobBadgeClassForJob(job))}>
+      {getJobDisplayStatusLabel(job)}
     </span>
   );
 
