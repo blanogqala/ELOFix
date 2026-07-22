@@ -242,6 +242,7 @@ export function resolveOrderFinance(order: {
   platformCommission?: number;
   supplierEarning?: number;
   deliveryPaid?: boolean;
+  materialsPaid?: boolean;
   payment?: { deliveryPaid?: boolean; materialsPaid?: boolean };
   items?: Array<{ qty: number; unitPrice: number }>;
 }): OrderFinanceBreakdown {
@@ -267,6 +268,6 @@ export function resolveOrderFinance(order: {
     platformCommission: order.platformCommission,
     supplierEarning: order.supplierEarning,
     deliveryPaid,
-    materialsPaid: order.payment?.materialsPaid,
+    materialsPaid: order.materialsPaid ?? order.payment?.materialsPaid,
   });
 }

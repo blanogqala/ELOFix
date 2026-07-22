@@ -12,11 +12,26 @@ import { EloFixLogo } from '@/components/EloFixLogo';
 import { LegalAgreementCheckbox } from '@/components/legal/LegalAgreementCheckbox';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
 import { buildLegalAcceptancePayload } from '@/lib/legal/versions';
+import { PasswordRequirements } from '@/components/auth/PasswordRequirements';
+import {
+  emailValidationMessage,
+  isPasswordValid,
+  passwordValidationMessage,
+  personNameValidationMessage,
+  phoneValidationMessage,
+} from '@/lib/accountValidation';
+
+type RegisterFieldErrors = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  password?: string;
+};
 
 export default function Register() {
   const [searchParams] = useSearchParams();
   const defaultRole = searchParams.get('role') === 'provider' ? 'provider' : 'user';
-  
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -26,9 +41,19 @@ export default function Register() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [legalAccepted, setLegalAccepted] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<RegisterFieldErrors>({});
   const { register } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  const clearFieldError = (field: keyof RegisterFieldErrors) => {
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,10 +68,23 @@ export default function Register() {
       return;
     }
 
+    const nextErrors: RegisterFieldErrors = {};
+    const nameError = personNameValidationMessage(name);
+    if (nameError) nextErrors.name = nameError;
+    const emailError = emailValidationMessage(email);
+    if (emailError) nextErrors.email = emailError;
+    const phoneError = phoneValidationMessage(phone);
+    if (phoneError) nextErrors.phone = phoneError;
+    const passwordError = passwordValidationMessage(password);
+    if (passwordError) nextErrors.password = passwordError;
+
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
     setIsLoading(true);
 
     try {
-      await register(name, email, phone, password, role, buildLegalAcceptancePayload(role));
+      await register(name.trim(), email.trim(), phone, password, role, buildLegalAcceptancePayload(role));
       toast({
         title: 'Account created!',
         description: role === 'provider'
@@ -58,9 +96,27 @@ export default function Register() {
         role === 'provider' ? { state: { newProviderOnboarding: true } } : undefined,
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      const lower = message.toLowerCase();
+      if (lower.includes('email') && (lower.includes('exist') || lower.includes('registered') || lower.includes('already'))) {
+        setFieldErrors({ email: message });
+        return;
+      }
+      if (lower.includes('phone')) {
+        setFieldErrors({ phone: message });
+        return;
+      }
+      if (lower.includes('name')) {
+        setFieldErrors({ name: message });
+        return;
+      }
+      if (lower.includes('password')) {
+        setFieldErrors({ password: message });
+        return;
+      }
       toast({
         title: 'Registration failed',
-        description: error instanceof Error ? error.message : 'Please try again.',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -95,7 +151,7 @@ export default function Register() {
       <div className="flex flex-1 items-center justify-center p-4 sm:p-8">
         <div className="w-full max-w-md min-w-0 animate-fade-in">
         <div className="mb-1 flex justify-center">
-            <EloFixLogo variant="dark" className="h-32" />
+            <EloFixLogo variant="dark" className="h-20 sm:h-28 md:h-32" />
           </div>
 
           <h1 className="mb-2 text-xl font-semibold sm:text-2xl md:text-3xl">Create an account</h1>
@@ -111,8 +167,8 @@ export default function Register() {
               }}
               className={cn(
                 "p-4 rounded-lg border-2 transition-all text-center",
-                role === 'user' 
-                  ? "border-primary bg-primary/5" 
+                role === 'user'
+                  ? "border-primary bg-primary/5"
                   : "border-border hover:border-primary/50"
               )}
             >
@@ -128,8 +184,8 @@ export default function Register() {
               }}
               className={cn(
                 "p-4 rounded-lg border-2 transition-all text-center",
-                role === 'provider' 
-                  ? "border-primary bg-primary/5" 
+                role === 'provider'
+                  ? "border-primary bg-primary/5"
                   : "border-border hover:border-primary/50"
               )}
             >
@@ -139,7 +195,7 @@ export default function Register() {
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
               <Label htmlFor="name">Full Name</Label>
               <div className="relative mt-1">
@@ -149,11 +205,21 @@ export default function Register() {
                   type="text"
                   placeholder="Enter your Full Name"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="pl-10"
-                  required
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    clearFieldError('name');
+                  }}
+                  className={cn('pl-10', fieldErrors.name && 'border-destructive')}
+                  aria-invalid={Boolean(fieldErrors.name)}
+                  autoComplete="name"
+                  inputMode="text"
                 />
               </div>
+              {fieldErrors.name ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.name}</p>
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">Letters only — no numbers.</p>
+              )}
             </div>
 
             <div>
@@ -163,13 +229,20 @@ export default function Register() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="Enter your email"
+                  placeholder="name@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10"
-                  required
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearFieldError('email');
+                  }}
+                  className={cn('pl-10', fieldErrors.email && 'border-destructive')}
+                  aria-invalid={Boolean(fieldErrors.email)}
+                  autoComplete="email"
                 />
               </div>
+              {fieldErrors.email ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.email}</p>
+              ) : null}
             </div>
 
             <div>
@@ -181,11 +254,17 @@ export default function Register() {
                   type="tel"
                   placeholder="Enter your phone number"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="pl-10"
-                  required
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    clearFieldError('phone');
+                  }}
+                  className={cn('pl-10', fieldErrors.phone && 'border-destructive')}
+                  aria-invalid={Boolean(fieldErrors.phone)}
                 />
               </div>
+              {fieldErrors.phone ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.phone}</p>
+              ) : null}
             </div>
 
             <div>
@@ -197,10 +276,13 @@ export default function Register() {
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10"
-                  required
-                  minLength={8}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearFieldError('password');
+                  }}
+                  className={cn('pl-10 pr-10', fieldErrors.password && 'border-destructive')}
+                  aria-invalid={Boolean(fieldErrors.password)}
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
@@ -210,6 +292,10 @@ export default function Register() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              {fieldErrors.password ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.password}</p>
+              ) : null}
+              <PasswordRequirements password={password} />
             </div>
 
             <LegalAgreementCheckbox
@@ -222,7 +308,7 @@ export default function Register() {
             <Button
               type="submit"
               className="btn-accent h-10 w-full whitespace-nowrap"
-              disabled={isLoading || !legalAccepted}
+              disabled={isLoading || !legalAccepted || !isPasswordValid(password)}
             >
               {isLoading ? 'Creating account...' : 'Create Account'}
             </Button>
@@ -237,9 +323,9 @@ export default function Register() {
             </div>
           </div>
 
-          <Button 
-            variant="outline" 
-            className="h-10 w-full whitespace-nowrap bg-accent hover:bg-accent/70" 
+          <Button
+            variant="outline"
+            className="h-10 w-full whitespace-nowrap bg-accent hover:bg-accent/70"
             onClick={handleGoogleLogin}
             disabled={isLoading || isGoogleLoading || !legalAccepted}
           >
@@ -268,7 +354,7 @@ export default function Register() {
             <EloFixLogo variant="light" className="h-56" clickable={false} />
           </div>
           <h2 className="text-3xl font-bold mb-4">
-            {role === 'provider' 
+            {role === 'provider'
               ? 'Grow your service business'
               : 'Find trusted professionals'}
           </h2>

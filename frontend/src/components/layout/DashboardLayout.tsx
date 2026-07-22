@@ -318,23 +318,35 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   return (
-    <div className="min-h-screen max-w-full bg-secondary-foreground/25">
-      {/* Mobile Header — shrink-0 so flex stretch doesn’t steal height; sticky needs no overflow:hidden on ancestors (overflow is on main only) */}
-      <header className="sticky top-0 z-50 flex h-16 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 sm:px-4 lg:hidden">
-        <div className="min-w-0 shrink">
-          <EloFixLogo variant="dark" className="h-12 sm:h-16" />
+    <div
+      className={cn(
+        'max-w-full bg-secondary-foreground/25',
+        showInactiveProviderOverlay
+          ? 'flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden'
+          : 'min-h-screen',
+      )}
+    >
+      {/* Mobile Header — above modals so hamburger stays usable */}
+      <header className="sticky top-0 z-[70] flex h-16 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 sm:px-4 lg:hidden">
+        <div className="min-w-0 shrink overflow-hidden">
+          <EloFixLogo variant="dark" className="h-10 max-h-10 w-auto max-w-[min(100%,11rem)] sm:h-12 sm:max-h-12" />
         </div>
         <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}>
           {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
         </Button>
       </header>
 
-      <div className="flex min-w-0 max-w-full">
-        {/* Sidebar — self-start fixes flex stretch: without it, aside grows to main height and sticky does nothing */}
+      <div
+        className={cn(
+          'flex min-w-0 max-w-full',
+          showInactiveProviderOverlay && 'min-h-0 flex-1 overflow-hidden',
+        )}
+      >
+        {/* Sidebar — on mobile, above dialogs/overlays so the menu is not blocked */}
         <aside className={cn(
           "relative z-40 flex h-screen w-64 shrink-0 flex-col border-r border-border bg-card transition-transform duration-200",
           "sticky top-0 self-start",
-          "max-lg:fixed max-lg:left-0 max-lg:top-0",
+          "max-lg:fixed max-lg:left-0 max-lg:top-0 max-lg:z-[60]",
           sidebarOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full",
           "lg:translate-x-0",
         )}>
@@ -564,22 +576,38 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         {/* Overlay */}
         {sidebarOpen && (
           <div 
-            className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+            className="fixed inset-0 bg-black/50 z-[55] lg:hidden"
             onClick={() => setSidebarOpen(false)}
           />
         )}
 
         {/* Main Content */}
-        <main className="min-h-screen min-w-0 flex-1 overflow-x-hidden lg:min-h-[calc(100vh-4rem)]">
-          <div className="relative space-y-6 p-4 mb-20 sm:mb-24 md:mb-24 lg:mb-24 md:space-y-8 lg:p-8">
+        <main
+          className={cn(
+            'min-w-0 flex-1 overflow-x-hidden',
+            showInactiveProviderOverlay
+              ? 'flex min-h-0 flex-col overflow-hidden pb-16'
+              : 'min-h-screen lg:min-h-[calc(100vh-4rem)]',
+          )}
+        >
+          <div
+            className={cn(
+              'relative',
+              showInactiveProviderOverlay
+                ? 'min-h-0 flex-1 overflow-hidden p-3 sm:p-6 lg:p-8'
+                : 'mb-20 space-y-6 p-4 sm:mb-24 md:mb-24 md:space-y-8 lg:mb-24 lg:p-8',
+            )}
+          >
             {showInactiveProviderOverlay ? (
-              <div className="relative min-h-[50vh]">
-                <div className="pointer-events-none select-none opacity-[0.38]">{children}</div>
-                <div className="absolute inset-0 z-50 flex items-center justify-center p-4 sm:p-8 bg-background/75 backdrop-blur-[2px]">
-                  <div className="card-elevated max-w-md w-full border border-border bg-card p-6 shadow-lg text-center space-y-4">
+              <div className="relative h-full min-h-0 max-h-full overflow-hidden">
+                <div className="pointer-events-none max-h-full select-none overflow-hidden opacity-[0.38]">
+                  {children}
+                </div>
+                <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden bg-background/75 p-3 backdrop-blur-[2px] sm:p-6">
+                  <div className="card-elevated w-full max-w-md shrink-0 space-y-3 border border-border bg-card p-4 text-center shadow-lg sm:space-y-4 sm:p-6">
                     <AlertCircle
                       className={cn(
-                        'h-12 w-12 mx-auto',
+                        'mx-auto h-10 w-10 sm:h-12 sm:w-12',
                         providerOverlayState === 'rejected'
                           ? 'text-destructive'
                           : 'text-amber-500'
@@ -589,24 +617,24 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     <div>
                       {providerOverlayState === 'incomplete' && (
                         <>
-                          <p className="font-semibold text-lg">Complete your profile and get approved</p>
-                          <p className="text-sm text-muted-foreground mt-2">
+                          <p className="text-base font-semibold sm:text-lg">Complete your profile and get approved</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
                             Complete your profile and get approved to access this feature. You can still move around the app — open your profile to finish setup.
                           </p>
                         </>
                       )}
                       {providerOverlayState === 'awaiting' && (
                         <>
-                          <p className="font-semibold text-lg">Your application is under review</p>
-                          <p className="text-sm text-muted-foreground mt-2">
+                          <p className="text-base font-semibold sm:text-lg">Your application is under review</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
                             You have submitted your application to the admin. Please wait for approval. Check your notifications for updates.
                           </p>
                         </>
                       )}
                       {providerOverlayState === 'rejected' && (
                         <>
-                          <p className="font-semibold text-lg">Your application was rejected</p>
-                          <p className="text-sm text-muted-foreground mt-2">
+                          <p className="text-base font-semibold sm:text-lg">Your application was rejected</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
                             Your provider application was not approved. Open notifications to see the reason and next steps.
                           </p>
                         </>

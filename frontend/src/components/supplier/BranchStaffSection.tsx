@@ -30,6 +30,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Pencil, Trash2 } from 'lucide-react';
+import { PasswordRequirements } from '@/components/auth/PasswordRequirements';
+import {
+  emailValidationMessage,
+  isPasswordValid,
+  isValidEmail,
+  passwordValidationMessage,
+} from '@/lib/accountValidation';
 
 export function BranchStaffSection({ branchId }: { branchId: string }) {
   const { user } = useAuth();
@@ -76,6 +83,20 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
     onError: (e: Error) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
+  const handleAddStaff = () => {
+    const emailError = emailValidationMessage(email);
+    if (emailError) {
+      toast({ title: 'Invalid email', description: emailError, variant: 'destructive' });
+      return;
+    }
+    const passwordError = passwordValidationMessage(password);
+    if (passwordError) {
+      toast({ title: 'Weak password', description: passwordError, variant: 'destructive' });
+      return;
+    }
+    addMut.mutate();
+  };
+
   const patchMut = useMutation({
     mutationFn: () => {
       if (!editing) throw new Error('No staff selected');
@@ -83,7 +104,10 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
         email: editEmail.trim(),
         role: editRole,
       };
-      if (editPassword.trim().length >= 8) {
+      if (editPassword.trim()) {
+        if (!isPasswordValid(editPassword.trim())) {
+          throw new Error(passwordValidationMessage(editPassword.trim()) || 'Invalid password');
+        }
         body.password = editPassword.trim();
       }
       return patchSupplierBranchUser(branchId, editing.id, body);
@@ -114,13 +138,17 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
   };
 
   const saveEdit = () => {
-    if (!editEmail.trim()) {
-      toast({ title: 'Email required', variant: 'destructive' });
+    const emailError = emailValidationMessage(editEmail);
+    if (emailError) {
+      toast({ title: 'Invalid email', description: emailError, variant: 'destructive' });
       return;
     }
-    if (editPassword.trim() && editPassword.trim().length < 8) {
-      toast({ title: 'New password must be at least 8 characters', variant: 'destructive' });
-      return;
+    if (editPassword.trim()) {
+      const passwordError = passwordValidationMessage(editPassword.trim());
+      if (passwordError) {
+        toast({ title: 'Weak password', description: passwordError, variant: 'destructive' });
+        return;
+      }
     }
     patchMut.mutate();
   };
@@ -174,7 +202,7 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor={`staff-pw-${branchId}`}>Password (min 8 chars)</Label>
+          <Label htmlFor={`staff-pw-${branchId}`}>Password</Label>
           <Input
             id={`staff-pw-${branchId}`}
             type="password"
@@ -182,6 +210,7 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
           />
+          <PasswordRequirements password={password} />
         </div>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -199,8 +228,8 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
         <Button
           type="button"
           variant="secondary"
-          disabled={addMut.isPending || !email.trim() || password.length < 8}
-          onClick={() => addMut.mutate()}
+          disabled={addMut.isPending || !email.trim() || !isValidEmail(email) || !isPasswordValid(password)}
+          onClick={handleAddStaff}
         >
           {addMut.isPending ? 'Adding…' : 'Add staff account'}
         </Button>
@@ -242,7 +271,7 @@ export function BranchStaffSection({ branchId }: { branchId: string }) {
                 placeholder="Leave blank to keep current password"
                 autoComplete="new-password"
               />
-              <p className="text-xs text-muted-foreground">Minimum 8 characters when changing password.</p>
+              {editPassword.trim() ? <PasswordRequirements password={editPassword} /> : null}
             </div>
             <div className="space-y-2">
               <Label>Role</Label>

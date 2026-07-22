@@ -15,6 +15,11 @@ const { normalizePhone } = require("../utils/phoneNormalization.util");
 const fraudDetection = require("./fraudDetection.service");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
+const {
+  assertValidEmail,
+  assertValidPassword,
+  assertValidPersonName,
+} = require("../utils/accountValidation.util");
 
 function emailDomainOnly(email) {
   const normalized = String(email || "").toLowerCase().trim();
@@ -90,6 +95,10 @@ async function register(body) {
     throw new AppError("Email, password, and name are required");
   }
 
+  const normalizedName = assertValidPersonName(name);
+  const normalizedEmail = assertValidEmail(email);
+  assertValidPassword(password);
+
   const roleToUse = parseRole(role);
   const legalData = validateLegalAcceptance(body, roleToUse);
   const hashed = await bcrypt.hash(password, 12);
@@ -98,7 +107,7 @@ async function register(body) {
 
   try {
     const existing = await prisma.user.findUnique({
-      where: { email: String(email).toLowerCase().trim() },
+      where: { email: normalizedEmail },
       select: { id: true, authProvider: true },
     });
     if (existing?.authProvider === "GOOGLE") {
@@ -107,9 +116,9 @@ async function register(body) {
 
     const user = await prisma.user.create({
       data: {
-        email: String(email).toLowerCase().trim(),
+        email: normalizedEmail,
         password: hashed,
-        name: String(name).trim(),
+        name: normalizedName,
         phone: phoneNorm,
         phoneNormalized: phoneNormalized || (phoneNorm ? normalizePhone(phoneNorm) : null),
         authProvider: "LOCAL",
@@ -362,9 +371,7 @@ async function changePassword(ctx, body = {}, auditContext = {}) {
   if (!currentPassword || !newPassword) {
     throw new AppError("Current password and new password are required", 400);
   }
-  if (String(newPassword).length < 8) {
-    throw new AppError("New password must be at least 8 characters", 400);
-  }
+  assertValidPassword(newPassword, "New password");
   const user = await prisma.user.findUnique({
     where: { id: ctx.userId },
     select: { password: true },

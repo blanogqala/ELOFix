@@ -16,6 +16,8 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
+import { PasswordRequirements } from '@/components/auth/PasswordRequirements';
+import { passwordValidationMessage } from '@/lib/accountValidation';
 
 export default function SupplierProfilePage() {
   const { user, refreshProfile } = useAuth();
@@ -176,8 +178,9 @@ export default function SupplierProfilePage() {
 
   const submitPassword = () => {
     const err: typeof pwdErrors = {};
-    if (pwd.next.length > 0 && pwd.next.length < 8) {
-      err.next = 'Use at least 8 characters';
+    const pwdMsg = passwordValidationMessage(pwd.next);
+    if (pwd.next.length > 0 && pwdMsg) {
+      err.next = pwdMsg;
     }
     if (pwd.next !== pwd.confirm) {
       err.confirm = 'Passwords do not match';
@@ -391,6 +394,7 @@ export default function SupplierProfilePage() {
                 onChange={(e) => setPwd((p) => ({ ...p, next: e.target.value }))}
                 className={cn(pwdErrors.next && 'border-destructive')}
               />
+              <PasswordRequirements password={pwd.next} />
               {pwdErrors.next && <p className="mt-1 text-xs text-destructive">{pwdErrors.next}</p>}
             </div>
             <div>

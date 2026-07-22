@@ -7,9 +7,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
 import { getDefaultDashboardPath } from '@/lib/postLoginRedirect';
+import { emailValidationMessage } from '@/lib/accountValidation';
+
+type LoginFieldErrors = {
+  email?: string;
+  password?: string;
+};
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -17,6 +24,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -41,9 +49,29 @@ export default function Login() {
     });
   }, [sessionError, toast]);
 
+  const clearFieldError = (field: keyof LoginFieldErrors) => {
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
+
+    const nextErrors: LoginFieldErrors = {};
+    const emailError = emailValidationMessage(email);
+    if (emailError) nextErrors.email = emailError;
+    if (!String(password ?? '').trim()) {
+      nextErrors.password = 'Password is required.';
+    }
+
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
     setIsLoading(true);
 
     try {
@@ -54,10 +82,12 @@ export default function Login() {
       });
       navigate(getDefaultDashboardPath(loggedInUser.role), { replace: true });
     } catch (error) {
-      toast({
-        title: 'Login failed',
-        description: error instanceof Error ? error.message : 'Please check your credentials.',
-        variant: 'destructive',
+      const message =
+        error instanceof Error ? error.message : 'Please check your credentials.';
+      // Red borders on both fields; message under password only
+      setFieldErrors({
+        email: '',
+        password: message,
       });
     } finally {
       setIsLoading(false);
@@ -77,14 +107,14 @@ export default function Login() {
       <div className="flex flex-1 items-center justify-center p-4 sm:p-8">
         <div className="w-full max-w-md min-w-0 animate-fade-in">
           <div className="mb-1 flex justify-center">
-            <EloFixLogo variant="dark" className="h-32" />
+            <EloFixLogo variant="dark" className="h-20 sm:h-28 md:h-32" />
           </div>
 
           <h1 className="mb-1 text-xl font-semibold sm:text-2xl md:text-3xl">Welcome back!</h1>
           <p className="mb-8 text-sm text-muted-foreground sm:text-base">Enter your credentials to access your account</p>
 
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
               <Label htmlFor="email">Email</Label>
               <div className="relative mt-1">
@@ -94,11 +124,19 @@ export default function Login() {
                   type="email"
                   placeholder="Enter your email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10"
-                  required
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearFieldError('email');
+                    clearFieldError('password');
+                  }}
+                  className={cn('pl-10', fieldErrors.email != null && 'border-destructive')}
+                  aria-invalid={fieldErrors.email != null}
+                  autoComplete="email"
                 />
               </div>
+              {fieldErrors.email ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.email}</p>
+              ) : null}
             </div>
 
             <div>
@@ -110,9 +148,14 @@ export default function Login() {
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10"
-                  required
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearFieldError('password');
+                    clearFieldError('email');
+                  }}
+                  className={cn('pl-10 pr-10', fieldErrors.password != null && 'border-destructive')}
+                  aria-invalid={fieldErrors.password != null}
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
@@ -122,6 +165,9 @@ export default function Login() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              {fieldErrors.password ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.password}</p>
+              ) : null}
             </div>
 
             <div className="flex items-center justify-between">
@@ -148,9 +194,9 @@ export default function Login() {
             </div>
           </div>
 
-          <Button 
-            variant="outline" 
-            className="h-10 w-full whitespace-nowrap bg-accent hover:bg-accent/70" 
+          <Button
+            variant="outline"
+            className="h-10 w-full whitespace-nowrap bg-accent hover:bg-accent/70"
             onClick={handleGoogleLogin}
             disabled={isLoading || isGoogleLoading}
           >

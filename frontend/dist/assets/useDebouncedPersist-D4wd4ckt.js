@@ -1,0 +1,1 @@
+import{r as o}from"./react-vendor-CZBNkCpJ.js";function c(r,s,t=400,e=!0){const u=o.useRef(r);u.current=r,o.useEffect(()=>{if(!e)return;const i=window.setTimeout(()=>{u.current()},t);return()=>window.clearTimeout(i)},[...s,t,e])}export{c as u};

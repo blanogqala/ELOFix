@@ -8,6 +8,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Eye, EyeOff, Lock } from 'lucide-react';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
+import { PasswordRequirements } from '@/components/auth/PasswordRequirements';
+import { isPasswordValid, passwordValidationMessage } from '@/lib/accountValidation';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -24,10 +26,11 @@ export default function ResetPassword() {
     e.preventDefault();
     if (isLoading) return;
 
-    if (password.length < 8) {
+    const passwordError = passwordValidationMessage(password);
+    if (passwordError) {
       toast({
-        title: 'Password too short',
-        description: 'Your new password must be at least 8 characters.',
+        title: 'Weak password',
+        description: passwordError,
         variant: 'destructive',
       });
       return;
@@ -88,12 +91,12 @@ export default function ResetPassword() {
         <div className="flex flex-1 items-center justify-center p-4 sm:p-8">
           <div className="w-full max-w-md min-w-0 animate-fade-in">
             <div className="mb-1 flex justify-center">
-              <EloFixLogo variant="dark" className="h-32" />
+              <EloFixLogo variant="dark" className="h-20 sm:h-28 md:h-32" />
             </div>
 
             <h1 className="mb-1 text-xl font-semibold sm:text-2xl md:text-3xl">Set a new password</h1>
             <p className="mb-8 text-sm text-muted-foreground sm:text-base">
-              Choose a strong password with at least 8 characters.
+              Choose a strong password that meets the requirements below.
             </p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -120,6 +123,7 @@ export default function ResetPassword() {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                <PasswordRequirements password={password} />
               </div>
 
               <div>
@@ -147,7 +151,11 @@ export default function ResetPassword() {
                 </div>
               </div>
 
-              <Button type="submit" className="btn-accent h-10 w-full whitespace-nowrap" disabled={isLoading}>
+              <Button
+                type="submit"
+                className="btn-accent h-10 w-full whitespace-nowrap"
+                disabled={isLoading || !isPasswordValid(password)}
+              >
                 {isLoading ? 'Updating...' : 'Update password'}
               </Button>
             </form>

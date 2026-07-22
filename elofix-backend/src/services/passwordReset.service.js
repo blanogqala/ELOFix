@@ -6,6 +6,7 @@ const { hmacHash } = require("../utils/identityHash.util");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { sendPasswordResetEmail } = require("./email.service");
+const { assertValidPassword } = require("../utils/accountValidation.util");
 
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 const GENERIC_FORGOT_MESSAGE =
@@ -165,13 +166,24 @@ async function resetPassword(body = {}, meta = {}) {
     throw new AppError("Invalid or expired reset link. Please request a new one.", 400);
   }
 
-  if (!newPassword || String(newPassword).length < 8) {
+  if (!newPassword) {
     await logAudit(AUDIT_ACTIONS.AUTH_PASSWORD_RESET_FAILED, {
       ...auditBase,
       entityType: ENTITY_TYPES.USER,
       newValue: { reason: "invalid_password", userAgent: auditBase.userAgent },
     });
-    throw new AppError("New password must be at least 8 characters", 400);
+    throw new AppError("New password is required", 400);
+  }
+
+  try {
+    assertValidPassword(newPassword, "New password");
+  } catch (err) {
+    await logAudit(AUDIT_ACTIONS.AUTH_PASSWORD_RESET_FAILED, {
+      ...auditBase,
+      entityType: ENTITY_TYPES.USER,
+      newValue: { reason: "invalid_password", userAgent: auditBase.userAgent },
+    });
+    throw err;
   }
 
   const tokenHash = hashResetToken(rawToken);

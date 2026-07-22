@@ -5,6 +5,10 @@ const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const branchService = require("./branch.service");
 const notificationEvents = require("./notificationEvents.service");
+const {
+  assertValidEmail,
+  assertValidPassword,
+} = require("../utils/accountValidation.util");
 
 const PLATFORM_COMMISSION_RATE = 0.07;
 const SUPPLIER_SHARE_RATE = 0.93;
@@ -411,9 +415,7 @@ async function listSuppliersForAdminDashboard() {
 }
 
 async function provisionSupplierByAdmin(body) {
-  const email = String(body?.email || "")
-    .toLowerCase()
-    .trim();
+  const email = assertValidEmail(body?.email || "");
   const password = body?.password;
   const displayName = String(body?.name || "").trim();
   const businessName = String(body?.businessName || "").trim();
@@ -421,8 +423,7 @@ async function provisionSupplierByAdmin(body) {
   const phone = body?.phone != null && String(body.phone).trim() ? String(body.phone).trim() : null;
   const address = body?.address != null && String(body.address).trim() ? String(body.address).trim() : null;
 
-  if (!email) throw new AppError("Email is required", 400);
-  if (!password || String(password).length < 8) throw new AppError("Password must be at least 8 characters", 400);
+  assertValidPassword(password);
   if (!businessName && !displayName) throw new AppError("Name or business name is required", 400);
 
   const hashed = await bcrypt.hash(String(password), 12);

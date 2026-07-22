@@ -144,10 +144,19 @@ function toast({ ...props }: Toast) {
     });
   const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id });
 
+  // Errors stay until the user dismisses (X). Success/default still auto-hide.
+  const duration =
+    props.duration !== undefined
+      ? props.duration
+      : props.variant === "destructive"
+        ? Infinity
+        : undefined;
+
   dispatch({
     type: "ADD_TOAST",
     toast: {
       ...props,
+      duration,
       id,
       open: true,
       onOpenChange: (open) => {

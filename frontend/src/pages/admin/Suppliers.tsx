@@ -21,6 +21,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/formatCurrency';
+import {
+  emailValidationMessage,
+  isPasswordValid,
+  isValidEmail,
+  passwordValidationMessage,
+} from '@/lib/accountValidation';
 
 export default function AdminSuppliers() {
   const { toast } = useToast();
@@ -310,10 +316,19 @@ export default function AdminSuppliers() {
               className="btn-accent w-full mt-2"
               disabled={provisionMut.isPending}
               onClick={() => {
-                if (!form.email.trim() || !form.password || form.password.length < 8 || !form.businessName.trim()) {
+                if (
+                  !form.email.trim() ||
+                  !form.password ||
+                  !isPasswordValid(form.password) ||
+                  !form.businessName.trim() ||
+                  !isValidEmail(form.email)
+                ) {
                   toast({
-                    title: 'Missing fields',
-                    description: 'Email, password (8+ chars), and business name are required.',
+                    title: 'Missing or invalid fields',
+                    description:
+                      passwordValidationMessage(form.password) ||
+                      emailValidationMessage(form.email) ||
+                      'Email, strong password, and business name are required.',
                     variant: 'destructive',
                   });
                   return;

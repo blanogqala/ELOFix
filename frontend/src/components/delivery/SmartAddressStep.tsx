@@ -24,18 +24,22 @@ function AddressBlock({
   onChange,
   locked,
   lockLabel,
+  locationButtonDisabled,
+  onLocationUsed,
 }: {
   title: string;
   point: DeliveryGeoPoint;
   onChange: (p: DeliveryGeoPoint) => void;
   locked?: boolean;
   lockLabel?: string;
+  locationButtonDisabled?: boolean;
+  onLocationUsed?: () => void;
 }) {
   const { toast } = useToast();
   const [geoLoading, setGeoLoading] = useState(false);
 
   const useCurrentLocation = () => {
-    if (locked || !navigator.geolocation) return;
+    if (locked || locationButtonDisabled || !navigator.geolocation) return;
     setGeoLoading(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -49,6 +53,7 @@ function AddressBlock({
             suburb: r.suburb,
             coordinates: r.coordinates,
           });
+          onLocationUsed?.();
           toast({ title: 'Location filled', description: 'Review the address if needed.' });
         } catch {
           toast({ title: 'Could not resolve address', variant: 'destructive' });
@@ -84,7 +89,14 @@ function AddressBlock({
           <MapPin className="h-3.5 w-3.5 text-primary" />
           {title}
         </Label>
-        <Button type="button" size="sm" variant="outline" disabled={geoLoading} onClick={useCurrentLocation}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={geoLoading || locationButtonDisabled}
+          title={locationButtonDisabled ? 'Current location already used for the other address' : undefined}
+          onClick={useCurrentLocation}
+        >
           {geoLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <LocateFixed className="h-3 w-3 mr-1" />}
           Use my location
         </Button>
@@ -120,6 +132,8 @@ export function SmartAddressStep({
   lockCollectionLabel,
   lockDestinationLabel,
 }: SmartAddressStepProps) {
+  const [locationUsedFor, setLocationUsedFor] = useState<'collection' | 'destination' | null>(null);
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -131,6 +145,8 @@ export function SmartAddressStep({
         onChange={onCollectionChange}
         locked={lockCollection}
         lockLabel={lockCollectionLabel}
+        locationButtonDisabled={locationUsedFor === 'destination'}
+        onLocationUsed={() => setLocationUsedFor('collection')}
       />
       <AddressBlock
         title="Delivery destination"
@@ -138,6 +154,8 @@ export function SmartAddressStep({
         onChange={onDestinationChange}
         locked={lockDestination}
         lockLabel={lockDestinationLabel}
+        locationButtonDisabled={locationUsedFor === 'collection'}
+        onLocationUsed={() => setLocationUsedFor('destination')}
       />
     </div>
   );

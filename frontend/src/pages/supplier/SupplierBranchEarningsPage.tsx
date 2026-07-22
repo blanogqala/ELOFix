@@ -161,9 +161,9 @@ export default function SupplierBranchEarningsPage() {
 
         <Tabs defaultValue="orders" className="w-full">
           <TabsList className={`grid w-full max-w-2xl ${canWithdraw ? 'grid-cols-3' : 'grid-cols-2'}`}>
-            <TabsTrigger value="orders">List of Orders</TabsTrigger>
+            <TabsTrigger value="orders">Orders</TabsTrigger>
             {canWithdraw ? <TabsTrigger value="withdraw">Withdrawal</TabsTrigger> : null}
-            <TabsTrigger value="history">History of Withdrawals</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="orders" className="mt-4">
