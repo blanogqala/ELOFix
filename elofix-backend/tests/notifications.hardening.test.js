@@ -68,6 +68,13 @@ function testNavPathTypesIncludeSupplierOrders() {
   assert.ok(NAV_PATH_TYPES["/user/material-orders"].includes("delivery_quote"));
 }
 
+function testJobsNavClearanceExcludesJobChat() {
+  assert.ok(!NAV_PATH_TYPES["/user/jobs"].includes("job_chat"));
+  assert.ok(!NAV_PATH_TYPES["/provider/jobs"].includes("job_chat"));
+  assert.ok(NAV_PATH_TYPES["/user/jobs"].includes("material_list_submitted"));
+  assert.ok(NAV_PATH_TYPES["/provider/jobs"].includes("job_accepted"));
+}
+
 async function testSocketEmitRequiresIo() {
   const prev = global.io;
   global.io = undefined;
@@ -216,6 +223,7 @@ async function main() {
   testAuditActionsPresent();
   testOutboxBackoffSchedule();
   testNavPathTypesIncludeSupplierOrders();
+  testJobsNavClearanceExcludesJobChat();
   await testSocketEmitRequiresIo();
 
   if (process.env.DATABASE_URL) {

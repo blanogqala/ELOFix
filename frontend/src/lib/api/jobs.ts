@@ -72,6 +72,7 @@ interface BackendJob {
   cancellationDetails?: string;
   cancellationSource?: string | null;
   cancelledAt?: string;
+  cancelledAtStatus?: string | null;
   rejectionReason?: string;
   rejectionDetails?: string;
   rejectedAt?: string;
@@ -214,6 +215,7 @@ function toFrontendJob(job: BackendJob): Job {
     cancellationDetails: job.cancellationDetails,
     cancellationSource: job.cancellationSource ?? undefined,
     cancelledAt: job.cancelledAt,
+    cancelledAtStatus: (job.cancelledAtStatus as Job['cancelledAtStatus']) || undefined,
     rejectionReason: job.rejectionReason,
     rejectionDetails: job.rejectionDetails,
     rejectedAt: job.rejectedAt,

@@ -8,6 +8,7 @@ const assert = require("assert");
 const { randomUUID } = require("crypto");
 
 const materialOrderService = require("../src/services/materialOrder.service");
+const jobService = require("../src/services/job.service");
 const { getJobMeta } = require("../src/services/jobMeta.service");
 const AppError = require("../src/utils/AppError");
 
@@ -160,8 +161,84 @@ async function createFixtures(prisma, suffix) {
   };
 }
 
+async function seedAcceptedProviderQuote(prisma, fixtures, fee = 200) {
+  const { orderId, courierJobId, deliveryRequestId, courier } = fixtures;
+
+  await prisma.deliveryRequest.update({
+    where: { id: deliveryRequestId },
+    data: {
+      status: "approved",
+      quotedFee: fee,
+      quoteNote: "Test quote",
+      payload: {
+        payment: { deliveryPaid: false },
+        delivery: { status: "Approved", providerId: courier.id, fee },
+        deliveryQuote: { fee, status: "Approved", note: "Test quote" },
+      },
+    },
+  });
+
+  await prisma.job.update({
+    where: { id: courierJobId },
+    data: {
+      price: fee,
+      meta: {
+        courierFlow: true,
+        deliveryRequestId,
+        materialOrderId: orderId,
+        parentJobId: fixtures.parentJob.id,
+        source: "job_materials",
+        servicePrice: {
+          amount: fee,
+          note: "Test quote",
+          submittedAt: new Date().toISOString(),
+        },
+      },
+    },
+  });
+
+  await prisma.materialOrder.update({
+    where: { id: orderId },
+    data: {
+      payload: {
+        jobStoreOrderId: orderId,
+        materialsSubtotal: 500,
+        total: 500 + fee,
+        deliveryType: "DELIVERY_PROVIDER",
+        deliveryProviderId: courier.id,
+        deliveryFee: fee,
+        payment: { materialsPaid: true, deliveryPaid: false },
+        delivery: {
+          type: "PROVIDER",
+          status: "Approved",
+          providerId: courier.id,
+          fee,
+        },
+        deliveryQuote: { fee, status: "Approved", note: "Test quote" },
+      },
+    },
+  });
+}
+
+async function markCourierJobAccepted(prisma, fixtures) {
+  const { courierJobId } = fixtures;
+  const job = await prisma.job.findUnique({ where: { id: courierJobId } });
+  const meta = job?.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta : {};
+  await prisma.job.update({
+    where: { id: courierJobId },
+    data: {
+      status: "ACCEPTED",
+      meta: {
+        ...meta,
+        statusOverride: "ASSIGNED",
+        progressStep: Math.max(Number(meta.progressStep) || 0, 1),
+      },
+    },
+  });
+}
+
 async function testProviderToStoreCancelsCourier(prisma, fixtures) {
-  const { orderId, courierJobId } = fixtures;
+  const { orderId, courierJobId, courier } = fixtures;
 
   await materialOrderService.updateMaterialOrderDelivery(orderId, {
     type: "STORE",
@@ -175,6 +252,19 @@ async function testProviderToStoreCancelsCourier(prisma, fixtures) {
   const meta = await getJobMeta(courierJobId);
   assert.strictEqual(meta.cancellationSource, "customer_changed_delivery_option");
   assert.strictEqual(meta.cancellationReason, "Customer changed delivery option");
+  assert.strictEqual(meta.cancelledAtStatus, "PENDING", "pending cancel must record cancelledAtStatus");
+
+  const inbox = await jobService.getCancelledRequestsForProvider(courier.id);
+  assert.ok(
+    inbox.some((j) => String(j.id) === String(courierJobId)),
+    "pending cancel should appear in Requests → Canceled inbox"
+  );
+
+  const activeJobs = await jobService.getJobsForActor(courier.id, "PROVIDER");
+  assert.ok(
+    !activeJobs.some((j) => String(j.id) === String(courierJobId)),
+    "pending cancel must not appear on Active Jobs (GET /jobs)"
+  );
 
   const dr = await prisma.deliveryRequest.findFirst({ where: { materialOrderId: orderId } });
   assert.strictEqual(String(dr.status).toLowerCase(), "cancelled");
@@ -187,6 +277,107 @@ async function testProviderToStoreCancelsCourier(prisma, fixtures) {
   const parentMeta = await getJobMeta(fixtures.parentJob.id);
   const storeOrder = parentMeta.storeOrders.find((o) => String(o.orderId) === orderId);
   assert.strictEqual(storeOrder.courierJobId, undefined, "parent storeOrders courierJobId should be cleared");
+}
+
+async function testAcceptedThenCancelExcludedFromRequestsInbox(prisma, fixtures) {
+  const { orderId, courierJobId, courier } = fixtures;
+  await markCourierJobAccepted(prisma, fixtures);
+
+  await materialOrderService.updateMaterialOrderDelivery(orderId, {
+    type: "STORE",
+    status: "PendingApproval",
+    fee: 0,
+  });
+
+  const courierJob = await prisma.job.findUnique({ where: { id: courierJobId } });
+  assert.strictEqual(courierJob.status, "CANCELLED", "accepted courier job should still cancel");
+
+  const meta = await getJobMeta(courierJobId);
+  assert.strictEqual(meta.cancellationSource, "customer_changed_delivery_option");
+  assert.strictEqual(meta.cancelledAtStatus, "ACCEPTED");
+  assert.ok(Number(meta.progressStep) >= 1, "accepted cancel should retain progressStep >= 1");
+
+  const inbox = await jobService.getCancelledRequestsForProvider(courier.id);
+  assert.ok(
+    !inbox.some((j) => String(j.id) === String(courierJobId)),
+    "accepted-then-canceled job must not appear in Requests → Canceled inbox"
+  );
+
+  const activeJobs = await jobService.getJobsForActor(courier.id, "PROVIDER");
+  const onActiveJobs = activeJobs.find((j) => String(j.id) === String(courierJobId));
+  assert.ok(onActiveJobs, "accepted-then-canceled job must remain on Active Jobs");
+  assert.strictEqual(onActiveJobs.status, "CANCELLED");
+}
+
+async function testAcceptedQuoteDroppedOnProviderToStore(prisma, fixtures) {
+  const { orderId, courierJobId, deliveryRequestId } = fixtures;
+  await seedAcceptedProviderQuote(prisma, fixtures, 200);
+
+  await materialOrderService.updateMaterialOrderDelivery(orderId, {
+    type: "STORE",
+    status: "PendingApproval",
+    fee: 0,
+  });
+
+  const courierJob = await prisma.job.findUnique({ where: { id: courierJobId } });
+  assert.strictEqual(courierJob.status, "CANCELLED");
+  assert.strictEqual(Number(courierJob.price), 0, "courier job price should be cleared");
+
+  const meta = await getJobMeta(courierJobId);
+  assert.ok(
+    meta.servicePrice == null || meta.servicePrice?.amount == null,
+    "courier servicePrice quote must be dropped"
+  );
+  assert.strictEqual(meta.cancellationSource, "customer_changed_delivery_option");
+
+  const dr = await prisma.deliveryRequest.findUnique({ where: { id: deliveryRequestId } });
+  assert.strictEqual(String(dr.status).toLowerCase(), "cancelled");
+  assert.strictEqual(dr.quotedFee, null, "cancelled delivery request must drop quotedFee");
+  assert.strictEqual(dr.quoteNote, null);
+  assert.strictEqual(dr.payload?.deliveryQuote, undefined);
+  assert.strictEqual(Number(dr.payload?.delivery?.fee ?? 0), 0);
+
+  const moRow = await prisma.materialOrder.findUnique({ where: { id: orderId } });
+  assert.strictEqual(moRow.payload.deliveryQuote, undefined);
+  assert.strictEqual(Number(moRow.payload.deliveryFee ?? 0), 0);
+
+  // Reconcile must not reinject the old provider fee onto the store order response.
+  const enriched = await materialOrderService.getMaterialOrderById(orderId);
+  assert.strictEqual(
+    String(enriched.deliveryType || "").toUpperCase(),
+    "STORE_DELIVERY"
+  );
+  assert.strictEqual(Number(enriched.deliveryFee ?? enriched.delivery?.fee ?? 0), 0);
+  assert.ok(!enriched.deliveryQuote, "store order must not expose dropped provider quote");
+}
+
+async function testAlreadyCancelledScrubsQuoteOnDeliveryOptionChange(prisma, fixtures) {
+  const { orderId, courierJobId, deliveryRequestId } = fixtures;
+  await seedAcceptedProviderQuote(prisma, fixtures, 200);
+
+  await prisma.job.update({
+    where: { id: courierJobId },
+    data: { status: "CANCELLED" },
+  });
+
+  await materialOrderService.updateMaterialOrderDelivery(orderId, {
+    type: "STORE",
+    status: "PendingApproval",
+    fee: 0,
+  });
+
+  const dr = await prisma.deliveryRequest.findUnique({ where: { id: deliveryRequestId } });
+  assert.strictEqual(String(dr.status).toLowerCase(), "cancelled");
+  assert.strictEqual(dr.quotedFee, null, "already-cancelled courier must still scrub quotedFee");
+
+  const meta = await getJobMeta(courierJobId);
+  assert.ok(
+    meta.servicePrice == null || meta.servicePrice?.amount == null,
+    "already-cancelled courier must still drop servicePrice"
+  );
+
+  const courierJob = await prisma.job.findUnique({ where: { id: courierJobId } });
+  assert.strictEqual(Number(courierJob.price), 0);
 }
 
 async function testCancelWithDetachedDeliveryRequestJobId(prisma, fixtures) {
@@ -290,6 +481,24 @@ async function runDbIntegrationTests() {
     const fixtures = await createFixtures(prisma, suffix);
     fixturesList.push(fixtures);
     await testProviderToStoreCancelsCourier(prisma, fixtures);
+
+    const acceptedCancelFixtures = await createFixtures(prisma, `${suffix}-accepted-cancel`);
+    fixturesList.push(acceptedCancelFixtures);
+    await testAcceptedThenCancelExcludedFromRequestsInbox(prisma, acceptedCancelFixtures);
+
+    const quoteFixtures = await createFixtures(prisma, `${suffix}-quote`);
+    fixturesList.push(quoteFixtures);
+    await testAcceptedQuoteDroppedOnProviderToStore(prisma, quoteFixtures);
+
+    const alreadyCancelledFixtures = await createFixtures(
+      prisma,
+      `${suffix}-already-cancelled`
+    );
+    fixturesList.push(alreadyCancelledFixtures);
+    await testAlreadyCancelledScrubsQuoteOnDeliveryOptionChange(
+      prisma,
+      alreadyCancelledFixtures
+    );
 
     const detachedFixtures = await createFixtures(
       prisma,

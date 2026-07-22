@@ -42,7 +42,9 @@ export function MaterialOrderExpandedDetails({
   const supplierName = mo?.supplierName || storeDisplayName || storeOrder.storeName || storeOrder.storeId;
   const fulfillmentStatus = String(mo?.fulfillmentStatus || 'PENDING').toUpperCase();
   const displayDeliveryType = resolveDisplayDeliveryType(storeOrder, mo);
-  const isDelivery = batch?.deliveryType === 'delivery' || displayDeliveryType !== 'SELF';
+  const isDelivery =
+    batch?.deliveryType === 'delivery' ||
+    (displayDeliveryType != null && displayDeliveryType !== 'SELF');
 
   return (
     <div className="space-y-3 border-t border-green-600/25 pt-3">
@@ -72,6 +74,7 @@ export function MaterialOrderExpandedDetails({
         <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Supplier</p>
         <p className="text-sm font-medium">{supplierName}</p>
         <p className="text-xs text-muted-foreground">
+          {displayDeliveryType == null && 'Not selected'}
           {displayDeliveryType === 'SELF' && 'Pickup'}
           {displayDeliveryType === 'STORE' && 'Store delivery'}
           {displayDeliveryType === 'PROVIDER' && 'Courier'}

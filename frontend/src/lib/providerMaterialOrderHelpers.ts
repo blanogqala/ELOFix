@@ -27,11 +27,33 @@ function canonicalStoreDeliveryType(raw?: string): JobStoreOrder['deliveryType']
   return null;
 }
 
+function normalizeDeliveryStatusToken(raw?: string | null): string {
+  return String(raw || '')
+    .trim()
+    .toLowerCase();
+}
+
+/** True when delivery was cancelled / cleared and the customer must choose again. */
+export function isDeliverySelectionCleared(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): boolean {
+  const moStatus = normalizeDeliveryStatusToken(mo?.delivery?.status ?? mo?.deliveryStatus);
+  const storeStatus = normalizeDeliveryStatusToken(storeOrder.deliveryStatus ?? storeOrder.delivery?.status);
+  if (moStatus === 'cancelled' || storeStatus === 'cancelled') return true;
+  const fromMo =
+    canonicalStoreDeliveryType(mo?.deliveryType) ??
+    canonicalStoreDeliveryType(mo?.delivery?.type);
+  if (!fromMo && !storeOrder.deliveryType) return true;
+  return false;
+}
+
 /** Prefer material-order snapshot delivery type when job meta storeOrders is stale or overwritten. */
 export function resolveDisplayDeliveryType(
   storeOrder: JobStoreOrder,
   mo: JobMaterialOrderSnapshot | null | undefined
-): JobStoreOrder['deliveryType'] {
+): JobStoreOrder['deliveryType'] | null {
+  if (isDeliverySelectionCleared(storeOrder, mo)) return null;
   const fromMo =
     canonicalStoreDeliveryType(mo?.deliveryType) ??
     canonicalStoreDeliveryType(mo?.delivery?.type);
@@ -39,11 +61,20 @@ export function resolveDisplayDeliveryType(
   return storeOrder.deliveryType;
 }
 
-export function deliveryModeLabel(deliveryType: JobStoreOrder['deliveryType']): string {
+export function deliveryModeLabel(deliveryType: JobStoreOrder['deliveryType'] | null | undefined): string {
+  if (!deliveryType) return 'Not selected';
   if (deliveryType === 'SELF') return 'Pickup';
   if (deliveryType === 'STORE') return 'Store delivery';
   if (deliveryType === 'PROVIDER') return 'Courier delivery';
   return 'Delivery';
+}
+
+export function resolveDeliveryModeBadgeLabel(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): string {
+  if (isDeliverySelectionCleared(storeOrder, mo)) return 'Not selected';
+  return deliveryModeLabel(resolveDisplayDeliveryType(storeOrder, mo));
 }
 
 export function supplierFacingStatus(mo: JobMaterialOrderSnapshot | null): string {

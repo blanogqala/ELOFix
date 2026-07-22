@@ -18,7 +18,6 @@ import {
 } from '@/lib/api/materialOrders';
 import {
   getJobsByUser,
-  updateStoreOrderDelivery,
   setStoreDeliveryOption,
 } from '@/lib/api/jobs';
 import { getInvoiceById } from '@/lib/api/payments';
@@ -558,24 +557,6 @@ export default function OrderDetails() {
   const orderFulfillmentStatusU = toFulfillmentStatusU(order?.fulfillmentStatus);
   const canCustomerCancelOrder = CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES.has(orderFulfillmentStatusU);
 
-  const handleCancelDelivery = async () => {
-    if (!order || !effectiveOrderId) return;
-    const isApprovedUnpaid = order.deliveryState === 'Approved' && !order.deliveryPaid;
-    if (isApprovedUnpaid && !window.confirm('Cancel delivery? You will need to choose a new delivery option.')) return;
-    try {
-      if (jobContext) {
-        await updateStoreOrderDelivery(jobContext.jobId, jobContext.storeId, { status: 'Cancelled' });
-      } else {
-        await updateMaterialOrderDelivery(effectiveOrderId, { status: 'Cancelled' });
-      }
-      toast({ title: 'Delivery cancelled', description: 'Delivery cancelled. You can choose a new delivery option.' });
-      loadOrder();
-      invalidateJobsAfterDeliveryChange();
-    } catch {
-      toast({ title: 'Error', description: 'Failed to cancel delivery.', variant: 'destructive' });
-    }
-  };
-
   const handleAcceptQuote = async () => {
     if (!order || !effectiveOrderId) return;
     try {
@@ -924,11 +905,6 @@ export default function OrderDetails() {
               highlightDeliveryComplete={deliveryJustCompleted}
               highlightConfirmSection={highlightConfirmSection}
               onDismissDeliveryHighlight={() => setDeliveryJustCompleted(false)}
-              onCancelDelivery={
-                order.deliveryState === 'PendingApproval' || (order.deliveryState === 'Approved' && !order.deliveryPaid)
-                  ? handleCancelDelivery
-                  : undefined
-              }
               onChangeDelivery={
                 canChangeDeliveryOption
                   ? handleChangeDelivery

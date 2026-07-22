@@ -251,9 +251,9 @@ async function markJobNotificationsRead(userId, jobId, section = "all") {
   return result.count;
 }
 
+// Exclude job_chat: Messages tab badges clear only via markJobNotificationsRead(section: "messages").
 const JOBS_NAV_TYPES = [
   ...JOB_SECTION_TYPES.materials,
-  ...JOB_SECTION_TYPES.messages,
   ...JOB_SECTION_TYPES.general.filter((t) => t !== "job_request"),
 ];
 

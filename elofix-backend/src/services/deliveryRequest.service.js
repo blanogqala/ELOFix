@@ -990,8 +990,48 @@ async function resolveCourierJobIdForMaterialOrder(materialOrderId, hints = {}) 
 }
 
 /**
+ * Drop accepted/submitted quote remnants from a delivery request and its courier job.
+ * Used when cancelling courier delivery (not when resetting for a new courier).
+ */
+async function voidCourierQuoteRemnants({ deliveryRequest: dr, jobId }) {
+  const { mutateJobMeta } = require("./jobMeta.service");
+
+  if (dr) {
+    const payload = dr.payload && typeof dr.payload === "object" ? { ...dr.payload } : {};
+    delete payload.deliveryQuote;
+    payload.delivery = {
+      ...(payload.delivery || {}),
+      status: "Cancelled",
+      fee: 0,
+    };
+    await prisma.deliveryRequest.update({
+      where: { id: dr.id },
+      data: {
+        status: "cancelled",
+        quotedFee: null,
+        quoteNote: null,
+        payload,
+      },
+    });
+  }
+
+  if (jobId) {
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { price: new Prisma.Decimal("0") },
+    });
+    await mutateJobMeta(jobId, (m) => ({
+      ...m,
+      servicePrice: null,
+    }));
+  }
+}
+
+/**
  * Cancel a material courier child job when the customer cancels delivery or switches provider.
- * Old courier sees the job in their Canceled requests inbox.
+ * Never-accepted (PENDING) cancels appear in the courier's Requests → Canceled inbox.
+ * Post-accept cancels appear under Active Jobs only.
+ * Drops quotedFee / Job.servicePrice so cancelled provider quotes cannot stay payable.
  */
 async function cancelCourierDeliveryForCustomer(params = {}) {
   const {
@@ -1021,32 +1061,40 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
   if (!jobId) return { cancelled: false };
 
   const job = await prisma.job.findUnique({ where: { id: jobId } });
-  if (!job || String(job.status) === "CANCELLED") {
+  if (!job) {
     return { cancelled: false, courierJobId: jobId, deliveryRequestId: dr?.id };
   }
 
+  const alreadyCancelled = String(job.status) === "CANCELLED";
   const cancelledAt = new Date().toISOString();
+  const cancelledAtStatus = String(job.status || "").trim();
   const cancellationReason =
     source === "customer_changed_provider"
       ? "Customer chose another courier"
       : source === "customer_changed_delivery_option"
         ? "Customer changed delivery option"
-        : "Customer cancelled delivery";
-
-  await prisma.job.update({
-    where: { id: jobId },
-    data: { status: "CANCELLED" },
-  });
+        : source === "provider_cancel"
+          ? "Courier cancelled delivery"
+          : "Customer cancelled delivery";
 
   const { mutateJobMeta } = require("./jobMeta.service");
-  await mutateJobMeta(jobId, (m) => ({
-    ...m,
-    statusOverride: "CANCELLED",
-    cancellationSource: source,
-    cancelledAt,
-    cancelledBy: "customer",
-    cancellationReason,
-  }));
+
+  if (!alreadyCancelled) {
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { status: "CANCELLED" },
+    });
+
+    await mutateJobMeta(jobId, (m) => ({
+      ...m,
+      statusOverride: "CANCELLED",
+      cancellationSource: source,
+      cancelledAt,
+      cancelledBy: "customer",
+      cancellationReason,
+      cancelledAtStatus,
+    }));
+  }
 
   if (dr) {
     if (resetDeliveryRequest) {
@@ -1064,17 +1112,24 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
           },
         },
       });
+      if (jobId) {
+        await prisma.job.update({
+          where: { id: jobId },
+          data: { price: new Prisma.Decimal("0") },
+        });
+        await mutateJobMeta(jobId, (m) => ({
+          ...m,
+          servicePrice: null,
+        }));
+      }
     } else {
-      const payload = dr.payload && typeof dr.payload === "object" ? { ...dr.payload } : {};
-      payload.delivery = { ...(payload.delivery || {}), status: "Cancelled" };
-      await prisma.deliveryRequest.update({
-        where: { id: dr.id },
-        data: { status: "cancelled", payload },
-      });
+      await voidCourierQuoteRemnants({ deliveryRequest: dr, jobId });
     }
+  } else if (jobId) {
+    await voidCourierQuoteRemnants({ deliveryRequest: null, jobId });
   }
 
-  if (notify && job.providerId) {
+  if (!alreadyCancelled && notify && job.providerId) {
     try {
       await notificationEvents.notifyDeliveryUpdate(
         job.providerId,
@@ -1087,7 +1142,12 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
     }
   }
 
-  return { cancelled: true, courierJobId: jobId, deliveryRequestId: dr?.id };
+  return {
+    cancelled: true,
+    alreadyCancelled: alreadyCancelled || undefined,
+    courierJobId: jobId,
+    deliveryRequestId: dr?.id,
+  };
 }
 
 async function createCourierJobForDeliveryRequest(dr, params) {

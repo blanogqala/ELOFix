@@ -314,6 +314,22 @@ function isDismissedFromProviderInbox(meta, userId) {
   return list.map((id) => String(id)).includes(String(userId));
 }
 
+/** Never-accepted courier cancels belong on Requests → Canceled, not Active Jobs. */
+function isNeverAcceptedCancelledCourierRequest(job, meta) {
+  if (!meta?.courierFlow) return false;
+  if (toFrontendStatus(job.status, meta) !== "CANCELLED") return false;
+  const source = String(meta.cancellationSource || "");
+  if (!["customer_cancel", "customer_changed_provider", "customer_changed_delivery_option"].includes(source)) {
+    return false;
+  }
+  const cancelledAtStatus = String(meta.cancelledAtStatus || "").trim().toUpperCase();
+  if (cancelledAtStatus) {
+    return cancelledAtStatus === "PENDING";
+  }
+  // Legacy rows without cancelledAtStatus: accept bumps progressStep; cancel preserves it.
+  return Number(meta.progressStep) < 1;
+}
+
 async function loadProviderSkillsSet(userId) {
   const provider = await prisma.provider.findUnique({
     where: { userId },
@@ -766,6 +782,9 @@ async function getJobsForActor(userId, role) {
   for (const job of jobs) {
     let meta = await getJobMeta(job.id);
     if (role === "PROVIDER" && isDismissedFromProviderInbox(meta, userId)) {
+      continue;
+    }
+    if (role === "PROVIDER" && isNeverAcceptedCancelledCourierRequest(job, meta)) {
       continue;
     }
     if (
@@ -1692,12 +1711,8 @@ async function getCancelledRequestsForProvider(providerUserId) {
   const results = [];
   for (const job of jobs) {
     const meta = await getJobMeta(job.id);
-    if (!meta?.courierFlow) continue;
     if (isDismissedFromProviderInbox(meta, pid)) continue;
-    const frontendStatus = toFrontendStatus(job.status, meta);
-    if (frontendStatus !== "CANCELLED") continue;
-    const source = String(meta.cancellationSource || "");
-    if (!["customer_cancel", "customer_changed_provider", "customer_changed_delivery_option"].includes(source)) continue;
+    if (!isNeverAcceptedCancelledCourierRequest(job, meta)) continue;
     results.push(await finalizeJob(job, meta));
   }
   results.sort((a, b) => {
@@ -2171,6 +2186,40 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   }
   if (Number(refundAmount) > 0) {
     await notificationEvents.notifyCustomerRefundProcessed(job.customerId, jobId, refundAmount);
+  }
+
+  if (Boolean(preMeta?.courierFlow) && policy.cancelledBy === "provider") {
+    try {
+      const materialOrderService = require("./materialOrder.service");
+      let materialOrderId =
+        preMeta?.materialOrderId != null && String(preMeta.materialOrderId).trim() !== ""
+          ? String(preMeta.materialOrderId).trim()
+          : "";
+      if (!materialOrderId) {
+        const dr = await prisma.deliveryRequest.findFirst({
+          where: { jobId: String(jobId) },
+          orderBy: { createdAt: "desc" },
+          select: { materialOrderId: true },
+        });
+        if (dr?.materialOrderId) materialOrderId = String(dr.materialOrderId);
+      }
+      if (materialOrderId) {
+        await materialOrderService.clearDeliveryAfterCourierProviderCancel(materialOrderId, {
+          courierJobId: jobId,
+        });
+        await notificationEvents.notifyUser(job.customerId, {
+          type: "delivery_update",
+          title: "Delivery cancelled",
+          message:
+            "Your courier cancelled this delivery. Please choose a new delivery option for your materials order.",
+          jobId: preMeta?.parentJobId ? String(preMeta.parentJobId) : jobId,
+          materialOrderId,
+          dedupeKey: `mo:${materialOrderId}:courier_provider_cancel_choose_delivery`,
+        });
+      }
+    } catch (e) {
+      console.error("cancelJob clearDeliveryAfterCourierProviderCancel", jobId, e);
+    }
   }
 
   return {

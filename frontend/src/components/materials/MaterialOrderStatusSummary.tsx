@@ -8,7 +8,7 @@ import {
 import { isMaterialOrderDeliveryPaymentPending } from '@/lib/jobQuoteDisplay';
 import { resolveMaterialOrderDeliveryTrackingBadge } from '@/lib/materialOrderDeliveryTracking';
 import {
-  deliveryModeLabel,
+  resolveDeliveryModeBadgeLabel,
   resolveDisplayDeliveryType,
 } from '@/lib/providerMaterialOrderHelpers';
 
@@ -23,10 +23,9 @@ export function MaterialOrderDeliveryModeBadge({
   mo,
   className,
 }: MaterialOrderDeliveryModeBadgeProps) {
-  const displayDeliveryType = resolveDisplayDeliveryType(storeOrder, mo);
   return (
     <Badge variant="outline" className={cn('text-xs shrink-0', className)}>
-      {deliveryModeLabel(displayDeliveryType)}
+      {resolveDeliveryModeBadgeLabel(storeOrder, mo)}
     </Badge>
   );
 }
@@ -51,11 +50,13 @@ export function MaterialOrderStatusSummary({
   const deliveryPayPending = isMaterialOrderDeliveryPaymentPending(storeOrder, mo);
   const fulfillmentStatus = String(mo?.fulfillmentStatus || 'PENDING').toUpperCase();
   const displayDeliveryType = resolveDisplayDeliveryType(storeOrder, mo);
-  const isDelivery = batch?.deliveryType === 'delivery' || displayDeliveryType !== 'SELF';
+  const isDelivery =
+    batch?.deliveryType === 'delivery' ||
+    (displayDeliveryType != null && displayDeliveryType !== 'SELF');
   const secondaryBadge = resolveMaterialOrderDeliveryTrackingBadge({
     deliveryPayPending,
     isRefunded,
-    displayDeliveryType,
+    displayDeliveryType: displayDeliveryType ?? 'SELF',
     mo,
     batch,
   });

@@ -45,7 +45,7 @@ import {
   isMaterialOrderRefunded,
   resolveMaterialBatchFromSnapshot,
 } from '@/lib/materialBatchTracking';
-import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
+import { resolveDeliveryModeBadgeLabel, resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
 import {
   getMaterialOrderDeliveryPaymentReminder,
   getStoreOrderDeliveryLine,
@@ -887,9 +887,7 @@ export function MaterialPaymentSection({
                                   </Badge>
                                 ) : null}
                                 <Badge variant="outline">
-                                  {storeOrder.deliveryType === 'SELF' && 'Self collection'}
-                                  {storeOrder.deliveryType === 'STORE' && 'Store delivery'}
-                                  {storeOrder.deliveryType === 'PROVIDER' && 'Delivery provider'}
+                                  {resolveDeliveryModeBadgeLabel(storeOrder, moPending)}
                                 </Badge>
                                 {storeOrder.deliveryStatus === 'PendingApproval' ? (
                                   <Badge variant="outline" className="text-xs">

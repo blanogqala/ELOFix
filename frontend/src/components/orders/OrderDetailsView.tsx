@@ -123,7 +123,6 @@ interface OrderDetailsViewProps {
   lastDriverPingMs?: number | null;
   locationPollFailed?: boolean;
   socketReconnecting?: boolean;
-  onCancelDelivery?: () => void;
   onChangeDelivery?: () => void;
   onChooseDelivery?: () => void;
   onCancelOrder?: () => void;
@@ -269,7 +268,6 @@ export function OrderDetailsView({
   lastDriverPingMs,
   locationPollFailed,
   socketReconnecting = false,
-  onCancelDelivery,
   onChangeDelivery,
   onChooseDelivery,
   onCancelOrder,
@@ -704,8 +702,8 @@ export function OrderDetailsView({
             </>
           ) : null}
 
-          <CourierContactCard order={order} />
-          <DeliveryRouteSummary order={order} />
+          {!isRejected ? <CourierContactCard order={order} /> : null}
+          {!isRejected ? <DeliveryRouteSummary order={order} /> : null}
 
           {isSelfPickup && !pickupChangeBlocked && onChangeDelivery ? (
             <div className="rounded-lg border border-border/80 bg-muted/25 p-4 space-y-3">
@@ -731,16 +729,31 @@ export function OrderDetailsView({
             </div>
           ) : null}
 
+          {!noDeliverySelected && isRejected && order.deliveryType === 'PROVIDER' ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+              <p className="text-sm font-medium">Courier declined this delivery request.</p>
+              {order.deliveryRejectionReason ? (
+                <p className="text-xs text-muted-foreground">Reason: {order.deliveryRejectionReason}</p>
+              ) : null}
+              {(onChangeDelivery || onChooseDelivery) ? (
+                <Button
+                  size="sm"
+                  className="btn-accent"
+                  onClick={onChangeDelivery ?? onChooseDelivery}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Change delivery option
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
           {!noDeliverySelected && isPendingApproval && order.deliveryType !== 'STORE' ? (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-4 space-y-3">
               <p className="text-sm font-medium leading-snug">
                 Your courier will review this request and send a delivery price.
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={onCancelDelivery}>
-                  <XCircle className="h-3.5 w-3.5 mr-1" />
-                  Cancel delivery request
-                </Button>
                 {onChangeDelivery ? (
                   <Button size="sm" variant="secondary" onClick={onChangeDelivery}>
                     <RefreshCw className="h-3.5 w-3.5 mr-1" />
@@ -818,9 +831,6 @@ export function OrderDetailsView({
                     Change option
                   </Button>
                 ) : null}
-                <Button size="sm" variant="outline" onClick={onCancelDelivery}>
-                  Cancel delivery
-                </Button>
               </div>
             </div>
           ) : null}

@@ -276,6 +276,7 @@ function enrichJob(job, meta) {
     cancelledBy: safeMeta.cancelledBy || null,
     cancellationSource: safeMeta.cancellationSource || null,
     cancelledAt: safeMeta.cancelledAt,
+    cancelledAtStatus: safeMeta.cancelledAtStatus || null,
     refundAmount:
       safeMeta.refund?.cumulativeCustomerNet != null &&
       Number.isFinite(Number(safeMeta.refund.cumulativeCustomerNet))

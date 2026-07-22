@@ -508,7 +508,7 @@ async function syncJobStoreOrderDeliveryFromMaterialOrder(row, payload) {
           deliveryPaid,
         },
       };
-      if (deliveryType !== "PROVIDER") {
+  if (deliveryType !== "PROVIDER" || deliveryStatus === "Cancelled") {
         delete nextOrder.courierJobId;
       }
       list[idx] = nextOrder;
@@ -866,9 +866,17 @@ async function reconcileMaterialOrderWithDeliveryContext(row, base, deliveryRequ
     base.courierJobId = String(deliveryRequestRow.jobId);
   }
 
+  const drStatus = String(deliveryRequestRow.status || "").toLowerCase();
+  const drActiveForFee =
+    deliveryType === "DELIVERY_PROVIDER" &&
+    !drCancelled &&
+    !jobCancelled &&
+    ["quoted", "approved", "paid", "in_transit", "completed"].includes(drStatus);
+
   const drPaid = isDeliveryRequestPaid(deliveryRequestRow);
   const moPaid = base.payment?.deliveryPaid === true;
-  const effectivePaid = moPaid || drPaid;
+  // Do not inherit payment/fee from a cancelled or non-provider courier request.
+  const effectivePaid = moPaid || (drActiveForFee && drPaid);
   const currentStatus = normalizeDeliveryStatus(base.delivery?.status);
   const effectiveStatus = resolveEffectiveDeliveryStatus(
     base,
@@ -877,7 +885,9 @@ async function reconcileMaterialOrderWithDeliveryContext(row, base, deliveryRequ
     row.fulfillmentStatus
   );
   const drFee =
-    deliveryRequestRow.quotedFee != null && Number(deliveryRequestRow.quotedFee) > 0
+    drActiveForFee &&
+    deliveryRequestRow.quotedFee != null &&
+    Number(deliveryRequestRow.quotedFee) > 0
       ? Number(deliveryRequestRow.quotedFee)
       : null;
   const effectiveFee =
@@ -1465,6 +1475,63 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
 
   await syncJobStoreOrderDeliveryFromMaterialOrder(rowBefore, result);
   return result;
+}
+
+/**
+ * When a courier cancels their delivery child job, clear the material-order
+ * delivery choice so the customer must pick a new option (same empty state as
+ * delivery.status === "Cancelled").
+ */
+async function clearDeliveryAfterCourierProviderCancel(materialOrderId, options = {}) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return null;
+
+  const row = await prisma.materialOrder.findUnique({ where: { id: mid } });
+  if (!row) return null;
+
+  const payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+  const materialsSubtotal = Number(payload.materialsSubtotal ?? 0) || 0;
+  const nextDelivery = {
+    ...(payload.delivery && typeof payload.delivery === "object" ? payload.delivery : {}),
+    status: "Cancelled",
+    fee: 0,
+  };
+  delete nextDelivery.providerId;
+
+  const nextPayload = {
+    ...payload,
+    delivery: nextDelivery,
+    deliveryFee: 0,
+    deliveryStatus: "processing",
+    total: materialsSubtotal,
+    payment: {
+      ...(payload.payment && typeof payload.payment === "object" ? payload.payment : {}),
+      deliveryPaid: false,
+    },
+  };
+  delete nextPayload.deliveryQuote;
+  delete nextPayload.deliveryRejection;
+  delete nextPayload.deliveryProviderId;
+
+  const updated = await prisma.materialOrder.update({
+    where: { id: mid },
+    data: { payload: nextPayload },
+  });
+
+  const deliveryRequestService = require("./deliveryRequest.service");
+  try {
+    await deliveryRequestService.cancelCourierDeliveryForCustomer({
+      materialOrderId: mid,
+      courierJobId: options.courierJobId ? String(options.courierJobId) : undefined,
+      source: "provider_cancel",
+      notify: false,
+    });
+  } catch (e) {
+    console.error("clearDeliveryAfterCourierProviderCancel void courier", mid, e);
+  }
+
+  await syncJobStoreOrderDeliveryFromMaterialOrder(updated, nextPayload);
+  return enrichOrderFromDbRow(updated, nextPayload);
 }
 
 async function approveMaterialOrderDeliveryBySupplier(orderId, supplierId, options = {}) {
@@ -4032,6 +4099,7 @@ module.exports = {
   getMaterialOrders,
   getMaterialOrderById,
   updateMaterialOrderDelivery,
+  clearDeliveryAfterCourierProviderCancel,
   approveMaterialOrderDelivery,
   approveMaterialOrderDeliveryBySupplier,
   rejectMaterialOrderDeliveryBySupplier,

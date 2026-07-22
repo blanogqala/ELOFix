@@ -108,6 +108,46 @@ describe('getCourierTimelineViewState', () => {
     const view = getCourierTimelineViewState(job, null, []);
     expect(view.currentIdx).toBe(2);
   });
+
+  it('pins cancel on Pending when cancelled before accept', () => {
+    const job = courierJob({
+      status: 'CANCELLED',
+      providerId: 'courier-1',
+      progressStep: 0,
+      cancelledAtStatus: 'PENDING',
+      cancelledAt: '2026-07-22T20:00:00.000Z',
+      cancellationSource: 'customer_changed_delivery_option',
+    });
+    const view = getCourierTimelineViewState(job, null, []);
+    expect(view.terminal).toBe('cancelled');
+    expect(view.pinIndex).toBe(0);
+    expect(view.currentIdx).toBe(0);
+  });
+
+  it('does not advance past Pending for legacy pending cancels that only have providerId', () => {
+    const job = courierJob({
+      status: 'CANCELLED',
+      providerId: 'courier-1',
+      progressStep: 0,
+      cancellationSource: 'customer_changed_delivery_option',
+    });
+    const view = getCourierTimelineViewState(job, null, []);
+    expect(view.terminal).toBe('cancelled');
+    expect(view.pinIndex).toBe(0);
+  });
+
+  it('pins cancel on Awaiting Payment when cancelled after accept', () => {
+    const job = courierJob({
+      status: 'CANCELLED',
+      providerId: 'courier-1',
+      progressStep: 1,
+      cancelledAtStatus: 'ACCEPTED' as Job['cancelledAtStatus'],
+      cancellationSource: 'customer_changed_delivery_option',
+    });
+    const view = getCourierTimelineViewState(job, null, []);
+    expect(view.terminal).toBe('cancelled');
+    expect(view.pinIndex).toBe(1);
+  });
 });
 
 describe('getJobDisplayStatusLabel', () => {

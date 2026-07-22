@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { JobMaterialOrderSnapshot, JobStoreOrder } from '@/types';
 import {
   deliveryModeLabel,
+  isDeliverySelectionCleared,
+  resolveDeliveryModeBadgeLabel,
   resolveDisplayDeliveryType,
 } from '@/lib/providerMaterialOrderHelpers';
 
-function storeOrder(deliveryType: JobStoreOrder['deliveryType']): JobStoreOrder {
+function storeOrder(
+  deliveryType: JobStoreOrder['deliveryType'],
+  overrides: Partial<JobStoreOrder> = {}
+): JobStoreOrder {
   return {
     storeId: 'branch-1',
     orderId: 'order-a',
@@ -18,10 +23,14 @@ function storeOrder(deliveryType: JobStoreOrder['deliveryType']): JobStoreOrder 
     invoiceId: '',
     createdAt: '2026-07-05T00:00:00.000Z',
     payment: { materialsPaid: true, deliveryPaid: true },
+    ...overrides,
   };
 }
 
-function materialOrder(deliveryType: string): JobMaterialOrderSnapshot {
+function materialOrder(
+  deliveryType: string,
+  overrides: Partial<JobMaterialOrderSnapshot> = {}
+): JobMaterialOrderSnapshot {
   return {
     id: 'mo-a',
     fulfillmentStatus: 'OUT_FOR_DELIVERY',
@@ -34,6 +43,7 @@ function materialOrder(deliveryType: string): JobMaterialOrderSnapshot {
     createdAt: '2026-07-05T00:00:00.000Z',
     jobStoreOrderId: 'order-a',
     deliveryType,
+    ...overrides,
   };
 }
 
@@ -53,11 +63,64 @@ describe('resolveDisplayDeliveryType', () => {
   it('falls back to store order when material order has no delivery type', () => {
     expect(resolveDisplayDeliveryType(storeOrder('PROVIDER'), null)).toBe('PROVIDER');
   });
+
+  it('returns null when delivery status is Cancelled', () => {
+    expect(
+      resolveDisplayDeliveryType(
+        storeOrder('PROVIDER', { deliveryStatus: 'Cancelled' }),
+        materialOrder('DELIVERY_PROVIDER', {
+          delivery: { type: 'PROVIDER', status: 'Cancelled', fee: 0 },
+          deliveryStatus: 'Cancelled',
+        })
+      )
+    ).toBeNull();
+  });
+});
+
+describe('isDeliverySelectionCleared', () => {
+  it('detects cancelled material-order delivery', () => {
+    expect(
+      isDeliverySelectionCleared(
+        storeOrder('PROVIDER'),
+        materialOrder('DELIVERY_PROVIDER', {
+          delivery: { type: 'PROVIDER', status: 'Cancelled', fee: 0 },
+        })
+      )
+    ).toBe(true);
+  });
 });
 
 describe('deliveryModeLabel', () => {
   it('labels store and courier modes', () => {
     expect(deliveryModeLabel('STORE')).toBe('Store delivery');
     expect(deliveryModeLabel('PROVIDER')).toBe('Courier delivery');
+  });
+
+  it('labels cleared selection', () => {
+    expect(deliveryModeLabel(null)).toBe('Not selected');
+  });
+});
+
+describe('resolveDeliveryModeBadgeLabel', () => {
+  it('shows Not selected after courier cancel clears delivery', () => {
+    expect(
+      resolveDeliveryModeBadgeLabel(
+        storeOrder('PROVIDER', { deliveryStatus: 'Cancelled' }),
+        materialOrder('DELIVERY_PROVIDER', {
+          delivery: { type: 'PROVIDER', status: 'Cancelled', fee: 0 },
+        })
+      )
+    ).toBe('Not selected');
+  });
+
+  it('keeps Courier delivery when selection is active', () => {
+    expect(
+      resolveDeliveryModeBadgeLabel(
+        storeOrder('PROVIDER', { deliveryStatus: 'Approved' }),
+        materialOrder('DELIVERY_PROVIDER', {
+          delivery: { type: 'PROVIDER', status: 'Approved', fee: 50 },
+        })
+      )
+    ).toBe('Courier delivery');
   });
 });
