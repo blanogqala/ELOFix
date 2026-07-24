@@ -413,11 +413,36 @@ async function rejectDirectDeliveryRequest(id, courierUserId, reason) {
     throw new AppError("Cannot reject in current state", 400);
   }
   const payload = row.payload && typeof row.payload === "object" ? { ...row.payload } : {};
-  payload.delivery = { ...(payload.delivery || {}), status: "Rejected" };
+  delete payload.deliveryQuote;
+  payload.delivery = {
+    ...(payload.delivery || {}),
+    status: "Rejected",
+    fee: 0,
+  };
   const updated = await prisma.deliveryRequest.update({
     where: { id: row.id },
-    data: { status: "rejected", payload },
+    data: {
+      status: "rejected",
+      quotedFee: null,
+      quoteNote: null,
+      payload,
+    },
   });
+
+  // Clear this job's quote surfaces when the DR still belongs to it (unpaid reject).
+  // Do not touch totalPrice/laborPaid — those only exist after payment.
+  if (row.jobId && String(updated.jobId || row.jobId) === String(row.jobId)) {
+    const { mutateJobMeta } = require("./jobMeta.service");
+    await prisma.job.update({
+      where: { id: String(row.jobId) },
+      data: { price: new Prisma.Decimal("0") },
+    });
+    await mutateJobMeta(String(row.jobId), (m) => ({
+      ...m,
+      servicePrice: null,
+    }));
+  }
+
   await syncMaterialOrderDeliveryFromRow(updated, "reject", { reason });
   return enrichDeliveryRequestAsync(updated);
 }
@@ -839,6 +864,44 @@ async function updateDirectDeliveryFulfillment(id, courierUserId, nextStatus) {
   if (!isDeliveryRequestPaidForFulfillment(row)) {
     throw new AppError("Delivery must be paid before fulfillment updates", 400);
   }
+
+  if (row.jobId) {
+    const linkedJob = await prisma.job.findUnique({
+      where: { id: String(row.jobId) },
+      select: { status: true, meta: true },
+    });
+    const linkedStatus = String(linkedJob?.status || "").toUpperCase();
+    const linkedOverride = String(linkedJob?.meta?.statusOverride || "").toUpperCase();
+    if (
+      linkedStatus === "DISPUTED" ||
+      linkedOverride === "DISPUTED" ||
+      linkedStatus === "CANCELLED" ||
+      linkedOverride === "CANCELLED"
+    ) {
+      throw new AppError(
+        "This delivery is under cancellation review or cancelled — fulfillment cannot continue",
+        409
+      );
+    }
+    const openCancellationDispute = await prisma.jobDispute.findFirst({
+      where: {
+        jobId: String(row.jobId),
+        status: { in: ["OPEN", "UNDER_INVESTIGATION"] },
+        requestedResolution: "REFUND",
+      },
+      select: { id: true },
+    });
+    if (openCancellationDispute) {
+      const cancelSrc = String(linkedJob?.meta?.cancellationSource || "");
+      if (cancelSrc === "provider_cancel" || cancelSrc === "customer_cancel") {
+        throw new AppError(
+          "This delivery is under cancellation review — fulfillment cannot continue",
+          409
+        );
+      }
+    }
+  }
+
   let current = String(row.fulfillmentStatus || "READY").toUpperCase();
   if (current === "PENDING" && isDeliveryRequestPaidForFulfillment(row)) {
     current = "READY";
@@ -1004,10 +1067,12 @@ async function voidCourierQuoteRemnants({ deliveryRequest: dr, jobId }) {
       status: "Cancelled",
       fee: 0,
     };
+    delete payload.delivery.providerId;
     await prisma.deliveryRequest.update({
       where: { id: dr.id },
       data: {
         status: "cancelled",
+        fulfillmentStatus: MaterialFulfillmentStatus.CANCELLED,
         quotedFee: null,
         quoteNote: null,
         payload,
@@ -1045,7 +1110,14 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
   let dr = null;
   let jobId = courierJobId ? String(courierJobId).trim() : "";
 
-  if (materialOrderId) {
+  // Prefer an explicit courierJobId so dispute-resolve / clear never cancels a
+  // newer re-hired job on the same material order.
+  if (jobId) {
+    dr = await prisma.deliveryRequest.findFirst({
+      where: { jobId },
+      orderBy: { createdAt: "desc" },
+    });
+  } else if (materialOrderId) {
     dr = await prisma.deliveryRequest.findFirst({
       where: { materialOrderId: String(materialOrderId) },
       orderBy: { createdAt: "desc" },
@@ -1054,8 +1126,6 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
     if (!jobId) {
       jobId = await resolveCourierJobIdForMaterialOrder(materialOrderId, { courierJobId });
     }
-  } else if (jobId) {
-    dr = await prisma.deliveryRequest.findFirst({ where: { jobId } });
   }
 
   if (!jobId) return { cancelled: false };
@@ -1065,7 +1135,13 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
     return { cancelled: false, courierJobId: jobId, deliveryRequestId: dr?.id };
   }
 
-  const alreadyCancelled = String(job.status) === "CANCELLED";
+  const jobStatus = String(job.status || "").toUpperCase();
+  const jobMeta =
+    job.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta : {};
+  const alreadyCancelled =
+    jobStatus === "CANCELLED" || String(jobMeta.statusOverride || "").toUpperCase() === "CANCELLED";
+  const preserveDisputeStatus =
+    jobStatus === "DISPUTED" || String(jobMeta.statusOverride || "").toUpperCase() === "DISPUTED";
   const cancelledAt = new Date().toISOString();
   const cancelledAtStatus = String(job.status || "").trim();
   const cancellationReason =
@@ -1079,7 +1155,8 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
 
   const { mutateJobMeta } = require("./jobMeta.service");
 
-  if (!alreadyCancelled) {
+  // Do not overwrite DISPUTED — refund investigation must stay open while DR is voided.
+  if (!alreadyCancelled && !preserveDisputeStatus) {
     await prisma.job.update({
       where: { id: jobId },
       data: { status: "CANCELLED" },
@@ -1093,6 +1170,12 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
       cancelledBy: "customer",
       cancellationReason,
       cancelledAtStatus,
+    }));
+  } else if (preserveDisputeStatus) {
+    await mutateJobMeta(jobId, (m) => ({
+      ...m,
+      deliveryAssignmentClearedAt: cancelledAt,
+      deliveryAssignmentClearedSource: source,
     }));
   }
 
@@ -1112,7 +1195,7 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
           },
         },
       });
-      if (jobId) {
+      if (jobId && !preserveDisputeStatus) {
         await prisma.job.update({
           where: { id: jobId },
           data: { price: new Prisma.Decimal("0") },
@@ -1123,13 +1206,27 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
         }));
       }
     } else {
-      await voidCourierQuoteRemnants({ deliveryRequest: dr, jobId });
+      await voidCourierQuoteRemnants({
+        deliveryRequest: dr,
+        jobId: preserveDisputeStatus ? null : jobId,
+      });
+      if (preserveDisputeStatus && jobId) {
+        // Still zero the quoted fee on the disputed job without changing status.
+        await prisma.job.update({
+          where: { id: jobId },
+          data: { price: new Prisma.Decimal("0") },
+        });
+        await mutateJobMeta(jobId, (m) => ({
+          ...m,
+          servicePrice: null,
+        }));
+      }
     }
-  } else if (jobId) {
+  } else if (jobId && !preserveDisputeStatus) {
     await voidCourierQuoteRemnants({ deliveryRequest: null, jobId });
   }
 
-  if (!alreadyCancelled && notify && job.providerId) {
+  if (!alreadyCancelled && !preserveDisputeStatus && notify && job.providerId) {
     try {
       await notificationEvents.notifyDeliveryUpdate(
         job.providerId,
@@ -1145,6 +1242,7 @@ async function cancelCourierDeliveryForCustomer(params = {}) {
   return {
     cancelled: true,
     alreadyCancelled: alreadyCancelled || undefined,
+    preservedDispute: preserveDisputeStatus || undefined,
     courierJobId: jobId,
     deliveryRequestId: dr?.id,
   };
@@ -1343,6 +1441,8 @@ async function ensureMaterialCourierJobRequest(params) {
   }
 
   if (isStaleDr) {
+    const previousJobId = existingDr.jobId ? String(existingDr.jobId) : null;
+    const staleDrId = String(existingDr.id);
     await prisma.deliveryRequest.update({
       where: { id: existingDr.id },
       data: {
@@ -1361,6 +1461,14 @@ async function ensureMaterialCourierJobRequest(params) {
         },
       },
     });
+    // Detach historical courier job so it cannot re-read this shared DR's later fee/paid state.
+    if (previousJobId) {
+      const { mutateJobMeta } = require("./jobMeta.service");
+      await mutateJobMeta(previousJobId, (m) => {
+        if (String(m.deliveryRequestId || "") !== staleDrId) return m;
+        return { ...m, deliveryRequestId: null };
+      });
+    }
     existingDr = await prisma.deliveryRequest.findFirst({ where: { materialOrderId: mid } });
     return createCourierJobForDeliveryRequest(existingDr, params);
   }

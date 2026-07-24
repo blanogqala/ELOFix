@@ -33,7 +33,8 @@ export function DeleteJobDialog({
           </AlertDialogTitle>
           <AlertDialogDescription className="space-y-2">
             <p>
-              Are you sure you want to delete this job from your list? This action cannot be undone.
+              Remove this job from your list only. The other party will still see it on their side.
+              This cannot be undone for your list.
             </p>
             <p className="text-sm">
               <strong>Note:</strong> Your payment invoices will be preserved in the Payments section for your records.
@@ -46,7 +47,7 @@ export function DeleteJobDialog({
             onClick={onConfirm}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            Delete Job
+            Remove from my list
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

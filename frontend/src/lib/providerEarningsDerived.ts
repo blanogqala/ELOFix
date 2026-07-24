@@ -145,7 +145,7 @@ export function sumNetReleasedAcrossJobs(jobs: ProviderEarningJobRow[]): number 
   return jobs.reduce((s, j) => s + getJobNetReleasedAfterRefund(j), 0);
 }
 
-/** Sum provider-entitled unreleased share across jobs (excludes courier pre-delivery customer escrow). */
+/** Sum provider-entitled unreleased share across jobs (includes delivery/moving held escrow). */
 export function sumProviderEscrowRemaining(jobs: ProviderEarningJobRow[]): number {
   return jobs.reduce((s, j) => s + getJobRemainingAmount(j), 0);
 }

@@ -52,7 +52,7 @@ export interface NormalizedOrder {
   id: string;
   storeName: string;
   items: NormalizedOrderItem[];
-  deliveryType: NormalizedOrderDeliveryType;
+  deliveryType?: NormalizedOrderDeliveryType | null;
   deliveryFee: number;
   totalPaid: number;
   createdAt: string;
@@ -96,6 +96,12 @@ export interface NormalizedOrder {
   driverLocation?: { lat: number; lng: number; updatedAt?: string } | null;
   deliveryConfirmed?: boolean;
   courierJobId?: string | null;
+  deliveryCancellationReview?: {
+    open?: boolean;
+    source?: string;
+    courierJobId?: string;
+    at?: string;
+  } | null;
   customerIssueFlag?: boolean;
   customerDeliveryIssue?: {
     reason: string;
@@ -285,13 +291,20 @@ export function OrderDetailsView({
   highlightConfirmSection,
   onDismissDeliveryHighlight,
 }: OrderDetailsViewProps) {
-  const canonical: CanonicalDeliveryType =
-    order.canonicalDelivery ||
-    (order.deliveryType === 'SELF'
-      ? 'pickup'
-      : order.deliveryType === 'PROVIDER'
-        ? 'provider_delivery'
-        : 'supplier_delivery');
+  const deliveryState = order.deliveryState || 'Processing';
+  const isCancelled = deliveryState === 'Cancelled';
+  const noDeliverySelected = isCancelled || !order.deliveryType;
+
+  const canonical: CanonicalDeliveryType | null = noDeliverySelected
+    ? null
+    : order.canonicalDelivery ||
+      (order.deliveryType === 'SELF'
+        ? 'pickup'
+        : order.deliveryType === 'PROVIDER'
+          ? 'provider_delivery'
+          : order.deliveryType === 'STORE'
+            ? 'supplier_delivery'
+            : null);
 
   const fulfillmentU = String(order.fulfillmentStatus || '').toUpperCase();
   const storeDeliveryFeePending =
@@ -310,7 +323,11 @@ export function OrderDetailsView({
 
   const isPickupCanonical = canonical === 'pickup';
   const unifiedMode: UnifiedDeliveryMode =
-    canonical === 'pickup' ? 'self_pickup' : canonical === 'supplier_delivery' ? 'store_delivery' : 'provider_delivery';
+    canonical === 'pickup'
+      ? 'self_pickup'
+      : canonical === 'supplier_delivery'
+        ? 'store_delivery'
+        : 'provider_delivery';
   const showConfirmReceipt =
     Boolean(onConfirmReceipt) &&
     order.deliveryConfirmed !== true &&
@@ -328,7 +345,6 @@ export function OrderDetailsView({
   const confirmLabel = isPickupCanonical ? 'Confirm collection' : 'Confirm delivery';
   const trackingLocked = fulfillmentU === 'COMPLETED' && order.deliveryConfirmed === true;
 
-  const deliveryState = order.deliveryState || 'Processing';
   const stateBadge = DELIVERY_STATE_BADGES[deliveryState] || DELIVERY_STATE_BADGES.Processing;
   const showTracking = order.deliveryType !== 'SELF' && order.deliveryPaid;
 
@@ -364,8 +380,11 @@ export function OrderDetailsView({
     deliveryType: order.deliveryType === 'STORE' ? 'STORE_DELIVERY' : order.deliveryType,
     deliveryState: order.deliveryState,
   });
-  const isCancelled = deliveryState === 'Cancelled';
-  const noDeliverySelected = isCancelled || !order.deliveryType;
+  const deliveryModeHeaderLabel = noDeliverySelected
+    ? 'Not selected'
+    : canonical
+      ? canonicalDeliveryLabel(canonical)
+      : 'Not selected';
   const isSelfPickup =
     isPickupCanonical &&
     order.deliveryType === 'SELF' &&
@@ -499,7 +518,7 @@ export function OrderDetailsView({
                 </Badge>
               ) : null}
               <Badge variant="outline" className="text-xs">
-                {canonicalDeliveryLabel(canonical)}
+                {deliveryModeHeaderLabel}
               </Badge>
             </div>
           </div>
@@ -626,7 +645,7 @@ export function OrderDetailsView({
               <Badge className={cn('text-xs', stateBadge.className)}>{stateBadge.label}</Badge>
             ) : null}
           </div>
-          <p className="text-xs text-muted-foreground pt-1">{canonicalDeliveryLabel(canonical)}</p>
+          <p className="text-xs text-muted-foreground pt-1">{deliveryModeHeaderLabel}</p>
         </CardHeader>
         <CardContent className="pt-5 space-y-4">
           {/* Store delivery — simplified */}
@@ -702,8 +721,8 @@ export function OrderDetailsView({
             </>
           ) : null}
 
-          {!isRejected ? <CourierContactCard order={order} /> : null}
-          {!isRejected ? <DeliveryRouteSummary order={order} /> : null}
+          {!noDeliverySelected && !isRejected ? <CourierContactCard order={order} /> : null}
+          {!noDeliverySelected && !isRejected ? <DeliveryRouteSummary order={order} /> : null}
 
           {isSelfPickup && !pickupChangeBlocked && onChangeDelivery ? (
             <div className="rounded-lg border border-border/80 bg-muted/25 p-4 space-y-3">
@@ -719,13 +738,24 @@ export function OrderDetailsView({
           ) : null}
 
           {noDeliverySelected ? (
-            <div className="rounded-lg border border-dashed border-border bg-muted/30 p-5 text-center space-y-3">
-              <Package className="h-8 w-8 mx-auto text-muted-foreground/50" aria-hidden />
-              <p className="text-sm text-muted-foreground">No delivery option selected yet.</p>
-              <Button size="sm" className="btn-accent" onClick={onChooseDelivery}>
-                <Truck className="h-3.5 w-3.5 mr-1.5" />
-                Choose delivery
-              </Button>
+            <div className="space-y-3">
+              {order.deliveryCancellationReview?.open ? (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-1">
+                  <p className="text-sm font-medium">Courier cancelled — under refund review</p>
+                  <p className="text-xs text-muted-foreground">
+                    The previous delivery fee stays under investigation. You can choose a new delivery
+                    option now; any new fee is a separate payment.
+                  </p>
+                </div>
+              ) : null}
+              <div className="rounded-lg border border-dashed border-border bg-muted/30 p-5 text-center space-y-3">
+                <Package className="h-8 w-8 mx-auto text-muted-foreground/50" aria-hidden />
+                <p className="text-sm text-muted-foreground">No delivery option selected yet.</p>
+                <Button size="sm" className="btn-accent" onClick={onChooseDelivery}>
+                  <Truck className="h-3.5 w-3.5 mr-1.5" />
+                  Choose delivery
+                </Button>
+              </div>
             </div>
           ) : null}
 

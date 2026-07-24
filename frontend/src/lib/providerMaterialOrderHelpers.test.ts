@@ -88,6 +88,18 @@ describe('isDeliverySelectionCleared', () => {
       )
     ).toBe(true);
   });
+
+  it('detects cleared selection when courier fulfillment is CANCELLED', () => {
+    expect(
+      isDeliverySelectionCleared(
+        storeOrder('PROVIDER', { deliveryStatus: 'Approved' }),
+        materialOrder('DELIVERY_PROVIDER', {
+          delivery: { type: 'PROVIDER', status: 'Processing', fee: 300 },
+          courierFulfillmentStatus: 'CANCELLED',
+        })
+      )
+    ).toBe(true);
+  });
 });
 
 describe('deliveryModeLabel', () => {

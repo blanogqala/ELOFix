@@ -2,6 +2,17 @@ import type { Job, JobMaterialOrderSnapshot, MaterialLine } from '@/types';
 import { isMaterialOrderRefunded } from '@/lib/materialBatchTracking';
 import { formatCurrency } from './formatCurrency';
 
+/** Courier job cancellation that opened an admin refund investigation (not a normal cancel). */
+export function isCourierCancellationUnderReview(
+  job: Pick<Job, 'status' | 'cancellationSource'> | null | undefined
+): boolean {
+  if (!job) return false;
+  return (
+    String(job.status || '').toUpperCase() === 'DISPUTED' &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel')
+  );
+}
+
 function round2(n: number): number {
   return Math.round(Math.max(0, n) * 100) / 100;
 }
@@ -105,8 +116,7 @@ export function getJobPriceDisplay(job: Job): {
       : undefined;
   const refundStatus = isDisputed ? undefined : job.refundStatus;
   const underAdminReview =
-    isDisputed &&
-    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel');
+    isCourierCancellationUnderReview(job);
 
   const settled = job.totalPrice != null && Number.isFinite(Number(job.totalPrice)) ? Number(job.totalPrice) : null;
   if (settled != null && settled > 0) {

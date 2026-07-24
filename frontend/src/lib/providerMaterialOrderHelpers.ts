@@ -41,6 +41,10 @@ export function isDeliverySelectionCleared(
   const moStatus = normalizeDeliveryStatusToken(mo?.delivery?.status ?? mo?.deliveryStatus);
   const storeStatus = normalizeDeliveryStatusToken(storeOrder.deliveryStatus ?? storeOrder.delivery?.status);
   if (moStatus === 'cancelled' || storeStatus === 'cancelled') return true;
+  const courierFs = String(mo?.courierFulfillmentStatus || '')
+    .trim()
+    .toUpperCase();
+  if (courierFs === 'CANCELLED') return true;
   const fromMo =
     canonicalStoreDeliveryType(mo?.deliveryType) ??
     canonicalStoreDeliveryType(mo?.delivery?.type);

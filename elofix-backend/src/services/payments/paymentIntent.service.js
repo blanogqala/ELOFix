@@ -83,6 +83,8 @@ async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, m
       if (p.payment?.deliveryPaid === true) {
         throw new AppError("Delivery fee already paid", 400);
       }
+      // Stale PAID intent after delivery cancel (deliveryPaid cleared) is healed by
+      // cancelStalePaidDeliveryFeeIntent before reuse — do not block here.
     }
     return;
   }
@@ -100,6 +102,49 @@ async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, m
       throw new AppError("Payment already completed for this order", 400);
     }
   }
+}
+
+/**
+ * After courier delivery cancel, MO.deliveryPaid is cleared but a PAID DELIVERY_FEE
+ * PaymentIntent may remain and block re-pay via @@unique([materialOrderId, kind]).
+ * Cancel any such intents so the customer can pay for a new delivery option.
+ */
+async function cancelDeliveryFeeIntentsForMaterialOrder(materialOrderId, options = {}) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return { cancelled: 0 };
+  const db = options.tx || prisma;
+  const now = new Date();
+  const result = await db.paymentIntent.updateMany({
+    where: {
+      materialOrderId: mid,
+      kind: "DELIVERY_FEE",
+      state: { not: "CANCELLED" },
+    },
+    data: {
+      state: "CANCELLED",
+      cancelledAt: now,
+    },
+  });
+  return { cancelled: Number(result.count) || 0 };
+}
+
+/** In-tx: if PAID DELIVERY_FEE exists but MO deliveryPaid is false, cancel it for reuse. */
+async function cancelStalePaidDeliveryFeeIntent(tx, materialOrderId) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return null;
+  const order = await tx.materialOrder.findUnique({ where: { id: mid } });
+  const p = order?.payload && typeof order.payload === "object" ? order.payload : {};
+  if (p.payment?.deliveryPaid === true) return null;
+
+  const paidIntent = await tx.paymentIntent.findFirst({
+    where: { materialOrderId: mid, kind: "DELIVERY_FEE", state: "PAID" },
+  });
+  if (!paidIntent) return null;
+
+  return tx.paymentIntent.update({
+    where: { id: paidIntent.id },
+    data: { state: "CANCELLED", cancelledAt: new Date() },
+  });
 }
 
 async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, metadata }) {
@@ -295,6 +340,23 @@ async function createPaymentIntent({
       // creating a duplicate (composite unique on [materialOrderId, kind]).
       // Covers retries after a PENDING/PROCESSING/FAILED/CANCELLED attempt.
       if (kindNorm === "DELIVERY_FEE" && materialOrderId) {
+        // Heal stale PAID intents left after delivery cancel (deliveryPaid already false).
+        await cancelStalePaidDeliveryFeeIntent(tx, materialOrderId);
+
+        // Prefer current DR.jobId after cancel/re-hire so PaymentReturn links the new courier job.
+        let deliveryFeeJobId = jobId ? String(jobId) : null;
+        const drMetaId =
+          intentMetadata && typeof intentMetadata === "object" && intentMetadata.deliveryRequestId
+            ? String(intentMetadata.deliveryRequestId).trim()
+            : "";
+        if (drMetaId) {
+          const drForJob = await tx.deliveryRequest.findUnique({
+            where: { id: drMetaId },
+            select: { jobId: true },
+          });
+          if (drForJob?.jobId) deliveryFeeJobId = String(drForJob.jobId);
+        }
+
         const reusable = await tx.paymentIntent.findFirst({
           where: {
             materialOrderId,
@@ -303,14 +365,22 @@ async function createPaymentIntent({
           },
         });
         if (reusable) {
+          // New merchant reference so PayFast / ITN / sandbox settle are a fresh payment,
+          // not tied to a previously settled attempt on this reused row.
+          const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
           const refreshed = await tx.paymentIntent.update({
             where: { id: reusable.id },
             data: {
+              merchantReference,
               provider: providerKey,
               amount: resolvedAmount,
               state: "PENDING",
               failedAt: null,
               cancelledAt: null,
+              paidAt: null,
+              refundedAt: null,
+              gatewayTransactionId: null,
+              jobId: deliveryFeeJobId || reusable.jobId || null,
               returnUrl: returnUrl || reusable.returnUrl || null,
               cancelUrl: cancelUrl || reusable.cancelUrl || null,
               gatewayPayload:
@@ -343,6 +413,9 @@ async function createPaymentIntent({
             },
           };
         }
+
+        // Fresh create below — use the same resolved courier job id.
+        jobId = deliveryFeeJobId || jobId || null;
       }
 
       const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
@@ -424,13 +497,16 @@ async function confirmPaymentReturn(intentId, userId, role) {
     intent.provider === "PAYFAST" &&
     payfastSettleOnReturn()
   ) {
+    // Unique per settle attempt — reusing a cancelled DELIVERY_FEE intent must not
+    // hit the prior sandbox-return-{intentId} webhook event (would skip settling).
+    const settleEventId = `sandbox-return-${intent.id}-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const webhookOut = await webhookService.processWebhookResult("PAYFAST", {
       valid: true,
       merchantReference: intent.merchantReference,
       gatewayTransactionId: `sandbox-return-${Date.now()}`,
       state: "PAID",
       amount: Number(intent.amount),
-      externalEventId: `sandbox-return-${intent.id}`,
+      externalEventId: settleEventId,
       raw: {
         source: "sandbox_return_url",
         intentId: intent.id,
@@ -491,7 +567,7 @@ async function adminForceSettle(intentId, adminUserId) {
     gatewayTransactionId: `admin-${adminUserId}-${Date.now()}`,
     state: "PAID",
     amount: Number(intent.amount),
-    externalEventId: `admin-force-${intent.id}`,
+    externalEventId: `admin-force-${intent.id}-${Date.now()}-${randomUUID().slice(0, 8)}`,
     raw: {
       source: "admin_force_settle",
       adminUserId,
@@ -523,4 +599,5 @@ module.exports = {
   adminForceSettle,
   listProviders,
   serializeIntent,
+  cancelDeliveryFeeIntentsForMaterialOrder,
 };

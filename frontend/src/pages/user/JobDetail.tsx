@@ -599,8 +599,8 @@ export default function JobDetail() {
       queryClient.removeQueries({ queryKey: queryKeys.jobs.detail(jobId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       toast({ 
-        title: 'Job Deleted', 
-        description: 'The job has been removed from your list.' 
+        title: 'Removed from your list', 
+        description: 'This job is still visible to the other party. Your invoices remain in Payments.' 
       });
       navigate('/user/jobs');
     } catch (error) {

@@ -686,7 +686,11 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
     return { skipped: true, jobRow: null };
   }
   if (String(job.status) === "CANCELLED") {
-    return { skipped: true, jobRow: null };
+    // Allow release for customer cancel-forfeit (en-route penalty); block other cancelled jobs.
+    const jobMeta = normalizeMeta(job.meta);
+    if (String(jobMeta.refund?.status || "").toLowerCase() !== "forfeited") {
+      return { skipped: true, jobRow: null };
+    }
   }
 
   let jobRow = job;
@@ -745,6 +749,59 @@ async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId
   });
 
   return { skipped: false, jobRow, meta2, stagedPayouts: stagedPayouts || [] };
+}
+
+/**
+ * Release held labor/courier escrow to the provider (full remaining share).
+ * Used by dispute RELEASE_FUNDS and customer cancel-forfeit (en-route penalty).
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx
+ */
+async function releaseHeldEscrowToProviderInTransaction(tx, jobId, providerProfileId) {
+  const j0 = await tx.job.findUnique({ where: { id: jobId } });
+  if (!j0 || !providerProfileId) return j0;
+  if (!j0.escrowSecondReleaseDone) {
+    await runSecondTrancheInTransaction(tx, {
+      job: j0,
+      providerProfileId,
+      jobId,
+    });
+    const escrowSettlement = require("./payments/escrowSettlement.service");
+    await escrowSettlement.markLaborEscrowFullyReleased(jobId, tx);
+  }
+  return j0;
+}
+
+/**
+ * Heal cancelled courier jobs where customer forfeited but escrow was never released
+ * (pending earnings were deleted, heldAmount left behind). Idempotent.
+ * @param {object} job
+ * @param {string} providerProfileId
+ */
+async function releaseForfeitedCourierEscrowIfNeeded(job, providerProfileId) {
+  if (!job || !providerProfileId) return job;
+  const meta = normalizeMeta(job.meta);
+  if (!meta.courierFlow) return job;
+  if (String(job.status) !== "CANCELLED") return job;
+  if (String(meta.refund?.status || "").toLowerCase() !== "forfeited") return job;
+  if (job.escrowSecondReleaseDone || job.isFullyReleased) return job;
+  if (!job.laborPaid) return job;
+  const providerAmt = Number(job.providerAmount);
+  const released = Number(job.releasedAmount) || 0;
+  if (!Number.isFinite(providerAmt) || providerAmt <= 0 || released >= providerAmt) return job;
+
+  await prisma.$transaction(
+    async (tx) => {
+      await releaseHeldEscrowToProviderInTransaction(tx, job.id, providerProfileId);
+    },
+    {
+      maxWait: 5000,
+      timeout: 20000,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }
+  );
+
+  const refreshed = await prisma.job.findUnique({ where: { id: job.id } });
+  return refreshed || job;
 }
 
 /**
@@ -1119,6 +1176,8 @@ module.exports = {
   runSettleLaborInTransaction,
   assertEscrowNotFrozen,
   runSecondTrancheInTransaction,
+  releaseHeldEscrowToProviderInTransaction,
+  releaseForfeitedCourierEscrowIfNeeded,
   backfillCourierDeliveryEscrowInTransaction,
   backfillCourierServicePaymentIfMissing,
   finalizeCourierDeliveryEscrowAfterPayment,

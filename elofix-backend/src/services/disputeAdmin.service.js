@@ -45,18 +45,7 @@ function isCancellationDispute(meta) {
 }
 
 async function releaseHeldEscrowToProviderInTransaction(tx, jobId, providerProfileId) {
-  const j0 = await tx.job.findUnique({ where: { id: jobId } });
-  if (!j0 || !providerProfileId) return j0;
-  if (!j0.escrowSecondReleaseDone) {
-    await paymentService.runSecondTrancheInTransaction(tx, {
-      job: j0,
-      providerProfileId,
-      jobId,
-    });
-    const escrowSettlement = require("./payments/escrowSettlement.service");
-    await escrowSettlement.markLaborEscrowFullyReleased(jobId, tx);
-  }
-  return j0;
+  return paymentService.releaseHeldEscrowToProviderInTransaction(tx, jobId, providerProfileId);
 }
 
 async function cancelJobAfterCancellationDisputeInTransaction(tx, jobId) {
@@ -438,6 +427,40 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
 
   if (trustUpdate) {
     await providerTrustScore.onDisputeRefundResolved(trustUpdate.providerProfileId, trustUpdate.kind);
+  }
+
+  const cancelledAfterResolve =
+    cancellationDispute &&
+    ["RELEASE_FUNDS", "PARTIAL_REFUND", "FULL_REFUND", "CLOSE_CASE"].includes(action);
+  if (cancelledAfterResolve && Boolean(metaBefore?.courierFlow)) {
+    try {
+      const materialOrderService = require("./materialOrder.service");
+      let materialOrderId =
+        metaBefore?.materialOrderId != null && String(metaBefore.materialOrderId).trim() !== ""
+          ? String(metaBefore.materialOrderId).trim()
+          : "";
+      if (!materialOrderId) {
+        const dr = await prisma.deliveryRequest.findFirst({
+          where: { jobId: String(job.id) },
+          orderBy: { createdAt: "desc" },
+          select: { materialOrderId: true },
+        });
+        if (dr?.materialOrderId) materialOrderId = String(dr.materialOrderId);
+      }
+      if (materialOrderId) {
+        const cancelSrc = String(metaBefore?.cancellationSource || "").trim();
+        await materialOrderService.ensureDeliveryClearedAfterCancellationDisputeResolved(
+          materialOrderId,
+          {
+            courierJobId: job.id,
+            source:
+              cancelSrc === "customer_cancel" ? "customer_cancel" : "provider_cancel",
+          }
+        );
+      }
+    } catch (e) {
+      console.error("resolveDispute ensureDeliveryClearedAfterCancellationDisputeResolved", job.id, e);
+    }
   }
 
   await notificationEvents.notifyCaseClosed({

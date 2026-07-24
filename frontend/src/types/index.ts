@@ -656,6 +656,13 @@ export interface JobMaterialOrderSnapshot {
   deliveryStatus?: string;
   courierJobId?: string | null;
   courierFulfillmentStatus?: string | null;
+  /** Set when courier cancel opened a refund investigation and delivery was cleared for re-choose. */
+  deliveryCancellationReview?: {
+    open?: boolean;
+    source?: string;
+    courierJobId?: string;
+    at?: string;
+  } | null;
 }
 
 export interface Job {
@@ -1107,6 +1114,13 @@ export interface MaterialOrder {
   source?: string;
   /** Courier job linked to provider delivery for this material order */
   courierJobId?: string | null;
+  /** Present after courier cancel opens refund review while customer re-chooses delivery. */
+  deliveryCancellationReview?: {
+    open?: boolean;
+    source?: string;
+    courierJobId?: string;
+    at?: string;
+  } | null;
   deliveryConfirmed?: boolean;
   customerIssueFlag?: boolean;
   customerDeliveryIssue?: {

@@ -7,7 +7,11 @@ import type {
 } from '@/types';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getQuoteMaterialsTotal, getUserLaborGross } from '@/lib/jobUtils';
-import { resolveDisplayDeliveryType } from '@/lib/providerMaterialOrderHelpers';
+import {
+  isDeliverySelectionCleared,
+  resolveDisplayDeliveryType,
+} from '@/lib/providerMaterialOrderHelpers';
+import { isMaterialOrderRefunded } from '@/lib/materialBatchTracking';
 
 export interface QuoteLine {
   label: string;
@@ -278,11 +282,53 @@ export function isMaterialOrderDeliveryPaymentPending(
   );
 }
 
+function isStoreOrderMaterialsPaid(
+  storeOrder: JobStoreOrder,
+  mo?: JobMaterialOrderSnapshot | null
+): boolean {
+  if (mo?.payment?.materialsPaid === true) return true;
+  if (storeOrder.payment?.materialsPaid === true) return true;
+  return String(mo?.paymentStatus || '').toLowerCase() === 'paid';
+}
+
+/**
+ * Amber strip on paid material cards: cancelled/missing delivery option, or unpaid delivery fee.
+ */
 export function getMaterialOrderDeliveryPaymentReminder(
   storeOrder: JobStoreOrder,
   mo: JobMaterialOrderSnapshot | null | undefined,
   role: 'user' | 'provider'
 ): string | undefined {
+  if (isMaterialOrderRefunded(mo)) return undefined;
+  if (!isStoreOrderMaterialsPaid(storeOrder, mo)) return undefined;
+
+  if (isDeliverySelectionCleared(storeOrder, mo)) {
+    const moStatus = String(mo?.delivery?.status ?? mo?.deliveryStatus ?? '')
+      .trim()
+      .toLowerCase();
+    const storeStatus = String(storeOrder.deliveryStatus ?? storeOrder.delivery?.status ?? '')
+      .trim()
+      .toLowerCase();
+    const wasCancelled = moStatus === 'cancelled' || storeStatus === 'cancelled';
+    const underReview = mo?.deliveryCancellationReview?.open === true;
+
+    if (underReview) {
+      return role === 'provider'
+        ? 'Previous courier cancelled — under refund review. Customer can choose another delivery option.'
+        : 'Previous courier cancelled — under refund review. You can choose a new delivery option (new fee is separate).';
+    }
+
+    if (wasCancelled) {
+      return role === 'provider'
+        ? 'Customer must choose another delivery option so these paid materials can be delivered.'
+        : 'Choose another delivery option so your paid materials can be delivered. Open order details to select.';
+    }
+
+    return role === 'provider'
+      ? 'Customer must select a delivery option for this paid material order.'
+      : 'Select a delivery option for this paid order. Open order details to choose.';
+  }
+
   if (!isMaterialOrderDeliveryPaymentPending(storeOrder, mo)) return undefined;
 
   const deliveryType = resolveDisplayDeliveryType(storeOrder, mo);

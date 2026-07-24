@@ -184,6 +184,12 @@ export function getCourierJobDisplayStatusLabel(
 ): string {
   if (job.status === 'CANCELLED') return 'Cancelled';
   if (job.status === 'REJECTED') return 'Rejected';
+  if (
+    job.status === 'DISPUTED' &&
+    (job.cancellationSource === 'customer_cancel' || job.cancellationSource === 'provider_cancel')
+  ) {
+    return 'Under review';
+  }
   if (isCourierAwaitingQuote(job, deliveryRequest)) {
     return COURIER_STATUS_WAITING_QUOTATION;
   }

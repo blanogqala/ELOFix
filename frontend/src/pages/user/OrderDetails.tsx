@@ -6,7 +6,7 @@ import { MaterialOrderDetailSkeleton } from '@/components/common/loading';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { resolveEffectiveDeliveryFee, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid } from '@/lib/orderFinance';
-import { OrderDetailsView, NormalizedOrder, NormalizedDeliveryState } from '@/components/orders/OrderDetailsView';
+import { OrderDetailsView, NormalizedOrder, NormalizedDeliveryState, type NormalizedOrderDeliveryType } from '@/components/orders/OrderDetailsView';
 import { DeliveryOptionChooser, DeliveryOptionSelection } from '@/components/orders/DeliveryOptionChooser';
 import { getSuppliers } from '@/lib/api/suppliers';
 import {
@@ -59,6 +59,18 @@ const CUSTOMER_CANCELABLE_FULFILLMENT_STATUSES = new Set([
 function toFulfillmentStatusU(status: string | undefined): string {
   const normalized = String(status || 'PENDING').toUpperCase().trim();
   return normalized || 'PENDING';
+}
+
+/** Map API delivery type; cleared / cancelled selections stay undefined (do not default to PROVIDER). */
+function mapApiDeliveryType(
+  raw: string | null | undefined
+): NormalizedOrderDeliveryType | undefined {
+  const u = String(raw || '').trim().toUpperCase();
+  if (!u) return undefined;
+  if (u === 'SELF') return 'SELF';
+  if (u === 'STORE' || u === 'STORE_DELIVERY') return 'STORE';
+  if (u === 'PROVIDER' || u === 'DELIVERY_PROVIDER') return 'PROVIDER';
+  return undefined;
 }
 
 function applyEffectiveDeliveryFee(order: NormalizedOrder): NormalizedOrder {
@@ -136,7 +148,9 @@ function mergeTrackingFields(
     ...normalized,
     fulfillmentStatus: String(mo.fulfillmentStatus || ''),
     materialBatch: batch,
-    canonicalDelivery: toCanonicalDeliveryType(String(mo.deliveryType)),
+    canonicalDelivery: mo.deliveryType
+      ? toCanonicalDeliveryType(String(mo.deliveryType))
+      : undefined,
     supplierDisplayName:
       typeof mo.supplierDisplayName === 'string' ? mo.supplierDisplayName : normalized.storeName,
     supplierPhone: typeof mo.supplierPhone === 'string' ? mo.supplierPhone : undefined,
@@ -159,6 +173,10 @@ function mergeTrackingFields(
         : undefined,
     deliveryConfirmed: Boolean(mo.deliveryConfirmed),
     customerIssueFlag: Boolean(mo.customerIssueFlag),
+    deliveryCancellationReview:
+      mo.deliveryCancellationReview && typeof mo.deliveryCancellationReview === 'object'
+        ? (mo.deliveryCancellationReview as NormalizedOrder['deliveryCancellationReview'])
+        : undefined,
     customerDeliveryIssue:
       mo.customerDeliveryIssue && typeof mo.customerDeliveryIssue === 'object'
         ? (mo.customerDeliveryIssue as NormalizedOrder['customerDeliveryIssue'])
@@ -391,7 +409,7 @@ export default function OrderDetails() {
             qty: i.qty,
             unitPrice: i.unitPrice,
           })),
-          deliveryType: found.deliveryType === 'SELF' ? 'SELF' : found.deliveryType === 'STORE_DELIVERY' ? 'STORE' : 'PROVIDER',
+          deliveryType: mapApiDeliveryType(found.deliveryType ?? found.delivery?.type),
           deliveryFee,
           totalPaid: found.total,
           createdAt: found.createdAt,
@@ -408,6 +426,7 @@ export default function OrderDetails() {
           providerVehicle: provider ? [provider.vehicleType, provider.numberPlate].filter(Boolean).join(' - ') : undefined,
           jobId: found.jobId,
           courierJobId,
+          deliveryCancellationReview: (found as MaterialOrder).deliveryCancellationReview,
           finance: found.finance,
           materialsSubtotal: found.materialsSubtotal,
           platformCommission: found.platformCommission,
@@ -482,7 +501,9 @@ export default function OrderDetails() {
           id: storeOrder.orderId,
           storeName: storeOrder.storeName || job.materials.find(m => m.supplierId === storeOrder.storeId)?.supplierName || 'Store',
           items: storeOrder.items.map(i => ({ productId: i.productId, name: i.name, qty: i.qty, unitPrice: i.unitPrice })),
-          deliveryType: storeOrder.deliveryType === 'STORE' ? 'STORE' : storeOrder.deliveryType,
+          deliveryType: mapApiDeliveryType(
+            moRow?.deliveryType ?? storeOrder.deliveryType ?? moRow?.delivery?.type ?? storeOrder.delivery?.type
+          ),
           deliveryFee,
           totalPaid: materialsTotal + (p?.deliveryPaid ? (storeOrder.deliveryFee || 0) : 0),
           createdAt: storeOrder.createdAt,
@@ -503,6 +524,7 @@ export default function OrderDetails() {
           storeId: storeOrder.storeId,
           fulfillmentStatus: moFulfillment,
           courierJobId,
+          deliveryCancellationReview: moRow?.deliveryCancellationReview,
           finance: moRow?.finance,
           materialsSubtotal: moRow?.materialsSubtotal,
           platformCommission: moRow?.platformCommission,

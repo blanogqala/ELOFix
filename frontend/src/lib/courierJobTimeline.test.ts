@@ -68,6 +68,18 @@ describe('getCourierJobDisplayStatusLabel', () => {
     );
   });
 
+  it('shows Under review when cancellation dispute is open', () => {
+    expect(
+      getCourierJobDisplayStatusLabel(
+        courierJob({
+          status: 'DISPUTED',
+          cancellationSource: 'provider_cancel',
+        }),
+        dr({ status: 'paid', fulfillmentStatus: 'COLLECTING', payment: { deliveryPaid: true } })
+      )
+    ).toBe('Under review');
+  });
+
   it('shows Collecting when delivery fee paid', () => {
     const job = courierJob({ status: 'ASSIGNED' });
     expect(

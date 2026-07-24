@@ -163,8 +163,8 @@ export function PaymentModal({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-md max-h-[min(90vh,720px)] flex flex-col overflow-hidden gap-0 p-0">
+          <DialogHeader className="shrink-0 px-6 pt-6 pr-12">
             <DialogTitle className="flex items-center gap-2">
               <Lock className="h-5 w-5 text-muted-foreground" />
               {title}
@@ -172,7 +172,7 @@ export function PaymentModal({
             {description && <DialogDescription>{description}</DialogDescription>}
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
             <div className="p-4 bg-muted/50 rounded-lg space-y-2">
               {breakdown.map((item, idx) => (
                 <div
@@ -261,7 +261,7 @@ export function PaymentModal({
             )}
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="shrink-0 gap-2 sm:gap-0 border-t border-border px-6 py-4">
             <Button variant="outline" onClick={handleCancel} disabled={isProcessing}>
               Cancel
             </Button>

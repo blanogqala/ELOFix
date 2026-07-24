@@ -124,4 +124,66 @@ describe('getMaterialOrderDeliveryPaymentReminder', () => {
       )
     ).toBe('Pay the delivery fee to accept the courier quote. Open Full tracking view to pay.');
   });
+
+  it('reminds customer to re-choose after delivery was cancelled', () => {
+    expect(
+      getMaterialOrderDeliveryPaymentReminder(
+        storeOrder({
+          deliveryType: 'PROVIDER',
+          deliveryStatus: 'Cancelled',
+          deliveryFee: 0,
+        }),
+        materialOrder({
+          deliveryType: undefined,
+          deliveryFee: 0,
+          delivery: { type: undefined, status: 'Cancelled', fee: 0 },
+          deliveryStatus: 'Cancelled',
+        }),
+        'user'
+      )
+    ).toBe(
+      'Choose another delivery option so your paid materials can be delivered. Open order details to select.'
+    );
+  });
+
+  it('mentions refund review when previous courier cancel is under investigation', () => {
+    expect(
+      getMaterialOrderDeliveryPaymentReminder(
+        storeOrder({
+          deliveryType: undefined as unknown as JobStoreOrder['deliveryType'],
+          deliveryStatus: 'Cancelled',
+          deliveryFee: 0,
+        }),
+        materialOrder({
+          deliveryType: undefined,
+          deliveryFee: 0,
+          delivery: { status: 'Cancelled', fee: 0 },
+          deliveryStatus: 'Cancelled',
+          deliveryCancellationReview: {
+            open: true,
+            source: 'provider_cancel',
+          },
+        }),
+        'user'
+      )
+    ).toMatch(/under refund review/i);
+  });
+
+  it('reminds provider when customer has not selected a delivery option', () => {
+    expect(
+      getMaterialOrderDeliveryPaymentReminder(
+        storeOrder({
+          deliveryType: undefined as unknown as JobStoreOrder['deliveryType'],
+          deliveryFee: 0,
+          deliveryStatus: 'SelfCollect',
+        }),
+        materialOrder({
+          deliveryType: undefined,
+          deliveryFee: 0,
+          delivery: undefined,
+        }),
+        'provider'
+      )
+    ).toBe('Customer must select a delivery option for this paid material order.');
+  });
 });

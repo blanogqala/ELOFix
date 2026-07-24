@@ -50,13 +50,11 @@ export function MaterialOrderStatusSummary({
   const deliveryPayPending = isMaterialOrderDeliveryPaymentPending(storeOrder, mo);
   const fulfillmentStatus = String(mo?.fulfillmentStatus || 'PENDING').toUpperCase();
   const displayDeliveryType = resolveDisplayDeliveryType(storeOrder, mo);
-  const isDelivery =
-    batch?.deliveryType === 'delivery' ||
-    (displayDeliveryType != null && displayDeliveryType !== 'SELF');
+  const isDelivery = displayDeliveryType != null && displayDeliveryType !== 'SELF';
   const secondaryBadge = resolveMaterialOrderDeliveryTrackingBadge({
     deliveryPayPending,
     isRefunded,
-    displayDeliveryType: displayDeliveryType ?? 'SELF',
+    displayDeliveryType,
     mo,
     batch,
   });
