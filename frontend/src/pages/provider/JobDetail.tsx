@@ -65,6 +65,7 @@ import {
 import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { JobDisputeStatusBanner } from '@/components/jobs/JobDisputeStatusBanner';
+import { QuotationFileActions } from '@/components/jobs/QuotationFileActions';
 import { MaterialsSection } from '@/components/materials/MaterialsSection';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -1302,13 +1303,20 @@ export default function ProviderJobDetail() {
           )}
 
           {job.quotationFileName ? (
-            <div className="p-3 rounded-lg bg-muted/30 border border-border flex items-center gap-2 text-sm">
-              {(() => {
-                const QIcon = quotationFileIcon(job.quotationFileName);
-                return <QIcon className="h-4 w-4 text-primary shrink-0" />;
-              })()}
-              <span className="truncate font-medium">{job.quotationFileName}</span>
-              <Badge variant="secondary" className="ml-auto shrink-0">On file</Badge>
+            <div className="p-3 rounded-lg bg-muted/30 border border-border flex flex-col gap-3 sm:flex-row sm:items-center text-sm">
+              <div className="flex min-w-0 items-center gap-2 flex-1">
+                {(() => {
+                  const QIcon = quotationFileIcon(job.quotationFileName);
+                  return <QIcon className="h-4 w-4 text-primary shrink-0" />;
+                })()}
+                <span className="truncate font-medium">{job.quotationFileName}</span>
+                <Badge variant="secondary" className="ml-auto sm:ml-2 shrink-0">On file</Badge>
+              </div>
+              <QuotationFileActions
+                jobId={job.id}
+                fileName={job.quotationFileName}
+                className="shrink-0 sm:justify-end"
+              />
             </div>
           ) : null}
 

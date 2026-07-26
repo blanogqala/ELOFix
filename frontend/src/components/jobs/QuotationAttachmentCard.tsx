@@ -1,11 +1,8 @@
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { fetchJobQuotationBlob } from '@/lib/api/jobs';
 import { quotationFileIcon, quotationFileKind } from '@/lib/quotationFile';
 import { cn } from '@/lib/utils';
-import { Download, ExternalLink, FileCheck2, Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { FileCheck2 } from 'lucide-react';
+import { QuotationFileActions } from '@/components/jobs/QuotationFileActions';
 
 export interface QuotationAttachmentCardProps {
   jobId: string;
@@ -24,58 +21,9 @@ export function QuotationAttachmentCard({
   serviceNote,
   className,
 }: QuotationAttachmentCardProps) {
-  const { toast } = useToast();
-  const [viewLoading, setViewLoading] = useState(false);
-  const [downloadLoading, setDownloadLoading] = useState(false);
   const hasFile = Boolean(fileName);
   const Icon = quotationFileIcon(fileName);
   const kind = quotationFileKind(fileName);
-
-  const openBlob = (blob: Blob, mode: 'view' | 'download') => {
-    const url = URL.createObjectURL(blob);
-    if (mode === 'view') {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      return;
-    }
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = fileName || 'quotation';
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleView = async () => {
-    setViewLoading(true);
-    try {
-      const blob = await fetchJobQuotationBlob(jobId, 'inline');
-      openBlob(blob, 'view');
-    } catch (error) {
-      toast({
-        title: 'Could not open quotation',
-        description: error instanceof Error ? error.message : 'Download failed.',
-        variant: 'destructive',
-      });
-    } finally {
-      setViewLoading(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    setDownloadLoading(true);
-    try {
-      const blob = await fetchJobQuotationBlob(jobId, 'attachment');
-      openBlob(blob, 'download');
-    } catch (error) {
-      toast({
-        title: 'Download failed',
-        description: error instanceof Error ? error.message : 'Try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setDownloadLoading(false);
-    }
-  };
 
   const uploadedLabel = uploadedAt
     ? new Date(uploadedAt).toLocaleString(undefined, {
@@ -132,24 +80,7 @@ export function QuotationAttachmentCard({
                 ) : null}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 sm:justify-end">
-              <Button variant="outline" size="sm" onClick={() => void handleView()} disabled={viewLoading}>
-                {viewLoading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                )}
-                View
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => void handleDownload()} disabled={downloadLoading}>
-                {downloadLoading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
-                Download
-              </Button>
-            </div>
+            <QuotationFileActions jobId={jobId} fileName={fileName} className="sm:justify-end" />
           </div>
         </div>
       ) : null}
