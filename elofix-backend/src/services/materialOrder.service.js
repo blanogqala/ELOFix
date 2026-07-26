@@ -459,20 +459,30 @@ async function syncJobStoreOrderDeliveryFromMaterialOrder(row, payload) {
   const storeOrderId = String(p.jobStoreOrderId || row?.id || "").trim();
   if (!storeOrderId) return;
 
-  const dt = String(p.deliveryType || "").toUpperCase();
-  const deliveryType =
-    dt === "STORE_DELIVERY" ? "STORE" : dt === "DELIVERY_PROVIDER" ? "PROVIDER" : "SELF";
   const dStatus = normalizeDeliveryStatus(p.delivery?.status);
-  const deliveryFee = Math.max(0, Number(p.deliveryFee ?? p.delivery?.fee ?? 0) || 0);
-  const deliveryPaid = p.payment?.deliveryPaid === true;
+  const deliveryCleared = dStatus === "Cancelled" || !p.deliveryType;
+  const dt = String(p.deliveryType || "").toUpperCase();
+  const deliveryType = deliveryCleared
+    ? null
+    : dt === "STORE_DELIVERY"
+      ? "STORE"
+      : dt === "DELIVERY_PROVIDER"
+        ? "PROVIDER"
+        : dt === "SELF"
+          ? "SELF"
+          : null;
+  const deliveryFee = deliveryCleared
+    ? 0
+    : Math.max(0, Number(p.deliveryFee ?? p.delivery?.fee ?? 0) || 0);
+  const deliveryPaid = !deliveryCleared && p.payment?.deliveryPaid === true;
 
   let deliveryStatus = "PendingApproval";
-  if (deliveryType === "SELF") {
+  if (deliveryCleared) {
+    deliveryStatus = "Cancelled";
+  } else if (deliveryType === "SELF") {
     deliveryStatus = "SelfCollect";
   } else if (dStatus === "Rejected") {
     deliveryStatus = "Rejected";
-  } else if (dStatus === "Cancelled") {
-    deliveryStatus = "Cancelled";
   } else if (deliveryPaid && ["Processing", "InProgress", "OnTheWay", "Delivered"].includes(dStatus)) {
     deliveryStatus = dStatus;
   } else if (dStatus === "Approved" || (deliveryFee > 0 && deliveryType === "STORE")) {
@@ -490,25 +500,41 @@ async function syncJobStoreOrderDeliveryFromMaterialOrder(row, payload) {
       const idx = list.findIndex((o) => String(o.orderId) === storeOrderId);
       if (idx < 0) return m;
       const prev = list[idx];
+      const nextDelivery = {
+        ...(prev.delivery || {}),
+        status: deliveryStatus,
+        fee: deliveryFee,
+      };
+      if (deliveryType) {
+        nextDelivery.type = deliveryType;
+      } else {
+        delete nextDelivery.type;
+      }
+      if (deliveryCleared) {
+        delete nextDelivery.providerId;
+      } else if (p.deliveryProviderId || p.delivery?.providerId) {
+        nextDelivery.providerId = p.deliveryProviderId || p.delivery?.providerId;
+      } else {
+        delete nextDelivery.providerId;
+      }
+
       const nextOrder = {
         ...prev,
-        deliveryType,
+        deliveryType: deliveryType || undefined,
         deliveryFee,
         deliveryStatus,
-        delivery: {
-          ...(prev.delivery || {}),
-          type: deliveryType,
-          status: deliveryStatus,
-          fee: deliveryFee,
-          providerId: p.deliveryProviderId || prev.deliveryProviderId || prev.delivery?.providerId,
-        },
+        delivery: nextDelivery,
         payment: {
           ...(prev.payment || {}),
           materialsPaid: p.payment?.materialsPaid !== false,
           deliveryPaid,
         },
       };
-  if (deliveryType !== "PROVIDER" || deliveryStatus === "Cancelled") {
+      if (deliveryCleared) {
+        delete nextOrder.deliveryType;
+        delete nextOrder.deliveryProviderId;
+        delete nextOrder.courierJobId;
+      } else if (deliveryType !== "PROVIDER") {
         delete nextOrder.courierJobId;
       }
       list[idx] = nextOrder;
@@ -942,6 +968,12 @@ async function reconcileMaterialOrderWithDeliveryContext(row, base, deliveryRequ
 }
 
 async function getMaterialOrderById(orderId) {
+  try {
+    await repairUnclearedDeliveryAfterCancelledCourier(orderId);
+  } catch (e) {
+    console.error("getMaterialOrderById repairUnclearedDelivery", orderId, e);
+  }
+
   let row = await prisma.materialOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -1260,6 +1292,74 @@ async function repairStaleCourierJobsForMaterialOrder(materialOrderId, options =
   return { repaired: result.cancelled, courierJobId: result.courierJobId };
 }
 
+/**
+ * Heal historical / missed cancels: MO still has provider delivery selected but the
+ * linked courier job or delivery request is already cancelled. Clears the delivery
+ * choice so the customer can re-select (same as clearDeliveryAfterCourierJobCancel).
+ */
+async function repairUnclearedDeliveryAfterCancelledCourier(materialOrderId, options = {}) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return { repaired: false };
+
+  const row = await prisma.materialOrder.findUnique({ where: { id: mid } });
+  if (!row?.payload || typeof row.payload !== "object") return { repaired: false };
+  if (!isProviderDeliveryType(resolvePayloadDeliveryType(row.payload))) {
+    return { repaired: false };
+  }
+
+  const dr = await prisma.deliveryRequest.findFirst({
+    where: { materialOrderId: mid },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, jobId: true, status: true, fulfillmentStatus: true },
+  });
+
+  let courierJobId = dr?.jobId ? String(dr.jobId) : "";
+  if (!courierJobId) {
+    courierJobId = await resolveCourierJobIdForMaterialOrderRow(row, mid);
+  }
+
+  let jobTerminal = false;
+  let keepRefundReviewOpen = false;
+  let repairSource = options.source === "provider_cancel" ? "provider_cancel" : "customer_cancel";
+  if (courierJobId) {
+    const courierJob = await prisma.job.findUnique({
+      where: { id: courierJobId },
+      select: { status: true, meta: true },
+    });
+    const jobStatus = courierJob ? String(courierJob.status || "").toUpperCase() : "";
+    const override = String(courierJob?.meta?.statusOverride || "").toUpperCase();
+    jobTerminal =
+      jobStatus === "CANCELLED" ||
+      override === "CANCELLED" ||
+      jobStatus === "DISPUTED" ||
+      override === "DISPUTED";
+    if (jobStatus === "DISPUTED" || override === "DISPUTED") {
+      keepRefundReviewOpen = true;
+      const cancelSrc = String(courierJob?.meta?.cancellationSource || "").trim();
+      if (cancelSrc === "provider_cancel" || cancelSrc === "customer_cancel") {
+        repairSource = cancelSrc;
+      }
+    }
+  }
+
+  const drCancelled = Boolean(dr && String(dr.status || "").toLowerCase() === "cancelled");
+  const fsCancelled = Boolean(
+    dr && String(dr.fulfillmentStatus || "").toUpperCase() === "CANCELLED"
+  );
+
+  if (!jobTerminal && !drCancelled && !fsCancelled) {
+    return { repaired: false, courierJobId: courierJobId || undefined };
+  }
+
+  await clearDeliveryAfterCourierJobCancel(mid, {
+    courierJobId: courierJobId || undefined,
+    source: repairSource,
+    keepRefundReviewOpen,
+  });
+
+  return { repaired: true, courierJobId: courierJobId || undefined };
+}
+
 async function repairAllStaleCourierJobs(options = {}) {
   const limit = Math.min(Math.max(Number(options.limit) || 200, 1), 1000);
   const rows = await prisma.materialOrder.findMany({
@@ -1305,10 +1405,15 @@ async function assertCourierNotCollectingForMaterialOrder(materialOrderId) {
 async function assertDeliveryChangeAllowed(row, current, updates = {}, orderId = null) {
   if (updates.status && normalizeDeliveryStatus(updates.status) === "Cancelled") return;
   const fulfillment = String(row.fulfillmentStatus || current.fulfillmentStatus || "").toUpperCase();
-  if (["OUT_FOR_DELIVERY", "COMPLETED", "CANCELLED"].includes(fulfillment)) {
+  const dStatus = normalizeDeliveryStatus(current.delivery?.status);
+  const deliveryCleared = dStatus === "Cancelled";
+
+  if (["OUT_FOR_DELIVERY", "COMPLETED"].includes(fulfillment) && !deliveryCleared) {
     throw new AppError("Delivery option cannot be changed after dispatch", 409);
   }
-  const dStatus = normalizeDeliveryStatus(current.delivery?.status);
+  if (fulfillment === "CANCELLED" && !deliveryCleared) {
+    throw new AppError("Delivery option cannot be changed after dispatch", 409);
+  }
   if (["InProgress", "OnTheWay", "Delivered"].includes(dStatus)) {
     throw new AppError("Delivery option cannot be changed while in transit", 409);
   }
@@ -1392,6 +1497,7 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
       if (typeChanging) {
         delete next.deliveryQuote;
         delete next.deliveryRejection;
+        delete next.deliveryCancellationReview;
         next.total = Number(next.materialsSubtotal ?? 0);
       }
       if (updates.type && next.materialBatch && typeof next.materialBatch === "object") {
@@ -1478,13 +1584,23 @@ async function updateMaterialOrderDelivery(orderId, updates = {}) {
 }
 
 /**
- * When a courier cancels their delivery child job, clear the material-order
- * delivery choice so the customer must pick a new option (same empty state as
- * delivery.status === "Cancelled").
+ * When a courier delivery child job is cancelled (by provider or customer),
+ * clear the material-order delivery choice so the customer must pick a new
+ * option. Materials payment is left untouched.
+ *
+ * @param {string} materialOrderId
+ * @param {{
+ *   courierJobId?: string,
+ *   source?: "provider_cancel" | "customer_cancel",
+ *   keepRefundReviewOpen?: boolean,
+ * }} [options]
  */
-async function clearDeliveryAfterCourierProviderCancel(materialOrderId, options = {}) {
+async function clearDeliveryAfterCourierJobCancel(materialOrderId, options = {}) {
   const mid = String(materialOrderId || "").trim();
   if (!mid) return null;
+
+  const source =
+    options.source === "customer_cancel" ? "customer_cancel" : "provider_cancel";
 
   const row = await prisma.materialOrder.findUnique({ where: { id: mid } });
   if (!row) return null;
@@ -1497,6 +1613,7 @@ async function clearDeliveryAfterCourierProviderCancel(materialOrderId, options 
     fee: 0,
   };
   delete nextDelivery.providerId;
+  delete nextDelivery.type;
 
   const nextPayload = {
     ...payload,
@@ -1509,29 +1626,100 @@ async function clearDeliveryAfterCourierProviderCancel(materialOrderId, options 
       deliveryPaid: false,
     },
   };
+  delete nextPayload.deliveryType;
   delete nextPayload.deliveryQuote;
   delete nextPayload.deliveryRejection;
   delete nextPayload.deliveryProviderId;
+
+  if (options.keepRefundReviewOpen) {
+    nextPayload.deliveryCancellationReview = {
+      open: true,
+      source,
+      courierJobId: options.courierJobId ? String(options.courierJobId) : undefined,
+      at: new Date().toISOString(),
+    };
+  } else {
+    delete nextPayload.deliveryCancellationReview;
+  }
 
   const updated = await prisma.materialOrder.update({
     where: { id: mid },
     data: { payload: nextPayload },
   });
 
+  try {
+    const paymentIntentService = require("./payments/paymentIntent.service");
+    await paymentIntentService.cancelDeliveryFeeIntentsForMaterialOrder(mid);
+  } catch (e) {
+    console.error("clearDeliveryAfterCourierJobCancel cancelDeliveryFeeIntents", mid, e);
+  }
+
   const deliveryRequestService = require("./deliveryRequest.service");
   try {
     await deliveryRequestService.cancelCourierDeliveryForCustomer({
       materialOrderId: mid,
       courierJobId: options.courierJobId ? String(options.courierJobId) : undefined,
-      source: "provider_cancel",
+      source,
       notify: false,
     });
   } catch (e) {
-    console.error("clearDeliveryAfterCourierProviderCancel void courier", mid, e);
+    console.error("clearDeliveryAfterCourierJobCancel void courier", mid, e);
   }
 
   await syncJobStoreOrderDeliveryFromMaterialOrder(updated, nextPayload);
   return enrichOrderFromDbRow(updated, nextPayload);
+}
+
+/**
+ * After admin resolves a courier cancellation dispute to cancelled: clear leftover
+ * assignment only when it is still the disputed courier job. If the customer already
+ * re-chose a different courier, leave that assignment alone and only drop the review flag.
+ */
+async function ensureDeliveryClearedAfterCancellationDisputeResolved(materialOrderId, options = {}) {
+  const mid = String(materialOrderId || "").trim();
+  if (!mid) return { cleared: false };
+
+  const row = await prisma.materialOrder.findUnique({ where: { id: mid } });
+  if (!row?.payload || typeof row.payload !== "object") return { cleared: false };
+
+  const disputedJobId = options.courierJobId ? String(options.courierJobId).trim() : "";
+  const stillAssigned = isProviderDeliveryType(resolvePayloadDeliveryType(row.payload));
+  const currentCourierJobId = stillAssigned
+    ? await resolveCourierJobIdForMaterialOrderRow(row, mid)
+    : "";
+
+  const isLeftoverDisputedAssignment =
+    stillAssigned &&
+    (!currentCourierJobId || !disputedJobId || currentCourierJobId === disputedJobId);
+
+  if (isLeftoverDisputedAssignment) {
+    await clearDeliveryAfterCourierJobCancel(mid, {
+      courierJobId: disputedJobId || currentCourierJobId || undefined,
+      source: options.source === "customer_cancel" ? "customer_cancel" : "provider_cancel",
+      keepRefundReviewOpen: false,
+    });
+    return { cleared: true };
+  }
+
+  if (row.payload.deliveryCancellationReview) {
+    const nextPayload = { ...row.payload };
+    delete nextPayload.deliveryCancellationReview;
+    await prisma.materialOrder.update({
+      where: { id: mid },
+      data: { payload: nextPayload },
+    });
+    return { cleared: false, reviewClosed: true, preservedRehire: Boolean(stillAssigned) };
+  }
+
+  return { cleared: false, preservedRehire: Boolean(stillAssigned && currentCourierJobId) };
+}
+
+/** @deprecated Prefer clearDeliveryAfterCourierJobCancel */
+async function clearDeliveryAfterCourierProviderCancel(materialOrderId, options = {}) {
+  return clearDeliveryAfterCourierJobCancel(materialOrderId, {
+    ...options,
+    source: options.source || "provider_cancel",
+  });
 }
 
 async function approveMaterialOrderDeliveryBySupplier(orderId, supplierId, options = {}) {
@@ -3622,11 +3810,29 @@ async function ensureJobMaterialPurchaseOrder(params) {
 }
 
 async function getJobMaterialOrdersForJob(jobId) {
-  const rows = await prisma.materialOrder.findMany({
+  let rows = await prisma.materialOrder.findMany({
     where: { jobId: String(jobId) },
     orderBy: { createdAt: "desc" },
     include: { supplier: { select: { id: true, name: true, businessName: true } } },
   });
+
+  let anyRepaired = false;
+  for (const r of rows) {
+    try {
+      const result = await repairUnclearedDeliveryAfterCancelledCourier(r.id);
+      if (result.repaired) anyRepaired = true;
+    } catch (e) {
+      console.error("getJobMaterialOrdersForJob repairUnclearedDelivery", r.id, e);
+    }
+  }
+  if (anyRepaired) {
+    rows = await prisma.materialOrder.findMany({
+      where: { jobId: String(jobId) },
+      orderBy: { createdAt: "desc" },
+      include: { supplier: { select: { id: true, name: true, businessName: true } } },
+    });
+  }
+
   const orderIds = rows.map((r) => String(r.id));
   const deliveryRequests = orderIds.length
     ? await prisma.deliveryRequest.findMany({
@@ -3636,6 +3842,7 @@ async function getJobMaterialOrdersForJob(jobId) {
           materialOrderId: true,
           jobId: true,
           fulfillmentStatus: true,
+          status: true,
         },
       })
     : [];
@@ -3703,6 +3910,22 @@ async function getJobMaterialOrdersForJob(jobId) {
       courierFulfillmentStatus: courierDeliveryRequest?.fulfillmentStatus
         ? String(courierDeliveryRequest.fulfillmentStatus)
         : undefined,
+      deliveryCancellationReview:
+        payload.deliveryCancellationReview &&
+        typeof payload.deliveryCancellationReview === "object"
+          ? {
+              open: payload.deliveryCancellationReview.open === true,
+              source: payload.deliveryCancellationReview.source
+                ? String(payload.deliveryCancellationReview.source)
+                : undefined,
+              courierJobId: payload.deliveryCancellationReview.courierJobId
+                ? String(payload.deliveryCancellationReview.courierJobId)
+                : undefined,
+              at: payload.deliveryCancellationReview.at
+                ? String(payload.deliveryCancellationReview.at)
+                : undefined,
+            }
+          : undefined,
       createdAt: r.createdAt?.toISOString?.() || String(r.createdAt),
     };
   });
@@ -4099,7 +4322,9 @@ module.exports = {
   getMaterialOrders,
   getMaterialOrderById,
   updateMaterialOrderDelivery,
+  clearDeliveryAfterCourierJobCancel,
   clearDeliveryAfterCourierProviderCancel,
+  ensureDeliveryClearedAfterCancellationDisputeResolved,
   approveMaterialOrderDelivery,
   approveMaterialOrderDeliveryBySupplier,
   rejectMaterialOrderDeliveryBySupplier,
@@ -4132,6 +4357,7 @@ module.exports = {
   resolveCourierUserId,
   assertCourierNotCollectingForMaterialOrder,
   repairStaleCourierJobsForMaterialOrder,
+  repairUnclearedDeliveryAfterCancelledCourier,
   repairAllStaleCourierJobs,
   resolvePayloadDeliveryType,
   isProviderDeliveryType,

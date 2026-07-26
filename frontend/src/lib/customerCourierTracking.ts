@@ -1,4 +1,5 @@
 import type { DeliveryRequestRecord, Job } from '@/types';
+import { isCourierCancellationUnderReview } from '@/lib/jobUtils';
 
 export type CourierMapRoutePhase =
   | 'to_collection'
@@ -33,6 +34,28 @@ export function getCustomerCourierTrackingBanner(
   dr: DeliveryRequestRecord
 ): CustomerCourierTrackingBanner {
   const status = String(fs || 'READY').toUpperCase();
+  const jobCancelled = String(job.status || '').toUpperCase() === 'CANCELLED';
+  const drCancelled = String(dr.status || '').toLowerCase() === 'cancelled';
+  const underReview = isCourierCancellationUnderReview(job);
+
+  if (underReview) {
+    return {
+      title: 'Under investigation',
+      description:
+        'This courier cancelled mid-delivery. The previous delivery fee is under refund review. You can choose a new delivery option on your material order.',
+      tone: 'border-amber-500/40 bg-amber-500/10',
+    };
+  }
+
+  if (jobCancelled || drCancelled || status === 'CANCELLED') {
+    return {
+      title: 'Delivery cancelled',
+      description:
+        'This courier delivery was cancelled. Choose a new delivery option on your material order so materials can be delivered.',
+      tone: 'border-destructive/40 bg-destructive/10',
+    };
+  }
+
   const fullyComplete =
     job.status === 'COMPLETED' ||
     job.completionConfirmedByUser === true ||

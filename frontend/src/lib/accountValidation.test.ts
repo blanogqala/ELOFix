@@ -6,6 +6,7 @@ import {
   isValidPersonName,
   isValidPhone,
   passwordValidationMessage,
+  personNameLettersOnlyHint,
   personNameValidationMessage,
   phoneValidationMessage,
 } from './accountValidation';
@@ -22,6 +23,14 @@ describe('accountValidation', () => {
     expect(personNameValidationMessage('Hello World 1')).toMatch(/no numbers/i);
     expect(isValidPersonName('Jane Doe')).toBe(true);
     expect(isValidPersonName("O'Connor")).toBe(true);
+  });
+
+  it('shows letters-only hint only while name fails that rule', () => {
+    expect(personNameLettersOnlyHint('')).toBeNull();
+    expect(personNameLettersOnlyHint('Jane Doe')).toBeNull();
+    expect(personNameLettersOnlyHint("O'Connor")).toBeNull();
+    expect(personNameLettersOnlyHint('Hello World 1')).toBe('Letters only — no numbers.');
+    expect(personNameLettersOnlyHint('Jane@Doe')).toBe('Letters only — no numbers.');
   });
 
   it('requires strong passwords', () => {

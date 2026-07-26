@@ -47,6 +47,23 @@ describe('getCustomerCourierTrackingBanner', () => {
     expect(banner.title).toBe('Courier heading to collection');
     expect(banner.title).not.toBe('Receipt confirmed — share feedback');
   });
+
+  it('shows cancelled banner when job or delivery request is cancelled', () => {
+    const fromJob = getCustomerCourierTrackingBanner('COLLECTING', {
+      ...baseJob,
+      status: 'CANCELLED',
+    }, baseDr);
+    expect(fromJob.title).toBe('Delivery cancelled');
+
+    const fromDr = getCustomerCourierTrackingBanner('COLLECTING', baseJob, {
+      ...baseDr,
+      status: 'cancelled',
+    });
+    expect(fromDr.title).toBe('Delivery cancelled');
+
+    const fromFs = getCustomerCourierTrackingBanner('CANCELLED', baseJob, baseDr);
+    expect(fromFs.title).toBe('Delivery cancelled');
+  });
 });
 
 describe('getCourierMapRoutePhase', () => {

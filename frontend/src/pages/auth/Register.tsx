@@ -17,6 +17,7 @@ import {
   emailValidationMessage,
   isPasswordValid,
   passwordValidationMessage,
+  personNameLettersOnlyHint,
   personNameValidationMessage,
   phoneValidationMessage,
 } from '@/lib/accountValidation';
@@ -144,6 +145,8 @@ export default function Register() {
     });
   };
 
+  const nameLettersOnlyHint = personNameLettersOnlyHint(name);
+
   return (
     <div className="min-h-screen flex flex-col">
       <div className="flex flex-1">
@@ -217,9 +220,9 @@ export default function Register() {
               </div>
               {fieldErrors.name ? (
                 <p className="mt-1 text-xs text-destructive">{fieldErrors.name}</p>
-              ) : (
-                <p className="mt-1 text-xs text-muted-foreground">Letters only — no numbers.</p>
-              )}
+              ) : nameLettersOnlyHint ? (
+                <p className="mt-1 text-xs text-destructive">{nameLettersOnlyHint}</p>
+              ) : null}
             </div>
 
             <div>

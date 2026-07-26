@@ -106,7 +106,7 @@ export default function ProviderActiveJobs() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       setDeleteDialogOpen(false);
       setJobToDelete(null);
-      toast({ title: 'Deleted', description: 'Cancelled job removed from your list.' });
+      toast({ title: 'Removed', description: 'Job removed from your list only. Other parties are unaffected.' });
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to delete.', variant: 'destructive' });
     }

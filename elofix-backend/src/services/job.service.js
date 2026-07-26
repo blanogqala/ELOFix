@@ -314,6 +314,13 @@ function isDismissedFromProviderInbox(meta, userId) {
   return list.map((id) => String(id)).includes(String(userId));
 }
 
+/** Soft-removed from this user's job list only — job row remains for the other party. */
+function isHiddenFromActorJobList(meta, userId) {
+  const list = meta?.hiddenFromJobListByUserIds;
+  if (!Array.isArray(list)) return false;
+  return list.map((id) => String(id)).includes(String(userId));
+}
+
 /** Never-accepted courier cancels belong on Requests → Canceled, not Active Jobs. */
 function isNeverAcceptedCancelledCourierRequest(job, meta) {
   if (!meta?.courierFlow) return false;
@@ -781,6 +788,12 @@ async function getJobsForActor(userId, role) {
   const out = [];
   for (const job of jobs) {
     let meta = await getJobMeta(job.id);
+    if (
+      (role === "CUSTOMER" || role === "PROVIDER") &&
+      isHiddenFromActorJobList(meta, userId)
+    ) {
+      continue;
+    }
     if (role === "PROVIDER" && isDismissedFromProviderInbox(meta, userId)) {
       continue;
     }
@@ -878,6 +891,12 @@ async function getJobByIdForActor(jobId, userId, role) {
     }
   }
   const meta = await getJobMeta(job.id);
+  if (
+    (role === "CUSTOMER" || role === "PROVIDER") &&
+    isHiddenFromActorJobList(meta, userId)
+  ) {
+    throw new AppError("Job not found", 404);
+  }
   return await finalizeJob(job, meta);
 }
 
@@ -1029,7 +1048,7 @@ async function assertSpecificationsReadyForPricing(job, meta) {
   );
 }
 
-async function buildDeliverySummaryForJob(deliveryRequestId) {
+async function buildDeliverySummaryForJob(deliveryRequestId, jobId) {
   if (!deliveryRequestId) return null;
   try {
     const row = await prisma.deliveryRequest.findUnique({
@@ -1039,9 +1058,15 @@ async function buildDeliverySummaryForJob(deliveryRequestId) {
         quotedFee: true,
         fulfillmentStatus: true,
         payload: true,
+        jobId: true,
       },
     });
     if (!row) return null;
+    // Only expose live DR fee/paid when this job currently owns the DeliveryRequest.
+    // Prevents rejected/cancelled children from inheriting a later courier's quote/payment.
+    if (!jobId || !row.jobId || String(row.jobId) !== String(jobId)) {
+      return null;
+    }
     const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
     const payment = payload.payment && typeof payload.payment === "object" ? payload.payment : {};
     const drStatus = String(row.status || "").toLowerCase();
@@ -1077,14 +1102,23 @@ async function finalizeJob(job, meta) {
   const courierFlow = Boolean(meta && typeof meta === "object" && meta.courierFlow);
   const parentJobId =
     meta && typeof meta === "object" && meta.parentJobId ? String(meta.parentJobId).trim() : null;
+  const statusOverride =
+    meta && typeof meta === "object" ? String(meta.statusOverride || "").toUpperCase() : "";
+  const jobStatus = String(workingJob?.status || "").toUpperCase();
+  const isTerminalCourierJob =
+    jobStatus === "CANCELLED" ||
+    statusOverride === "CANCELLED" ||
+    statusOverride === "REJECTED";
+
   let deliverySummary =
     courierFlow && deliveryRequestId
-      ? await buildDeliverySummaryForJob(deliveryRequestId)
+      ? await buildDeliverySummaryForJob(deliveryRequestId, workingJob?.id)
       : null;
 
   if (
     courierFlow &&
     deliveryRequestId &&
+    !isTerminalCourierJob &&
     deliverySummary?.quotedFee != null &&
     Number(deliverySummary.quotedFee) > 0 &&
     Number(workingJob?.price) === 0
@@ -1093,7 +1127,7 @@ async function finalizeJob(job, meta) {
       const drRow = await prisma.deliveryRequest.findUnique({
         where: { id: deliveryRequestId },
       });
-      if (drRow) {
+      if (drRow && String(drRow.jobId || "") === String(workingJob.id)) {
         const deliveryRequestService = require("./deliveryRequest.service");
         await deliveryRequestService.syncCourierJobPricingFromDeliveryRow(drRow, {
           paid: Boolean(deliverySummary.deliveryPaid),
@@ -1105,7 +1139,7 @@ async function finalizeJob(job, meta) {
         if (refreshed) {
           workingJob = refreshed;
           workingMeta = await getJobMeta(workingJob.id);
-          deliverySummary = await buildDeliverySummaryForJob(deliveryRequestId);
+          deliverySummary = await buildDeliverySummaryForJob(deliveryRequestId, workingJob.id);
         }
       }
     } catch (e) {
@@ -1216,8 +1250,18 @@ async function deleteJob(jobId, actorUserId, actorRole) {
   } else {
     throw new AppError("Forbidden", 403);
   }
-  await prisma.job.delete({ where: { id: jobId } });
-  return { id: jobId };
+
+  // Soft-hide for this actor only — do not delete the job row (other party keeps it).
+  await mutateJobMeta(jobId, (m) => {
+    const prev = Array.isArray(m.hiddenFromJobListByUserIds)
+      ? m.hiddenFromJobListByUserIds.map((id) => String(id))
+      : [];
+    return {
+      ...m,
+      hiddenFromJobListByUserIds: [...new Set([...prev, String(actorUserId)])],
+    };
+  });
+  return { id: jobId, hidden: true };
 }
 
 async function addMaterials(jobId, newMaterials = [], actorUserId) {
@@ -2073,6 +2117,50 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
       details,
       actorRole: policy.cancelledBy,
     });
+
+    // Courier cancel mid-collection opens refund review — clear the assignment so the
+    // customer can choose a new delivery while the case stays OPEN for the old fee.
+    if (Boolean(preMeta?.courierFlow)) {
+      try {
+        const materialOrderService = require("./materialOrder.service");
+        let materialOrderId =
+          preMeta?.materialOrderId != null && String(preMeta.materialOrderId).trim() !== ""
+            ? String(preMeta.materialOrderId).trim()
+            : "";
+        if (!materialOrderId) {
+          const dr = await prisma.deliveryRequest.findFirst({
+            where: { jobId: String(jobId) },
+            orderBy: { createdAt: "desc" },
+            select: { materialOrderId: true },
+          });
+          if (dr?.materialOrderId) materialOrderId = String(dr.materialOrderId);
+        }
+        if (materialOrderId) {
+          const clearSource =
+            policy.cancelledBy === "customer" ? "customer_cancel" : "provider_cancel";
+          await materialOrderService.clearDeliveryAfterCourierJobCancel(materialOrderId, {
+            courierJobId: jobId,
+            source: clearSource,
+            keepRefundReviewOpen: true,
+          });
+          const notifyMessage =
+            policy.cancelledBy === "customer"
+              ? "This delivery was cancelled and is under refund review. You can choose a new delivery option for your paid materials order."
+              : "Your courier cancelled this delivery — the case is under refund review. You can choose a new delivery option for your paid materials order.";
+          await notificationEvents.notifyUser(job.customerId, {
+            type: "delivery_update",
+            title: "Delivery under investigation",
+            message: notifyMessage,
+            jobId: preMeta?.parentJobId ? String(preMeta.parentJobId) : jobId,
+            materialOrderId,
+            dedupeKey: `mo:${materialOrderId}:courier_${clearSource}_dispute_choose_delivery`,
+          });
+        }
+      } catch (e) {
+        console.error("cancelJob dispute-open clearDeliveryAfterCourierJobCancel", jobId, e);
+      }
+    }
+
     const meta = await getJobMeta(jobId);
     const finalized = await finalizeJob(job, meta);
     return {
@@ -2118,12 +2206,26 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
       if (!j) {
         throw new AppError("Job not found", 404);
       }
-      const { refundAmount: rAmt, refundKind } = await paymentService.runCancelJobFinancialsInTransaction(tx, {
-        job: j,
-        providerProfileId: providerRow?.id,
-        refundOverride: policy.refundAmount,
-        courierFlow: Boolean(preMeta?.courierFlow),
-      });
+
+      let rAmt = 0;
+      let refundKind = policy.refundKind || "none";
+
+      if (policy.customerForfeits && providerRow?.id) {
+        // En-route cancel penalty: release held 93% to provider before CANCELLED.
+        await paymentService.releaseHeldEscrowToProviderInTransaction(tx, jobId, providerRow.id);
+        rAmt = 0;
+        refundKind = policy.refundKind || "forfeit_customer_en_route";
+      } else {
+        const financials = await paymentService.runCancelJobFinancialsInTransaction(tx, {
+          job: j,
+          providerProfileId: providerRow?.id,
+          refundOverride: policy.refundAmount,
+          courierFlow: Boolean(preMeta?.courierFlow),
+        });
+        rAmt = financials.refundAmount;
+        refundKind = financials.refundKind;
+      }
+
       const u = await tx.job.update({
         where: { id: jobId },
         data: { status: "CANCELLED" },
@@ -2168,11 +2270,14 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
   );
-  try {
-    const escrowSettlement = require("./payments/escrowSettlement.service");
-    await escrowSettlement.markLaborIntentRefunded(jobId);
-  } catch (e) {
-    console.error("markLaborIntentRefunded", e);
+  // Customer forfeit: no refund — do not mark payment intent as REFUNDED.
+  if (!policy.customerForfeits) {
+    try {
+      const escrowSettlement = require("./payments/escrowSettlement.service");
+      await escrowSettlement.markLaborIntentRefunded(jobId);
+    } catch (e) {
+      console.error("markLaborIntentRefunded", e);
+    }
   }
 
   if (Number(refundAmount) > 0 && providerRow) {
@@ -2188,7 +2293,10 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
     await notificationEvents.notifyCustomerRefundProcessed(job.customerId, jobId, refundAmount);
   }
 
-  if (Boolean(preMeta?.courierFlow) && policy.cancelledBy === "provider") {
+  if (
+    Boolean(preMeta?.courierFlow) &&
+    (policy.cancelledBy === "provider" || policy.cancelledBy === "customer")
+  ) {
     try {
       const materialOrderService = require("./materialOrder.service");
       let materialOrderId =
@@ -2204,21 +2312,27 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
         if (dr?.materialOrderId) materialOrderId = String(dr.materialOrderId);
       }
       if (materialOrderId) {
-        await materialOrderService.clearDeliveryAfterCourierProviderCancel(materialOrderId, {
+        const clearSource =
+          policy.cancelledBy === "customer" ? "customer_cancel" : "provider_cancel";
+        await materialOrderService.clearDeliveryAfterCourierJobCancel(materialOrderId, {
           courierJobId: jobId,
+          source: clearSource,
         });
+        const notifyMessage =
+          policy.cancelledBy === "customer"
+            ? "This delivery was cancelled. Please choose a new delivery option for your paid materials order."
+            : "Your courier cancelled this delivery. Please choose a new delivery option for your materials order.";
         await notificationEvents.notifyUser(job.customerId, {
           type: "delivery_update",
           title: "Delivery cancelled",
-          message:
-            "Your courier cancelled this delivery. Please choose a new delivery option for your materials order.",
+          message: notifyMessage,
           jobId: preMeta?.parentJobId ? String(preMeta.parentJobId) : jobId,
           materialOrderId,
-          dedupeKey: `mo:${materialOrderId}:courier_provider_cancel_choose_delivery`,
+          dedupeKey: `mo:${materialOrderId}:courier_${clearSource}_choose_delivery`,
         });
       }
     } catch (e) {
-      console.error("cancelJob clearDeliveryAfterCourierProviderCancel", jobId, e);
+      console.error("cancelJob clearDeliveryAfterCourierJobCancel", jobId, e);
     }
   }
 

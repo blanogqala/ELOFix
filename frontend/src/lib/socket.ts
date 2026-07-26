@@ -37,8 +37,17 @@ export const socket = io(SOCKET_URL, {
 export function ensureSocketAuthAndConnect(): void {
   if (typeof window === 'undefined') return;
   const session = getCurrentSession();
-  if (session?.token) {
-    socket.auth = { token: session.token };
+  const token = session?.token ? String(session.token) : '';
+  if (token) {
+    const prev = (socket.auth as { token?: string } | undefined)?.token;
+    socket.auth = { token };
+    // Auth is only applied on handshake. If we were already connected without a
+    // token (or with a different one), reconnect so update_location / order:join work.
+    if (socket.connected && prev !== token) {
+      socket.disconnect();
+      socket.connect();
+      return;
+    }
   }
   if (!socket.connected) {
     socket.connect();

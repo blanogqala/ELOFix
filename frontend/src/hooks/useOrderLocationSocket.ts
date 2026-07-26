@@ -4,6 +4,8 @@ import { getLatestTrackingForOrder } from '@/lib/api/tracking';
 import { ApiHttpError } from '@/api/client';
 
 const POLL_MS = 10_000;
+/** Faster poll until the first driver ping so COLLECTING maps populate quickly. */
+const POLL_MS_UNTIL_FIRST_FIX = 2_500;
 
 export function useOrderLocationSocket(opts: { orderId: string | undefined; enabled: boolean }) {
   const { orderId, enabled } = opts;
@@ -15,6 +17,8 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
   const lastPollRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const orderIdRef = useRef<string | undefined>(undefined);
   const hadConnectedRef = useRef(false);
+  const hasFixRef = useRef(false);
+  const pollIntervalRef = useRef<number | null>(null);
 
   orderIdRef.current = orderId;
 
@@ -35,6 +39,7 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
     }
 
     hadConnectedRef.current = false;
+    hasFixRef.current = false;
     const oid = String(orderId);
 
     setLiveLat(null);
@@ -47,8 +52,18 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
       setLiveLat(la);
       setLiveLng(lo);
       touchPing();
+      const becameFirstFix = !hasFixRef.current;
+      if (becameFirstFix) {
+        hasFixRef.current = true;
+      }
       if (fromPoll) {
         lastPollRef.current = { lat: la, lng: lo };
+      }
+      if (becameFirstFix && pollIntervalRef.current != null) {
+        window.clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = window.setInterval(() => {
+          void runPoll();
+        }, POLL_MS);
       }
     };
 
@@ -104,7 +119,7 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
     }
     joinRoom();
 
-    const poll = async () => {
+    async function runPoll() {
       try {
         const loc = await getLatestTrackingForOrder(oid);
         const la = loc.lastLat;
@@ -125,15 +140,18 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
         }
         setPollFailed(true);
       }
-    };
+    }
 
-    void poll();
-    const pollId = window.setInterval(() => {
-      void poll();
-    }, POLL_MS);
+    void runPoll();
+    pollIntervalRef.current = window.setInterval(() => {
+      void runPoll();
+    }, POLL_MS_UNTIL_FIRST_FIX);
 
     return () => {
-      window.clearInterval(pollId);
+      if (pollIntervalRef.current != null) {
+        window.clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
       socket.off('order:location:update', onUpdate);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);

@@ -28,6 +28,7 @@ import { resolveLinkedMaterialOrderId } from '@/lib/resolveLinkedMaterialOrderId
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { guardPaymentCardsForUser } from '@/lib/paymentCardGuard';
+import { isCourierCancellationUnderReview } from '@/lib/jobUtils';
 
 function resolveCollectionPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
   if (dr.collectionPoint?.address?.trim()) return dr.collectionPoint;
@@ -81,11 +82,18 @@ export function JobDeliverySection({
 
   const drStatus = String(deliveryRequest.status || 'pending_quote');
   const fs = String(deliveryRequest.fulfillmentStatus || 'READY').toUpperCase();
+  const jobCancelled = String(job.status || '').toUpperCase() === 'CANCELLED';
+  const underReview = isCourierCancellationUnderReview(job);
+  const deliveryCancelled =
+    jobCancelled ||
+    underReview ||
+    drStatus === 'cancelled' ||
+    fs === 'CANCELLED';
   const paid =
     ['paid', 'in_transit', 'completed'].includes(drStatus) ||
     deliveryRequest.payment?.deliveryPaid === true;
 
-  const activeFulfillment = LIVE_TRACKING_FS.has(fs);
+  const activeFulfillment = !deliveryCancelled && LIVE_TRACKING_FS.has(fs);
   const customerLiveTracking = variant === 'user' && paid && activeFulfillment;
   const providerLiveTracking = variant === 'provider' && paid && activeFulfillment;
 
@@ -111,8 +119,10 @@ export function JobDeliverySection({
     job.completionConfirmedByUser === true ||
     (deliveryRequest.deliveryConfirmed === true && deliveryRequest.customerRating != null);
 
-  const mapCompletedMode = fullyComplete || (fs === 'COMPLETED' && deliveryRequest.deliveryConfirmed === true);
-  const showCustomerMap = activeFulfillment || mapCompletedMode;
+  const mapCompletedMode =
+    !deliveryCancelled &&
+    (fullyComplete || (fs === 'COMPLETED' && deliveryRequest.deliveryConfirmed === true));
+  const showCustomerMap = !deliveryCancelled && (activeFulfillment || mapCompletedMode);
   const headingToCustomer = courierMapShowsDestination(fs, mapCompletedMode);
 
   const mapDestCoords = useMemo(() => {
@@ -211,14 +221,45 @@ export function JobDeliverySection({
         <Badge variant="outline">{statusLabel}</Badge>
       </div>
 
-      {variant === 'user' && paid ? (
+      {variant === 'user' && (paid || deliveryCancelled) ? (
         <div className={cn('rounded-lg border p-4 space-y-1', customerBanner.tone)}>
           <p className="font-medium text-sm">{customerBanner.title}</p>
           <p className="text-xs text-muted-foreground">{customerBanner.description}</p>
+          {deliveryCancelled && linkedMaterialOrderId ? (
+            <Button
+              type="button"
+              size="sm"
+              className="btn-accent mt-2"
+              onClick={() =>
+                navigate(`/user/material-orders/${encodeURIComponent(linkedMaterialOrderId)}`)
+              }
+            >
+              Choose new delivery option
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
-      {variant === 'provider' ? (
+      {variant === 'provider' && underReview ? (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-1">
+          <p className="font-medium text-sm">Under investigation</p>
+          <p className="text-xs text-muted-foreground">
+            This cancellation is under admin review. Collection, navigation, and live location sharing
+            are disabled.
+          </p>
+        </div>
+      ) : null}
+
+      {variant === 'provider' && deliveryCancelled && !underReview ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 space-y-1">
+          <p className="font-medium text-sm text-destructive">Delivery cancelled</p>
+          <p className="text-xs text-muted-foreground">
+            This courier assignment is cancelled. Collection and delivery actions are disabled.
+          </p>
+        </div>
+      ) : null}
+
+      {variant === 'provider' && !deliveryCancelled ? (
         <div className="rounded-lg border border-border bg-muted/20 px-3 py-3 text-sm space-y-2">
           <div>
             <p className="text-xs font-medium text-muted-foreground">Collection address</p>
@@ -347,7 +388,7 @@ export function JobDeliverySection({
         />
       ) : null}
 
-      {variant === 'provider' && paid ? (
+      {variant === 'provider' && paid && !deliveryCancelled ? (
         <CourierDeliveryFulfillment
           deliveryRequestId={deliveryRequest.id}
           fulfillmentStatus={fs}

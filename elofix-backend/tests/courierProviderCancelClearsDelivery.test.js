@@ -1,6 +1,6 @@
 /**
- * Courier provider cancelJob clears linked material-order delivery so the customer
- * must choose a new option. Non-courier cancels leave delivery unchanged.
+ * Courier job cancel (provider or customer) clears linked material-order delivery
+ * so the customer must choose a new option. Non-courier cancels leave delivery unchanged.
  *
  * Run: node tests/courierProviderCancelClearsDelivery.test.js
  */
@@ -162,8 +162,26 @@ async function createFixtures(prisma, suffix) {
 
 async function cleanup(prisma, fixturesList) {
   for (const fixtures of fixturesList) {
+    if (fixtures.courierJobId) {
+      const disputes = await prisma.jobDispute
+        .findMany({ where: { jobId: fixtures.courierJobId }, select: { id: true } })
+        .catch(() => []);
+      for (const d of disputes) {
+        await prisma.disputeMessage.deleteMany({ where: { disputeId: d.id } }).catch(() => {});
+        await prisma.jobDisputeRound.deleteMany({ where: { disputeId: d.id } }).catch(() => {});
+        await prisma.disputeResolutionLog.deleteMany({ where: { disputeId: d.id } }).catch(() => {});
+        await prisma.jobDispute.delete({ where: { id: d.id } }).catch(() => {});
+      }
+      await prisma.providerReview.deleteMany({ where: { jobId: fixtures.courierJobId } }).catch(() => {});
+    }
+    if (fixtures.rehiredJobId) {
+      await prisma.providerReview.deleteMany({ where: { jobId: fixtures.rehiredJobId } }).catch(() => {});
+    }
     if (fixtures.deliveryRequestId) {
       await prisma.deliveryRequest.delete({ where: { id: fixtures.deliveryRequestId } }).catch(() => {});
+    }
+    if (fixtures.rehiredJobId) {
+      await prisma.job.delete({ where: { id: fixtures.rehiredJobId } }).catch(() => {});
     }
     if (fixtures.courierJobId) {
       await prisma.job.delete({ where: { id: fixtures.courierJobId } }).catch(() => {});
@@ -180,6 +198,9 @@ async function cleanup(prisma, fixturesList) {
     if (fixtures.supplier) {
       await prisma.supplier.delete({ where: { id: fixtures.supplier.id } }).catch(() => {});
     }
+    if (fixtures.courier) {
+      await prisma.provider.deleteMany({ where: { userId: fixtures.courier.id } }).catch(() => {});
+    }
     if (fixtures.customer) {
       await prisma.user.delete({ where: { id: fixtures.customer.id } }).catch(() => {});
     }
@@ -187,6 +208,271 @@ async function cleanup(prisma, fixturesList) {
       await prisma.user.delete({ where: { id: fixtures.courier.id } }).catch(() => {});
     }
   }
+}
+
+async function assertDeliveryCleared(prisma, fixtures) {
+  const mo = await prisma.materialOrder.findUnique({ where: { id: fixtures.orderId } });
+  assert.ok(mo);
+  assert.strictEqual(String(mo.payload?.delivery?.status), "Cancelled");
+  assert.strictEqual(Number(mo.payload?.deliveryFee ?? 0), 0);
+  assert.strictEqual(mo.payload?.deliveryProviderId, undefined);
+  assert.strictEqual(mo.payload?.deliveryType, undefined);
+  assert.strictEqual(mo.payload?.delivery?.type, undefined);
+  assert.strictEqual(mo.payload?.delivery?.providerId, undefined);
+  assert.strictEqual(mo.payload?.payment?.deliveryPaid, false);
+  assert.strictEqual(mo.payload?.payment?.materialsPaid, true);
+
+  const parentMeta = await getJobMeta(fixtures.parentJob.id);
+  const storeOrder = (parentMeta.storeOrders || []).find(
+    (o) => String(o.orderId) === String(fixtures.orderId)
+  );
+  assert.ok(storeOrder);
+  assert.strictEqual(String(storeOrder.deliveryStatus), "Cancelled");
+  assert.ok(!storeOrder.deliveryType, "deliveryType should be cleared after cancel");
+  assert.ok(!storeOrder.deliveryProviderId, "deliveryProviderId should be cleared after cancel");
+  assert.ok(!storeOrder.courierJobId, "courierJobId should be cleared after cancel");
+  assert.ok(!storeOrder.delivery?.providerId, "delivery.providerId should not fall back to prev");
+
+  const dr = await prisma.deliveryRequest.findUnique({ where: { id: fixtures.deliveryRequestId } });
+  assert.ok(dr);
+  assert.strictEqual(String(dr.status).toLowerCase(), "cancelled");
+  assert.strictEqual(String(dr.fulfillmentStatus || "").toUpperCase(), "CANCELLED");
+}
+
+async function seedPaidCollectingCourier(prisma, fixtures) {
+  await prisma.provider.upsert({
+    where: { userId: fixtures.courier.id },
+    create: {
+      userId: fixtures.courier.id,
+      businessName: "Courier Biz",
+      skills: ["delivery"],
+      location: "Cape Town",
+    },
+    update: {},
+  });
+
+  await prisma.job.update({
+    where: { id: fixtures.courierJobId },
+    data: {
+      status: "IN_PROGRESS",
+      price: 300,
+      laborPaid: true,
+      meta: {
+        courierFlow: true,
+        deliveryRequestId: fixtures.deliveryRequestId,
+        materialOrderId: fixtures.orderId,
+        parentJobId: fixtures.parentJob.id,
+        source: "job_materials",
+        laborPaid: true,
+      },
+    },
+  });
+
+  await prisma.deliveryRequest.update({
+    where: { id: fixtures.deliveryRequestId },
+    data: {
+      status: "paid",
+      fulfillmentStatus: "COLLECTING",
+      quotedFee: 300,
+      payload: {
+        payment: { deliveryPaid: true },
+        delivery: { status: "Processing", providerId: fixtures.courier.id, fee: 300 },
+      },
+    },
+  });
+
+  await prisma.materialOrder.update({
+    where: { id: fixtures.orderId },
+    data: {
+      payload: {
+        jobStoreOrderId: fixtures.orderId,
+        materialsSubtotal: 500,
+        total: 800,
+        deliveryType: "DELIVERY_PROVIDER",
+        deliveryProviderId: fixtures.courier.id,
+        deliveryFee: 300,
+        payment: { materialsPaid: true, deliveryPaid: true },
+        delivery: {
+          type: "PROVIDER",
+          status: "Processing",
+          providerId: fixtures.courier.id,
+          fee: 300,
+        },
+      },
+    },
+  });
+}
+
+async function testCourierCollectingProviderCancelOpensDisputeAndClearsDelivery(prisma, fixtures) {
+  await seedPaidCollectingCourier(prisma, fixtures);
+
+  const result = await jobService.cancelJob(
+    fixtures.courierJobId,
+    "Cannot continue collecting",
+    "Mid-collection cancel",
+    fixtures.courier.id,
+    "provider"
+  );
+
+  assert.strictEqual(result.disputeOpened, true);
+  assert.ok(result.disputeId);
+  assert.strictEqual(String(result.job.status), "DISPUTED");
+
+  const jobRow = await prisma.job.findUnique({ where: { id: fixtures.courierJobId } });
+  assert.strictEqual(String(jobRow.meta?.statusOverride || ""), "DISPUTED");
+  assert.strictEqual(String(jobRow.meta?.cancellationSource || ""), "provider_cancel");
+
+  const dispute = await prisma.jobDispute.findUnique({ where: { id: result.disputeId } });
+  assert.ok(dispute);
+  assert.strictEqual(String(dispute.status), "OPEN");
+
+  await assertDeliveryCleared(prisma, fixtures);
+
+  const mo = await prisma.materialOrder.findUnique({ where: { id: fixtures.orderId } });
+  assert.strictEqual(mo.payload?.deliveryCancellationReview?.open, true);
+  assert.strictEqual(String(mo.payload?.deliveryCancellationReview?.source || ""), "provider_cancel");
+
+  const deliveryRequestService = require("../src/services/deliveryRequest.service");
+  let blocked = false;
+  try {
+    await deliveryRequestService.updateDirectDeliveryFulfillment(
+      fixtures.deliveryRequestId,
+      fixtures.courier.id,
+      "COLLECTED"
+    );
+  } catch (e) {
+    blocked = true;
+    assert.strictEqual(e.statusCode, 409);
+  }
+  assert.strictEqual(blocked, true, "fulfillment must be blocked while disputed");
+}
+
+/**
+ * After dispute-open clear, customer re-hires a new courier job B on the same MO.
+ * Resolving the disputed job A must NOT cancel B or wipe the new assignment.
+ */
+async function testDisputeResolvePreservesRehiredCourier(prisma, fixtures) {
+  await seedPaidCollectingCourier(prisma, fixtures);
+
+  const cancelResult = await jobService.cancelJob(
+    fixtures.courierJobId,
+    "Cannot continue collecting",
+    "Mid-collection cancel for rehire test",
+    fixtures.courier.id,
+    "provider"
+  );
+  assert.strictEqual(cancelResult.disputeOpened, true);
+  await assertDeliveryCleared(prisma, fixtures);
+
+  const jobBId = randomUUID();
+  fixtures.rehiredJobId = jobBId;
+
+  await prisma.job.create({
+    data: {
+      id: jobBId,
+      title: `Material delivery — rehire ${fixtures.orderId.slice(0, 8)}`,
+      category: "delivery",
+      location: "Cape Town",
+      description: "Re-hired courier after dispute",
+      price: 500,
+      customerId: fixtures.customer.id,
+      providerId: fixtures.courier.id,
+      status: "IN_PROGRESS",
+      laborPaid: true,
+      meta: {
+        courierFlow: true,
+        deliveryRequestId: fixtures.deliveryRequestId,
+        materialOrderId: fixtures.orderId,
+        parentJobId: fixtures.parentJob.id,
+        source: "job_materials",
+        laborPaid: true,
+      },
+    },
+  });
+
+  // Same MO has a unique DR — re-hire rebinds the existing request to job B.
+  await prisma.deliveryRequest.update({
+    where: { id: fixtures.deliveryRequestId },
+    data: {
+      jobId: jobBId,
+      courierId: fixtures.courier.id,
+      status: "paid",
+      fulfillmentStatus: "COLLECTING",
+      quotedFee: 500,
+      payload: {
+        payment: { deliveryPaid: true },
+        delivery: { status: "Processing", providerId: fixtures.courier.id, fee: 500 },
+      },
+    },
+  });
+
+  await prisma.materialOrder.update({
+    where: { id: fixtures.orderId },
+    data: {
+      payload: {
+        jobStoreOrderId: fixtures.orderId,
+        materialsSubtotal: 500,
+        total: 1000,
+        deliveryType: "DELIVERY_PROVIDER",
+        deliveryProviderId: fixtures.courier.id,
+        deliveryFee: 500,
+        payment: { materialsPaid: true, deliveryPaid: true },
+        delivery: {
+          type: "PROVIDER",
+          status: "Processing",
+          providerId: fixtures.courier.id,
+          fee: 500,
+        },
+        deliveryCancellationReview: {
+          open: true,
+          source: "provider_cancel",
+          courierJobId: fixtures.courierJobId,
+          at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+
+  const ensureResult =
+    await materialOrderService.ensureDeliveryClearedAfterCancellationDisputeResolved(
+      fixtures.orderId,
+      {
+        courierJobId: fixtures.courierJobId,
+        source: "provider_cancel",
+      }
+    );
+
+  assert.strictEqual(ensureResult.cleared, false, "must not clear re-hired assignment");
+  assert.ok(ensureResult.reviewClosed || ensureResult.preservedRehire);
+
+  const jobB = await prisma.job.findUnique({ where: { id: jobBId } });
+  assert.ok(jobB);
+  assert.notStrictEqual(String(jobB.status), "CANCELLED", "re-hired job B must stay active");
+  assert.notStrictEqual(String(jobB.meta?.statusOverride || ""), "CANCELLED");
+
+  const mo = await prisma.materialOrder.findUnique({ where: { id: fixtures.orderId } });
+  assert.strictEqual(String(mo.payload?.deliveryType || ""), "DELIVERY_PROVIDER");
+  assert.strictEqual(String(mo.payload?.deliveryProviderId || ""), String(fixtures.courier.id));
+  assert.strictEqual(mo.payload?.deliveryCancellationReview, undefined);
+
+  const dr = await prisma.deliveryRequest.findUnique({ where: { id: fixtures.deliveryRequestId } });
+  assert.ok(dr);
+  assert.strictEqual(String(dr.jobId), jobBId);
+  assert.notStrictEqual(String(dr.status || "").toLowerCase(), "cancelled");
+  assert.notStrictEqual(String(dr.fulfillmentStatus || "").toUpperCase(), "CANCELLED");
+
+  // Explicit cancel of disputed A must not rewrite onto B via materialOrderId.
+  const deliveryRequestService = require("../src/services/deliveryRequest.service");
+  await deliveryRequestService.cancelCourierDeliveryForCustomer({
+    materialOrderId: fixtures.orderId,
+    courierJobId: fixtures.courierJobId,
+    source: "provider_cancel",
+    notify: false,
+  });
+  const jobBAfter = await prisma.job.findUnique({ where: { id: jobBId } });
+  assert.notStrictEqual(String(jobBAfter.status), "CANCELLED");
+  const drAfter = await prisma.deliveryRequest.findUnique({ where: { id: fixtures.deliveryRequestId } });
+  assert.notStrictEqual(String(drAfter.status || "").toLowerCase(), "cancelled");
 }
 
 async function testCourierProviderCancelClearsDelivery(prisma, fixtures) {
@@ -200,25 +486,21 @@ async function testCourierProviderCancelClearsDelivery(prisma, fixtures) {
 
   assert.strictEqual(result.cancelledBy, "provider");
   assert.strictEqual(String(result.job.status), "CANCELLED");
+  await assertDeliveryCleared(prisma, fixtures);
+}
 
-  const mo = await prisma.materialOrder.findUnique({ where: { id: fixtures.orderId } });
-  assert.ok(mo);
-  assert.strictEqual(String(mo.payload?.delivery?.status), "Cancelled");
-  assert.strictEqual(Number(mo.payload?.deliveryFee ?? 0), 0);
-  assert.strictEqual(mo.payload?.deliveryProviderId, undefined);
-  assert.strictEqual(mo.payload?.payment?.deliveryPaid, false);
-
-  const parentMeta = await getJobMeta(fixtures.parentJob.id);
-  const storeOrder = (parentMeta.storeOrders || []).find(
-    (o) => String(o.orderId) === String(fixtures.orderId)
+async function testCourierCustomerCancelClearsDelivery(prisma, fixtures) {
+  const result = await jobService.cancelJob(
+    fixtures.courierJobId,
+    "Changed mind",
+    "Customer cancel",
+    fixtures.customer.id,
+    "customer"
   );
-  assert.ok(storeOrder);
-  assert.strictEqual(String(storeOrder.deliveryStatus), "Cancelled");
-  assert.ok(!storeOrder.courierJobId, "courierJobId should be cleared after cancel");
 
-  const dr = await prisma.deliveryRequest.findUnique({ where: { id: fixtures.deliveryRequestId } });
-  assert.ok(dr);
-  assert.strictEqual(String(dr.status).toLowerCase(), "cancelled");
+  assert.strictEqual(result.cancelledBy, "customer");
+  assert.strictEqual(String(result.job.status), "CANCELLED");
+  await assertDeliveryCleared(prisma, fixtures);
 }
 
 async function testNonCourierCancelLeavesDelivery(prisma, fixtures) {
@@ -257,15 +539,103 @@ async function testNonCourierCancelLeavesDelivery(prisma, fixtures) {
   assert.strictEqual(String(after.payload?.deliveryType || ""), "DELIVERY_PROVIDER");
 }
 
+/**
+ * Pre-fix dirty shape: courier job CANCELLED but MO still PROVIDER and DR still COLLECTING.
+ * Reading the order / job snapshot must heal via repair-on-read.
+ */
+async function seedDirtyUnclearedCancelledCourier(prisma, fixtures) {
+  await prisma.job.update({
+    where: { id: fixtures.courierJobId },
+    data: { status: "CANCELLED" },
+  });
+  await prisma.deliveryRequest.update({
+    where: { id: fixtures.deliveryRequestId },
+    data: {
+      status: "paid",
+      fulfillmentStatus: "COLLECTING",
+      quotedFee: 300,
+      payload: {
+        payment: { deliveryPaid: true },
+        delivery: { status: "Processing", providerId: fixtures.courier.id, fee: 300 },
+      },
+    },
+  });
+  await prisma.materialOrder.update({
+    where: { id: fixtures.orderId },
+    data: {
+      payload: {
+        jobStoreOrderId: fixtures.orderId,
+        materialsSubtotal: 500,
+        total: 800,
+        deliveryType: "DELIVERY_PROVIDER",
+        deliveryProviderId: fixtures.courier.id,
+        deliveryFee: 300,
+        payment: { materialsPaid: true, deliveryPaid: true },
+        delivery: {
+          type: "PROVIDER",
+          status: "Processing",
+          providerId: fixtures.courier.id,
+          fee: 300,
+        },
+      },
+    },
+  });
+}
+
+async function testRepairOnReadHealsUnclearedCancelledCourier(prisma, fixtures) {
+  await seedDirtyUnclearedCancelledCourier(prisma, fixtures);
+
+  const before = await prisma.materialOrder.findUnique({ where: { id: fixtures.orderId } });
+  assert.strictEqual(String(before.payload?.deliveryType || ""), "DELIVERY_PROVIDER");
+  assert.strictEqual(String(before.payload?.delivery?.status || ""), "Processing");
+
+  const order = await materialOrderService.getMaterialOrderById(fixtures.orderId);
+  assert.ok(order);
+  assert.strictEqual(String(order.delivery?.status || order.deliveryStatus || ""), "Cancelled");
+  assert.ok(!order.deliveryType, "deliveryType should be cleared after repair-on-read");
+  assert.ok(!order.deliveryProviderId, "deliveryProviderId should be cleared after repair-on-read");
+
+  const mo = await prisma.materialOrder.findUnique({ where: { id: fixtures.orderId } });
+  assert.strictEqual(String(mo.payload?.delivery?.status), "Cancelled");
+  assert.strictEqual(mo.payload?.deliveryType, undefined);
+  assert.strictEqual(mo.payload?.payment?.materialsPaid, true);
+  assert.strictEqual(mo.payload?.payment?.deliveryPaid, false);
+
+  const snapshots = await materialOrderService.getJobMaterialOrdersForJob(fixtures.parentJob.id);
+  const snap = snapshots.find((s) => String(s.id) === String(fixtures.orderId));
+  assert.ok(snap);
+  assert.ok(!snap.deliveryType, "job snapshot deliveryType cleared");
+  assert.strictEqual(String(snap.delivery?.status || snap.deliveryStatus || ""), "Cancelled");
+  assert.ok(
+    !snap.courierFulfillmentStatus || String(snap.courierFulfillmentStatus).toUpperCase() === "CANCELLED",
+    "job snapshot must not expose active courier tracking"
+  );
+}
+
 async function runDbIntegrationTests() {
   const prisma = require("../src/config/prisma");
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const fixturesList = [];
 
   try {
+    const disputeClearFixtures = await createFixtures(prisma, `${suffix}-dispute`);
+    fixturesList.push(disputeClearFixtures);
+    await testCourierCollectingProviderCancelOpensDisputeAndClearsDelivery(
+      prisma,
+      disputeClearFixtures
+    );
+
+    const rehireFixtures = await createFixtures(prisma, `${suffix}-rehire`);
+    fixturesList.push(rehireFixtures);
+    await testDisputeResolvePreservesRehiredCourier(prisma, rehireFixtures);
+
     const clearFixtures = await createFixtures(prisma, `${suffix}-clear`);
     fixturesList.push(clearFixtures);
     await testCourierProviderCancelClearsDelivery(prisma, clearFixtures);
+
+    const customerClearFixtures = await createFixtures(prisma, `${suffix}-cust`);
+    fixturesList.push(customerClearFixtures);
+    await testCourierCustomerCancelClearsDelivery(prisma, customerClearFixtures);
 
     const leaveFixtures = await createFixtures(prisma, `${suffix}-leave`);
     fixturesList.push(leaveFixtures);
@@ -273,6 +643,10 @@ async function runDbIntegrationTests() {
     if (leaveFixtures._serviceProvider) {
       fixturesList.push({ courier: leaveFixtures._serviceProvider });
     }
+
+    const repairFixtures = await createFixtures(prisma, `${suffix}-repair`);
+    fixturesList.push(repairFixtures);
+    await testRepairOnReadHealsUnclearedCancelledCourier(prisma, repairFixtures);
 
     console.log("courierProviderCancelClearsDelivery.test.js: OK");
   } finally {
@@ -283,7 +657,20 @@ async function runDbIntegrationTests() {
 
 async function main() {
   assert.strictEqual(
+    typeof materialOrderService.clearDeliveryAfterCourierJobCancel,
+    "function"
+  );
+  assert.strictEqual(
     typeof materialOrderService.clearDeliveryAfterCourierProviderCancel,
+    "function"
+  );
+  assert.strictEqual(
+    typeof materialOrderService.repairUnclearedDeliveryAfterCancelledCourier,
+    "function"
+  );
+
+  assert.strictEqual(
+    typeof materialOrderService.ensureDeliveryClearedAfterCancellationDisputeResolved,
     "function"
   );
 

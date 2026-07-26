@@ -11,6 +11,7 @@ const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { enrichJob, normalizeMeta } = require("./jobMeta.service");
+const paymentService = require("./payment.service");
 
 function coerceMoney(value) {
   const n = Number(value);
@@ -143,13 +144,34 @@ async function getProviderEarnings(userId) {
   const provider = await requireProviderByUserId(userId);
   const providerUserId = provider.userId;
 
-  const jobs = await prisma.job.findMany({
+  let jobs = await prisma.job.findMany({
     where: { providerId: providerUserId },
     orderBy: { createdAt: "desc" },
     include: {
       customer: { select: { name: true } },
     },
   });
+
+  // Heal cancelled courier forfeit jobs that never released escrow to the provider.
+  let healedAny = false;
+  for (const job of jobs) {
+    const refreshed = await paymentService.releaseForfeitedCourierEscrowIfNeeded(job, provider.id);
+    if (
+      refreshed &&
+      (Number(refreshed.releasedAmount) || 0) !== (Number(job.releasedAmount) || 0)
+    ) {
+      healedAny = true;
+    }
+  }
+  if (healedAny) {
+    jobs = await prisma.job.findMany({
+      where: { providerId: providerUserId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        customer: { select: { name: true } },
+      },
+    });
+  }
 
   const ledger = await getLedgerSummary(provider.id);
 
@@ -186,13 +208,23 @@ async function getProviderEarnings(userId) {
 
 async function getProviderEarningJob(userId, jobId) {
   const provider = await requireProviderByUserId(userId);
-  const job = await prisma.job.findFirst({
+  let job = await prisma.job.findFirst({
     where: { id: jobId, providerId: provider.userId },
     include: {
       customer: { select: { id: true, name: true, email: true } },
     },
   });
   if (!job) throw new AppError("Job not found", 404);
+  const beforeReleased = Number(job.releasedAmount) || 0;
+  const healed = await paymentService.releaseForfeitedCourierEscrowIfNeeded(job, provider.id);
+  if ((Number(healed.releasedAmount) || 0) !== beforeReleased) {
+    job = await prisma.job.findFirst({
+      where: { id: jobId, providerId: provider.userId },
+      include: {
+        customer: { select: { id: true, name: true, email: true } },
+      },
+    });
+  }
   const clawbackMap = await getJobClawbackMap(provider.id, [job.id]);
   return {
     job: {

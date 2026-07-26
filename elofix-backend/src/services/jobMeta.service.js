@@ -194,23 +194,12 @@ function resolvePaymentSettlementStatus(job, safeMeta) {
 }
 
 /**
- * Courier/delivery pre-confirmation: customer payment is held until delivery is confirmed.
- * Not counted as provider "remaining to you" until released.
+ * Provider-entitled unreleased share for earnings display.
+ * Courier/delivery/moving: full providerAmount (93%) stays held until customer confirms,
+ * so remaining equals held escrow (or providerAmount − released) the same as labor.
  */
-function isCourierPreDeliveryHold(job, meta) {
-  const safeMeta = normalizeMeta(meta);
-  const releasedAmount = Number(job.releasedAmount) || 0;
-  return Boolean(
-    safeMeta.courierFlow && !safeMeta.completionConfirmedByUser && releasedAmount <= 0
-  );
-}
-
-/** Provider-entitled unreleased share for earnings display (excludes courier pre-delivery customer escrow). */
 function computeProviderEntitledRemaining(job, meta) {
   const safeMeta = normalizeMeta(meta);
-  if (isCourierPreDeliveryHold(job, safeMeta)) {
-    return 0;
-  }
   const provNum = job.providerAmount != null ? Number(job.providerAmount) : null;
   if (provNum == null || Number.isNaN(provNum)) {
     return 0;
@@ -355,7 +344,6 @@ module.exports = {
   mutateJobMeta,
   mutateJobMetaInTransaction,
   enrichJob,
-  isCourierPreDeliveryHold,
   computeProviderEntitledRemaining,
   resolveJobHasStarted,
   toFrontendStatus,

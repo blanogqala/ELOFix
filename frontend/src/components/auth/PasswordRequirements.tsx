@@ -1,4 +1,4 @@
-import { Check, Circle } from 'lucide-react';
+import { Circle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   getPasswordChecks,
@@ -11,23 +11,20 @@ type PasswordRequirementsProps = {
 };
 
 export function PasswordRequirements({ password, className }: PasswordRequirementsProps) {
+  if (!String(password ?? '').trim()) return null;
+
   const checks = getPasswordChecks(password);
+  const unmet = PASSWORD_REQUIREMENT_LABELS.filter(({ key }) => !checks[key]);
+  if (unmet.length === 0) return null;
 
   return (
     <ul className={cn('mt-2 space-y-1 text-xs text-muted-foreground', className)} aria-live="polite">
-      {PASSWORD_REQUIREMENT_LABELS.map(({ key, label }) => {
-        const ok = checks[key];
-        return (
-          <li key={key} className={cn('flex items-center gap-1.5', ok && 'text-emerald-600')}>
-            {ok ? (
-              <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            ) : (
-              <Circle className="h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />
-            )}
-            <span>{label}</span>
-          </li>
-        );
-      })}
+      {unmet.map(({ key, label }) => (
+        <li key={key} className="flex items-center gap-1.5">
+          <Circle className="h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />
+          <span>{label}</span>
+        </li>
+      ))}
     </ul>
   );
 }

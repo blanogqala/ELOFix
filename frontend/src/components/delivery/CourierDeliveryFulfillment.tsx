@@ -12,9 +12,30 @@ import { ApiHttpError } from '@/api/client';
 import { formatDeliveryPointLabel } from '@/lib/formatAddress';
 
 import { buildExternalDirectionsUrl } from '@/lib/map/externalNavigationUrl';
+import { ensureSocketAuthAndConnect, socket } from '@/lib/socket';
+import { COURIER_LIVE_GPS_STATUSES } from '@/hooks/useCourierProviderGeolocation';
 
 function mapsUrl(lat?: number, lng?: number, address?: string) {
   return buildExternalDirectionsUrl({ lat, lng, address });
+}
+
+/** Push an immediate GPS sample when the courier enters a live-tracking status. */
+function pushImmediateCourierLocation(deliveryRequestId: string) {
+  if (!navigator.geolocation || !deliveryRequestId) return;
+  ensureSocketAuthAndConnect();
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const emit = () => socket.emit('update_location', { orderId: deliveryRequestId, lat, lng });
+      if (socket.connected) emit();
+      else socket.once('connect', emit);
+    },
+    () => {
+      /* geoError is surfaced by useCourierProviderGeolocation on the job page */
+    },
+    { enableHighAccuracy: true, maximumAge: 10_000, timeout: 12_000 }
+  );
 }
 
 interface CourierDeliveryFulfillmentProps {
@@ -26,6 +47,8 @@ interface CourierDeliveryFulfillmentProps {
   deliveryConfirmedAt?: string;
   customerRating?: DeliveryRequestRecord['customerRating'];
   geoError?: string | null;
+  /** When true, hide Navigate / Arrived actions (cancellation under admin review). */
+  underReview?: boolean;
   onUpdated: (request: DeliveryRequestRecord | null) => void;
 }
 
@@ -48,6 +71,7 @@ export function CourierDeliveryFulfillment({
   deliveryConfirmedAt,
   customerRating,
   geoError = null,
+  underReview = false,
   onUpdated,
 }: CourierDeliveryFulfillmentProps) {
   const { toast } = useToast();
@@ -56,9 +80,12 @@ export function CourierDeliveryFulfillment({
   const mut = useMutation({
     mutationFn: (status: CourierFulfillmentStatus) =>
       patchDirectDeliveryFulfillment(deliveryRequestId, status),
-    onSuccess: (updated) => {
+    onSuccess: (updated, status) => {
       onUpdated(updated);
       toast({ title: 'Status updated' });
+      if (COURIER_LIVE_GPS_STATUSES.has(String(status || '').toUpperCase())) {
+        pushImmediateCourierLocation(deliveryRequestId);
+      }
     },
     onError: (err) => {
       const msg =
@@ -84,10 +111,27 @@ export function CourierDeliveryFulfillment({
 
   const collectionLabel = collection.label?.trim();
   const fullyComplete = deliveryConfirmed && customerRating != null;
+  const actionsDisabled = underReview || fs === 'CANCELLED';
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {(fs === 'READY' || fs === 'COLLECTING' || fs === 'COLLECTED') && (
+      {underReview ? (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-2 sm:col-span-2">
+          <p className="text-sm font-medium">Under investigation</p>
+          <p className="text-xs text-muted-foreground">
+            Cancellation is under admin review. Navigate and fulfillment actions are disabled.
+          </p>
+        </div>
+      ) : null}
+      {!underReview && fs === 'CANCELLED' ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 space-y-2 sm:col-span-2">
+          <p className="text-sm font-medium text-destructive">Delivery cancelled</p>
+          <p className="text-xs text-muted-foreground">
+            Collection and delivery actions are disabled for this cancelled assignment.
+          </p>
+        </div>
+      ) : null}
+      {!actionsDisabled && (fs === 'READY' || fs === 'COLLECTING' || fs === 'COLLECTED') && (
         <div className=" rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-primary flex items-center gap-1.5">
             <Package className="h-3.5 w-3.5" />
@@ -141,7 +185,7 @@ export function CourierDeliveryFulfillment({
         </div>
       )}
 
-      {(fs === 'COLLECTED' || fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION') && (
+      {!actionsDisabled && (fs === 'COLLECTED' || fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION') && (
         <div
           className={cn(
             'rounded-lg border p-4 space-y-3',

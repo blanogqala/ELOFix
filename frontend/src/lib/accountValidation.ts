@@ -65,6 +65,16 @@ export function personNameValidationMessage(name: string): string | null {
   return null;
 }
 
+/** Live hint for letters-only rule; null when empty or valid for that rule. */
+export function personNameLettersOnlyHint(name: string): string | null {
+  const value = String(name ?? '');
+  if (!value.trim()) return null;
+  if (/\d/.test(value) || !PERSON_NAME_RE.test(value.trim())) {
+    return 'Letters only — no numbers.';
+  }
+  return null;
+}
+
 export function isValidEmail(email: string): boolean {
   const trimmed = String(email ?? '').trim();
   if (!trimmed || /\s/.test(trimmed)) return false;
