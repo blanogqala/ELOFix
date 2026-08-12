@@ -365,6 +365,35 @@ async function notifyCustomerConfirmationNeeded(customerId, jobId, jobTitle) {
   });
 }
 
+async function notifyCompletionPaymentRequired(customerId, jobId, jobTitle) {
+  await notifyUser(customerId, {
+    type: "completion_payment_required",
+    title: "Completion payment required",
+    message: `Your provider has marked "${jobTitle || "the job"}" as ready for completion. Please review the work and pay the remaining balance.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, "completion_payment_required"),
+  });
+}
+
+async function notifyDepositPaymentSuccess(customerId, providerId, jobId, jobTitle) {
+  await notifyUser(customerId, {
+    type: "deposit_paid",
+    title: "Deposit payment successful",
+    message: `Your mobilisation deposit for "${jobTitle || "the job"}" was successful. The provider can now begin the service.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, "deposit_paid"),
+  });
+  if (providerId) {
+    await notifyUser(providerId, {
+      type: "deposit_paid_provider",
+      title: "Mobilisation deposit paid",
+      message: `The customer has paid the mobilisation deposit for "${jobTitle || "the job"}". You can begin the service.`,
+      jobId,
+      dedupeKey: jobDedupe(jobId, "deposit_paid_provider"),
+    });
+  }
+}
+
 async function notifyJobMarkedComplete(providerId, jobId, jobTitle) {
   await notifyUser(providerId, {
     type: "job_marked_complete",
@@ -475,10 +504,20 @@ async function notifyRefundApproved({ customerId, jobId, amount }) {
 }
 
 async function notifyCustomerRefundProcessed(customerId, jobId, amount) {
+  let jobTitle = "your job";
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id: String(jobId) },
+      select: { title: true, category: true },
+    });
+    jobTitle = job?.title || job?.category || "your job";
+  } catch {
+    /* best-effort title */
+  }
   await notifyUser(customerId, {
     type: "refund_processed",
     title: "Refund processed",
-    message: `Your refund of R ${Number(amount || 0).toFixed(2)} has been processed.`,
+    message: `Your refund of R ${Number(amount || 0).toFixed(2)} for your ${jobTitle} job has been processed successfully.`,
     jobId,
     dedupeKey: jobDedupe(jobId, "refund_processed"),
   });
@@ -610,19 +649,37 @@ async function notifyProviderRefundOutcome({
 }
 
 async function notifyCaseClosed({ customerId, providerId, jobId, disputeId, action }) {
-  const msg = `Dispute case closed (${String(action || "resolved").replace(/_/g, " ").toLowerCase()}).`;
+  const act = String(action || "resolved").toUpperCase();
+  let customerMsg = `Dispute case closed (${act.replace(/_/g, " ").toLowerCase()}).`;
+  let providerMsg = customerMsg;
+  if (act === "RELEASE_FUNDS") {
+    customerMsg =
+      "Your dispute has been reviewed by EloFix. The remaining completion balance is now due. You have 30 days to settle the outstanding amount. Failure to settle within the stated period may result in further action in accordance with EloFix's Terms and applicable law.";
+    providerMsg =
+      "EloFix resolved the dispute in favor of releasing the remaining balance. The customer must pay the outstanding completion amount before settlement is recorded.";
+  } else if (act === "FULL_REFUND") {
+    customerMsg = "EloFix approved a customer refund based on amounts you have already paid.";
+    providerMsg =
+      "EloFix approved a customer refund. If you owe a recovery amount, settle it via the refund-due instructions in your account.";
+  } else if (act === "RETURN_PROVIDER") {
+    customerMsg = "EloFix instructed the provider to return to site and correct the work.";
+    providerMsg = "EloFix instructed you to return to site and correct the work. Mark the job complete again when finished.";
+  } else if (act === "CLOSE_CASE") {
+    customerMsg = "EloFix closed the dispute without issuing a refund or releasing unpaid funds.";
+    providerMsg = customerMsg;
+  }
   const actionKey = String(action || "resolved").toLowerCase();
   await notifyUser(customerId, {
     type: "case_closed",
-    title: "Case closed",
-    message: msg,
+    title: act === "RELEASE_FUNDS" ? "Remaining balance due" : "Case closed",
+    message: customerMsg,
     jobId,
     dedupeKey: disputeUserDedupe(disputeId, customerId) || jobDedupe(jobId, `case_closed:${actionKey}:customer`),
   });
   await notifyUser(providerId, {
     type: "case_closed",
     title: "Case closed",
-    message: msg,
+    message: providerMsg,
     jobId,
     dedupeKey: disputeUserDedupe(disputeId, providerId) || jobDedupe(jobId, `case_closed:${actionKey}:provider`),
   });
@@ -680,8 +737,8 @@ async function notifyProviderStagedRefundOutcome({
   if (claw > 0) parts.push(`R ${claw.toFixed(2)} clawed back from your balance`);
   if (debt > 0) {
     parts.push(
-      `R ${debt.toFixed(2)} owed — pay by ${due} via bank transfer or future job earnings.${ref} ` +
-        `If unpaid, your account will be blocked and legal action may follow.`
+      `R ${debt.toFixed(2)} owed — repay by ${due} via EloFix (job repayment page or bank transfer).${ref} ` +
+        `Failure to comply may result in further action under the EloFix Terms and applicable law.`
     );
   }
 
@@ -824,6 +881,81 @@ async function notifyAdminRefundDebtOverdue(providerUserId, amountOwed) {
   }
 }
 
+async function notifyAdminCustomerRefundReady({ repaymentId, providerId, amount, jobIds }) {
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  const jobs = Array.isArray(jobIds) && jobIds.length ? ` Jobs: ${jobIds.join(", ")}.` : "";
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "admin_refund_ready",
+      title: "Customer refund ready",
+      message: `Provider repayment verified (R ${Number(amount || 0).toFixed(2)}). Process customer refund.${jobs}`,
+      dedupeKey: `admin_refund_ready:${repaymentId}`,
+    });
+  }
+}
+
+async function notifyCustomerRefundApproved({ customerId, jobId, amount }) {
+  await notifyRefundApproved({ customerId, jobId, amount });
+}
+
+async function notifyCustomerRefundProcessing({ customerId, jobId, amount }) {
+  await notifyUser(customerId, {
+    type: "refund_processing",
+    title: "Refund processing",
+    message: `Your refund of R ${Number(amount || 0).toFixed(2)} is being processed back to your original payment method.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `refund_processing:${amount}`),
+  });
+}
+
+async function notifyCustomerRefundFailed({ customerId, jobId, amount }) {
+  await notifyUser(customerId, {
+    type: "refund_failed",
+    title: "Refund delayed",
+    message: `Your refund of R ${Number(amount || 0).toFixed(2)} could not be completed automatically. EloFix is following up.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `refund_failed:${amount}`),
+  });
+}
+
+async function notifyAdminGatewayRefundManualRequired({ jobId, repaymentId, amount, reason }) {
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "admin_refund_manual_required",
+      title: "Manual gateway refund required",
+      message:
+        `Job ${jobId}: process R ${Number(amount || 0).toFixed(2)} refund in the payment gateway dashboard. ` +
+        `${reason || ""}`.trim(),
+      jobId,
+      dedupeKey: `admin_refund_manual:${repaymentId}:${jobId}`,
+    });
+  }
+}
+
+async function notifyAdminGatewayRefundFailed({ jobId, repaymentId, amount, reason }) {
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "admin_refund_gateway_failed",
+      title: "Gateway refund failed",
+      message: `Job ${jobId}: gateway refund of R ${Number(amount || 0).toFixed(2)} failed. ${reason || ""}`.trim(),
+      jobId,
+      dedupeKey: `admin_refund_failed:${repaymentId}:${jobId}`,
+    });
+  }
+}
+
+async function notifyProviderRefundCompleted(providerId, amount, jobId) {
+  await notifyUser(providerId, {
+    type: "refund_completed",
+    title: "Customer refund completed",
+    message: `The customer refund of R ${Number(amount || 0).toFixed(2)} has been completed.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `provider_refund_completed:${amount}`),
+  });
+}
+
 module.exports = {
   notifyUser,
   notifyJobRequest,
@@ -849,6 +981,8 @@ module.exports = {
   notifyMaterialsListSubmitted,
   notifyChatMessage,
   notifyCustomerConfirmationNeeded,
+  notifyCompletionPaymentRequired,
+  notifyDepositPaymentSuccess,
   notifyJobMarkedComplete,
   notifyJobCompleted,
   notifyPaymentReleased,
@@ -880,6 +1014,13 @@ module.exports = {
   notifyCustomerRefundDebtOverdue,
   notifyAdminRefundRepaymentSubmitted,
   notifyAdminRefundDebtOverdue,
+  notifyAdminCustomerRefundReady,
+  notifyCustomerRefundApproved,
+  notifyCustomerRefundProcessing,
+  notifyCustomerRefundFailed,
+  notifyAdminGatewayRefundManualRequired,
+  notifyAdminGatewayRefundFailed,
+  notifyProviderRefundCompleted,
   queueEmail,
   queueEmailStub,
   jobDedupe,

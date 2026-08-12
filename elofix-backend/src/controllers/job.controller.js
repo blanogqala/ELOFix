@@ -348,6 +348,8 @@ async function openJobDispute(req, res) {
 
 async function uploadCompletionEvidence(req, res) {
   if (!req.file) throw new AppError("File is required", 400);
+  // Ensure only job parties can upload (works for AWAITING_CONFIRMATION and COMPLETED).
+  await jobService.getJobByIdForActor(req.params.id, req.user.userId, req.user.role);
   await validateUploadedCompletionMedia(req.file);
   await mirrorMulterFile(req.file);
   const url = filePathToPublicUrl(req.file.path);

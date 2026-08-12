@@ -149,6 +149,50 @@ function navigateForNotification(n: AppNotification, role: UserRole, navigate: N
     return;
   }
   if (n.type === 'support_contact' || n.type === 'support_reply') return;
+  if (
+    role === 'provider' &&
+    (n.type === 'refund_debt_due' ||
+      n.type === 'refund_debt_reminder' ||
+      n.type === 'refund_debt_overdue' ||
+      n.type === 'repayment_submitted' ||
+      n.type === 'repayment_confirmed' ||
+      n.type === 'repayment_rejected')
+  ) {
+    if (n.jobId) {
+      navigate(`/provider/jobs/${n.jobId}/refund`);
+      return;
+    }
+    navigate('/provider/earnings');
+    return;
+  }
+  if (
+    role === 'admin' &&
+    (n.type === 'admin_repayment_submitted' ||
+      n.type === 'admin_refund_ready' ||
+      n.type === 'admin_refund_manual_required' ||
+      n.type === 'admin_refund_gateway_failed')
+  ) {
+    navigate('/admin/refund-repayments');
+    return;
+  }
+  if (
+    role === 'user' &&
+    (n.type === 'refund_processed' ||
+      n.type === 'refund_completed' ||
+      n.type === 'refund_issued' ||
+      n.type === 'refund_staged_payout')
+  ) {
+    navigate('/user/payments');
+    return;
+  }
+  if (role === 'user' && (n.type === 'refund_approved' || n.type === 'refund_processing' || n.type === 'refund_failed')) {
+    if (n.jobId) {
+      navigate(`/user/jobs/${n.jobId}`);
+      return;
+    }
+    navigate('/user/payments');
+    return;
+  }
   const mat = n.materialOrderId?.trim();
   if ((role === 'supplier' || role === 'branch_staff') && mat) {
     navigate(`/supplier/orders?orderId=${encodeURIComponent(mat)}`);

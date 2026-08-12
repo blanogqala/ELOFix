@@ -81,7 +81,7 @@ function normalizeMeta(meta) {
 
 function stripJobForApi(job) {
   if (!job || typeof job !== "object") return job;
-  const { meta: _omit, ...rest } = job;
+  const { meta: _omit, providerReview: _pr, ...rest } = job;
   return rest;
 }
 
@@ -222,6 +222,40 @@ function enrichJob(job, meta) {
   const remainingAmount = computeProviderEntitledRemaining(job, safeMeta);
   const { paidAmountFromJob } = require("../utils/jobPaidAmount.util");
   const customerPaidTotal = paidAmountFromJob({ ...job, meta: safeMeta });
+  const paymentModeService = require("./payments/paymentMode.service");
+  const paymentSchedule = paymentModeService.serializePaymentSchedule(job);
+  const nextLaborPaymentType = job.legacyEscrowV2
+    ? null
+    : paymentModeService.resolveNextLaborPaymentType(job, safeMeta);
+  const paymentSummary = job.legacyEscrowV2
+    ? null
+    : paymentModeService.buildPaymentSummary(job, safeMeta);
+
+  const pr = job.providerReview || null;
+  const jobReview = pr
+    ? {
+        id: pr.id,
+        rating: Number(pr.rating),
+        comment: pr.comment || "",
+        images: Array.isArray(pr.images) ? pr.images : [],
+        videos: Array.isArray(pr.videos) ? pr.videos : [],
+        createdAt:
+          pr.createdAt instanceof Date ? pr.createdAt.toISOString() : pr.createdAt
+            ? String(pr.createdAt)
+            : null,
+      }
+    : null;
+  const userRating =
+    jobReview?.rating != null
+      ? jobReview.rating
+      : safeMeta.userRating != null
+        ? Number(safeMeta.userRating)
+        : null;
+  const userReview =
+    jobReview?.comment != null && String(jobReview.comment).trim() !== ""
+      ? jobReview.comment
+      : safeMeta.userReview;
+
   return {
     ...stripJobForApi(job),
     status,
@@ -229,16 +263,27 @@ function enrichJob(job, meta) {
     providerAmount: job.providerAmount != null ? Number(job.providerAmount) : null,
     commissionAmount: job.commissionAmount != null ? Number(job.commissionAmount) : null,
     releasedAmount: job.releasedAmount != null ? Number(job.releasedAmount) : null,
-    remainingAmount,
+    remainingAmount: job.legacyEscrowV2 ? remainingAmount : 0,
     customerPaidTotal,
     isFullyReleased: typeof job.isFullyReleased === "boolean" ? job.isFullyReleased : false,
     escrowSecondReleaseDone:
       typeof job.escrowSecondReleaseDone === "boolean" ? job.escrowSecondReleaseDone : false,
+    legacyEscrowV2: Boolean(job.legacyEscrowV2),
+    paymentModeSnapshot: job.paymentModeSnapshot || null,
+    quotedAmount: job.quotedAmount != null ? Number(job.quotedAmount) : null,
+    firstPaymentAmount: job.firstPaymentAmount != null ? Number(job.firstPaymentAmount) : null,
+    secondPaymentAmount: job.secondPaymentAmount != null ? Number(job.secondPaymentAmount) : null,
+    paymentProgress: job.paymentProgress || "NONE",
+    paymentSchedule,
+    paymentSummary,
+    nextLaborPaymentType,
+    depositPayment: safeMeta.depositPayment || null,
+    completionPayment: safeMeta.completionPayment || null,
     escrow: {
-      enabled: true,
+      enabled: Boolean(job.legacyEscrowV2),
       holdPercent: 0,
-      heldAmount: held,
-      releasedAmount: released,
+      heldAmount: job.legacyEscrowV2 ? held : 0,
+      releasedAmount: job.legacyEscrowV2 ? released : Number(job.releasedAmount || 0),
     },
     jobNotes: safeMeta.jobNotes,
     chat: safeMeta.chat,
@@ -258,8 +303,9 @@ function enrichJob(job, meta) {
     storeOrders: safeMeta.storeOrders,
     proposedLaborPrice: safeMeta.proposedLaborPrice,
     completionConfirmedByUser: Boolean(safeMeta.completionConfirmedByUser),
-    userRating: safeMeta.userRating,
-    userReview: safeMeta.userReview,
+    userRating,
+    userReview,
+    jobReview,
     cancellationReason: safeMeta.cancellationReason,
     cancellationDetails: safeMeta.cancellationDetails,
     cancelledBy: safeMeta.cancelledBy || null,
@@ -274,6 +320,8 @@ function enrichJob(job, meta) {
           ? Number(safeMeta.refund.amount)
           : undefined,
     refundStatus: safeMeta.refund?.status || safeMeta.refund?.kind || undefined,
+    customerRefundStatus: safeMeta.refund?.customerRefundStatus || undefined,
+    refundCompletedAt: safeMeta.refund?.completedAt || null,
     providerRefundDebt:
       safeMeta.refund?.providerDebtAdded != null &&
       Number.isFinite(Number(safeMeta.refund.providerDebtAdded))
@@ -291,6 +339,8 @@ function enrichJob(job, meta) {
             pendingRefund: Number(safeMeta.refund.pendingRefund) || 0,
             cumulativeCustomerNet: Number(safeMeta.refund.cumulativeCustomerNet) || 0,
             processedAt: safeMeta.refund.processedAt || null,
+            completedAt: safeMeta.refund.completedAt || null,
+            customerRefundStatus: safeMeta.refund.customerRefundStatus || null,
           }
         : undefined,
     rejectionReason: safeMeta.rejectionReason,
@@ -303,6 +353,16 @@ function enrichJob(job, meta) {
     confirmationDeadlineAt: safeMeta.confirmationDeadlineAt || null,
     markedCompleteAt: safeMeta.markedCompleteAt || null,
     disputeId: safeMeta.disputeId || null,
+    completionPaymentDue:
+      safeMeta.completionPaymentDue && typeof safeMeta.completionPaymentDue === "object"
+        ? {
+            amountDue: Number(safeMeta.completionPaymentDue.amountDue) || 0,
+            dueAt: safeMeta.completionPaymentDue.dueAt || null,
+            resolutionLogId: safeMeta.completionPaymentDue.resolutionLogId || null,
+            createdAt: safeMeta.completionPaymentDue.createdAt || null,
+            notifiedAt: safeMeta.completionPaymentDue.notifiedAt || null,
+          }
+        : null,
     timelineEvents: safeMeta.timelineEvents,
   };
 }

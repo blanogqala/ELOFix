@@ -1,4 +1,5 @@
 import { AppNotification, AppNotificationType } from '@/types';
+import { PAYMENTS_NAV_TYPES } from '@/lib/refundStatusDisplay';
 
 export type JobActivitySection = 'materials' | 'messages' | 'general';
 
@@ -36,6 +37,18 @@ export const JOBS_NAV_TYPES: AppNotificationType[] = [
 ];
 
 export const REQUESTS_NAV_TYPES: AppNotificationType[] = REQUEST_TYPES;
+
+export const CUSTOMER_PAYMENTS_NAV_TYPES: AppNotificationType[] = [
+  ...PAYMENTS_NAV_TYPES,
+] as AppNotificationType[];
+
+export function hasPaymentsNavActivity(notifications: AppNotification[]): boolean {
+  return notifications.some(
+    (n) =>
+      !n.read &&
+      CUSTOMER_PAYMENTS_NAV_TYPES.includes(n.type as AppNotificationType)
+  );
+}
 
 export function notificationSection(n: AppNotification): JobActivitySection | null {
   if (!n.jobId || n.read) return null;

@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
+import { settlementStatusLabel } from '@/lib/branchSettlementDisplay';
 import { resolveOrderFinance, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid, isStoreDeliveryRejected, isStoreDeliveryType } from '@/lib/orderFinance';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { buildPublicTrackingUrl } from '@/lib/publicTrackingUrl';
@@ -1270,6 +1271,26 @@ function DetailPanel({
               );
             })}
           </ul>
+        </div>
+
+        <div className="rounded-lg border border-primary p-4">
+          <p className="text-xs font-medium uppercase text-muted-foreground">Payment & settlement</p>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span>Payment</span>
+              <span className="font-medium">
+                {order.paymentStatus === 'paid' ? '✓ Customer payment confirmed' : 'Awaiting customer payment'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>Settlement</span>
+              <span className="font-medium">
+                {order.paymentStatus === 'paid'
+                  ? settlementStatusLabel((order as { settlementStatus?: string }).settlementStatus)
+                  : '—'}
+              </span>
+            </div>
+          </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

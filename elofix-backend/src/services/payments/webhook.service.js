@@ -107,20 +107,25 @@ async function processWebhookResult(providerKey, verifyResult) {
               paidAt: new Date(),
               gatewayTransactionId: gwTxId,
               gatewayPayload: mergedPayload,
-              escrowStatus: intent.kind === "LABOR" ? "HELD" : intent.escrowStatus,
+              escrowStatus: "NOT_APPLICABLE",
             },
           });
 
           const fresh = await tx.paymentIntent.findUnique({ where: { id: intent.id } });
 
           let settledAudit = null;
+          let laborSettleExtra = null;
+          let postSettleProviderRepayment = false;
           if (fresh.kind === "LABOR") {
             const laborResult = await escrowSettlement.settleLaborFromIntent(tx, fresh, verifyResult.raw);
             settledAudit = laborResult.settledAudit || null;
+            laborSettleExtra = laborResult;
           } else if (fresh.kind === "MATERIAL_ORDER") {
             await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
           } else if (fresh.kind === "JOB_STORE_ORDER" && fresh.materialOrderId) {
             await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
+          } else if (fresh.kind === "PROVIDER_REFUND_REPAYMENT") {
+            postSettleProviderRepayment = true;
           }
 
           await tx.paymentWebhookEvent.updateMany({
@@ -136,7 +141,10 @@ async function processWebhookResult(providerKey, verifyResult) {
             state: "PAID",
             postSettleJobStore,
             postSettleDeliveryFee,
+            postSettleProviderRepayment,
             settledAudit,
+            notifyDepositPaid: Boolean(laborSettleExtra?.notifyDepositPaid),
+            laborJobId: fresh.jobId || null,
           };
         }
 
@@ -229,8 +237,40 @@ async function processWebhookResult(providerKey, verifyResult) {
         userId: sa.userId,
         entityType: ENTITY_TYPES.PAYMENT,
         entityId: sa.intentId,
-        newValue: { jobId: sa.jobId, amount: sa.amount, kind: "LABOR" },
+        newValue: { jobId: sa.jobId, amount: sa.amount, kind: "LABOR", paymentType: sa.paymentType },
       });
+    }
+    if (result?.notifyDepositPaid && result?.laborJobId) {
+      try {
+        const job = await prisma.job.findUnique({
+          where: { id: String(result.laborJobId) },
+          select: { customerId: true, providerId: true, title: true },
+        });
+        if (job?.customerId) {
+          const notificationEvents = require("../notificationEvents.service");
+          await notificationEvents.notifyDepositPaymentSuccess(
+            job.customerId,
+            job.providerId,
+            result.laborJobId,
+            job.title
+          );
+        }
+      } catch (notifyErr) {
+        console.error("[processWebhookResult] deposit notify failed", notifyErr);
+      }
+    }
+    if (result?.postSettleProviderRepayment && result?.intentId) {
+      try {
+        const intent = await prisma.paymentIntent.findUnique({
+          where: { id: result.intentId },
+        });
+        if (intent) {
+          const refundRecovery = require("../refundRecovery.service");
+          await refundRecovery.markGatewayRepaymentPaidFromIntent(intent);
+        }
+      } catch (postErr) {
+        console.error("[processWebhookResult] provider refund repayment post-settle failed", postErr);
+      }
     }
     return { httpStatus: 200, result };
   } catch (e) {

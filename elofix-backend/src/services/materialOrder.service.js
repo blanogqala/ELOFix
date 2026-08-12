@@ -375,6 +375,11 @@ function enrichOrderFromDbRow(row, payload) {
   if (row.refundProcessedAt != null) p.refundProcessedAt = row.refundProcessedAt instanceof Date ? row.refundProcessedAt.toISOString() : String(row.refundProcessedAt);
   if (row.refundReference != null) p.refundReference = String(row.refundReference);
   if (row.commissionReversed != null) p.commissionReversed = Number(row.commissionReversed);
+  if (row.settlementStatus != null) p.settlementStatus = String(row.settlementStatus);
+  if (row.settlementAmount != null) p.settlementAmount = Number(row.settlementAmount);
+  if (row.gatewaySettlementId != null) p.gatewaySettlementId = String(row.gatewaySettlementId);
+  if (row.settledAt != null) p.settledAt = row.settledAt instanceof Date ? row.settledAt.toISOString() : String(row.settledAt);
+  if (row.settlementFailureReason != null) p.settlementFailureReason = String(row.settlementFailureReason);
   const materialsPaidFromStatus = String(row.paymentStatus || "").toLowerCase() === "paid";
   p.payment = {
     ...(p.payment || {}),

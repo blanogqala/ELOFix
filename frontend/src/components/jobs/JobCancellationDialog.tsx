@@ -12,11 +12,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertTriangle } from 'lucide-react';
-import { formatCurrency } from '@/lib/formatCurrency';
 import {
   EMPTY_CUSTOMER_CANCEL_PREVIEW,
   type CustomerCancelPreview,
 } from '@/lib/jobCancellationPolicy';
+import { CancellationPaymentStatus } from '@/components/jobs/CancellationPaymentStatus';
 
 interface JobCancellationDialogProps {
   open: boolean;
@@ -24,10 +24,10 @@ interface JobCancellationDialogProps {
   onConfirm: (reason: string, details: string) => void;
   hasMaterialsPaid: boolean;
   materialsAmount: number;
-  laborAmount: number;
   cancelPreview?: CustomerCancelPreview;
   /** When set, uses Select-style reason values instead of customer radio labels. */
   reasonOptions?: { value: string; label: string }[];
+  actor?: 'customer' | 'provider';
 }
 
 const CUSTOMER_CANCELLATION_REASONS = [
@@ -45,21 +45,14 @@ export function JobCancellationDialog({
   onConfirm,
   hasMaterialsPaid,
   materialsAmount,
-  laborAmount,
   cancelPreview,
   reasonOptions,
+  actor = 'customer',
 }: JobCancellationDialogProps) {
   const [reason, setReason] = useState('');
   const [details, setDetails] = useState('');
 
   const preview = cancelPreview ?? EMPTY_CUSTOMER_CANCEL_PREVIEW;
-  const showCommissionBreakdown =
-    !preview.customerForfeits &&
-    (preview.laborGross ?? 0) > 0 &&
-    (preview.commissionAmount ?? 0) > 0;
-  const materialsRefund =
-    preview.materialsRefundable && !hasMaterialsPaid ? materialsAmount : 0;
-  const estimatedTotal = preview.refundAmount;
 
   const handleConfirm = () => {
     if (!reason) return;
@@ -72,7 +65,7 @@ export function JobCancellationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-destructive" />
@@ -96,72 +89,12 @@ export function JobCancellationDialog({
             </div>
           ) : null}
 
-          <div className="p-4 bg-muted/50 rounded-lg space-y-2">
-            <p className="font-medium text-sm">Refund breakdown</p>
-            <div className="text-sm space-y-1">
-              {showCommissionBreakdown ? (
-                <>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Labor / service</span>
-                    <span className="text-success shrink-0">
-                      +{formatCurrency(preview.laborGross!, { decimals: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Platform commission (7%)</span>
-                    <span className="text-destructive shrink-0">
-                      −{formatCurrency(preview.commissionAmount!, { decimals: 2 })}
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Labor / service</span>
-                  {preview.laborRefund > 0 ? (
-                    <span className="text-success shrink-0">
-                      +{formatCurrency(preview.laborRefund, { decimals: 2 })}
-                    </span>
-                  ) : laborAmount > 0 && preview.customerForfeits ? (
-                    <span className="text-destructive shrink-0 text-right">Non-refundable</span>
-                  ) : (
-                    <span className="text-muted-foreground shrink-0">—</span>
-                  )}
-                </div>
-              )}
-              {!hasMaterialsPaid && materialsRefund > 0 && (
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Materials (not ordered)</span>
-                  <span className="text-success shrink-0">
-                    +{formatCurrency(materialsRefund, { decimals: 2 })}
-                  </span>
-                </div>
-              )}
-              {hasMaterialsPaid && (
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Materials (already ordered)</span>
-                  <span className="text-destructive shrink-0 text-right">Non-refundable</span>
-                </div>
-              )}
-              <div className="border-t border-border pt-1 mt-1">
-                <div className="flex justify-between font-medium gap-2">
-                  <span>{preview.opensDisputeReview ? 'Estimated refund' : 'Total refund'}</span>
-                  <span
-                    className={
-                      estimatedTotal > 0 ? 'text-success shrink-0' : 'text-muted-foreground shrink-0'
-                    }
-                  >
-                    {formatCurrency(estimatedTotal, { decimals: 2 })}
-                  </span>
-                </div>
-              </div>
-              {preview.opensDisputeReview ? (
-                <p className="text-xs text-muted-foreground pt-1">
-                  Final amount subject to admin review. Funds are held until the investigation is
-                  complete.
-                </p>
-              ) : null}
-            </div>
-          </div>
+          <CancellationPaymentStatus
+            preview={preview}
+            actor={actor}
+            hasMaterialsPaid={hasMaterialsPaid}
+            materialsAmount={materialsAmount}
+          />
 
           <div>
             <Label className="mb-2 block">Reason for cancellation</Label>

@@ -19,7 +19,7 @@ const STEP_IMAGES: Record<number, { src: string; alt: string; width: number; hei
   },
   3: {
     src: howItWorksStep3,
-    alt: 'Pay securely with escrow protection until work is completed and approved',
+    alt: 'Pay with flexible options — staged or single payment depending on the service',
     width: 1024,
     height: 546,
   },

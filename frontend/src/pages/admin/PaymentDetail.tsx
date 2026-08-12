@@ -257,7 +257,9 @@ export default function AdminPaymentDetail() {
               )}
               {maxReleasable > 0 && !canReleaseEscrow && (
                 <p className="text-sm text-muted-foreground">
-                  Courier delivery funds are held until the customer confirms delivery.
+                  {job.courierFlow
+                    ? 'Courier delivery funds are held until the customer confirms delivery.'
+                    : 'Manual escrow release is only available for legacy escrow jobs. This job settles per transaction.'}
                 </p>
               )}
             </div>

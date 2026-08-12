@@ -8,6 +8,8 @@ const {
   mutateJobMetaInTransaction,
   toFrontendStatus,
   enrichJob,
+  createChat,
+  appendTimelineEventIfAbsent,
 } = require("./jobMeta.service");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
@@ -15,8 +17,6 @@ const notificationEvents = require("./notificationEvents.service");
 const providerTrustScore = require("./providerTrustScore.service");
 const jobCompletionEvidence = require("./jobCompletionEvidence.service");
 const disputeRoundService = require("./disputeRound.service");
-const { upsertDisputeReviewForJob } = require("./providerReview.service");
-const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
 
 const VALID_RESOLUTIONS = new Set([
   "PROVIDER_RETURN_FIX",
@@ -79,10 +79,29 @@ function toDisputeDto(row, extras = {}) {
   };
 }
 
+function mapEvidenceEntries(rows) {
+  return (rows || []).map((e) => ({
+    id: e.id,
+    disputeId: e.disputeId,
+    jobId: e.jobId,
+    authorId: e.authorId,
+    authorRole: e.authorRole,
+    comment: e.comment,
+    images: e.images || [],
+    videos: e.videos || [],
+    createdAt: e.createdAt instanceof Date ? e.createdAt.toISOString() : e.createdAt,
+    updatedAt: e.updatedAt instanceof Date ? e.updatedAt.toISOString() : e.updatedAt,
+  }));
+}
+
 async function getDisputeById(disputeId, actorUserId, actorRole) {
   const row = await prisma.jobDispute.findUnique({
     where: { id: String(disputeId) },
-    include: { messages: { orderBy: { createdAt: "asc" } }, resolutionLogs: { orderBy: { createdAt: "desc" } } },
+    include: {
+      messages: { orderBy: { createdAt: "asc" } },
+      resolutionLogs: { orderBy: { createdAt: "desc" } },
+      evidenceEntries: { orderBy: { createdAt: "asc" } },
+    },
   });
   if (!row) throw new AppError("Dispute not found", 404);
   assertCanAccessDispute(row, actorUserId, actorRole);
@@ -108,6 +127,7 @@ async function getDisputeById(disputeId, actorUserId, actorRole) {
       createdAt: l.createdAt instanceof Date ? l.createdAt.toISOString() : l.createdAt,
     })),
     rounds,
+    evidence: mapEvidenceEntries(row.evidenceEntries),
   });
 }
 
@@ -221,27 +241,47 @@ async function createCustomerDisputeInTransaction(tx, params) {
     customerVideos: videos,
   });
 
-  await mutateJobMetaInTransaction(tx, job.id, (m) => ({
-    ...m,
-    statusOverride: "DISPUTED",
-    escrowFrozen: true,
-    disputeId: row.id,
-    ...metaExtras,
-  }));
+  await tx.disputeEvidence.create({
+    data: {
+      id: randomUUID(),
+      disputeId: row.id,
+      jobId: job.id,
+      authorId: customerUserId,
+      authorRole: "CUSTOMER",
+      comment,
+      images,
+      videos,
+    },
+  });
 
-  if (providerRow) {
-    await upsertDisputeReviewForJob(
-      {
-        jobId: job.id,
-        customerId: job.customerId,
-        providerProfileId: providerRow.id,
-        comment,
-        images,
-        videos,
-      },
-      tx
+  await mutateJobMetaInTransaction(tx, job.id, (m) => {
+    const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
+    const chat = Array.isArray(m.chat) ? [...m.chat] : [];
+    chat.push(
+      createChat(
+        systemAuthor,
+        "Customer rejected the provider's completion request and opened a dispute."
+      )
     );
-  }
+    chat.push(
+      createChat(systemAuthor, "Your dispute has been submitted to EloFix for review.")
+    );
+    let patched = {
+      ...m,
+      statusOverride: "DISPUTED",
+      escrowFrozen: true,
+      disputeId: row.id,
+      chat,
+      ...metaExtras,
+    };
+    patched = appendTimelineEventIfAbsent(patched, {
+      type: "DISPUTE_OPENED",
+      at: new Date().toISOString(),
+      source: "customer_reject_completion",
+      disputeId: row.id,
+    });
+    return patched;
+  });
 
   return row;
 }
@@ -320,20 +360,6 @@ async function createCancellationDisputeInTransaction(tx, params) {
     ...metaExtras,
   }));
 
-  if (providerRow) {
-    await upsertDisputeReviewForJob(
-      {
-        jobId: job.id,
-        customerId: job.customerId,
-        providerProfileId: providerRow.id,
-        comment: isProvider ? null : comment,
-        images: isProvider ? [] : [],
-        videos: isProvider ? [] : [],
-      },
-      tx
-    );
-  }
-
   return row;
 }
 
@@ -343,25 +369,31 @@ async function postCreateDisputeSideEffects(dispute, job, actorUserId, options =
     requestedResolution = dispute.requestedResolution,
     cancellationActorRole = null,
   } = options;
-  const providerRow = job.providerId
-    ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
-    : null;
 
   try {
     const escrowSettlement = require("./payments/escrowSettlement.service");
     const intents = await prisma.paymentIntent.findMany({
       where: { jobId: String(job.id), kind: "LABOR" },
-      select: { id: true },
+      select: { id: true, state: true, paymentType: true },
     });
     for (const intent of intents) {
       await escrowSettlement.markIntentDisputed(intent.id);
     }
+    // Cancel unpaid completion-stage intents so they cannot be reused or settled after reject.
+    const completionTypes = ["COMPLETION", "FULL_COMPLETION"];
+    const pendingCompletion = intents.filter(
+      (i) =>
+        completionTypes.includes(String(i.paymentType || "").toUpperCase()) &&
+        ["PENDING", "PROCESSING", "FAILED", "CANCELLED", "DISPUTED"].includes(String(i.state || ""))
+    );
+    for (const intent of pendingCompletion) {
+      await prisma.paymentIntent.update({
+        where: { id: intent.id },
+        data: { state: "CANCELLED", cancelledAt: new Date() },
+      }).catch(() => {});
+    }
   } catch (e) {
     console.warn("[jobDispute] markIntentDisputed failed", e?.message || e);
-  }
-
-  if (providerRow) {
-    await syncProviderAggregateRating(providerRow.id);
   }
 
   await logAudit(reopening ? AUDIT_ACTIONS.DISPUTE_REOPENED : AUDIT_ACTIONS.DISPUTE_OPENED, {
@@ -486,14 +518,15 @@ async function openDispute(jobId, customerUserId, payload) {
   }
   if (!job.providerId) throw new AppError("No provider assigned", 400);
 
+  const existing = await getExistingDisputeForJob(jobId);
+  assertNoActiveDispute(existing);
+
   const meta = await getJobMeta(jobId);
   const status = toFrontendStatus(job.status, meta);
   if (status !== "AWAITING_CONFIRMATION") {
     throw new AppError("Disputes can only be opened while awaiting confirmation", 400);
   }
 
-  const existing = await getExistingDisputeForJob(jobId);
-  assertNoActiveDispute(existing);
   const reopening = Boolean(existing && ["RESOLVED", "CLOSED"].includes(existing.status));
   if (reopening) {
     await disputeRoundService.ensureDisputeRounds(existing.id);
@@ -504,52 +537,177 @@ async function openDispute(jobId, customerUserId, payload) {
     select: { id: true },
   });
 
-  const dispute = await prisma.$transaction(
-    async (tx) =>
-      createCustomerDisputeInTransaction(tx, {
-        job,
-        customerUserId,
-        providerRow,
-        comment,
-        requestedResolution,
-        otherResolutionDetail,
-        images,
-        videos,
-        existing,
-        reopening,
-      }),
-    { maxWait: 5000, timeout: 15000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-  );
+  try {
+    const dispute = await prisma.$transaction(
+      async (tx) =>
+        createCustomerDisputeInTransaction(tx, {
+          job,
+          customerUserId,
+          providerRow,
+          comment,
+          requestedResolution,
+          otherResolutionDetail,
+          images,
+          videos,
+          existing,
+          reopening,
+        }),
+      { maxWait: 5000, timeout: 15000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
 
-  await postCreateDisputeSideEffects(dispute, job, customerUserId, { reopening, requestedResolution });
+    await postCreateDisputeSideEffects(dispute, job, customerUserId, { reopening, requestedResolution });
 
-  const full = await prisma.jobDispute.findUnique({
-    where: { id: dispute.id },
-    include: { messages: { orderBy: { createdAt: "asc" } } },
-  });
-  return toDisputeDto(full);
+    const full = await prisma.jobDispute.findUnique({
+      where: { id: dispute.id },
+      include: { messages: { orderBy: { createdAt: "asc" } } },
+    });
+    return toDisputeDto(full);
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err?.code === "P2002") {
+      throw new AppError("A dispute is already open for this job", 400);
+    }
+    throw err;
+  }
 }
 
 async function addProviderEvidence(disputeId, providerUserId, payload) {
   const row = await prisma.jobDispute.findUnique({ where: { id: String(disputeId) } });
   if (!row) throw new AppError("Dispute not found", 404);
   if (String(row.providerId) !== String(providerUserId)) throw new AppError("Forbidden", 403);
+  if (!["OPEN", "UNDER_INVESTIGATION"].includes(String(row.status || "").toUpperCase())) {
+    throw new AppError("Cannot add evidence to a closed dispute", 400);
+  }
 
-  const comment = payload?.comment != null ? String(payload.comment).trim() : row.providerComment;
-  const images = Array.isArray(payload?.images) ? payload.images.map(String) : row.providerImages;
-  const videos = Array.isArray(payload?.videos) ? payload.videos.map(String) : row.providerVideos;
+  const comment = payload?.comment != null ? String(payload.comment).trim() : "";
+  if (!comment) throw new AppError("Comment is required", 400);
+  const images = Array.isArray(payload?.images) ? payload.images.map(String) : [];
+  const videos = Array.isArray(payload?.videos) ? payload.videos.map(String) : [];
+  jobCompletionEvidence.assertMediaLimits(images, videos);
 
-  const updated = await prisma.jobDispute.update({
+  await prisma.disputeEvidence.create({
+    data: {
+      id: randomUUID(),
+      disputeId: row.id,
+      jobId: row.jobId,
+      authorId: providerUserId,
+      authorRole: "PROVIDER",
+      comment,
+      images,
+      videos,
+    },
+  });
+
+  // Keep legacy snapshot fields as latest provider response for round sync / older clients.
+  await prisma.jobDispute.update({
     where: { id: row.id },
     data: { providerComment: comment, providerImages: images, providerVideos: videos },
-    include: { messages: { orderBy: { createdAt: "asc" } } },
   });
   await disputeRoundService.syncProviderEvidenceToActiveRound(row.id, {
     providerComment: comment,
     providerImages: images,
     providerVideos: videos,
   });
-  return toDisputeDto(updated);
+
+  await mutateJobMeta(row.jobId, (m) => {
+    const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
+    const chat = Array.isArray(m.chat) ? [...m.chat] : [];
+    chat.push(createChat(systemAuthor, "Provider submitted evidence for the dispute."));
+    return {
+      ...appendTimelineEventIfAbsent(
+        { ...m, chat },
+        {
+          type: "DISPUTE_EVIDENCE_ADDED",
+          at: new Date().toISOString(),
+          source: "provider",
+          disputeId: row.id,
+        }
+      ),
+    };
+  });
+
+  return getDisputeById(disputeId, providerUserId, "PROVIDER");
+}
+
+async function addDisputeEvidence(disputeId, actorUserId, actorRole, payload) {
+  const row = await prisma.jobDispute.findUnique({ where: { id: String(disputeId) } });
+  if (!row) throw new AppError("Dispute not found", 404);
+  assertCanAccessDispute(row, actorUserId, actorRole);
+  if (!["OPEN", "UNDER_INVESTIGATION"].includes(String(row.status || "").toUpperCase())) {
+    throw new AppError("Cannot add evidence to a closed dispute", 400);
+  }
+
+  const role = String(actorRole || "").toUpperCase();
+  let authorRole = null;
+  if (role === "CUSTOMER" && String(actorUserId) === String(row.customerId)) {
+    authorRole = "CUSTOMER";
+  } else if (role === "PROVIDER" && String(actorUserId) === String(row.providerId)) {
+    authorRole = "PROVIDER";
+  } else if (role === "ADMIN") {
+    throw new AppError("Admins cannot submit party evidence via this endpoint", 403);
+  } else {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const comment = String(payload?.comment || "").trim();
+  if (!comment) throw new AppError("Comment is required", 400);
+  const images = Array.isArray(payload?.images) ? payload.images.map(String) : [];
+  const videos = Array.isArray(payload?.videos) ? payload.videos.map(String) : [];
+  jobCompletionEvidence.assertMediaLimits(images, videos);
+
+  await prisma.disputeEvidence.create({
+    data: {
+      id: randomUUID(),
+      disputeId: row.id,
+      jobId: row.jobId,
+      authorId: String(actorUserId),
+      authorRole,
+      comment,
+      images,
+      videos,
+    },
+  });
+
+  if (authorRole === "PROVIDER") {
+    await prisma.jobDispute.update({
+      where: { id: row.id },
+      data: { providerComment: comment, providerImages: images, providerVideos: videos },
+    });
+    await disputeRoundService.syncProviderEvidenceToActiveRound(row.id, {
+      providerComment: comment,
+      providerImages: images,
+      providerVideos: videos,
+    });
+  } else {
+    await prisma.jobDispute.update({
+      where: { id: row.id },
+      data: {
+        customerComment: comment,
+        customerImages: images,
+        customerVideos: videos,
+      },
+    });
+  }
+
+  const partyLabel = authorRole === "CUSTOMER" ? "Customer" : "Provider";
+  await mutateJobMeta(row.jobId, (m) => {
+    const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
+    const chat = Array.isArray(m.chat) ? [...m.chat] : [];
+    chat.push(createChat(systemAuthor, `${partyLabel} submitted evidence for the dispute.`));
+    return {
+      ...appendTimelineEventIfAbsent(
+        { ...m, chat },
+        {
+          type: "DISPUTE_EVIDENCE_ADDED",
+          at: new Date().toISOString(),
+          source: authorRole.toLowerCase(),
+          disputeId: row.id,
+        }
+      ),
+    };
+  });
+
+  return getDisputeById(disputeId, actorUserId, actorRole);
 }
 
 async function addDisputeMessage(disputeId, senderUserId, senderRole, body, attachments = []) {
@@ -604,8 +762,10 @@ module.exports = {
   getDisputeById,
   listDisputesForActor,
   addProviderEvidence,
+  addDisputeEvidence,
   addDisputeMessage,
   getProviderDisputeStats,
   toDisputeDto,
   mapDisputeMessages,
+  mapEvidenceEntries,
 };

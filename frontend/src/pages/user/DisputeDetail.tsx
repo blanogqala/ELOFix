@@ -4,8 +4,9 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { DisputeCaseDetailView } from '@/components/disputes/DisputeCaseDetailView';
 import { DisputeMessageComposer } from '@/components/disputes/DisputeMessageComposer';
-import { addDisputeMessage, getDispute } from '@/lib/api/disputes';
-import type { JobDispute } from '@/types';
+import { addDisputeMessage, getDispute, submitDisputeEvidence } from '@/lib/api/disputes';
+import { buildJobCancellationFinancials } from '@/lib/jobCancellationFinancials';
+import type { Job, JobDispute } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 
@@ -19,6 +20,7 @@ export default function UserDisputeDetail() {
   const { toast } = useToast();
   const [dispute, setDispute] = useState<JobDispute | null>(null);
   const [loading, setLoading] = useState(true);
+  const [addingEvidence, setAddingEvidence] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -38,7 +40,8 @@ export default function UserDisputeDetail() {
   }, [load]);
 
   const isCancellation =
-    dispute?.job?.cancellationSource === 'customer_cancel' || dispute?.job?.cancellationSource === 'provider_cancel';
+    dispute?.job?.cancellationSource === 'customer_cancel' ||
+    dispute?.job?.cancellationSource === 'provider_cancel';
 
   useEffect(() => {
     if (!id || !dispute) return;
@@ -53,11 +56,34 @@ export default function UserDisputeDetail() {
     toast({ title: 'Message sent' });
   };
 
+  const handleAddEvidence = async (payload: {
+    comment: string;
+    images: string[];
+    videos: string[];
+  }) => {
+    if (!id) return;
+    setAddingEvidence(true);
+    try {
+      const updated = await submitDisputeEvidence(id, payload);
+      setDispute(updated);
+      toast({ title: 'Evidence submitted' });
+    } catch (e) {
+      toast({
+        title: 'Could not submit evidence',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+      throw e;
+    } finally {
+      setAddingEvidence(false);
+    }
+  };
+
   if (loading) {
     return (
       <DashboardLayout>
         <div className="flex justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <Loader2 className="h-8 w-8 animate-spin" />
         </div>
       </DashboardLayout>
     );
@@ -78,6 +104,10 @@ export default function UserDisputeDetail() {
   }
 
   const jobTitle = dispute.job?.title || dispute.job?.categoryName || null;
+  const open = isDisputeOpen(dispute.status);
+  const financials = dispute.job
+    ? buildJobCancellationFinancials(dispute.job as Job)
+    : null;
 
   return (
     <DashboardLayout>
@@ -86,7 +116,9 @@ export default function UserDisputeDetail() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate(dispute.jobId ? `/user/jobs/${dispute.jobId}` : '/user/jobs?view=review')}
+            onClick={() =>
+              navigate(dispute.jobId ? `/user/jobs/${dispute.jobId}` : '/user/jobs?view=review')
+            }
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to job
@@ -97,14 +129,31 @@ export default function UserDisputeDetail() {
           dispute={dispute}
           jobTitle={jobTitle}
           caseKind="dispute"
+          evidenceEntries={dispute.evidence}
+          evidenceJobId={dispute.jobId}
+          canAddCustomerEvidence={open}
+          onAddCustomerEvidence={handleAddEvidence}
+          addingEvidence={addingEvidence}
+          financialSummary={
+            financials
+              ? {
+                  servicePrice: financials.servicePrice,
+                  paidToDate: financials.paidToDate,
+                  unpaidRemaining: financials.unpaidRemaining,
+                  amountUnderReview: financials.amountUnderReview,
+                }
+              : null
+          }
           footer={
-            isDisputeOpen(dispute.status) ? (
+            open ? (
               <DisputeMessageComposer
                 placeholder="Message EloFix or the provider…"
                 onSend={handleSendMessage}
               />
             ) : (
-              <p className="text-sm text-muted-foreground">This case is closed. Messages are read-only.</p>
+              <p className="text-sm text-muted-foreground">
+                This case is closed. Messages are read-only.
+              </p>
             )
           }
         />

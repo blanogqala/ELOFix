@@ -23,6 +23,7 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
 import { AdminSupplierMaterialOrdersSection } from '@/components/admin/AdminSupplierMaterialOrdersSection';
+import { AdminSupplierBranchPayoutSection } from '@/components/admin/AdminSupplierBranchPayoutSection';
 
 export default function AdminSupplierDetail() {
   const { supplierId } = useParams<{ supplierId: string }>();
@@ -199,6 +200,8 @@ export default function AdminSupplierDetail() {
             </Button>
           </div>
         </div>
+
+        <AdminSupplierBranchPayoutSection supplierId={id} branches={supplier.branches ?? []} />
 
         <AdminSupplierMaterialOrdersSection
           supplierId={id}

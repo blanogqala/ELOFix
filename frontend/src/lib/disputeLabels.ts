@@ -31,15 +31,15 @@ export function formatDisputeStatus(status: string): string {
 export function formatAdminResolutionAction(action: string): string {
   switch (String(action || '').toUpperCase()) {
     case 'RELEASE_FUNDS':
-      return 'Remaining funds released to provider';
+      return 'Release remaining funds to provider';
     case 'PARTIAL_REFUND':
       return 'Partial refund issued to customer';
     case 'FULL_REFUND':
-      return 'Full refund issued to customer';
+      return 'Refund customer';
     case 'RETURN_PROVIDER':
-      return 'Provider sent back to fix issues';
+      return 'Return provider to site';
     case 'CLOSE_CASE':
-      return 'Case closed without further action';
+      return 'Case closed';
     default:
       return action.replace(/_/g, ' ');
   }

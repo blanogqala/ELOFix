@@ -94,7 +94,9 @@ async function getAnalyticsBranches(req, res) {
   res.json({
     success: true,
     branches: result.branches,
-    totalAvailableWithdrawals: result.totalAvailableWithdrawals,
+    totalPendingSettlement: result.totalPendingSettlement,
+    totalSettled: result.totalSettled,
+    gatewaySettlementSupported: result.gatewaySettlementSupported,
   });
 }
 

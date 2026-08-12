@@ -1,7 +1,7 @@
 const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
-const { syncProviderAggregateRating } = require("./providerAggregateRating.service");
+const { syncProviderAggregateRating, PUBLIC_REVIEW_RATING_FILTER } = require("./providerAggregateRating.service");
 const notificationEvents = require("./notificationEvents.service");
 
 const RATING_MIN = 1;
@@ -34,7 +34,7 @@ function emptyBreakdown() {
 async function aggregateRatingBreakdown(providerProfileId) {
   const rows = await prisma.providerReview.groupBy({
     by: ["rating"],
-    where: { providerId: providerProfileId },
+    where: { providerId: providerProfileId, ...PUBLIC_REVIEW_RATING_FILTER },
     _count: { rating: true },
   });
   const breakdown = emptyBreakdown();
@@ -226,9 +226,27 @@ async function upsertProviderReviewForJob({
 /**
  * Standalone review submission for a completed job (customer only).
  */
-async function createProviderReview({ jobId, customerUserId, rating, comment }) {
+async function createProviderReview({
+  jobId,
+  customerUserId,
+  rating,
+  comment,
+  images = [],
+  videos = [],
+}) {
   const jid = String(jobId || "").trim();
   if (!jid) throw new AppError("jobId is required", 400);
+
+  const MAX_IMAGES = 10;
+  const MAX_VIDEOS = 3;
+  const imageList = (Array.isArray(images) ? images : [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean)
+    .slice(0, MAX_IMAGES);
+  const videoList = (Array.isArray(videos) ? videos : [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean)
+    .slice(0, MAX_VIDEOS);
 
   const job = await prisma.job.findUnique({
     where: { id: jid },
@@ -237,6 +255,10 @@ async function createProviderReview({ jobId, customerUserId, rating, comment }) 
       status: true,
       customerId: true,
       providerId: true,
+      paymentProgress: true,
+      paymentModeSnapshot: true,
+      legacyEscrowV2: true,
+      laborPaid: true,
       providerReview: { select: { id: true } },
     },
   });
@@ -251,6 +273,15 @@ async function createProviderReview({ jobId, customerUserId, rating, comment }) 
     throw new AppError("No provider assigned to this job", 400);
   }
 
+  // Non-legacy jobs must be fully paid before a standalone post-complete review.
+  if (!job.legacyEscrowV2 && job.paymentModeSnapshot) {
+    if (String(job.paymentProgress || "") !== "FULLY_PAID") {
+      throw new AppError("Job must be fully paid before submitting a review", 400);
+    }
+  } else if (job.legacyEscrowV2 && !job.laborPaid) {
+    throw new AppError("Job must be paid before submitting a review", 400);
+  }
+
   const providerRow = await prisma.provider.findUnique({
     where: { userId: job.providerId },
     select: { id: true },
@@ -261,14 +292,27 @@ async function createProviderReview({ jobId, customerUserId, rating, comment }) 
     throw new AppError("You already submitted a review for this job", 409);
   }
 
-  return upsertProviderReviewForJob({
+  const review = await upsertProviderReviewForJob({
     jobId: jid,
     customerId: job.customerId,
     providerProfileId: providerRow.id,
     rating,
     comment,
+    images: imageList,
+    videos: videoList,
     allowEditWithinMinutes: 0,
   });
+
+  const { mutateJobMeta } = require("./jobMeta.service");
+  const rounded = normalizeRating(rating);
+  await mutateJobMeta(jid, (m) => ({
+    ...m,
+    userRating: rounded,
+    userReview: comment != null && String(comment).trim() !== "" ? String(comment).trim() : m.userReview,
+    completionConfirmedByUser: true,
+  }));
+
+  return review;
 }
 
 async function resolveProviderProfileId(routeId) {
@@ -290,7 +334,7 @@ async function listProviderReviews(providerRouteId, { limit = 20, offset = 0 } =
 
   const [rows, total, breakdown, profile] = await Promise.all([
     prisma.providerReview.findMany({
-      where: { providerId },
+      where: { providerId, ...PUBLIC_REVIEW_RATING_FILTER },
       orderBy: { createdAt: "desc" },
       take,
       skip,
@@ -299,7 +343,7 @@ async function listProviderReviews(providerRouteId, { limit = 20, offset = 0 } =
         job: { select: { title: true, category: true } },
       },
     }),
-    prisma.providerReview.count({ where: { providerId } }),
+    prisma.providerReview.count({ where: { providerId, ...PUBLIC_REVIEW_RATING_FILTER } }),
     aggregateRatingBreakdown(providerId),
     prisma.provider.findUnique({
       where: { id: providerId },

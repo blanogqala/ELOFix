@@ -1,5 +1,10 @@
 import type { DeliveryRequestRecord, Job } from '@/types';
-import { getUserLaborGross, getQuoteMaterialsTotal } from '@/lib/jobUtils';
+import { getQuoteMaterialsTotal } from '@/lib/jobUtils';
+import {
+  buildJobCancellationFinancials,
+  type CancellationTrancheStage,
+  type JobCancellationFinancials,
+} from '@/lib/jobCancellationFinancials';
 
 const EN_ROUTE_COURIER = new Set(['COLLECTING', 'COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION']);
 const COURIER_POST_PICKUP = new Set(['COLLECTED', 'OUT_FOR_DELIVERY', 'AT_DESTINATION', 'COMPLETED']);
@@ -69,13 +74,26 @@ export function getCustomerCancelForfeitWarningMessage(job: Job): string {
     : 'Your provider has already started work. Cancelling will open a dispute so EloFix can review your refund request.';
 }
 
-export function getCustomerCancelPaidDisputeWarningMessage(job: Job): string {
-  return job.courierFlow
-    ? 'You have paid for delivery. Cancelling will open a dispute so EloFix can review your refund request before any funds are released.'
-    : 'You have paid for this service. Cancelling will open a dispute so EloFix can review your refund request before any funds are released.';
+export function getCustomerCancelPaidDisputeWarningMessage(
+  job: Job,
+  financials?: JobCancellationFinancials
+): string {
+  if (job.courierFlow) {
+    return 'You have paid for delivery. Cancelling will open a dispute so EloFix can review your refund request before any funds are released.';
+  }
+  const fin = financials ?? buildJobCancellationFinancials(job);
+  if (fin.hasPartialPayment && fin.unpaidRemaining > 0) {
+    return 'Because you have already paid the deposit, this cancellation will be submitted to EloFix for refund review. The unpaid completion payment will not be charged.';
+  }
+  return 'You have paid for this service. Cancelling will open a dispute so EloFix can review your refund request before any funds are released.';
 }
 
-export function getProviderCancelPaidDisputeWarningMessage(): string {
+export function getProviderCancelPaidDisputeWarningMessage(
+  financials?: JobCancellationFinancials
+): string {
+  if (financials?.hasPartialPayment && financials.unpaidRemaining > 0) {
+    return 'The customer has paid the deposit only. The completion payment has not been charged. Cancelling this job will open a dispute so EloFix can review how the paid deposit should be handled.';
+  }
   return 'The customer has paid for this job. Cancelling will open a dispute so EloFix can review how funds should be released.';
 }
 
@@ -93,9 +111,19 @@ export interface CustomerCancelPreview {
   providerEnRoute: boolean;
   refundAmount: number;
   laborRefund: number;
+  /** @deprecated use paidToDate */
   laborGross?: number;
+  /** @deprecated use commissionOnPaid */
   commissionAmount?: number;
   estimatedNetRefund?: number;
+  servicePrice?: number;
+  paidToDate?: number;
+  unpaidRemaining?: number;
+  amountUnderReview?: number;
+  commissionOnPaid?: number;
+  providerShareOnPaid?: number;
+  depositStage?: CancellationTrancheStage | null;
+  completionStage?: CancellationTrancheStage | null;
   materialsRefundable: boolean;
   customerForfeits: boolean;
   opensDisputeReview?: boolean;
@@ -114,22 +142,30 @@ export const EMPTY_CUSTOMER_CANCEL_PREVIEW: CustomerCancelPreview = {
 };
 
 function buildPaidLaborDisputePreview(
-  laborGross: number,
+  job: Job,
+  financials: JobCancellationFinancials,
   materialsTotal: number,
   materialsRefundable: boolean,
   warning: string,
   providerEnRoute = false
 ): CustomerCancelPreview {
-  const commissionAmount = computeCancelCommission(laborGross);
-  const estimatedNetRefund = computeEstimatedNetRefund(laborGross);
+  const amountUnderReview = financials.amountUnderReview;
   const materialsRefund = materialsRefundable ? materialsTotal : 0;
   return {
     providerEnRoute,
-    laborGross,
-    commissionAmount,
-    estimatedNetRefund,
-    laborRefund: estimatedNetRefund,
-    refundAmount: estimatedNetRefund + materialsRefund,
+    servicePrice: financials.servicePrice,
+    paidToDate: financials.paidToDate,
+    unpaidRemaining: financials.unpaidRemaining,
+    amountUnderReview,
+    commissionOnPaid: financials.commissionOnPaid,
+    providerShareOnPaid: financials.providerShareOnPaid,
+    depositStage: financials.depositStage,
+    completionStage: financials.completionStage,
+    laborGross: financials.paidToDate,
+    commissionAmount: financials.commissionOnPaid,
+    estimatedNetRefund: amountUnderReview,
+    laborRefund: amountUnderReview,
+    refundAmount: amountUnderReview + materialsRefund,
     materialsRefundable,
     customerForfeits: false,
     opensDisputeReview: true,
@@ -153,7 +189,8 @@ export function getCustomerCancelPreview(
 
   const providerEnRoute = isProviderEnRouteToService(job, deliveryRequest);
   const laborPaid = Boolean(job.laborPaid);
-  const laborGross = laborPaid ? getUserLaborGross(job) : 0;
+  const financials = buildJobCancellationFinancials(job);
+  const paidToDate = laborPaid ? financials.paidToDate : 0;
   const materialsTotal = getQuoteMaterialsTotal(job);
   const materialsRefundable = !hasMaterialsPaid;
 
@@ -168,12 +205,13 @@ export function getCustomerCancelPreview(
     };
   }
 
-  if (laborPaid && laborGross > 0) {
+  if (laborPaid && paidToDate > 0) {
     return buildPaidLaborDisputePreview(
-      laborGross,
+      job,
+      financials,
       materialsTotal,
       materialsRefundable,
-      getCustomerCancelPaidDisputeWarningMessage(job),
+      getCustomerCancelPaidDisputeWarningMessage(job, financials),
       providerEnRoute
     );
   }
@@ -205,16 +243,18 @@ export function getProviderCancelPreview(
 
   const providerEnRoute = isProviderEnRouteToService(job, deliveryRequest);
   const laborPaid = Boolean(job.laborPaid);
-  const laborGross = laborPaid ? getUserLaborGross(job) : 0;
+  const financials = buildJobCancellationFinancials(job);
+  const paidToDate = laborPaid ? financials.paidToDate : 0;
   const materialsTotal = getQuoteMaterialsTotal(job);
   const materialsRefundable = !hasMaterialsPaid;
 
-  if (laborPaid && laborGross > 0) {
+  if (laborPaid && paidToDate > 0) {
     return buildPaidLaborDisputePreview(
-      laborGross,
+      job,
+      financials,
       materialsTotal,
       materialsRefundable,
-      getProviderCancelPaidDisputeWarningMessage(),
+      getProviderCancelPaidDisputeWarningMessage(financials),
       providerEnRoute
     );
   }

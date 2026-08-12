@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,12 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { format, parseISO } from 'date-fns';
 
 type TabType = 'cards' | 'invoices';
+
+function isRefundInvoice(invoice: Invoice): boolean {
+  const type = String(invoice.type || '').toLowerCase();
+  const status = String(invoice.status || '').toLowerCase();
+  return type === 'refund' || status === 'refunded' || status === 'partially_refunded';
+}
 
 export default function UserPayments() {
   const { user } = useAuth();
@@ -464,39 +471,46 @@ export default function UserPayments() {
           </div>
         )}
 
-        {/* Invoices Tab */}
+        {/* Refunded Invoices Tab — refund history only */}
         {activeTab === 'invoices' && (
           <div className="space-y-6">
-            {invoices.length === 0 ? (
-              <div className="card-elevated p-12 text-center">
-                <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">No invoices yet</h3>
-                <p className="text-muted-foreground text-sm">Your payment history will appear here</p>
-              </div>
-            ) : (
-              groupInvoicesByJob(invoices).map(group => (
+            {(() => {
+              const refundInvoices = invoices.filter(isRefundInvoice);
+              if (refundInvoices.length === 0) {
+                return (
+                  <div className="card-elevated p-12 text-center">
+                    <RotateCcw className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                    <h3 className="font-semibold mb-2">No refunds yet</h3>
+                    <p className="text-muted-foreground text-sm">
+                      Completed refunds for your jobs will appear here
+                    </p>
+                  </div>
+                );
+              }
+              return groupInvoicesByJob(refundInvoices).map((group) => (
                 <div key={group.jobId}>
-                  <h3 className="text-sm font-semibold mb-3">Job: {group.label}</h3>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">{group.label}</h3>
+                    {group.jobId && !String(group.jobId).startsWith('store-') ? (
+                      <Button variant="link" className="h-auto p-0 text-xs" asChild>
+                        <Link to={`/user/jobs/${group.jobId}`}>Open job</Link>
+                      </Button>
+                    ) : null}
+                  </div>
                   <div className="space-y-2">
-                    {group.invoices.map(invoice => (
-                      <div 
+                    {group.invoices.map((invoice) => (
+                      <div
                         key={invoice.id}
                         className="card-elevated p-4 cursor-pointer hover:border-primary/30 transition-colors"
                         onClick={() => setSelectedInvoice(invoice)}
                       >
                         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                              {invoice.type === 'refund' ? (
-                                <RotateCcw className="h-4 w-4 text-primary" />
-                              ) : (
-                                <FileText className="h-4 w-4 text-primary" />
-                              )}
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10">
+                              <RotateCcw className="h-4 w-4 text-success" />
                             </div>
                             <div className="min-w-0">
-                              <p className="truncate font-medium">
-                                {getInvoiceTypeLabel(invoice)}
-                              </p>
+                              <p className="truncate font-medium">Refund · {group.label}</p>
                               <p className="text-sm text-muted-foreground">
                                 {format(parseISO(invoice.paidAt), 'PPP')}
                               </p>
@@ -504,16 +518,12 @@ export default function UserPayments() {
                           </div>
                           <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
                             <div className="text-left sm:text-right">
-                              <p className={cn(
-                                "font-semibold",
-                                invoice.type === 'refund' && "text-success"
-                              )}>
-                                {invoice.type === 'refund' ? '+' : ''}
-                                {formatCurrency(invoice.totalAmount, { decimals: 2 })}
+                              <p className="font-semibold text-success tabular-nums">
+                                +{formatCurrency(invoice.totalAmount, { decimals: 2 })}
                               </p>
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                {getStatusIcon(invoice.status)}
-                                <span>{getStatusLabel(invoice.status)}</span>
+                              <div className="flex items-center gap-1 text-xs text-success">
+                                <CheckCircle className="h-3.5 w-3.5" />
+                                <span>Refunded</span>
                               </div>
                             </div>
                             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -523,8 +533,8 @@ export default function UserPayments() {
                     ))}
                   </div>
                 </div>
-              ))
-            )}
+              ));
+            })()}
           </div>
         )}
 

@@ -16,12 +16,7 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { getJobDisplayStatusLabel, getProviderJobBadgeVariantForJob } from '@/lib/jobProgressDisplay';
-import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
-import {
-  RefundSummaryLine,
-  hasRefundDisplay,
-  isJobRefunded,
-} from '@/components/payments/RefundSummaryLine';
+import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { ACTIVE_WORKFLOW_JOB_STATUSES, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
@@ -29,6 +24,7 @@ import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { ProviderRequestCard } from '@/components/jobs/ProviderRequestCard';
+import { jobHasSubmittedReview } from '@/lib/jobReviewStatus';
 
 type JobsView = 'jobs' | 'review';
 
@@ -186,35 +182,16 @@ export default function ProviderActiveJobs() {
             <Trash2 className="mr-1 h-4 w-4" /> Delete
           </Button>
         )}
-        {(() => {
-          const { text, isPaid, refundAmount, refundStatus, underAdminReview } =
-            getProviderJobPriceDisplay(job);
-          const showRefund = hasRefundDisplay({ refundAmount, refundStatus });
-          const processedRefund = isJobRefunded({ refundAmount, refundStatus });
-          return (
-            <>
-              <p className="font-semibold tabular-nums">
-                {text}
-                {isPaid && !processedRefund ? <span className="ml-1 text-xs text-success">(Paid)</span> : null}
-                {isPaid && processedRefund ? (
-                  <span className="ml-1 text-xs text-destructive">(Refunded)</span>
-                ) : null}
-              </p>
-              {underAdminReview && (
-                <p className="text-xs text-amber-700 dark:text-amber-200">Under admin review</p>
-              )}
-              {showRefund && (
-                <p className="text-xs">
-                  <RefundSummaryLine
-                    refundAmount={refundAmount}
-                    refundStatus={refundStatus}
-                    variant="inline"
-                  />
-                </p>
-              )}
-            </>
-          );
-        })()}
+        <JobPaymentListSummary job={job} compact />
+        {job.status === 'COMPLETED' && jobHasSubmittedReview(job) ? (
+          <p className="text-xs text-muted-foreground">
+            Customer review:{' '}
+            {'★'.repeat(Math.max(0, Math.min(5, Math.round(Number(job.jobReview?.rating ?? job.userRating) || 0))))}
+            {'☆'.repeat(
+              5 - Math.max(0, Math.min(5, Math.round(Number(job.jobReview?.rating ?? job.userRating) || 0)))
+            )}
+          </p>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           {new Date(job.createdAt).toLocaleDateString()}
         </p>

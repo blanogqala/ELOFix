@@ -25,10 +25,14 @@ function serializeIntent(row) {
     merchantReference: row.merchantReference,
     provider: row.provider,
     kind: row.kind,
+    paymentType: row.paymentType || null,
     userId: row.userId,
     jobId: row.jobId,
     materialOrderId: row.materialOrderId,
+    recipientUserId: row.recipientUserId || null,
     amount: Number(row.amount),
+    commissionAmount: Number(row.commissionAmount || 0),
+    recipientAmount: Number(row.recipientAmount || 0),
     currency: row.currency,
     state: row.state,
     escrowStatus: row.escrowStatus,
@@ -52,17 +56,43 @@ function toPrismaDecimal(v) {
   return new Prisma.Decimal(String(Number(v).toFixed(2)));
 }
 
-async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, metadata }) {
+async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, metadata, paymentType }) {
   if (kind === "LABOR" && jobId) {
-    const existing = await tx.paymentIntent.findFirst({
-      where: { jobId, kind: "LABOR", state: "PAID" },
-    });
-    if (existing) {
-      throw new AppError("Labor payment already completed", 400);
+    const paymentModeService = require("./paymentMode.service");
+    const job = await tx.job.findUnique({ where: { id: jobId } });
+    if (!job) throw new AppError("Job not found", 404);
+    const meta = await getJobMeta(jobId);
+
+    // Legacy single full labor payment
+    if (job.legacyEscrowV2) {
+      const existing = await tx.paymentIntent.findFirst({
+        where: { jobId, kind: "LABOR", state: "PAID" },
+      });
+      if (existing || job.laborPaid) {
+        throw new AppError("Labor payment already completed", 400);
+      }
+      return;
     }
-    const pendingPaid = await tx.job.findUnique({ where: { id: jobId }, select: { laborPaid: true } });
-    if (pendingPaid?.laborPaid) {
-      throw new AppError("Labor already paid", 400);
+
+    const type =
+      paymentType ||
+      paymentModeService.resolveNextLaborPaymentType(job, meta);
+    if (!type) {
+      throw new AppError("No labor payment is due for this job at this stage", 400);
+    }
+    const existingType = await tx.paymentIntent.findFirst({
+      where: {
+        jobId,
+        kind: "LABOR",
+        paymentType: type,
+        state: { in: ["PAID", "PENDING", "PROCESSING"] },
+      },
+    });
+    if (existingType && existingType.state === "PAID") {
+      throw new AppError("This payment stage is already completed", 400);
+    }
+    if (String(job.paymentProgress) === "FULLY_PAID") {
+      throw new AppError("Labor payments already completed", 400);
     }
   }
   if (kind === "DELIVERY_FEE") {
@@ -147,18 +177,57 @@ async function cancelStalePaidDeliveryFeeIntent(tx, materialOrderId) {
   });
 }
 
-async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, metadata }) {
-  if (amount != null && Number(amount) > 0) {
-    return toPrismaDecimal(amount);
-  }
+async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, metadata, paymentType }) {
+  const paymentModeService = require("./paymentMode.service");
+
+  // Never trust client amount for labor — always derive from job snapshot / expected gross.
   if (kind === "LABOR" && jobId) {
-    const job = await tx.job.findUnique({ where: { id: jobId } });
+    let job = await tx.job.findUnique({ where: { id: jobId } });
     if (!job) throw new AppError("Job not found", 404);
     const meta = await getJobMeta(jobId);
-    const gross = paymentService.expectedLaborGrossFromJob(job, meta);
-    if (gross.lte(0)) throw new AppError("Invalid labor amount", 400);
-    return gross;
+
+    if (!job.paymentModeSnapshot && !job.legacyEscrowV2) {
+      const quoted =
+        (meta?.servicePrice && Number(meta.servicePrice.amount)) ||
+        Number(job.totalPrice || job.price || 0);
+      if (quoted > 0) {
+        await paymentModeService.snapshotPaymentModeOnJob(tx, jobId, {
+          quotedAmount: quoted,
+          categoryKey: job.category,
+        });
+        job = await tx.job.findUnique({ where: { id: jobId } });
+      }
+    }
+
+    if (job.legacyEscrowV2 === true) {
+      const gross = paymentService.expectedLaborGrossFromJob(job, meta);
+      if (gross.lte(0)) throw new AppError("Invalid labor amount", 400);
+      if (amount != null && Number(amount) > 0) {
+        paymentModeService.assertAmountMatchesExpected(amount, gross);
+      }
+      return gross;
+    }
+
+    paymentModeService.assertPaymentModeReady(job);
+
+    const type =
+      paymentType ||
+      paymentModeService.resolveNextLaborPaymentType(job, meta);
+    if (!type) {
+      throw new AppError("No labor payment is due for this job at this stage", 400);
+    }
+    const expected = paymentModeService.expectedAmountForLaborPaymentType(job, type);
+    if (expected.lte(0)) throw new AppError("Invalid labor amount", 400);
+    if (amount != null && Number(amount) > 0) {
+      paymentModeService.assertAmountMatchesExpected(amount, expected);
+    }
+    return expected;
   }
+
+  // Non-LABOR: always derive from persisted server-side order/job data.
+  // Client amount is validation-only (optional hint); never authoritative.
+  let serverAmount = null;
+
   if (kind === "DELIVERY_FEE") {
     const deliveryRequestId = metadata?.deliveryRequestId
       ? String(metadata.deliveryRequestId).trim()
@@ -168,21 +237,72 @@ async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, 
       if (!dr) throw new AppError("Delivery request not found", 404);
       const fee = Number(dr.quotedFee || 0);
       if (fee <= 0) throw new AppError("Invalid delivery fee amount", 400);
-      return toPrismaDecimal(fee);
+      serverAmount = toPrismaDecimal(fee);
     }
   }
-  if ((kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER" || kind === "DELIVERY_FEE") && materialOrderId) {
+
+  if (
+    serverAmount == null &&
+    (kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER" || kind === "DELIVERY_FEE") &&
+    materialOrderId
+  ) {
     const order = await tx.materialOrder.findUnique({ where: { id: materialOrderId } });
     if (!order) throw new AppError("Material order not found", 404);
+    if (String(order.paymentStatus || "").toLowerCase() === "paid" && kind === "MATERIAL_ORDER") {
+      throw new AppError("Material order is already paid", 400);
+    }
     const p = order.payload && typeof order.payload === "object" ? order.payload : {};
-    const total =
-      kind === "DELIVERY_FEE"
-        ? Number(p.deliveryFee || p.delivery?.fee || p.deliveryQuote?.fee || 0)
-        : Number(p.totalAmount || p.total || order.materialsSubtotal || 0);
+    let total;
+    if (kind === "DELIVERY_FEE") {
+      total = Number(p.deliveryFee || p.delivery?.fee || p.deliveryQuote?.fee || 0);
+    } else {
+      // Prefer persisted materialsSubtotal when set; otherwise locked payload totals from order creation.
+      const persisted = Number(order.materialsSubtotal);
+      total =
+        Number.isFinite(persisted) && persisted > 0
+          ? persisted
+          : Number(p.totalAmount || p.total || p.materialsSubtotal || 0);
+    }
     if (total <= 0) throw new AppError("Invalid order amount", 400);
-    return toPrismaDecimal(total);
+    serverAmount = toPrismaDecimal(total);
   }
-  throw new AppError("amount is required", 400);
+
+  if (serverAmount == null && kind === "JOB_STORE_ORDER" && jobId) {
+    const meta = await getJobMeta(jobId);
+    const storeOrders = Array.isArray(meta.storeOrders) ? meta.storeOrders : [];
+    const orderId = metadata?.orderId ? String(metadata.orderId).trim() : "";
+    const supplierId = metadata?.supplierId ? String(metadata.supplierId).trim() : "";
+    const match = storeOrders.find((o) => {
+      if (!o || typeof o !== "object") return false;
+      if (orderId && String(o.orderId || "") === orderId) return true;
+      if (supplierId && String(o.supplierId || "") === supplierId) return true;
+      return false;
+    });
+    if (!match) {
+      throw new AppError("Store order not found for this job", 404);
+    }
+    if (match.payment?.materialsPaid === true) {
+      throw new AppError("Store order materials are already paid", 400);
+    }
+    const items = Array.isArray(match.items) ? match.items : [];
+    const materialsTotal = items.reduce(
+      (sum, item) => sum + Number(item.qty || 0) * Number(item.unitPrice || item.price || 0),
+      0
+    );
+    const deliveryFee = Number(match.deliveryFee || match.delivery?.fee || 0);
+    const total = materialsTotal + (Number.isFinite(deliveryFee) ? deliveryFee : 0);
+    if (total <= 0) throw new AppError("Invalid store order amount", 400);
+    serverAmount = toPrismaDecimal(total);
+  }
+
+  if (serverAmount == null || serverAmount.lte(0)) {
+    throw new AppError("Unable to resolve payment amount from server records", 400);
+  }
+
+  if (amount != null && Number(amount) > 0) {
+    paymentModeService.assertAmountMatchesExpected(amount, serverAmount);
+  }
+  return serverAmount;
 }
 
 async function authorizeIntentAccess(intent, userId, role) {
@@ -285,6 +405,8 @@ async function createPaymentIntent({
         }
       }
 
+      let resolvedPaymentType = null;
+      const paymentModeService = require("./paymentMode.service");
       if (kindNorm === "LABOR" && jobId) {
         const job = await tx.job.findUnique({ where: { id: jobId } });
         if (!job) throw new AppError("Job not found", 404);
@@ -294,6 +416,43 @@ async function createPaymentIntent({
         if (job.status === "CANCELLED" || job.status === "REJECTED") {
           throw new AppError("Cannot pay for a cancelled or rejected job", 400);
         }
+        const meta = await getJobMeta(jobId);
+        if (meta.statusOverride === "DISPUTED" || meta.escrowFrozen === true) {
+          throw new AppError(
+            "Cannot create a labor payment while this job is under dispute review",
+            400
+          );
+        }
+        if (!job.paymentModeSnapshot && !job.legacyEscrowV2) {
+          const quoted =
+            (meta?.servicePrice && Number(meta.servicePrice.amount)) ||
+            Number(job.totalPrice || job.price || 0);
+          if (quoted > 0) {
+            await paymentModeService.snapshotPaymentModeOnJob(tx, jobId, {
+              quotedAmount: quoted,
+              categoryKey: job.category,
+            });
+          }
+        }
+        const jobFresh = await tx.job.findUnique({ where: { id: jobId } });
+        if (jobFresh.legacyEscrowV2 === true) {
+          resolvedPaymentType = paymentModeService.PAYMENT_TYPES.FULL_UPFRONT;
+        } else {
+          paymentModeService.assertPaymentModeReady(jobFresh);
+          resolvedPaymentType = paymentModeService.resolveNextLaborPaymentType(jobFresh, meta);
+          if (!resolvedPaymentType) {
+            throw new AppError("No labor payment is due for this job at this stage", 400);
+          }
+        }
+        console.log("[createPaymentIntent] LABOR stage", {
+          jobId,
+          paymentModeSnapshot: jobFresh.paymentModeSnapshot || null,
+          paymentProgress: jobFresh.paymentProgress || "NONE",
+          nextLaborPaymentType: resolvedPaymentType,
+          laborPaid: Boolean(jobFresh.laborPaid),
+        });
+      } else {
+        resolvedPaymentType = paymentModeService.paymentTypeForKind(kindNorm, null, null);
       }
       if (materialOrderId) {
         const order = await tx.materialOrder.findUnique({ where: { id: materialOrderId } });
@@ -318,7 +477,13 @@ async function createPaymentIntent({
         }
       }
 
-      await assertNoDuplicatePaidIntent(tx, { kind: kindNorm, jobId, materialOrderId, metadata });
+      await assertNoDuplicatePaidIntent(tx, {
+        kind: kindNorm,
+        jobId,
+        materialOrderId,
+        metadata,
+        paymentType: resolvedPaymentType,
+      });
 
       const resolvedAmount = await resolveAmountForKind(tx, {
         kind: kindNorm,
@@ -326,6 +491,7 @@ async function createPaymentIntent({
         materialOrderId,
         amount,
         metadata,
+        paymentType: resolvedPaymentType,
       });
 
       const defaultReturn = `${frontendBaseUrl()}/payments/return?intentId=`;
@@ -374,6 +540,7 @@ async function createPaymentIntent({
               merchantReference,
               provider: providerKey,
               amount: resolvedAmount,
+              paymentType: resolvedPaymentType,
               state: "PENDING",
               failedAt: null,
               cancelledAt: null,
@@ -418,6 +585,73 @@ async function createPaymentIntent({
         jobId = deliveryFeeJobId || jobId || null;
       }
 
+      if (kindNorm === "LABOR" && jobId && resolvedPaymentType) {
+        // Reuse ONLY the same paymentType (DEPOSIT ≠ COMPLETION). Never reuse a PAID intent.
+        const reusableLabor = await tx.paymentIntent.findFirst({
+          where: {
+            jobId,
+            kind: "LABOR",
+            paymentType: resolvedPaymentType,
+            state: { in: ["PENDING", "PROCESSING", "FAILED", "CANCELLED"] },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (reusableLabor) {
+          const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
+          const refreshed = await tx.paymentIntent.update({
+            where: { id: reusableLabor.id },
+            data: {
+              merchantReference,
+              provider: providerKey,
+              amount: resolvedAmount,
+              paymentType: resolvedPaymentType,
+              state: "PENDING",
+              failedAt: null,
+              cancelledAt: null,
+              paidAt: null,
+              refundedAt: null,
+              gatewayTransactionId: null,
+              returnUrl: returnUrl || reusableLabor.returnUrl || null,
+              cancelUrl: cancelUrl || reusableLabor.cancelUrl || null,
+              gatewayPayload:
+                intentMetadata && typeof intentMetadata === "object"
+                  ? intentMetadata
+                  : reusableLabor.gatewayPayload ?? undefined,
+              escrowStatus: "NOT_APPLICABLE",
+              providerPayoutStatus: "NONE",
+            },
+          });
+          console.log("[createPaymentIntent] LABOR reuse same-stage intent", {
+            jobId,
+            intentId: refreshed.id,
+            paymentType: resolvedPaymentType,
+            amount: Number(refreshed.amount),
+            merchantReference: refreshed.merchantReference,
+            provider: providerKey,
+          });
+          const reuseCheckout = await gw.createCheckout(
+            {
+              ...refreshed,
+              amount: Number(refreshed.amount),
+              returnUrl: refreshed.returnUrl || `${defaultReturn}${refreshed.id}`,
+              cancelUrl: refreshed.cancelUrl || `${defaultCancel}${refreshed.id}`,
+            },
+            customer
+          );
+          await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
+          return {
+            replay: false,
+            payload: {
+              intentId: refreshed.id,
+              merchantReference: refreshed.merchantReference,
+              intent: serializeIntent(refreshed),
+              checkout: reuseCheckout,
+              reused: true,
+            },
+          };
+        }
+      }
+
       const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
 
       const intent = await tx.paymentIntent.create({
@@ -426,13 +660,14 @@ async function createPaymentIntent({
           merchantReference,
           provider: providerKey,
           kind: kindNorm,
+          paymentType: resolvedPaymentType,
           userId: String(userId),
           jobId: jobId || null,
           materialOrderId: materialOrderId || null,
           amount: resolvedAmount,
           currency: paymentCurrency(),
           state: "PENDING",
-          escrowStatus: kindNorm === "LABOR" ? "HELD" : "NOT_APPLICABLE",
+          escrowStatus: "NOT_APPLICABLE",
           providerPayoutStatus: kindNorm === "LABOR" ? "NONE" : "NOT_APPLICABLE",
           idempotencyKey: idempotencyKey || null,
           returnUrl: returnUrl || null,
@@ -523,6 +758,11 @@ async function confirmPaymentReturn(intentId, userId, role) {
       console.log("[confirmPaymentReturn] sandbox settle on return", {
         intentId: intent.id,
         merchantReference: intent.merchantReference,
+        paymentType: intent.paymentType || null,
+        amount: Number(intent.amount),
+        kind: intent.kind,
+        jobId: intent.jobId || null,
+        provider: intent.provider,
       });
     }
   } else if (intent.state !== "PAID" && intent.provider === "PAYFAST") {

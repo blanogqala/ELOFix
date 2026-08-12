@@ -1,5 +1,5 @@
 /**
- * Refund repayment duplicate-prevention tests.
+ * Refund repayment tests (amount authority, admin DTO, confirm mismatch).
  * Run: node tests/refundRepayment.test.js
  * DB integration only runs when DATABASE_URL is set.
  */
@@ -8,7 +8,7 @@ const assert = require("assert");
 const { randomUUID } = require("crypto");
 const AppError = require("../src/utils/AppError");
 
-async function createFixtures(prisma, suffix) {
+async function createFixtures(prisma, suffix, { debtAmount = 465 } = {}) {
   const providerUser = await prisma.user.create({
     data: {
       email: `repay-prov-${suffix}@example.com`,
@@ -37,12 +37,12 @@ async function createFixtures(prisma, suffix) {
     },
   });
   const ref = `EFX-TEST-${suffix}`;
-  await prisma.refundRecovery.create({
+  const recovery = await prisma.refundRecovery.create({
     data: {
       id: randomUUID(),
       providerId: provider.id,
       customerId: customerUser.id,
-      totalPending: 1000,
+      totalPending: debtAmount,
       recoveredAmount: 0,
       status: "PENDING",
       dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -53,12 +53,12 @@ async function createFixtures(prisma, suffix) {
     data: {
       id: randomUUID(),
       providerId: provider.id,
-      amount: 1000,
+      amount: debtAmount,
       type: "debit",
       status: "refund_debt",
     },
   });
-  return { providerUser, provider, customerUser, adminUser, ref };
+  return { providerUser, provider, customerUser, adminUser, ref, recovery, debtAmount };
 }
 
 async function cleanupFixtures(prisma, fixtures) {
@@ -81,22 +81,23 @@ async function cleanupFixtures(prisma, fixtures) {
 }
 
 async function testDuplicateBlock(refundRecovery, fixtures) {
-  const { providerUser, provider, ref } = fixtures;
+  const { providerUser, provider, ref, debtAmount } = fixtures;
   const row = await refundRecovery.submitProviderRepayment(providerUser.id, {
-    amount: 100,
+    amount: debtAmount,
     reference: ref,
   });
   assert.strictEqual(row.status, "SUBMITTED");
+  assert.strictEqual(Number(row.amount), debtAmount);
 
   const summary = await refundRecovery.getProviderRefundDebtSummary(provider.id);
   assert.ok(summary.pendingRepayment, "debt summary should include pending repayment");
-  assert.strictEqual(summary.pendingRepayment.amount, 100);
+  assert.strictEqual(summary.pendingRepayment.amount, debtAmount);
   assert.strictEqual(summary.lastRejectedRepayment, null);
 
   let threw = false;
   try {
     await refundRecovery.submitProviderRepayment(providerUser.id, {
-      amount: 200,
+      amount: debtAmount,
       reference: ref,
     });
   } catch (e) {
@@ -111,9 +112,9 @@ async function testDuplicateBlock(refundRecovery, fixtures) {
 }
 
 async function testRejectAllowsResubmit(refundRecovery, fixtures) {
-  const { providerUser, provider, adminUser, ref } = fixtures;
+  const { providerUser, provider, adminUser, ref, debtAmount } = fixtures;
   const row = await refundRecovery.submitProviderRepayment(providerUser.id, {
-    amount: 150,
+    amount: debtAmount,
     reference: ref,
   });
 
@@ -124,41 +125,137 @@ async function testRejectAllowsResubmit(refundRecovery, fixtures) {
   const summary = await refundRecovery.getProviderRefundDebtSummary(provider.id);
   assert.strictEqual(summary.pendingRepayment, null);
   assert.ok(summary.lastRejectedRepayment);
-  assert.strictEqual(summary.lastRejectedRepayment.amount, 150);
+  assert.strictEqual(summary.lastRejectedRepayment.amount, debtAmount);
+
+  const history = await refundRecovery.listAdminRefundRepayments({ view: "history" });
+  assert.ok(
+    history.some((r) => r.id === row.id && r.status === "REJECTED"),
+    "rejected repayment remains in history"
+  );
 
   const row2 = await refundRecovery.submitProviderRepayment(providerUser.id, {
-    amount: 150,
+    amount: debtAmount,
     reference: ref,
   });
   assert.strictEqual(row2.status, "SUBMITTED");
 }
 
-async function testConfirmPartialAllowsResubmit(refundRecovery, fixtures) {
-  const { providerUser, provider, adminUser, ref } = fixtures;
+async function testClientCannotManipulateAmount(refundRecovery, fixtures) {
+  const { providerUser, ref, debtAmount } = fixtures;
+  let threw = false;
+  try {
+    await refundRecovery.submitProviderRepayment(providerUser.id, {
+      amount: roundDown(debtAmount),
+      reference: ref,
+    });
+  } catch (e) {
+    threw = e instanceof AppError && e.statusCode === 400;
+    assert.ok(/must equal the outstanding obligation/i.test(e.message), e.message);
+  }
+  assert.strictEqual(threw, true, "understated client amount must be rejected");
+}
+
+function roundDown(n) {
+  return Math.max(1, Math.round((n - 65) * 100) / 100);
+}
+
+async function testAdminListReturnsNumericAmount(refundRecovery, fixtures) {
+  const { providerUser, ref, debtAmount } = fixtures;
   const row = await refundRecovery.submitProviderRepayment(providerUser.id, {
-    amount: 400,
+    amount: debtAmount,
     reference: ref,
   });
+
+  const reviews = await refundRecovery.listAdminRefundRepayments({ view: "reviews" });
+  const dto = reviews.find((r) => r.id === row.id);
+  assert.ok(dto, "admin list should include submitted repayment");
+  assert.strictEqual(typeof dto.amount, "number", "amount must be a JS number, not Decimal string");
+  assert.strictEqual(typeof dto.submittedAmount, "number");
+  assert.strictEqual(dto.amount, debtAmount);
+  assert.strictEqual(dto.submittedAmount, debtAmount);
+  assert.strictEqual(dto.expectedAmount, debtAmount);
+  assert.strictEqual(dto.amountMismatch, false);
+  assert.strictEqual(dto.amountMissing, false);
+  assert.strictEqual(dto.currency, "ZAR");
+  assert.notStrictEqual(dto.amount, 0);
+}
+
+async function testConfirmMatchingRepayment(refundRecovery, fixtures) {
+  const { providerUser, provider, adminUser, ref, debtAmount } = fixtures;
+  const row = await refundRecovery.submitProviderRepayment(providerUser.id, {
+    amount: debtAmount,
+    reference: ref,
+  });
+
+  // Customer refund must not run before verification
+  let blockedProcess = false;
+  try {
+    await refundRecovery.processAdminCustomerRefund(adminUser.id, row.id);
+  } catch (e) {
+    blockedProcess = e instanceof AppError && e.statusCode === 400;
+    assert.ok(/must be verified/i.test(e.message), e.message);
+  }
+  assert.strictEqual(blockedProcess, true, "process customer refund before confirm must fail");
 
   await refundRecovery.confirmAdminRefundRepayment(adminUser.id, row.id);
 
   const summary = await refundRecovery.getProviderRefundDebtSummary(provider.id);
+  assert.ok(summary.totalOwed <= 1e-6, "full confirm should clear debt");
   assert.strictEqual(summary.pendingRepayment, null);
-  assert.ok(summary.totalOwed > 0, "partial confirm should leave remaining debt");
+}
 
-  const row2 = await refundRecovery.submitProviderRepayment(providerUser.id, {
-    amount: 300,
-    reference: ref,
+async function testConfirmMismatchRequiresAck(refundRecovery, fixtures) {
+  const { provider, adminUser, ref, debtAmount } = fixtures;
+  const prisma = require("../src/config/prisma");
+
+  const partialAmt = roundMoney(debtAmount - 65);
+  const row = await prisma.providerRefundRepayment.create({
+    data: {
+      id: randomUUID(),
+      providerId: provider.id,
+      amount: partialAmt,
+      reference: `${ref}-PARTIAL`,
+      status: "SUBMITTED",
+    },
   });
-  assert.strictEqual(row2.status, "SUBMITTED");
+
+  const reviews = await refundRecovery.listAdminRefundRepayments({ view: "reviews" });
+  const dto = reviews.find((r) => r.id === row.id);
+  assert.ok(dto.amountMismatch, "partial row should flag mismatch");
+  assert.strictEqual(dto.submittedAmount, partialAmt);
+  assert.strictEqual(dto.expectedAmount, debtAmount);
+
+  let blocked = false;
+  try {
+    await refundRecovery.confirmAdminRefundRepayment(adminUser.id, row.id);
+  } catch (e) {
+    blocked = e instanceof AppError && e.statusCode === 400;
+    assert.ok(/amount mismatch/i.test(e.message), e.message);
+  }
+  assert.strictEqual(blocked, true, "confirm without acknowledgePartial must fail");
+
+  await refundRecovery.confirmAdminRefundRepayment(adminUser.id, row.id, {
+    acknowledgePartial: true,
+  });
+
+  const summary = await refundRecovery.getProviderRefundDebtSummary(provider.id);
+  assert.ok(summary.totalOwed > 0, "partial confirm should leave remaining debt");
+  assert.ok(
+    Math.abs(summary.totalOwed - (debtAmount - partialAmt)) < 0.02,
+    `remaining should be ~${debtAmount - partialAmt}, got ${summary.totalOwed}`
+  );
+}
+
+function roundMoney(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
 async function testListViews(refundRecovery, fixtures) {
-  const { providerUser, provider, adminUser, ref } = fixtures;
+  const { providerUser, provider, adminUser, ref, debtAmount } = fixtures;
   const prisma = require("../src/config/prisma");
 
   const pending = await refundRecovery.submitProviderRepayment(providerUser.id, {
-    amount: 50,
+    amount: debtAmount,
     reference: ref,
   });
 
@@ -201,6 +298,9 @@ async function testListViews(refundRecovery, fixtures) {
     !reviews.some((r) => r.id === rejectedRow.id || r.id === confirmedRow.id),
     "reviews view should exclude history rows"
   );
+  const pendingDto = reviews.find((r) => r.id === pending.id);
+  assert.strictEqual(typeof pendingDto.amount, "number");
+  assert.strictEqual(pendingDto.amount, debtAmount);
 
   const history = await refundRecovery.listAdminRefundRepayments({ view: "history" });
   assert.ok(
@@ -268,18 +368,39 @@ async function runDbIntegrationTests() {
     await cleanupFixtures(prisma, fixtures2);
   }
 
-  const fixtures3 = await createFixtures(prisma, `${suffix}-conf`);
+  const fixtures3 = await createFixtures(prisma, `${suffix}-amt`);
   try {
-    await testConfirmPartialAllowsResubmit(refundRecovery, fixtures3);
+    await testClientCannotManipulateAmount(refundRecovery, fixtures3);
   } finally {
     await cleanupFixtures(prisma, fixtures3);
   }
 
-  const fixtures4 = await createFixtures(prisma, `${suffix}-list`);
+  const fixtures4 = await createFixtures(prisma, `${suffix}-list465`, { debtAmount: 465 });
   try {
-    await testListViews(refundRecovery, fixtures4);
+    await testAdminListReturnsNumericAmount(refundRecovery, fixtures4);
   } finally {
     await cleanupFixtures(prisma, fixtures4);
+  }
+
+  const fixtures5 = await createFixtures(prisma, `${suffix}-conf`, { debtAmount: 465 });
+  try {
+    await testConfirmMatchingRepayment(refundRecovery, fixtures5);
+  } finally {
+    await cleanupFixtures(prisma, fixtures5);
+  }
+
+  const fixtures6 = await createFixtures(prisma, `${suffix}-mis`, { debtAmount: 465 });
+  try {
+    await testConfirmMismatchRequiresAck(refundRecovery, fixtures6);
+  } finally {
+    await cleanupFixtures(prisma, fixtures6);
+  }
+
+  const fixtures7 = await createFixtures(prisma, `${suffix}-views`);
+  try {
+    await testListViews(refundRecovery, fixtures7);
+  } finally {
+    await cleanupFixtures(prisma, fixtures7);
   }
 
   console.log("refundRepayment.test.js: OK (DB integration)");

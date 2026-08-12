@@ -68,6 +68,7 @@ interface BackendJob {
   completionConfirmedByUser?: boolean;
   userRating?: number;
   userReview?: string;
+  jobReview?: Job['jobReview'];
   cancellationReason?: string;
   cancellationDetails?: string;
   cancellationSource?: string | null;
@@ -97,11 +98,25 @@ interface BackendJob {
   paymentSettlementStatus?: 'released' | 'held' | 'pending' | 'refund';
   refundAmount?: number;
   refundStatus?: string;
+  customerRefundStatus?: string | null;
+  refundCompletedAt?: string | null;
   refundDetails?: Job['refundDetails'];
   providerRefundDebt?: number;
   confirmationDeadlineAt?: string | null;
   markedCompleteAt?: string | null;
   disputeId?: string | null;
+  legacyEscrowV2?: boolean;
+  paymentModeSnapshot?: Job['paymentModeSnapshot'];
+  quotedAmount?: number | null;
+  firstPaymentAmount?: number | null;
+  secondPaymentAmount?: number | null;
+  paymentProgress?: Job['paymentProgress'];
+  paymentSchedule?: Job['paymentSchedule'];
+  paymentSummary?: Job['paymentSummary'];
+  nextLaborPaymentType?: Job['nextLaborPaymentType'];
+  paymentSummary?: Job['paymentSummary'];
+  depositPayment?: Job['depositPayment'];
+  completionPayment?: Job['completionPayment'];
 }
 
 interface BackendJobsResponse {
@@ -211,6 +226,16 @@ function toFrontendJob(job: BackendJob): Job {
     completionConfirmedByUser: Boolean(job.completionConfirmedByUser),
     userRating: job.userRating,
     userReview: job.userReview,
+    jobReview: job.jobReview
+      ? {
+          id: job.jobReview.id,
+          rating: Number(job.jobReview.rating),
+          comment: job.jobReview.comment || '',
+          images: Array.isArray(job.jobReview.images) ? job.jobReview.images : [],
+          videos: Array.isArray(job.jobReview.videos) ? job.jobReview.videos : [],
+          createdAt: job.jobReview.createdAt ?? null,
+        }
+      : null,
     cancellationReason: job.cancellationReason,
     cancellationDetails: job.cancellationDetails,
     cancellationSource: job.cancellationSource ?? undefined,
@@ -245,11 +270,33 @@ function toFrontendJob(job: BackendJob): Job {
         : undefined,
     refundAmount: numOrUndef(job.refundAmount),
     refundStatus: job.refundStatus,
+    customerRefundStatus: job.customerRefundStatus ?? null,
+    refundCompletedAt: job.refundCompletedAt ?? null,
     refundDetails: job.refundDetails,
     providerRefundDebt: numOrUndef(job.providerRefundDebt),
     confirmationDeadlineAt: job.confirmationDeadlineAt ?? null,
     markedCompleteAt: job.markedCompleteAt ?? null,
     disputeId: job.disputeId ?? null,
+    legacyEscrowV2: Boolean(job.legacyEscrowV2),
+    paymentModeSnapshot: job.paymentModeSnapshot ?? null,
+    quotedAmount: numOrUndef(job.quotedAmount) ?? null,
+    firstPaymentAmount: numOrUndef(job.firstPaymentAmount) ?? null,
+    secondPaymentAmount: numOrUndef(job.secondPaymentAmount) ?? null,
+    paymentProgress: job.paymentProgress,
+    paymentSchedule: job.paymentSchedule ?? null,
+    nextLaborPaymentType: job.nextLaborPaymentType ?? null,
+    paymentSummary: job.paymentSummary ?? null,
+    depositPayment: job.depositPayment ?? null,
+    completionPayment: job.completionPayment ?? null,
+    completionPaymentDue: job.completionPaymentDue
+      ? {
+          amountDue: Number(job.completionPaymentDue.amountDue) || 0,
+          dueAt: job.completionPaymentDue.dueAt ?? null,
+          resolutionLogId: job.completionPaymentDue.resolutionLogId ?? null,
+          createdAt: job.completionPaymentDue.createdAt ?? null,
+          notifiedAt: job.completionPaymentDue.notifiedAt ?? null,
+        }
+      : null,
   };
 }
 

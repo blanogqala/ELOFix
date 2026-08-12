@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const branchAccountService = require("./branchAccount.service");
+const branchSettlementService = require("./branchSettlement.service");
 
 function moneyNum(d) {
   if (d == null) return 0;
@@ -136,7 +137,7 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
 
   const dateFilter = ordersDateWhere(query);
 
-  const withdrawalsSummary = await branchAccountService.computeSupplierAvailableWithdrawalsSummary(sid, {
+  const withdrawalsSummary = await branchSettlementService.aggregateSupplierSettlementSummary(sid, {
     from: query.from,
     to: query.to,
   });
@@ -201,14 +202,17 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
       netEarnings,
       platformCommission,
       grossRevenue: Math.round((netEarnings + platformCommission) * 100) / 100,
-      availableWithdrawals: withdrawalsSummary.byBranchId[b.id] ?? 0,
+      pendingSettlement: withdrawalsSummary.byBranchId[b.id]?.pendingSettlement ?? 0,
+      settled: withdrawalsSummary.byBranchId[b.id]?.settled ?? 0,
       managerEmails: (b.branchUsers || []).map((u) => u.email).filter(Boolean),
     });
   }
 
   return {
     branches: out,
-    totalAvailableWithdrawals: withdrawalsSummary.totalAvailable,
+    totalPendingSettlement: withdrawalsSummary.totalPendingSettlement,
+    totalSettled: withdrawalsSummary.totalSettled,
+    gatewaySettlementSupported: withdrawalsSummary.gatewaySettlementSupported,
   };
 }
 

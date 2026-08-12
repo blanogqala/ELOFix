@@ -236,7 +236,65 @@ async function verifyWebhook(data, clientIp) {
 }
 
 async function refund() {
-  return { supported: false, message: "PayFast refunds are processed via merchant dashboard" };
+  return {
+    supported: false,
+    ok: false,
+    status: "MANUAL_REQUIRED",
+    requiresManualAction: true,
+    message: "PayFast refunds are processed via merchant dashboard",
+  };
+}
+
+function supportsMarketplaceSettlement() {
+  return false;
+}
+
+async function createBranchPayoutDestination(profile) {
+  return createPayoutDestination(profile);
+}
+
+async function createPayoutDestination() {
+  return {
+    supported: false,
+    requiresManualAction: true,
+    message: "PayFast marketplace payout destinations are not supported",
+  };
+}
+
+async function updatePayoutDestination() {
+  return createPayoutDestination();
+}
+
+async function deactivatePayoutDestination() {
+  return { supported: false, message: "PayFast payout deactivation is not supported" };
+}
+
+async function getPayoutDestinationStatus() {
+  return { supported: false };
+}
+
+async function createProviderSettlement() {
+  return {
+    supported: false,
+    requiresManualAction: true,
+    message: "PayFast marketplace provider settlement is not supported",
+  };
+}
+
+async function createSupplierSettlement() {
+  return {
+    supported: false,
+    requiresManualAction: true,
+    message: "PayFast marketplace branch settlement is not supported",
+  };
+}
+
+async function getSettlementStatus() {
+  return { supported: false };
+}
+
+async function verifySettlementWebhook() {
+  return { valid: false };
 }
 
 module.exports = {
@@ -247,4 +305,14 @@ module.exports = {
   refund,
   buildSignature,
   buildItnSignature,
+  supportsMarketplaceSettlement,
+  createPayoutDestination,
+  updatePayoutDestination,
+  deactivatePayoutDestination,
+  getPayoutDestinationStatus,
+  createBranchPayoutDestination,
+  createProviderSettlement,
+  createSupplierSettlement,
+  getSettlementStatus,
+  verifySettlementWebhook,
 };

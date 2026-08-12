@@ -115,17 +115,30 @@ function verifyWebhook(rawBody, signatureHeader) {
   };
 }
 
-async function refund(gatewayTransactionId, amountCents) {
+/**
+ * @param {string} gatewayTransactionId
+ * @param {number} amountZar - Amount in ZAR (major units). Converted to cents for the API.
+ */
+async function refund(gatewayTransactionId, amountZar) {
+  const amountCents = Math.round(Number(amountZar) * 100);
   const res = await fetch(`${apiBase()}/api/v1/merchant/refund`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({
       transaction_id: gatewayTransactionId,
-      amount: Math.round(Number(amountCents) * 100),
+      amount: amountCents,
     }),
   });
   const json = await res.json().catch(() => ({}));
-  return { supported: true, ok: res.ok, data: json };
+  return {
+    supported: true,
+    ok: res.ok,
+    status: res.ok ? "COMPLETED" : "FAILED",
+    externalRefundId: json?.refund_id || json?.id || null,
+    message: res.ok ? null : json?.message || `HTTP ${res.status}`,
+    requiresManualAction: false,
+    data: json,
+  };
 }
 
 module.exports = {
@@ -134,4 +147,34 @@ module.exports = {
   createCheckout,
   verifyWebhook,
   refund,
+  supportsMarketplaceSettlement: () => false,
+  createPayoutDestination: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "PayJustNow marketplace payout destinations are not supported",
+  }),
+  updatePayoutDestination: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "PayJustNow marketplace payout destinations are not supported",
+  }),
+  deactivatePayoutDestination: async () => ({
+    supported: false,
+    message: "PayJustNow payout deactivation is not supported",
+  }),
+  getPayoutDestinationStatus: async () => ({ supported: false }),
+  createBranchPayoutDestination: async (profile) =>
+    module.exports.createPayoutDestination(profile),
+  createProviderSettlement: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "PayJustNow marketplace provider settlement is not supported",
+  }),
+  createSupplierSettlement: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "PayJustNow marketplace branch settlement is not supported",
+  }),
+  getSettlementStatus: async () => ({ supported: false }),
+  verifySettlementWebhook: async () => ({ valid: false }),
 };

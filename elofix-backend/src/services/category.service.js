@@ -13,6 +13,11 @@ const SERVICE_AREAS = [
 ];
 
 const ALLOWED_STEP3_TYPES = new Set(["measurements", "items", "issue", "none"]);
+const ALLOWED_PAYMENT_MODES = new Set([
+  "TWO_PAYMENT_50_50",
+  "SINGLE_PAYMENT_UPFRONT",
+  "SINGLE_PAYMENT_ON_COMPLETION",
+]);
 
 function emitSuggestionEvent(event, payload, userIds = []) {
   if (!global.io) return;
@@ -61,6 +66,8 @@ function normalizeCategoryInput(input, { isCreate = false } = {}) {
     input.requiresMaterials != null ? Boolean(input.requiresMaterials) : undefined;
   const requiresInspection =
     input.requiresInspection != null ? Boolean(input.requiresInspection) : undefined;
+  const paymentMode =
+    input.paymentMode != null ? String(input.paymentMode).trim().toUpperCase() : undefined;
   const isActive = input.isActive != null ? Boolean(input.isActive) : undefined;
   const sortOrder =
     input.sortOrder != null && input.sortOrder !== ""
@@ -81,6 +88,9 @@ function normalizeCategoryInput(input, { isCreate = false } = {}) {
   if (step3Type && !ALLOWED_STEP3_TYPES.has(step3Type)) {
     throw new AppError("Invalid step3Type", 400);
   }
+  if (paymentMode && !ALLOWED_PAYMENT_MODES.has(paymentMode)) {
+    throw new AppError("Invalid paymentMode", 400);
+  }
   if (sortOrder != null && Number.isNaN(sortOrder)) {
     throw new AppError("sortOrder must be a number", 400);
   }
@@ -92,6 +102,7 @@ function normalizeCategoryInput(input, { isCreate = false } = {}) {
     ...(step3Type != null ? { step3Type } : {}),
     ...(requiresMaterials != null ? { requiresMaterials } : {}),
     ...(requiresInspection != null ? { requiresInspection } : {}),
+    ...(paymentMode != null ? { paymentMode } : {}),
     ...(isActive != null ? { isActive } : {}),
     ...(sortOrder != null ? { sortOrder } : {}),
     ...(skills != null ? { skills } : {}),

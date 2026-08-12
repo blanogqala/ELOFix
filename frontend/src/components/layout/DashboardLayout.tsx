@@ -199,13 +199,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     staleTime: 5_000,
   });
 
-  const { hasJobsNavActivity, hasRequestsNavActivity } = useJobActivityIndicators();
+  const { hasJobsNavActivity, hasRequestsNavActivity, hasPaymentsNavActivity } =
+    useJobActivityIndicators();
   const { hasNavActivity: hasAdminNavActivity, hasGroupActivity: hasAdminGroupActivity } =
     useAdminActivityIndicators();
   useNavNotificationClearance();
   const jobsNavPath =
     user?.role === 'provider' ? '/provider/jobs' : user?.role === 'user' ? '/user/jobs' : null;
   const requestsNavPath = user?.role === 'provider' ? '/provider/requests' : null;
+  const paymentsNavPath = user?.role === 'user' ? '/user/payments' : null;
 
   const handleNotificationNew = useCallback((notification?: { type?: string }) => {
     if (!user?.id) return;
@@ -532,6 +534,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   )}
                   {requestsNavPath && item.path === requestsNavPath && hasRequestsNavActivity && (
                     <ActivityDot className="ml-1" aria-label="New requests" />
+                  )}
+                  {paymentsNavPath && item.path === paymentsNavPath && hasPaymentsNavActivity && (
+                    <ActivityDot className="ml-1" aria-label="New refund" />
                   )}
                   {active && (
                     <ChevronRight className="ml-auto h-4 w-4" />

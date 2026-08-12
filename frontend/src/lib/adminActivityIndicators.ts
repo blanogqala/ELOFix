@@ -9,6 +9,9 @@ const FRAUD_TYPES: AppNotificationType[] = ['fraud_alert'];
 const REFUND_REPAYMENTS_TYPES: AppNotificationType[] = [
   'admin_repayment_submitted',
   'admin_refund_debt_overdue',
+  'admin_refund_ready',
+  'admin_refund_manual_required',
+  'admin_refund_gateway_failed',
 ];
 
 const ADMIN_NAV_TYPE_MAP: Record<string, AppNotificationType[]> = {
@@ -16,13 +19,14 @@ const ADMIN_NAV_TYPE_MAP: Record<string, AppNotificationType[]> = {
   '/admin/categories': CATEGORIES_TYPES,
   '/admin/fraud-center': FRAUD_TYPES,
   '/admin/refund-repayments': REFUND_REPAYMENTS_TYPES,
+  '/admin/jobs': ['dispute_opened'],
 };
 
 export { ADMIN_NAV_TYPE_MAP };
 
 const ADMIN_GROUP_CHILD_PATHS: Record<string, string[]> = {
   Users: ['/admin/providers'],
-  Work: ['/admin/categories'],
+  Work: ['/admin/categories', '/admin/jobs'],
   Finance: ['/admin/refund-repayments'],
 };
 

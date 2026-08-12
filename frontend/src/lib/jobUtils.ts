@@ -1,5 +1,6 @@
 import type { Job, JobMaterialOrderSnapshot, MaterialLine } from '@/types';
 import { isMaterialOrderRefunded } from '@/lib/materialBatchTracking';
+import { paymentStatusLabelFromSummary } from '@/components/jobs/JobPaymentProgressCard';
 import { formatCurrency } from './formatCurrency';
 
 /** Courier job cancellation that opened an admin refund investigation (not a normal cancel). */
@@ -101,43 +102,87 @@ export function getProviderJobPriceDisplay(job: Job): ReturnType<typeof getJobPr
   return getJobPriceDisplay(job);
 }
 
-export function getJobPriceDisplay(job: Job): {
+export type JobPriceDisplay = {
   text: string;
+  /** Fully paid only (never true for deposit-only when paymentSummary exists). */
   isPaid?: boolean;
+  isFullyPaid?: boolean;
+  isPartialPaid?: boolean;
+  paymentStatusLabel?: string;
+  paidAmount?: number;
+  remainingAmount?: number;
   refundAmount?: number;
   refundStatus?: string;
   refundLabel?: string;
   underAdminReview?: boolean;
-} {
+};
+
+function withPaymentSummaryFields(
+  job: Job,
+  base: Omit<JobPriceDisplay, 'isPaid' | 'isFullyPaid' | 'isPartialPaid' | 'paymentStatusLabel' | 'paidAmount' | 'remainingAmount'> & {
+    isPaid?: boolean;
+  }
+): JobPriceDisplay {
+  const summary = !job.legacyEscrowV2 ? job.paymentSummary : null;
+  if (!summary) {
+    const legacyPaid = Boolean(base.isPaid);
+    return {
+      ...base,
+      isPaid: legacyPaid,
+      isFullyPaid: legacyPaid,
+      isPartialPaid: false,
+      paymentStatusLabel: legacyPaid ? 'Fully paid' : undefined,
+    };
+  }
+
+  const paidAmount = Number(summary.totalPaidByCustomer) || 0;
+  const remainingAmount = Number(summary.totalRemainingByCustomer) || 0;
+  const isFullyPaid = paidAmount > 0 && remainingAmount < 0.005;
+  const isPartialPaid = paidAmount > 0 && remainingAmount >= 0.005;
+  const paymentStatusLabel = paymentStatusLabelFromSummary(summary, job.paymentProgress);
+
+  return {
+    ...base,
+    paidAmount,
+    remainingAmount,
+    isFullyPaid,
+    isPartialPaid,
+    paymentStatusLabel,
+    // Backward-compatible: lists that still check isPaid must not treat deposit as full.
+    isPaid: isFullyPaid,
+  };
+}
+
+export function getJobPriceDisplay(job: Job): JobPriceDisplay {
   const isDisputed = job.status === 'DISPUTED';
   const refundAmount =
     !isDisputed && job.refundAmount != null && Number.isFinite(Number(job.refundAmount))
       ? Number(job.refundAmount)
       : undefined;
   const refundStatus = isDisputed ? undefined : job.refundStatus;
-  const underAdminReview =
-    isCourierCancellationUnderReview(job);
+  const underAdminReview = isCourierCancellationUnderReview(job);
+  const refundLabel = refundAmount && refundAmount > 0 ? 'Refunded' : undefined;
 
   const settled = job.totalPrice != null && Number.isFinite(Number(job.totalPrice)) ? Number(job.totalPrice) : null;
   if (settled != null && settled > 0) {
-    return {
+    return withPaymentSummaryFields(job, {
       text: formatCurrency(settled, { decimals: 2 }),
       isPaid: job.laborPaid ?? false,
       refundAmount,
       refundStatus,
-      refundLabel: refundAmount && refundAmount > 0 ? 'Refunded' : undefined,
+      refundLabel,
       underAdminReview,
-    };
+    });
   }
   if (job.servicePrice?.amount != null) {
-    return {
+    return withPaymentSummaryFields(job, {
       text: formatCurrency(job.servicePrice.amount, { decimals: 2 }),
       isPaid: job.laborPaid ?? false,
       refundAmount,
       refundStatus,
-      refundLabel: refundAmount && refundAmount > 0 ? 'Refunded' : undefined,
+      refundLabel,
       underAdminReview,
-    };
+    });
   }
   if (job.courierFlow && job.deliverySummary?.quotedFee != null) {
     const fee = Number(job.deliverySummary.quotedFee);
@@ -145,6 +190,9 @@ export function getJobPriceDisplay(job: Job): {
       return {
         text: formatCurrency(fee, { decimals: 2 }),
         isPaid: Boolean(job.deliverySummary.deliveryPaid),
+        isFullyPaid: Boolean(job.deliverySummary.deliveryPaid),
+        isPartialPaid: false,
+        paymentStatusLabel: job.deliverySummary.deliveryPaid ? 'Fully paid' : undefined,
         refundAmount,
         refundStatus,
         underAdminReview,

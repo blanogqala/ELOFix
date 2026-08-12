@@ -2,6 +2,10 @@
  * Financial refund / escrow unit tests (no DB).
  * Run: node tests/financial.refund.test.js
  */
+require("dotenv").config();
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+}
 const assert = require("assert");
 const {
   roundMoney,
@@ -19,10 +23,25 @@ function testGrossToNetLaborRefund() {
 }
 
 function testDisputeGrossToLaborNet() {
-  const job = { totalPrice: 1000, price: 1000 };
-  const meta = {};
-  assert.strictEqual(disputeGrossToLaborNet("FULL_REFUND", 0, job, meta), 930);
-  assert.strictEqual(disputeGrossToLaborNet("PARTIAL_REFUND", 500, job, meta), 465);
+  const jobNoPaid = { totalPrice: 1000, price: 1000 };
+  const metaEmpty = {};
+  assert.strictEqual(disputeGrossToLaborNet("FULL_REFUND", 0, jobNoPaid, metaEmpty), 0);
+  assert.strictEqual(disputeGrossToLaborNet("PARTIAL_REFUND", 500, jobNoPaid, metaEmpty), 0);
+
+  const depositJob = {
+    laborPaid: true,
+    legacyEscrowV2: false,
+    totalPrice: 1000,
+    quotedAmount: 1000,
+    paymentModeSnapshot: "TWO_PAYMENT_50_50",
+    firstPaymentAmount: 500,
+    secondPaymentAmount: 500,
+    paymentProgress: "FIRST_PAID",
+  };
+  const depositMeta = { laborPaid: true, depositPayment: { status: "paid", amount: 500 } };
+  assert.strictEqual(disputeGrossToLaborNet("FULL_REFUND", 0, depositJob, depositMeta), 465);
+  assert.strictEqual(disputeGrossToLaborNet("PARTIAL_REFUND", 500, depositJob, depositMeta), 465);
+  assert.strictEqual(disputeGrossToLaborNet("PARTIAL_REFUND", 1000, depositJob, depositMeta), 465);
 }
 
 function testEscrowAppliedNotOverstated() {

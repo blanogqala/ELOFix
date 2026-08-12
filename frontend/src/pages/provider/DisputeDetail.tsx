@@ -4,13 +4,13 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { DisputeCaseDetailView } from '@/components/disputes/DisputeCaseDetailView';
 import { DisputeMessageComposer } from '@/components/disputes/DisputeMessageComposer';
-import { ProviderDisputeEvidenceForm } from '@/components/disputes/ProviderDisputeEvidenceForm';
 import {
   addDisputeMessage,
   getDispute,
-  submitProviderDisputeEvidence,
+  submitDisputeEvidence,
 } from '@/lib/api/disputes';
-import type { JobDispute } from '@/types';
+import { buildJobCancellationFinancials } from '@/lib/jobCancellationFinancials';
+import type { Job, JobDispute } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 
@@ -24,6 +24,7 @@ export default function ProviderDisputeDetail() {
   const { toast } = useToast();
   const [dispute, setDispute] = useState<JobDispute | null>(null);
   const [loading, setLoading] = useState(true);
+  const [addingEvidence, setAddingEvidence] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -43,7 +44,8 @@ export default function ProviderDisputeDetail() {
   }, [load]);
 
   const isCancellation =
-    dispute?.job?.cancellationSource === 'customer_cancel' || dispute?.job?.cancellationSource === 'provider_cancel';
+    dispute?.job?.cancellationSource === 'customer_cancel' ||
+    dispute?.job?.cancellationSource === 'provider_cancel';
 
   useEffect(() => {
     if (!id || !dispute) return;
@@ -58,15 +60,27 @@ export default function ProviderDisputeDetail() {
     toast({ title: 'Message sent' });
   };
 
-  const handleSubmitEvidence = async (payload: {
+  const handleAddEvidence = async (payload: {
     comment: string;
     images: string[];
     videos: string[];
   }) => {
     if (!id) return;
-    const updated = await submitProviderDisputeEvidence(id, payload);
-    setDispute(updated);
-    toast({ title: 'Response saved', description: 'Your dispute response was updated.' });
+    setAddingEvidence(true);
+    try {
+      const updated = await submitDisputeEvidence(id, payload);
+      setDispute(updated);
+      toast({ title: 'Evidence submitted' });
+    } catch (e) {
+      toast({
+        title: 'Could not submit evidence',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+      throw e;
+    } finally {
+      setAddingEvidence(false);
+    }
   };
 
   if (loading) {
@@ -95,6 +109,9 @@ export default function ProviderDisputeDetail() {
 
   const jobTitle = dispute.job?.title || dispute.job?.categoryName || null;
   const open = isDisputeOpen(dispute.status);
+  const financials = dispute.job
+    ? buildJobCancellationFinancials(dispute.job as Job)
+    : null;
 
   return (
     <DashboardLayout>
@@ -116,6 +133,21 @@ export default function ProviderDisputeDetail() {
           dispute={dispute}
           jobTitle={jobTitle}
           caseKind="dispute"
+          evidenceEntries={dispute.evidence}
+          evidenceJobId={dispute.jobId}
+          canAddProviderEvidence={open}
+          onAddProviderEvidence={handleAddEvidence}
+          addingEvidence={addingEvidence}
+          financialSummary={
+            financials
+              ? {
+                  servicePrice: financials.servicePrice,
+                  paidToDate: financials.paidToDate,
+                  unpaidRemaining: financials.unpaidRemaining,
+                  amountUnderReview: financials.amountUnderReview,
+                }
+              : null
+          }
           footer={
             open ? (
               <DisputeMessageComposer
@@ -123,20 +155,12 @@ export default function ProviderDisputeDetail() {
                 onSend={handleSendMessage}
               />
             ) : (
-              <p className="text-sm text-muted-foreground">This case is closed. Messages are read-only.</p>
+              <p className="text-sm text-muted-foreground">
+                This case is closed. Messages are read-only.
+              </p>
             )
           }
         />
-
-        {open && dispute.jobId && (
-          <ProviderDisputeEvidenceForm
-            jobId={dispute.jobId}
-            initialComment={dispute.providerComment}
-            initialImages={dispute.providerImages}
-            initialVideos={dispute.providerVideos}
-            onSubmit={handleSubmitEvidence}
-          />
-        )}
       </div>
     </DashboardLayout>
   );

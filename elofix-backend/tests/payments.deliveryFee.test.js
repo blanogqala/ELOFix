@@ -59,7 +59,8 @@ async function createFixtures(prisma, suffix) {
         supplierId: supplier.id,
         branchId: branch.id,
         paymentStatus: "unpaid",
-        payload: { totalAmount: 500, deliveryFee: 100, payment: {}, ...payloadExtra },
+        materialsSubtotal: 500,
+        payload: { totalAmount: 500, deliveryFee: 100, materialsSubtotal: 500, payment: {}, ...payloadExtra },
       },
     });
   const orderRaw = await makeOrder();

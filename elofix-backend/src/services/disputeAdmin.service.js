@@ -11,6 +11,8 @@ const {
   getJobMeta,
   mutateJobMetaInTransaction,
   enrichJob,
+  createChat,
+  appendTimelineEventIfAbsent,
 } = require("./jobMeta.service");
 const jobProgressUtil = require("../utils/jobProgress.util");
 const paymentService = require("./payment.service");
@@ -25,6 +27,7 @@ const {
   attemptGatewayRefundFirst,
   resolveRefundStatusAfterGateway,
   roundMoney,
+  remainingRefundableLaborGross,
 } = require("./providerRefundClawback.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const { normalizeMeta } = require("./jobMeta.service");
@@ -146,6 +149,7 @@ async function getDisputeDetail(disputeId) {
     include: {
       messages: { orderBy: { createdAt: "asc" } },
       resolutionLogs: { orderBy: { createdAt: "desc" } },
+      evidenceEntries: { orderBy: { createdAt: "asc" } },
       job: true,
     },
   });
@@ -159,9 +163,15 @@ async function getDisputeDetail(disputeId) {
   const evidence = await jobCompletionEvidence.getEvidenceByJobId(row.jobId);
   const rounds = await disputeRoundService.getDisputeRounds(row.id);
   const messages = await mapDisputeMessages(row.messages);
+  const { mapEvidenceEntries } = require("./jobDispute.service");
 
   return {
-    dispute: toAdminDisputeDto({ ...row, customer, provider }),
+    dispute: toAdminDisputeDto({
+      ...row,
+      customer,
+      provider,
+      evidence: mapEvidenceEntries(row.evidenceEntries),
+    }),
     messages,
     resolutionLogs: row.resolutionLogs.map((l) => ({
       id: l.id,
@@ -173,6 +183,7 @@ async function getDisputeDetail(disputeId) {
     })),
     job: row.job ? enrichJob(row.job, meta) : null,
     completionEvidence: evidence,
+    evidence: mapEvidenceEntries(row.evidenceEntries),
     rounds,
   };
 }
@@ -241,10 +252,6 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
   const metaBefore = normalizeMeta(job.meta);
   const cancellationDispute = isCancellationDispute(metaBefore);
 
-  if (cancellationDispute && action === "RETURN_PROVIDER") {
-    throw new AppError("Return provider is not available for cancellation disputes", 400);
-  }
-
   const providerRow = await prisma.provider.findUnique({
     where: { userId: job.providerId },
     select: { id: true },
@@ -256,9 +263,12 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
   if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
     refundGross =
       action === "FULL_REFUND"
-        ? Number(job.totalPrice) || Number(job.price) || 0
+        ? remainingRefundableLaborGross(job, metaBefore)
         : Math.max(0, Number(amount) || 0);
     refundLaborNet = disputeGrossToLaborNet(action, refundGross, job, metaBefore);
+    if (action === "FULL_REFUND" && refundLaborNet <= 0) {
+      throw new AppError("No paid amount remains available to refund", 400);
+    }
     const laborPaidFlag = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);
     if (refundLaborNet > 0 && laborPaidFlag) {
       const split = providerRow
@@ -278,6 +288,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
   }
 
   let trustUpdate = null;
+  let releasePaymentDue = null;
 
   const txResult = await prisma.$transaction(
     async (tx) => {
@@ -293,9 +304,10 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
         return { replay: true };
       }
 
+      const resolutionLogId = randomUUID();
       await tx.disputeResolutionLog.create({
         data: {
-          id: randomUUID(),
+          id: resolutionLogId,
           disputeId: dispute.id,
           adminId: String(adminUserId),
           action,
@@ -305,39 +317,65 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
       });
 
       if (action === "RELEASE_FUNDS" && providerRow) {
-        if (cancellationDispute) {
-          await releaseHeldEscrowToProviderInTransaction(tx, job.id, providerRow.id);
-          await cancelJobAfterCancellationDisputeInTransaction(tx, job.id);
-        } else {
-          const j0 = await tx.job.findUnique({ where: { id: job.id } });
-          if (!j0.escrowSecondReleaseDone) {
-            await paymentService.runSecondTrancheInTransaction(tx, {
-              job: j0,
-              providerProfileId: providerRow.id,
-              jobId: job.id,
-            });
-            const escrowSettlement = require("./payments/escrowSettlement.service");
-            await escrowSettlement.markLaborEscrowFullyReleased(job.id, tx);
-          }
-          await tx.job.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
-          await mutateJobMetaInTransaction(tx, job.id, (m) => {
-            const next = {
-              ...m,
-              completionConfirmedByUser: true,
-              disputeId: null,
-              statusOverride: "COMPLETED",
-              escrowFrozen: false,
-            };
-            next.progressStep = jobProgressUtil.nextMonotonicProgressStep(next, job);
-            return next;
+        const j0 = await tx.job.findUnique({ where: { id: job.id } });
+        const amountDue = Math.max(
+          0,
+          Number(j0?.secondPaymentAmount) ||
+            (Number(j0?.quotedAmount || j0?.totalPrice || 0) > 0
+              ? Number(j0?.quotedAmount || j0?.totalPrice || 0) / 2
+              : 0)
+        );
+        const dueAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const notifiedAt = new Date().toISOString();
+        releasePaymentDue = { amountDue, dueAt: dueAt.toISOString() };
+        await tx.job.update({
+          where: { id: job.id },
+          data: { status: "IN_PROGRESS" },
+        });
+        await mutateJobMetaInTransaction(tx, job.id, (m) => {
+          const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
+          const chat = Array.isArray(m.chat) ? [...m.chat] : [];
+          chat.push(
+            createChat(
+              systemAuthor,
+              "Admin released the remaining balance for payment. The customer must settle the outstanding completion amount."
+            )
+          );
+          let patched = {
+            ...m,
+            statusOverride: "AWAITING_CONFIRMATION",
+            disputeId: null,
+            escrowFrozen: false,
+            cancellationSource: null,
+            cancellationReason: null,
+            cancellationDetails: null,
+            cancelledBy: null,
+            cancelledAt: null,
+            completionPaymentDue: {
+              amountDue,
+              dueAt: dueAt.toISOString(),
+              resolutionLogId,
+              createdAt: notifiedAt,
+              notifiedAt,
+            },
+            chat,
+          };
+          patched = appendTimelineEventIfAbsent(patched, {
+            type: "ADMIN_RELEASE_COMPLETION_DUE",
+            at: notifiedAt,
+            source: "admin_resolve",
+            amountDue,
+            dueAt: dueAt.toISOString(),
           });
-        }
+          return patched;
+        });
       } else if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
         const laborNet = refundLaborNet;
         const clawbackIdempotencyKey = `dispute-refund:${dispute.id}:${action}`;
-        const laborGross = Number(job.totalPrice) || Number(job.price) || 0;
-        const maxNetLabor = Math.round(laborGross * 0.93 * 100) / 100;
-        const isFullRefund = laborNet > 0 && laborNet >= maxNetLabor - 0.01;
+        const maxRefundableNet = disputeGrossToLaborNet("FULL_REFUND", 0, job, metaBefore);
+        const isFullRefund =
+          laborNet > 0 &&
+          (action === "FULL_REFUND" || laborNet >= maxRefundableNet - 0.01);
         const refundStatusOverride = resolveRefundStatusAfterGateway({
           manualOnly: Boolean(gatewayPreflight?.manualOnly),
           gatewaySuccess: gatewayPreflight?.result?.ok === true,
@@ -373,26 +411,51 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
         }
       } else if (action === "RETURN_PROVIDER") {
         await tx.job.update({ where: { id: job.id }, data: { status: "IN_PROGRESS" } });
-        await mutateJobMetaInTransaction(tx, job.id, (m) => ({
-          ...m,
-          statusOverride: "IN_PROGRESS",
-          disputeId: null,
-          escrowFrozen: false,
-          markedCompleteAt: null,
-          confirmationDeadlineAt: null,
-          progressStep: 3,
-        }));
+        await mutateJobMetaInTransaction(tx, job.id, (m) => {
+          const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
+          const chat = Array.isArray(m.chat) ? [...m.chat] : [];
+          chat.push(createChat(systemAuthor, "Admin instructed provider to return to site."));
+          let patched = {
+            ...m,
+            statusOverride: "IN_PROGRESS",
+            disputeId: null,
+            escrowFrozen: false,
+            markedCompleteAt: null,
+            confirmationDeadlineAt: null,
+            completionPaymentDue: null,
+            cancellationSource: null,
+            cancellationReason: null,
+            cancellationDetails: null,
+            cancelledBy: null,
+            cancelledAt: null,
+            progressStep: 3,
+            chat,
+          };
+          patched = appendTimelineEventIfAbsent(patched, {
+            type: "ADMIN_RETURN_PROVIDER",
+            at: new Date().toISOString(),
+            source: "admin_resolve",
+          });
+          return patched;
+        });
       } else if (action === "CLOSE_CASE") {
-        if (cancellationDispute && providerRow) {
-          await releaseHeldEscrowToProviderInTransaction(tx, job.id, providerRow.id);
-          await cancelJobAfterCancellationDisputeInTransaction(tx, job.id);
-        } else {
-          await mutateJobMetaInTransaction(tx, job.id, (m) => ({
+        await mutateJobMetaInTransaction(tx, job.id, (m) => {
+          const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
+          const chat = Array.isArray(m.chat) ? [...m.chat] : [];
+          chat.push(createChat(systemAuthor, "Admin closed the dispute without financial movement."));
+          let patched = {
             ...m,
             disputeId: null,
             escrowFrozen: false,
-          }));
-        }
+            chat,
+          };
+          patched = appendTimelineEventIfAbsent(patched, {
+            type: "DISPUTE_CLOSED",
+            at: new Date().toISOString(),
+            source: "admin_resolve",
+          });
+          return patched;
+        });
       }
 
       await disputeRoundService.closeActiveDisputeRoundInTransaction(tx, dispute.id, {
@@ -430,8 +493,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
   }
 
   const cancelledAfterResolve =
-    cancellationDispute &&
-    ["RELEASE_FUNDS", "PARTIAL_REFUND", "FULL_REFUND", "CLOSE_CASE"].includes(action);
+    cancellationDispute && ["PARTIAL_REFUND", "FULL_REFUND"].includes(action);
   if (cancelledAfterResolve && Boolean(metaBefore?.courierFlow)) {
     try {
       const materialOrderService = require("./materialOrder.service");

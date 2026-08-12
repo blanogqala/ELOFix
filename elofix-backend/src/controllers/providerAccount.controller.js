@@ -25,6 +25,16 @@ async function putWithdrawalProfile(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function putWithdrawalProfileReplace(req, res) {
+  const data = await providerAccountService.replaceWithdrawalProfile(req.user.userId, req.body || {});
+  res.json({ success: true, ...data });
+}
+
+async function deleteWithdrawalProfile(req, res) {
+  const data = await providerAccountService.deactivateWithdrawalProfile(req.user.userId);
+  res.json({ success: true, ...data });
+}
+
 async function getWithdrawals(req, res) {
   const data = await providerAccountService.listProviderWithdrawals(req.user.userId);
   res.json({ success: true, ...data });
@@ -80,10 +90,29 @@ async function getRefundDebt(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function getJobRefundObligation(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const data = await refundRecovery.getProviderJobRefundObligation(
+    req.user.userId,
+    req.params.jobId
+  );
+  res.json({ success: true, obligation: data });
+}
+
 async function postRefundRepayment(req, res) {
   const refundRecovery = require("../services/refundRecovery.service");
   const row = await refundRecovery.submitProviderRepayment(req.user.userId, req.body || {});
   res.status(201).json({ success: true, repayment: row });
+}
+
+async function postRefundObligationCheckout(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const data = await refundRecovery.createProviderRefundRepaymentCheckout(
+    req.user.userId,
+    req.params.jobId,
+    req.body || {}
+  );
+  res.status(201).json({ success: true, ...data });
 }
 
 module.exports = {
@@ -92,10 +121,14 @@ module.exports = {
   getEarningJob,
   getWithdrawalProfile,
   putWithdrawalProfile,
+  putWithdrawalProfileReplace,
+  deleteWithdrawalProfile,
   getWithdrawals,
   getTransactions,
   postWithdraw,
   getTrustScore,
   getRefundDebt,
+  getJobRefundObligation,
   postRefundRepayment,
+  postRefundObligationCheckout,
 };

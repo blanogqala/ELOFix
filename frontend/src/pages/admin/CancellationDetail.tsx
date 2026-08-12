@@ -2,22 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { DisputeCaseDetailView } from '@/components/disputes/DisputeCaseDetailView';
 import { DisputeMessageComposer } from '@/components/disputes/DisputeMessageComposer';
+import { AdminResolutionPanel } from '@/components/disputes/AdminResolutionPanel';
 import {
   getAdminDisputeDetail,
   resolveAdminDispute,
   updateAdminDisputeStatus,
 } from '@/lib/api/adminDisputes';
 import { addDisputeMessage } from '@/lib/api/disputes';
+import { buildJobCancellationFinancials } from '@/lib/jobCancellationFinancials';
+import type { Job, JobDispute } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 
@@ -34,7 +29,6 @@ export default function AdminCancellationDetail() {
   const [acting, setActing] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
   const [resolveAction, setResolveAction] = useState('RELEASE_FUNDS');
-  const [refundAmount, setRefundAmount] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -65,19 +59,6 @@ export default function AdminCancellationDetail() {
     navigate(`/admin/disputes/${id}`, { replace: true });
   }, [id, data, isCancellation, navigate]);
 
-  if (loading || !data) {
-    return (
-      <DashboardLayout>
-        <div className="flex justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin" />
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  const { dispute, messages, resolutionLogs, rounds, job } = data;
-  const open = isCaseOpen(dispute.status);
-
   const handleInvestigate = async () => {
     if (!id) return;
     setActing(true);
@@ -96,7 +77,6 @@ export default function AdminCancellationDetail() {
     try {
       await resolveAdminDispute(id, {
         action: resolveAction,
-        amount: resolveAction === 'PARTIAL_REFUND' ? Number(refundAmount) : undefined,
         notes: adminNotes,
       });
       await load();
@@ -119,7 +99,25 @@ export default function AdminCancellationDetail() {
     toast({ title: 'Message sent' });
   };
 
+  if (loading || !data) {
+    return (
+      <DashboardLayout>
+        <div className="flex justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const { dispute, messages, resolutionLogs, rounds, job } = data;
+  const open = isCaseOpen(dispute.status);
+  const cancelFinancials = job ? buildJobCancellationFinancials(job as Job) : null;
+  const maxRefundable = cancelFinancials?.amountUnderReview ?? 0;
   const jobTitle = dispute.jobTitle || dispute.jobCategory || null;
+  const adminEvidence =
+    (data as { evidence?: JobDispute['evidence'] }).evidence ??
+    (dispute as JobDispute).evidence ??
+    [];
 
   return (
     <DashboardLayout>
@@ -131,12 +129,29 @@ export default function AdminCancellationDetail() {
         </div>
 
         <DisputeCaseDetailView
-          dispute={{ ...dispute, adminNotes: adminNotes || dispute.adminNotes, rounds: rounds ?? dispute.rounds }}
+          dispute={{
+            ...dispute,
+            adminNotes: adminNotes || dispute.adminNotes,
+            rounds: rounds ?? dispute.rounds,
+            evidence: adminEvidence,
+          }}
           messages={messages}
           resolutionLogs={resolutionLogs}
           rounds={rounds ?? dispute.rounds}
           jobTitle={jobTitle}
           caseKind="cancellation"
+          evidenceEntries={adminEvidence}
+          evidenceJobId={dispute.jobId}
+          financialSummary={
+            cancelFinancials
+              ? {
+                  servicePrice: cancelFinancials.servicePrice,
+                  paidToDate: cancelFinancials.paidToDate,
+                  unpaidRemaining: cancelFinancials.unpaidRemaining,
+                  amountUnderReview: cancelFinancials.amountUnderReview,
+                }
+              : null
+          }
           footer={
             open ? (
               <DisputeMessageComposer placeholder="Message the customer or provider…" onSend={handleSendMessage} />
@@ -146,52 +161,19 @@ export default function AdminCancellationDetail() {
           }
         />
 
-        {open && (
-          <div className="card-elevated space-y-4 p-5 sm:p-6">
-            <h2 className="font-semibold">Admin resolution</h2>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Admin notes</label>
-              <Textarea value={adminNotes} onChange={(e) => setAdminNotes(e.target.value)} />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Action</label>
-                <Select value={resolveAction} onValueChange={setResolveAction}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select action" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="RELEASE_FUNDS">Release funds</SelectItem>
-                    <SelectItem value="PARTIAL_REFUND">Partial refund</SelectItem>
-                    <SelectItem value="FULL_REFUND">Full refund</SelectItem>
-                    <SelectItem value="CLOSE_CASE">Close case</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {resolveAction === 'PARTIAL_REFUND' && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Refund amount</label>
-                  <input
-                    value={refundAmount}
-                    onChange={(e) => setRefundAmount(e.target.value)}
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    inputMode="decimal"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" disabled={acting} onClick={() => void handleInvestigate()}>
-                Mark under investigation
-              </Button>
-              <Button className="btn-accent" disabled={acting} onClick={() => void handleResolve()}>
-                Apply resolution
-              </Button>
-            </div>
-          </div>
-        )}
+        {open ? (
+          <AdminResolutionPanel
+            adminNotes={adminNotes}
+            onAdminNotesChange={setAdminNotes}
+            resolveAction={resolveAction}
+            onResolveActionChange={setResolveAction}
+            acting={acting}
+            onInvestigate={handleInvestigate}
+            onResolve={handleResolve}
+            maxRefundable={maxRefundable}
+          />
+        ) : null}
       </div>
     </DashboardLayout>
   );
 }
-

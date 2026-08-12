@@ -520,13 +520,16 @@ export interface SupplierBranchAnalyticsRow {
   netEarnings: number;
   platformCommission?: number;
   grossRevenue?: number;
-  availableWithdrawals?: number;
+  pendingSettlement?: number;
+  settled?: number;
   managerEmails?: string[];
 }
 
 export interface SupplierAnalyticsBranchesResult {
   branches: SupplierBranchAnalyticsRow[];
-  totalAvailableWithdrawals: number;
+  totalPendingSettlement: number;
+  totalSettled: number;
+  gatewaySettlementSupported?: boolean;
 }
 
 export async function getSupplierAnalyticsBranches(params?: {
@@ -538,11 +541,15 @@ export async function getSupplierAnalyticsBranches(params?: {
   const { data } = await apiClient.get<{
     success: boolean;
     branches: SupplierBranchAnalyticsRow[];
-    totalAvailableWithdrawals?: number;
+    totalPendingSettlement?: number;
+    totalSettled?: number;
+    gatewaySettlementSupported?: boolean;
   }>('/supplier/analytics/branches', { params: { ...params } });
   return {
     branches: Array.isArray(data?.branches) ? data.branches : [],
-    totalAvailableWithdrawals: Number(data?.totalAvailableWithdrawals ?? 0),
+    totalPendingSettlement: Number(data?.totalPendingSettlement ?? 0),
+    totalSettled: Number(data?.totalSettled ?? 0),
+    gatewaySettlementSupported: Boolean(data?.gatewaySettlementSupported),
   };
 }
 
@@ -601,11 +608,13 @@ function branchIdempotencyHeaders(): { 'Idempotency-Key': string } {
   return { 'Idempotency-Key': uuid };
 }
 
-export interface BranchBalanceSnapshot {
-  totalEarned: number;
-  totalWithdrawn: number;
-  withdrawalCap: number;
-  available: number;
+export interface BranchSettlementSummary {
+  totalMaterialSales: number;
+  platformCommission: number;
+  netBranchEarnings: number;
+  pendingSettlement: number;
+  settled: number;
+  gatewaySettlementSupported: boolean;
 }
 
 export interface BranchWithdrawalProfile {
@@ -613,111 +622,145 @@ export interface BranchWithdrawalProfile {
   branchId: string;
   bankName: string;
   accountHolder: string;
+  accountType?: string;
   accountNumberMasked: string;
   branchCodeMasked: string;
+  verificationStatus?: string;
+  gatewaySettlementProfile?: {
+    status?: string | null;
+    provider?: string | null;
+    recipientConfigured?: boolean;
+  };
+  isActive?: boolean;
   updatedAt: string;
 }
 
-export interface BranchWithdrawalRow {
+export interface BranchPayoutProfileResponse {
+  success: boolean;
+  profile: BranchWithdrawalProfile | null;
+  verificationStatus?: string;
+  gatewaySettlementSupported?: boolean;
+  bankProfileComplete?: boolean;
+  canRemove?: boolean;
+  removeBlockedReason?: string;
+}
+
+export interface BranchSettlementEventRow {
   id: string;
-  amount: number;
-  status: string;
+  branchId: string;
+  branchName?: string;
+  supplierId: string;
+  materialOrderId?: string;
+  paymentIntentId?: string;
+  eventType: string;
+  grossAmount: number;
+  commissionAmount: number;
+  netAmount: number;
+  settlementStatus: string;
+  gatewayReference?: string;
+  gatewaySettlementId?: string;
+  description?: string;
   createdAt: string;
 }
 
-export async function getBranchBalance(branchId: string): Promise<BranchBalanceSnapshot> {
-  const { data } = await apiClient.get<{ success: boolean } & BranchBalanceSnapshot>(
+/** @deprecated use BranchSettlementSummary */
+export interface BranchBalanceSnapshot extends BranchSettlementSummary {}
+
+export async function getBranchBalance(branchId: string): Promise<BranchSettlementSummary> {
+  const { data } = await apiClient.get<{ success: boolean } & BranchSettlementSummary>(
     `/supplier/branches/${encodeURIComponent(branchId)}/balance`
   );
   return {
-    totalEarned: data.totalEarned ?? 0,
-    totalWithdrawn: data.totalWithdrawn ?? 0,
-    withdrawalCap: data.withdrawalCap ?? 0,
-    available: data.available ?? 0,
+    totalMaterialSales: data.totalMaterialSales ?? 0,
+    platformCommission: data.platformCommission ?? 0,
+    netBranchEarnings: data.netBranchEarnings ?? 0,
+    pendingSettlement: data.pendingSettlement ?? 0,
+    settled: data.settled ?? 0,
+    gatewaySettlementSupported: Boolean(data.gatewaySettlementSupported),
   };
 }
 
-export async function getBranchWithdrawalProfile(
-  branchId: string
-): Promise<{ success: boolean; profile: BranchWithdrawalProfile | null }> {
-  const { data } = await apiClient.get<{ success: boolean; profile: BranchWithdrawalProfile | null }>(
+export async function getBranchWithdrawalProfile(branchId: string): Promise<BranchPayoutProfileResponse> {
+  const { data } = await apiClient.get<BranchPayoutProfileResponse>(
     `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile`
   );
   return data;
 }
 
+type BranchSavePayoutBody = {
+  bankName: string;
+  accountHolder: string;
+  accountNumber?: string;
+  branchCode?: string;
+  accountType?: string;
+  confirmReplace?: boolean;
+};
+
 export async function saveBranchWithdrawalProfile(
   branchId: string,
-  body: {
-    bankName: string;
-    accountNumber: string;
-    accountHolder: string;
-    branchCode: string;
-  }
-): Promise<{ success: boolean; profile: BranchWithdrawalProfile }> {
-  const { data } = await apiClient.put<{ success: boolean; profile: BranchWithdrawalProfile }>(
+  body: BranchSavePayoutBody
+): Promise<BranchPayoutProfileResponse> {
+  const { data } = await apiClient.put<BranchPayoutProfileResponse>(
     `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile`,
     body
   );
   return data;
 }
 
-export async function requestBranchWithdrawal(
+export async function replaceBranchWithdrawalProfile(
   branchId: string,
-  amount: number
-): Promise<{
-  success: boolean;
-  withdrawal: { id: string; amount: number; status: string; createdAt: string };
-}> {
-  const { data } = await apiClient.post(
-    `/supplier/branches/${encodeURIComponent(branchId)}/withdraw`,
-    { amount },
-    { headers: branchIdempotencyHeaders() }
+  body: BranchSavePayoutBody & { confirmReplace: true }
+): Promise<BranchPayoutProfileResponse> {
+  const { data } = await apiClient.put<BranchPayoutProfileResponse>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile/replace`,
+    body
   );
   return data;
 }
 
-export async function getBranchWithdrawals(
+export async function removeBranchWithdrawalProfile(branchId: string): Promise<BranchPayoutProfileResponse> {
+  const { data } = await apiClient.delete<BranchPayoutProfileResponse>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile`
+  );
+  return data;
+}
+
+export async function getBranchSettlementHistory(
   branchId: string,
   filters?: { from?: string; to?: string }
-): Promise<{ success: boolean; withdrawals: BranchWithdrawalRow[] }> {
+): Promise<{ success: boolean; events: BranchSettlementEventRow[] }> {
   const params: Record<string, string> = {};
   if (filters?.from) params.from = filters.from;
   if (filters?.to) params.to = filters.to;
-  const { data } = await apiClient.get<{ success: boolean; withdrawals: BranchWithdrawalRow[] }>(
+  const { data } = await apiClient.get<{ success: boolean; events: BranchSettlementEventRow[] }>(
     `/supplier/branches/${encodeURIComponent(branchId)}/withdrawals`,
     Object.keys(params).length > 0 ? { params } : undefined
   );
   return {
     success: Boolean(data?.success),
-    withdrawals: Array.isArray(data?.withdrawals) ? data.withdrawals : [],
+    events: Array.isArray(data?.events) ? data.events : [],
   };
 }
 
-export interface SupplierOrgWithdrawalRow {
-  id: string;
-  branchId: string;
-  branchName: string;
-  amount: number;
-  status: string;
-  createdAt: string;
+export interface SupplierOrgSettlementEventRow extends BranchSettlementEventRow {
+  branchName?: string;
 }
 
-export async function getSupplierOrgBranchWithdrawals(filters?: {
+export async function getSupplierOrgSettlementHistory(filters?: {
   from?: string;
   to?: string;
   branchId?: string;
-}): Promise<{ success: boolean; withdrawals: SupplierOrgWithdrawalRow[] }> {
+}): Promise<{ success: boolean; events: SupplierOrgSettlementEventRow[] }> {
   const params: Record<string, string> = {};
   if (filters?.from) params.from = filters.from;
   if (filters?.to) params.to = filters.to;
   if (filters?.branchId) params.branchId = filters.branchId;
-  const { data } = await apiClient.get<{ success: boolean; withdrawals: SupplierOrgWithdrawalRow[] }>(
+  const { data } = await apiClient.get<{ success: boolean; events: SupplierOrgSettlementEventRow[] }>(
     '/supplier/branch-withdrawals',
     Object.keys(params).length > 0 ? { params } : undefined
   );
   return {
     success: Boolean(data?.success),
-    withdrawals: Array.isArray(data?.withdrawals) ? data.withdrawals : [],
+    events: Array.isArray(data?.events) ? data.events : [],
   };
 }

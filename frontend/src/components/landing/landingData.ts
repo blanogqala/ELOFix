@@ -76,7 +76,7 @@ export const PLATFORM_FEATURES: PlatformFeature[] = [
     title: 'Request Services',
     description:
       'Post maintenance jobs, compare verified providers, and manage work from quote to completion — all in one place.',
-    highlights: ['AI-assisted estimates', 'Portfolio & reviews', 'Milestone tracking'],
+    highlights: ['AI-assisted estimates', 'Portfolio & reviews', 'Clear job tracking'],
     accent: 'primary',
   },
   {
@@ -146,7 +146,7 @@ export const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     icon: Lock,
     title: 'Pay Securely',
     description:
-      'Funds are protected with escrow until work is approved or materials are delivered. Track every step in real time.',
+      'Flexible payment options for every service. Selected jobs use a 50% mobilisation payment before work begins and the remaining 50% after completion; others use a single payment. Track every step in real time.',
   },
 ];
 
@@ -168,8 +168,8 @@ export const TRUST_ITEMS: TrustItem[] = [
   },
   {
     icon: Lock,
-    title: 'Escrow Protection',
-    description: 'Your money is held safely until you approve the outcome.',
+    title: 'Flexible Payments',
+    description: 'Staged or single payment depending on the service category — clear schedules upfront.',
   },
   {
     icon: Radar,
@@ -195,7 +195,7 @@ export const SUPPLIER_BRANDS: SupplierBrand[] = [
 export const TESTIMONIALS: Testimonial[] = [
   {
     quote:
-      'I booked a plumber and ordered tiles from Cashbuild in one session. Delivery tracking was spot-on and the escrow gave me peace of mind.',
+      'I booked a plumber and ordered tiles from Cashbuild in one session. Delivery tracking was spot-on and the payment schedule was clear from the start.',
     name: 'Thandi M.',
     role: 'Homeowner · Johannesburg',
     rating: 5,
@@ -240,9 +240,9 @@ export const FAQ_ITEMS: FAQItem[] = [
       'Providers complete ID verification, skill assessment, and portfolio review. Verified badges appear on profiles so you can choose with confidence.',
   },
   {
-    question: 'How does escrow protection work?',
+    question: 'How do payments work on EloFix?',
     answer:
-      'When you pay through EloFix, funds are held securely until you confirm the job is complete or materials are received as expected. Disputes are handled through our support team.',
+      'Flexible payment options for every service. Selected services can be paid in two stages — a 50% mobilisation payment before work begins and the remaining 50% after completion. Some services use a single payment, depending on the service category. Providers receive requests, quote, receive the applicable payment for that category, complete the work, request completion, and receive any remaining payment where applicable. Settlement is processed through licensed payment partners; EloFix does not hold or guarantee provider funds.',
   },
   {
     question: 'What is the supplier branch system?',

@@ -15,7 +15,7 @@ import {
 import { cn } from '@/lib/utils';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
-import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
+import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
@@ -95,12 +95,7 @@ export default function ProviderDashboard() {
         </p>
       </div>
       <div className="shrink-0 text-right">
-        <p className="text-sm font-medium tabular-nums">
-          {getProviderJobPriceDisplay(job).text}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {new Date(job.createdAt).toLocaleDateString()}
-        </p>
+        <JobPaymentListSummary job={job} showDate compact />
       </div>
     </>
   );
@@ -329,9 +324,7 @@ export default function ProviderDashboard() {
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-sm font-semibold text-primary tabular-nums">
-                          {getProviderJobPriceDisplay(job).text}
-                        </p>
+                        <JobPaymentListSummary job={job} compact className="text-primary [&_p:first-child]:text-primary [&_p:first-child]:font-semibold" />
                       </div>
                     </div>
                   </div>

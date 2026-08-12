@@ -256,6 +256,10 @@ function checkProviderProfileCompletion(profile, user, opts = {}) {
 
   if (!businessHoursComplete(settings)) return false;
 
+  const hasPayoutProfile =
+    Boolean(profile.withdrawalProfile) || Boolean(profile.bankVerifiedAt);
+  if (!hasPayoutProfile) return false;
+
   return true;
 }
 
@@ -479,6 +483,7 @@ async function persistProfileCompleted(profileId) {
     include: {
       user: { select: { phone: true } },
       workPosts: { select: { id: true } },
+      withdrawalProfile: { select: { id: true } },
     },
   });
   if (!profile) return false;
@@ -977,11 +982,28 @@ async function listProviders({
     ? profiles
     : profiles.filter((profile) => isProviderAvailable(profile.settings));
 
+  // Hide providers with overdue refund debt from customer booking lists
+  // (they may not yet be flagged blocked=true, but cannot accept new work).
+  let bookableProfiles = visibleProfiles;
+  if (!forAdmin && visibleProfiles.length > 0) {
+    const overdueRows = await prisma.refundRecovery.findMany({
+      where: {
+        providerId: { in: visibleProfiles.map((p) => p.id) },
+        status: "OVERDUE",
+      },
+      select: { providerId: true },
+    });
+    if (overdueRows.length) {
+      const overdueIds = new Set(overdueRows.map((r) => String(r.providerId)));
+      bookableProfiles = visibleProfiles.filter((p) => !overdueIds.has(String(p.id)));
+    }
+  }
+
   const laborByProviderUserId = await aggregateCompletedLaborByCategoryForProviders(
-    visibleProfiles.map((p) => p.userId)
+    bookableProfiles.map((p) => p.userId)
   );
 
-  const providerUserIds = visibleProfiles.map((p) => p.userId);
+  const providerUserIds = bookableProfiles.map((p) => p.userId);
   const providerJobs =
     providerUserIds.length > 0
       ? await prisma.job.findMany({
@@ -997,7 +1019,7 @@ async function listProviders({
   });
 
   const providers = await Promise.all(
-    visibleProfiles.map(async (profile) => {
+    bookableProfiles.map(async (profile) => {
       const providerJobRows = jobsByProviderUserId.get(String(profile.userId)) || [];
       const completedJobs = countJobsByStatus(providerJobRows).completed;
       const pendingSuggestionsCount = forAdmin
@@ -1196,8 +1218,11 @@ async function getProviderById(id) {
     },
   });
 
+  const { aggregateRatingBreakdown } = require("./providerReview.service");
+  const { PUBLIC_REVIEW_RATING_FILTER } = require("./providerAggregateRating.service");
+
   const reviewRows = await prisma.providerReview.findMany({
-    where: { providerId: profile.id },
+    where: { providerId: profile.id, ...PUBLIC_REVIEW_RATING_FILTER },
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {
@@ -1211,7 +1236,6 @@ async function getProviderById(id) {
     },
   });
 
-  const { aggregateRatingBreakdown } = require("./providerReview.service");
   const ratingBreakdown = await aggregateRatingBreakdown(profile.id);
 
   const trustRow = await providerTrustScore.getTrustScoreForProviderProfile(profile.id, profile);

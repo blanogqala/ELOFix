@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  getAdminSupplierAvailableWithdrawals,
-  getAdminSupplierBranchWithdrawals,
+  getAdminSupplierSettlementSummary,
+  getAdminSupplierSettlementHistory,
   getAdminSupplierOrdersExport,
 } from '@/lib/api/admin';
 import { EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY } from '@/lib/api/supplierPortal';
 import { parseInitialDate } from '@/components/supplier/SupplierEarningsEnhanced';
 import { AdminSupplierOrdersPanel } from '@/components/admin/AdminSupplierOrdersPanel';
-import { SupplierOrgWithdrawalHistoryPanel } from '@/components/supplier/SupplierOrgWithdrawalHistoryPanel';
+import { SupplierSettlementHistoryPanel } from '@/components/supplier/SupplierSettlementHistoryPanel';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,17 +39,18 @@ export function AdminSupplierMaterialOrdersSection({
     enabled: Boolean(supplierId),
   });
 
-  const { data: availableData, isLoading: availableLoading } = useQuery({
-    queryKey: ['admin', 'supplier', supplierId, 'available-withdrawals', from, to],
-    queryFn: () => getAdminSupplierAvailableWithdrawals(supplierId, { from, to }),
+  const { data: settlementData, isLoading: settlementLoading } = useQuery({
+    queryKey: ['admin', 'supplier', supplierId, 'settlement-summary', from, to],
+    queryFn: () => getAdminSupplierSettlementSummary(supplierId, { from, to }),
     enabled: Boolean(supplierId),
   });
 
   const summary = exportData?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
   const rows = exportData?.rows ?? [];
   const activeSummary = useMemo(() => resolveActiveSummary(summary, rows), [summary, rows]);
-  const totalAvailableWithdrawals = availableData?.totalAvailableWithdrawals ?? 0;
-  const summaryLoading = exportLoading || availableLoading;
+  const totalPendingSettlement = settlementData?.totalPendingSettlement ?? 0;
+  const totalSettled = settlementData?.totalSettled ?? 0;
+  const summaryLoading = exportLoading || settlementLoading;
 
   return (
     <div>
@@ -62,7 +63,7 @@ export function AdminSupplierMaterialOrdersSection({
       {summaryLoading ? (
         <p className="mb-6 text-sm text-muted-foreground">Loading summary…</p>
       ) : (
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <Card className="border-2 border-primary/80 shadow-sm">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Revenue</CardTitle>
@@ -96,13 +97,24 @@ export function AdminSupplierMaterialOrdersSection({
           </Card>
           <Card className="border-2 border-primary/80 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Available withdrawals</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Pending settlement</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-primary">
-                {formatCurrency(totalAvailableWithdrawals)}
+                {formatCurrency(totalPendingSettlement)}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">In selected date range · all branches</p>
+            </CardContent>
+          </Card>
+          <Card className="border-2 border-primary/80 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Settled</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {formatCurrency(totalSettled)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Verified branch settlements</p>
             </CardContent>
           </Card>
         </div>
@@ -138,7 +150,7 @@ export function AdminSupplierMaterialOrdersSection({
       <Tabs defaultValue="orders" className="w-full">
         <TabsList className="mb-4 grid w-full max-w-lg grid-cols-2">
           <TabsTrigger value="orders">List of Orders</TabsTrigger>
-          <TabsTrigger value="history">History of Withdrawals</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
         <TabsContent value="orders">
           <AdminSupplierOrdersPanel
@@ -154,16 +166,15 @@ export function AdminSupplierMaterialOrdersSection({
           />
         </TabsContent>
         <TabsContent value="history">
-          <SupplierOrgWithdrawalHistoryPanel
+          <SupplierSettlementHistoryPanel
             queryKeyPrefix={`admin-supplier-${supplierId}`}
-            fetchWithdrawals={(filters) => getAdminSupplierBranchWithdrawals(supplierId, filters)}
+            fetchEvents={(filters) => getAdminSupplierSettlementHistory(supplierId, filters)}
             branches={branches}
             controlledFrom={from}
             controlledTo={to}
             onControlledFromChange={setFrom}
             onControlledToChange={setTo}
-            exportFileTag={`admin-supplier-${supplierId.slice(0, 8)}-withdrawals`}
-            description="Past payout requests for all branches of this supplier"
+            exportFileTag={`admin-supplier-${supplierId.slice(0, 8)}-settlements`}
           />
         </TabsContent>
       </Tabs>

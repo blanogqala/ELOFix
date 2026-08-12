@@ -22,7 +22,7 @@ export function HeroSection() {
 
           <p className="landing-fade-in landing-delay-2 mx-auto mb-10 max-w-2xl text-base leading-relaxed text-white/80 md:text-lg lg:text-xl">
             Request verified professionals, order hardware from approved suppliers, and track everything —
-            from quote to delivery — with secure escrow payments.
+            from quote to delivery — with flexible payment options for every service.
           </p>
 
           <div className="landing-fade-in landing-delay-3 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -53,7 +53,7 @@ export function HeroSection() {
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
-              Escrow protected
+              Flexible payments
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />

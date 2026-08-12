@@ -2,6 +2,7 @@
   "watch": ["server.js", "src", ".env"],
   "ext": "js,cjs,mjs",
   "signal": "SIGTERM",
+  "killDelay": 2500,
   "env": {
     "NODE_ENV": "development"
   },
@@ -16,5 +17,5 @@
     ".git/**"
   ],
   "exec": "node",
-  "delay": 300
+  "delay": 1000
 }

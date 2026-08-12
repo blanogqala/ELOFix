@@ -56,6 +56,15 @@ const AUDIT_ACTIONS = {
   // Admin — payments
   ADMIN_PAYMENT_FORCE_SETTLE: "admin.payment.force_settle",
 
+  // Payout profiles
+  PAYOUT_PROFILE_CREATED: "payout.profile.created",
+  PAYOUT_PROFILE_UPDATED: "payout.profile.updated",
+  PAYOUT_PROFILE_REPLACED: "payout.profile.replaced",
+  PAYOUT_PROFILE_DEACTIVATED: "payout.profile.deactivated",
+  PAYOUT_VERIFICATION_REQUESTED: "payout.verification.requested",
+  PAYOUT_VERIFICATION_SUCCEEDED: "payout.verification.succeeded",
+  PAYOUT_VERIFICATION_FAILED: "payout.verification.failed",
+
   // Withdrawals
   WITHDRAWAL_REQUEST: "withdrawal.request",
   WITHDRAWAL_APPROVE: "withdrawal.approve",
@@ -103,6 +112,8 @@ const ENTITY_TYPES = {
   DISPUTE: "dispute",
   PAYMENT: "payment",
   WITHDRAWAL: "withdrawal",
+  BRANCH: "branch",
+  SUPPLIER: "supplier",
   FRAUD_ALERT: "fraud_alert",
   TRUST_SCORE: "trust_score",
   NOTIFICATION: "notification",

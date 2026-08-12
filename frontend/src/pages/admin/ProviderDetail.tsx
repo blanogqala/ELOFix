@@ -18,7 +18,8 @@ import {
   rejectProviderDocument,
 } from '@/lib/api/providers';
 import { getCategories } from '@/lib/api/categories';
-import { getAdminProviderAnalytics, type AdminProviderAnalytics } from '@/lib/api/admin';
+import { getAdminProviderAnalytics, getAdminProviderPayoutProfile, type AdminProviderAnalytics } from '@/lib/api/admin';
+import { AdminPayoutBankingCard } from '@/components/admin/AdminPayoutBankingCard';
 import { getProviderReviews } from '@/lib/api/providerReviews';
 import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
 import { Category, Provider, ProviderReview } from '@/types';
@@ -674,6 +675,19 @@ export default function AdminProviderDetail() {
                   </div>
                 ))}
               </div>
+              {id ? (
+                <div className="mt-4">
+                  <AdminPayoutBankingCard
+                    loadProfile={async () => {
+                      const data = await getAdminProviderPayoutProfile(id);
+                      return {
+                        profile: data.profile,
+                        gatewaySettlementSupported: data.gatewaySettlementSupported,
+                      };
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
 

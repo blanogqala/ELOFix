@@ -5,9 +5,11 @@ test.describe('Customer critical workflows (UI-only)', () => {
 
   test('registration + login redirects to /user/dashboard', async ({ page }) => {
     const customer = await registerCustomer(page);
-    // force logout by clearing localStorage session key used in legacy tests
-    await page.evaluate(() => localStorage.removeItem('fixmate_auth'));
-    await page.goto('/login');
+    // Clear session and navigate with domcontentloaded to avoid ERR_ABORTED when
+    // in-memory auth still redirects during a concurrent navigation.
+    await page.evaluate(() => localStorage.removeItem('formmate_auth'));
+    await page.goto('/login', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
     await login(page, customer.email, customer.password);
     await expect(page).toHaveURL(/\/user\/dashboard/);
   });
@@ -50,4 +52,3 @@ test.describe('Customer critical workflows (UI-only)', () => {
     }
   });
 });
-

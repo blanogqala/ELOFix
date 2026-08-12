@@ -51,6 +51,13 @@ describe('adminActivityIndicators', () => {
     expect(hasAdminGroupActivity(notifications, 'Finance')).toBe(true);
   });
 
+  it('routes unread dispute_opened to Jobs nav and Work group', () => {
+    const notifications = [n({ type: 'dispute_opened' })];
+    expect(hasAdminNavActivity(notifications, '/admin/jobs')).toBe(true);
+    expect(hasAdminNavActivity(notifications, '/admin/categories')).toBe(false);
+    expect(hasAdminGroupActivity(notifications, 'Work')).toBe(true);
+  });
+
   it('clears activity after notifications are marked read', () => {
     const notifications = [n({ type: 'admin_provider_application_submitted', read: true })];
     expect(hasAdminNavActivity(notifications, '/admin/providers')).toBe(false);

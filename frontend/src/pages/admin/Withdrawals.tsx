@@ -95,8 +95,13 @@ export default function AdminWithdrawals() {
         <div>
           <h1 className="text-2xl font-bold">Withdrawals</h1>
           <p className="text-muted-foreground">
-            Monitor provider payout activity. New withdrawals are completed automatically.
+            Monitor historical provider payout activity. New in-app withdrawals are disabled.
           </p>
+        </div>
+
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+          New withdrawals are disabled. Provider and supplier shares are recorded per transaction; bank
+          payout is handled outside EloFix. The list below remains for historical requests.
         </div>
 
         <Tabs defaultValue="providers" className="w-full">

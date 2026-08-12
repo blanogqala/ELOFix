@@ -27,6 +27,8 @@ export async function submitProviderReview(payload: {
   jobId: string;
   rating: number;
   comment?: string;
+  images?: string[];
+  videos?: string[];
 }): Promise<ProviderReview> {
   const { data } = await apiClient.post<{ success: boolean; review: ProviderReview }>(
     '/provider-reviews',

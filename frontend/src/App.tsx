@@ -105,6 +105,7 @@ const App = () => (
             <Route path="/provider/requests/:id" element={<AuthGuard allowedRoles={['provider']}><RouteSuspense><Pages.ProviderRequestDetail /></RouteSuspense></AuthGuard>} />
             <Route path="/provider/jobs" element={<AuthGuard allowedRoles={['provider']}><RouteSuspense><Pages.ProviderActiveJobs /></RouteSuspense></AuthGuard>} />
             <Route path="/provider/jobs/:id/materials/browse" element={<AuthGuard allowedRoles={['provider']}><RouteSuspense><Pages.ProviderJobBrowseMaterials /></RouteSuspense></AuthGuard>} />
+            <Route path="/provider/jobs/:id/refund" element={<AuthGuard allowedRoles={['provider']}><RouteSuspense><Pages.ProviderJobRefundRepayment /></RouteSuspense></AuthGuard>} />
             <Route path="/provider/jobs/:id" element={<AuthGuard allowedRoles={['provider']}><RouteSuspense><Pages.ProviderJobDetail /></RouteSuspense></AuthGuard>} />
             <Route path="/provider/earnings" element={<AuthGuard allowedRoles={['provider']}><RouteSuspense><Pages.ProviderEarnings /></RouteSuspense></AuthGuard>} />
             <Route path="/provider/disputes" element={<Navigate to="/provider/jobs?view=review" replace />} />

@@ -46,6 +46,29 @@ function payfastSettleOnReturn() {
   return String(process.env.PAYFAST_MODE || "sandbox").toLowerCase() !== "live";
 }
 
+/** When true, attempt marketplace branch settlement via a capable gateway adapter. */
+function marketplaceSettlementEnabled() {
+  return String(process.env.MARKETPLACE_SETTLEMENT_ENABLED || "false").toLowerCase() === "true";
+}
+
+/**
+ * First enabled gateway that supports marketplace branch settlement.
+ * @returns {import('./payfast.gateway') | null}
+ */
+function settlementCapableGateway() {
+  if (!marketplaceSettlementEnabled()) return null;
+  const { GATEWAYS } = require("./gatewayRegistry");
+  const { enabledProviders } = module.exports;
+  for (const [key, gw] of Object.entries(GATEWAYS)) {
+    const mapKey = { PAYFAST: "payfast", PAYFLEX: "payflex", PAYJUSTNOW: "payjustnow" }[key];
+    if (!enabledProviders().has(mapKey)) continue;
+    if (typeof gw.supportsMarketplaceSettlement === "function" && gw.supportsMarketplaceSettlement()) {
+      if (typeof gw.isConfigured === "function" && gw.isConfigured()) return gw;
+    }
+  }
+  return null;
+}
+
 module.exports = {
   paymentCurrency,
   frontendBaseUrl,
@@ -54,4 +77,6 @@ module.exports = {
   isProviderEnabled,
   allowAdminPaymentOverride,
   payfastSettleOnReturn,
+  marketplaceSettlementEnabled,
+  settlementCapableGateway,
 };

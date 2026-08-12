@@ -1,24 +1,19 @@
-import { useCallback, useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { BlockedActionDialog } from '@/components/account/BlockedActionDialog';
-import { useBlockedActionGuard } from '@/hooks/useBlockedActionGuard';
 import {
   getProviderEarnings,
   getProviderBalance,
   getProviderEarningJob,
-  getWithdrawalProfile,
-  saveWithdrawalProfile,
-  requestWithdrawal,
   getProviderTransactions,
   getProviderRefundDebt,
-  submitProviderRefundRepayment,
   type ProviderEarningJobRow,
   type ProviderBalanceSnapshot,
   type ProviderTransactionRow,
   type ProviderRefundDebtSummary,
+  type ProviderSettlementRecord,
 } from '@/lib/api/providerAccount';
 import {
   getJobReleasedAmount,
@@ -32,16 +27,24 @@ import {
   jobHasRefundImpact,
   getStatusColor,
   sumNetProviderKeptAcrossJobs,
-  sumNetReleasedAcrossJobs,
   sumProviderEscrowRemaining,
+  getJobCustomerPaid,
+  getJobCustomerRemaining,
+  getJobProviderShareRecorded,
+  getJobProviderShareRemaining,
+  sumProviderShareRemainingAcrossJobs,
 } from '@/lib/providerEarningsDerived';
+import {
+  countPaidSettlementStages,
+  groupSettlementRecordsByJob,
+} from '@/lib/providerSettlementGroups';
+import { ProviderSettlementJobGroups } from '@/components/provider/ProviderSettlementJobGroups';
 import { RefundSummaryLine, hasRefundDisplay } from '@/components/payments/RefundSummaryLine';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   DollarSign,
   CheckCircle,
   Clock,
-  Landmark,
   Loader2,
   Briefcase,
   ArrowLeft,
@@ -51,8 +54,6 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -61,7 +62,6 @@ const PREFETCH_DEBOUNCE_MS = 220;
 
 export default function ProviderEarnings() {
   const { user } = useAuth();
-  const { dialogProps, guardAction, openIfBlockedMessage } = useBlockedActionGuard();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [balance, setBalance] = useState<ProviderBalanceSnapshot | null>(null);
@@ -72,23 +72,14 @@ export default function ProviderEarnings() {
   const prefetchedIdsRef = useRef<Set<string>>(new Set());
   const prefetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [bankName, setBankName] = useState('');
-  const [accountNumber, setAccountNumber] = useState('');
-  const [accountHolder, setAccountHolder] = useState('');
-  const [branchCode, setBranchCode] = useState('');
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [savingBank, setSavingBank] = useState(false);
-
-  const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [bankMask, setBankMask] = useState<{ account: string; branch: string } | null>(null);
   const [transactions, setTransactions] = useState<ProviderTransactionRow[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [providerEscrowRemaining, setProviderEscrowRemaining] = useState<number | null>(null);
+  const [providerShareRecordedTotal, setProviderShareRecordedTotal] = useState(0);
+  const [providerShareRemainingTotal, setProviderShareRemainingTotal] = useState<number | null>(null);
+  const [hasLegacyJobs, setHasLegacyJobs] = useState(false);
+  const [settlementRecords, setSettlementRecords] = useState<ProviderSettlementRecord[]>([]);
   const [refundDebtDetail, setRefundDebtDetail] = useState<ProviderRefundDebtSummary | null>(null);
-  const [repayAmount, setRepayAmount] = useState('');
-  const [repayReference, setRepayReference] = useState('');
-  const [submittingRepayment, setSubmittingRepayment] = useState(false);
 
   const loadEarnings = useCallback(async () => {
     if (!user) return;
@@ -104,6 +95,14 @@ export default function ProviderEarnings() {
       setProviderEscrowRemaining(
         data.summary.providerEscrowRemaining ?? data.summary.pending ?? bal.pending ?? null
       );
+      setProviderShareRecordedTotal(Number(data.summary.totalProviderShareRecorded) || 0);
+      setProviderShareRemainingTotal(
+        data.summary.totalProviderShareRemaining != null
+          ? Number(data.summary.totalProviderShareRemaining)
+          : null
+      );
+      setHasLegacyJobs(Boolean(data.summary.hasLegacyJobs));
+      setSettlementRecords(Array.isArray(data.settlementRecords) ? data.settlementRecords : []);
       setJobs(data.jobs);
       if ((bal.refundDebtOwed ?? 0) > 0) {
         try {
@@ -124,32 +123,6 @@ export default function ProviderEarnings() {
       });
     } finally {
       setIsLoading(false);
-    }
-  }, [user, toast]);
-
-  const loadProfile = useCallback(async () => {
-    if (!user) return;
-    setProfileLoading(true);
-    try {
-      const { profile } = await getWithdrawalProfile();
-      if (profile) {
-        setBankName(profile.bankName);
-        setAccountNumber('');
-        setAccountHolder(profile.accountHolder);
-        setBranchCode('');
-        setBankMask({ account: profile.accountNumberMasked, branch: profile.branchCodeMasked });
-      } else {
-        setBankMask(null);
-      }
-    } catch (error) {
-      console.error(error);
-      toast({
-        title: 'Could not load bank details',
-        description: error instanceof Error ? error.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setProfileLoading(false);
     }
   }, [user, toast]);
 
@@ -174,10 +147,9 @@ export default function ProviderEarnings() {
   useEffect(() => {
     if (user) {
       void loadEarnings();
-      void loadProfile();
       void loadTransactions();
     }
-  }, [user, loadEarnings, loadProfile, loadTransactions]);
+  }, [user, loadEarnings, loadTransactions]);
 
   useEffect(() => {
     setSelectedJob((prev) => {
@@ -187,19 +159,29 @@ export default function ProviderEarnings() {
     });
   }, [jobs]);
 
-  const yourTotalEarnings = sumNetProviderKeptAcrossJobs(jobs);
-  const amountReleasedToYou = sumNetReleasedAcrossJobs(jobs);
+  const yourTotalEarnings =
+    providerShareRecordedTotal > 0
+      ? providerShareRecordedTotal
+      : sumNetProviderKeptAcrossJobs(jobs);
   const remainingToYou =
-    providerEscrowRemaining ?? sumProviderEscrowRemaining(jobs) ?? balance?.pending ?? 0;
+    providerShareRemainingTotal ??
+    sumProviderShareRemainingAcrossJobs(jobs) ??
+    (hasLegacyJobs ? providerEscrowRemaining ?? sumProviderEscrowRemaining(jobs) : 0);
+
+  const settlementGroups = useMemo(
+    () => groupSettlementRecordsByJob(settlementRecords, jobs),
+    [settlementRecords, jobs]
+  );
+  const stageCounts = useMemo(
+    () => countPaidSettlementStages(settlementGroups),
+    [settlementGroups]
+  );
 
   const available = balance?.available ?? 0;
   const refundDebtOwed = balance?.refundDebtOwed ?? 0;
   const refundDebtDueLabel = refundDebtDetail?.dueAt
     ? new Date(refundDebtDetail.dueAt).toLocaleString('en-ZA')
     : 'the due date';
-  const withdrawNum = parseFloat(withdrawAmount);
-  const withdrawExceeds =
-    Number.isFinite(withdrawNum) && withdrawNum > 0 && withdrawNum > available + 1e-6;
 
   const selectedJobId = selectedJob?.id ?? null;
 
@@ -254,95 +236,6 @@ export default function ProviderEarnings() {
     };
   }, []);
 
-  const handleSaveBank = async () => {
-    setSavingBank(true);
-    try {
-      await saveWithdrawalProfile({
-        bankName,
-        accountNumber,
-        accountHolder,
-        branchCode,
-      });
-      toast({ title: 'Withdrawal details saved' });
-      await loadProfile();
-    } catch (error) {
-      toast({
-        title: 'Save failed',
-        description: error instanceof Error ? error.message : 'Check all fields.',
-        variant: 'destructive',
-      });
-    } finally {
-      setSavingBank(false);
-    }
-  };
-
-  const handleWithdraw = async () => {
-    const n = parseFloat(withdrawAmount);
-    if (!Number.isFinite(n) || n <= 0) {
-      toast({ title: 'Invalid amount', variant: 'destructive' });
-      return;
-    }
-    setWithdrawing(true);
-    try {
-      await requestWithdrawal(n);
-      toast({ title: 'Withdrawal requested', description: 'Your request is pending processing.' });
-      setWithdrawAmount('');
-      await Promise.all([loadEarnings(), loadProfile(), loadTransactions()]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : undefined;
-      if (!message || !openIfBlockedMessage(message)) {
-        toast({
-          title: 'Withdrawal failed',
-          description: message,
-          variant: 'destructive',
-        });
-      }
-    } finally {
-      setWithdrawing(false);
-    }
-  };
-
-  const handleSubmitRepayment = async () => {
-    const n = parseFloat(repayAmount);
-    if (!Number.isFinite(n) || n <= 0) {
-      toast({ title: 'Invalid amount', variant: 'destructive' });
-      return;
-    }
-    if (!repayReference.trim()) {
-      toast({ title: 'Reference required', description: 'Enter your bank payment reference.', variant: 'destructive' });
-      return;
-    }
-    setSubmittingRepayment(true);
-    try {
-      await submitProviderRefundRepayment({ amount: n, reference: repayReference.trim() });
-      toast({
-        title: 'Repayment submitted',
-        description: 'Waiting for admin approval. This usually takes less than 24 hours.',
-      });
-      await loadEarnings();
-    } catch (error) {
-      const status =
-        error && typeof error === 'object' && 'status' in error
-          ? Number((error as { status: number }).status)
-          : 0;
-      if (status === 409) {
-        toast({
-          title: 'Payment already submitted',
-          description: 'Your repayment is waiting for admin review.',
-        });
-        await loadEarnings();
-        return;
-      }
-      toast({
-        title: 'Submission failed',
-        description: error instanceof Error ? error.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSubmittingRepayment(false);
-    }
-  };
-
   const panelCustomerGross = mergedPanelJob ? getJobTotalPrice(mergedPanelJob) : 0;
   const panelProviderNet = mergedPanelJob ? getJobProviderNet(mergedPanelJob) : 0;
   const panelCommission = mergedPanelJob
@@ -364,13 +257,6 @@ export default function ProviderEarnings() {
     ? Number(mergedPanelJob.providerRefundDebt ?? mergedPanelJob.refundDetails?.providerDebtAdded) || 0
     : 0;
   const panelHasRefund = mergedPanelJob ? jobHasRefundImpact(mergedPanelJob) : false;
-
-  useEffect(() => {
-    if (refundDebtDetail?.pendingRepayment) return;
-    if (refundDebtDetail?.reference) {
-      setRepayReference(refundDebtDetail.reference);
-    }
-  }, [refundDebtDetail?.reference, refundDebtDetail?.pendingRepayment]);
 
   const transactionAmountClass = (kind: ProviderTransactionRow['kind']) => {
     if (kind === 'withdrawal') return 'text-foreground';
@@ -400,11 +286,12 @@ export default function ProviderEarnings() {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Earnings</h1>
           <p className="text-sm text-muted-foreground sm:text-base">
-            Your total earnings (net of platform fee), released amounts, and escrow (ZAR)
+            Provider share recorded from customer payments (ZAR). Bank payout is outside EloFix until a
+            split-capable gateway is connected.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
@@ -414,7 +301,20 @@ export default function ProviderEarnings() {
                 <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
                   {formatCurrency(yourTotalEarnings)}
                 </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Your total earnings</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Total provider share recorded</p>
+              </div>
+            </div>
+          </div>
+          <div className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+                <CheckCircle className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
+                  {stageCounts.paid} of {Math.max(stageCounts.expected, stageCounts.paid)}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Paid/settled stages</p>
               </div>
             </div>
           </div>
@@ -427,23 +327,11 @@ export default function ProviderEarnings() {
                 <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
                   {formatCurrency(remainingToYou)}
                 </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Remaining to you (escrow)</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Remaining provider share</p>
               </div>
             </div>
           </div>
-          <div className="card-elevated p-4 sm:p-6">
-            <div className="flex items-center gap-3 sm:gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
-                <CheckCircle className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
-                  {formatCurrency(amountReleasedToYou)}
-                </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Amount released to you</p>
-              </div>
-            </div>
-          </div>
+          {hasLegacyJobs || (balance?.available ?? 0) > 0 ? (
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 sm:h-12 sm:w-12">
@@ -453,10 +341,11 @@ export default function ProviderEarnings() {
                 <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
                   {formatCurrency(available)}
                 </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Available to withdraw</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Legacy ledger balance</p>
               </div>
             </div>
           </div>
+          ) : null}
           <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10 sm:h-12 sm:w-12">
@@ -466,19 +355,34 @@ export default function ProviderEarnings() {
                 <p className="text-base font-bold leading-tight tabular-nums truncate text-destructive sm:text-lg lg:text-xl xl:text-2xl">
                   {refundDebtOwed > 0 ? `−${formatCurrency(refundDebtOwed)}` : formatCurrency(0)}
                 </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Refund owed</p>
-                {refundDebtOwed > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-0.5 sm:text-xs">
-                    Pay before {refundDebtDueLabel} via bank transfer or future earnings — see Withdrawal tab
-                  </p>
-                )}
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  {refundDebtOwed > 0
+                    ? refundDebtDetail?.pendingRepayment
+                      ? 'Repayment submitted'
+                      : 'Refund required'
+                    : 'Refund owed'}
+                </p>
+                {refundDebtOwed > 0 ? (
+                  <>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 sm:text-xs">
+                      {refundDebtDetail?.pendingRepayment
+                        ? 'Awaiting EloFix verification'
+                        : `Due by ${refundDebtDueLabel}`}
+                    </p>
+                    {refundDebtDetail?.recoveries?.[0]?.jobId ? (
+                      <Link
+                        to={`/provider/jobs/${refundDebtDetail.recoveries[0].jobId}/refund`}
+                        className="mt-0.5 inline-block text-xs font-medium text-destructive underline-offset-2 hover:underline"
+                      >
+                        View repayment
+                      </Link>
+                    ) : null}
+                  </>
+                ) : null}
               </div>
             </div>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground -mt-4 md:-mt-6">
-          Job sums use amounts from the server. Bank withdrawals use your ledger balance on the Withdrawal tab.
-        </p>
 
         <Tabs
           defaultValue="jobs"
@@ -487,9 +391,8 @@ export default function ProviderEarnings() {
             if (v !== 'jobs') setSelectedJob(null);
           }}
         >
-          <TabsList className="grid w-full max-w-lg grid-cols-3">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
             <TabsTrigger value="jobs">Jobs</TabsTrigger>
-            <TabsTrigger value="withdraw">Withdrawal</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
@@ -516,10 +419,12 @@ export default function ProviderEarnings() {
                     <ul className="max-h-[min(520px,65vh)] divide-y divide-border overflow-y-auto">
                       {jobs.map((job) => {
                         const totalP = getJobTotalPrice(job);
-                        const released = getJobReleasedAmount(job);
+                        const customerPaid = getJobCustomerPaid(job);
+                        const customerRemaining = getJobCustomerRemaining(job);
+                        const shareRecorded = getJobProviderShareRecorded(job);
+                        const shareRemaining = getJobProviderShareRemaining(job);
                         const clawback = getJobClawbackAmount(job);
                         const netReleased = getJobNetReleasedAfterRefund(job);
-                        const remaining = getJobRemainingAmount(job);
                         const hasRefund = jobHasRefundImpact(job);
                         const showRefund = hasRefundDisplay(job);
                         const escrowReversed =
@@ -527,6 +432,7 @@ export default function ProviderEarnings() {
                         const fromRow = job.customerName?.trim();
                         const customerDisplay = customerNameCache[job.id] ?? (fromRow || '—');
                         const displayStatus = getJobStatus(job);
+                        const paymentLabel = job.paymentLabel || '—';
                         return (
                           <li key={job.id} className="transition-all duration-300">
                             <button
@@ -540,44 +446,47 @@ export default function ProviderEarnings() {
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <span className="font-medium leading-snug line-clamp-2">{job.title}</span>
-                                <p className={cn('shrink-0 text-xs font-semibold', getStatusColor(displayStatus))}>
-                                  {displayStatus}
-                                </p>
+                                <div className="shrink-0 text-right">
+                                  <p className={cn('text-xs font-semibold', getStatusColor(displayStatus))}>
+                                    {displayStatus}
+                                  </p>
+                                  <p className="text-[11px] text-muted-foreground">{paymentLabel}</p>
+                                </div>
                               </div>
                               <p className="text-xs text-muted-foreground">
                                 Customer: <span className="text-foreground/90">{customerDisplay}</span>
                               </p>
-                              <div className="grid grid-cols-3 gap-2 text-xs sm:text-sm">
+                              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 sm:text-sm">
                                 <div>
-                                  <p className="text-muted-foreground">Job price (customer)</p>
+                                  <p className="text-muted-foreground">Service price</p>
                                   <p className="font-semibold tabular-nums">{formatCurrency(totalP)}</p>
                                 </div>
                                 <div>
-                                  <p className="text-muted-foreground">Released to you</p>
-                                  <p className="font-semibold tabular-nums text-primary">{formatCurrency(released)}</p>
+                                  <p className="text-muted-foreground">Customer paid</p>
+                                  <p className="font-semibold tabular-nums">{formatCurrency(customerPaid)}</p>
                                 </div>
                                 <div>
-                                  {hasRefund && clawback > 0 ? (
-                                    <>
-                                      <p className="text-muted-foreground">Taken back (refund)</p>
-                                      <p className="font-semibold tabular-nums text-destructive">
-                                        −{formatCurrency(clawback)}
-                                      </p>
-                                    </>
-                                  ) : showRefund ? (
-                                    <>
-                                      <p className="text-muted-foreground">Customer refund</p>
-                                      <p className="font-semibold tabular-nums text-destructive">
-                                        −{formatCurrency(Number(job.refundAmount) || 0)}
-                                      </p>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <p className="text-muted-foreground">Remaining to you</p>
-                                      <p className="font-semibold tabular-nums">{formatCurrency(remaining)}</p>
-                                    </>
-                                  )}
+                                  <p className="text-muted-foreground">Customer remaining</p>
+                                  <p className="font-semibold tabular-nums">{formatCurrency(customerRemaining)}</p>
                                 </div>
+                                <div>
+                                  <p className="text-muted-foreground">Provider share recorded</p>
+                                  <p className="font-semibold tabular-nums text-primary">
+                                    {formatCurrency(shareRecorded)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Provider share remaining</p>
+                                  <p className="font-semibold tabular-nums">{formatCurrency(shareRemaining)}</p>
+                                </div>
+                                {hasRefund && clawback > 0 ? (
+                                  <div>
+                                    <p className="text-muted-foreground">Taken back (refund)</p>
+                                    <p className="font-semibold tabular-nums text-destructive">
+                                      −{formatCurrency(clawback)}
+                                    </p>
+                                  </div>
+                                ) : null}
                               </div>
                               {showRefund && (
                                 <div className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5">
@@ -589,7 +498,7 @@ export default function ProviderEarnings() {
                                   />
                                   {escrowReversed > 0 && clawback === 0 && (
                                     <p className="mt-1 text-xs text-muted-foreground">
-                                      Held funds returned to customer — not released to you.
+                                      Held funds returned to customer — not settled to you.
                                     </p>
                                   )}
                                 </div>
@@ -626,7 +535,9 @@ export default function ProviderEarnings() {
                   <div className="grid grid-cols-2 gap-4 border-b-2 border-primary/30 p-4 sm:p-6">
                     <div className="justify-self-start">
                       <h2 className="text-lg font-semibold tracking-tight">Job details</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">Earnings and release progress for this job</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Customer payment vs your provider share (separate concepts)
+                      </p>
                     </div>
                     <div className="justify-self-end">
                       <Button
@@ -652,7 +563,7 @@ export default function ProviderEarnings() {
                           </p>
                         )}
                       </div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-accent">Customer</p>
+                      <p className="text-xs font-medium uppercase tracking-wide text-accent">Customer payment</p>
                       <dl className="space-y-3 border-b border-primary/30 pb-2">
                         <div className="flex justify-between gap-4">
                           <dt className="text-muted-foreground">Name</dt>
@@ -661,13 +572,31 @@ export default function ProviderEarnings() {
                           </dd>
                         </div>
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Total price (what they paid)</dt>
+                          <dt className="text-muted-foreground">Service price</dt>
                           <dd className="text-right font-semibold tabular-nums">
                             {formatCurrency(panelCustomerGross)}
                           </dd>
                         </div>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Customer paid</dt>
+                          <dd className="text-right font-semibold tabular-nums">
+                            {formatCurrency(getJobCustomerPaid(mergedPanelJob))}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Customer remaining</dt>
+                          <dd className="text-right font-semibold tabular-nums">
+                            {formatCurrency(getJobCustomerRemaining(mergedPanelJob))}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Payment status</dt>
+                          <dd className="text-right font-medium">
+                            {mergedPanelJob.paymentLabel || derivedDetailStatus}
+                          </dd>
+                        </div>
                       </dl>
-                      <p className="pt-2 text-xs font-medium uppercase tracking-wide text-accent">Your share</p>
+                      <p className="pt-2 text-xs font-medium uppercase tracking-wide text-accent">Provider share</p>
                       <dl className="space-y-3 border-b border-primary/30 pb-2">
                         <div className="flex justify-between gap-4">
                           <dt className="text-muted-foreground">Platform fee (7%)</dt>
@@ -676,68 +605,88 @@ export default function ProviderEarnings() {
                           </dd>
                         </div>
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Your earnings</dt>
+                          <dt className="text-muted-foreground">Share recorded</dt>
+                          <dd className="text-right font-semibold tabular-nums text-primary">
+                            {formatCurrency(getJobProviderShareRecorded(mergedPanelJob))}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Share remaining (unpaid stages)</dt>
+                          <dd className="text-right font-semibold tabular-nums">
+                            {formatCurrency(getJobProviderShareRemaining(mergedPanelJob))}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Expected total share</dt>
                           <dd className="text-right font-semibold tabular-nums text-foreground">
                             {formatCurrency(panelProviderNet)}
                           </dd>
                         </div>
                       </dl>
+                      {(hasLegacyJobs || panelRemaining > 0 || panelReleased > 0) && (
+                        <>
                       <p className="pt-2 text-xs font-medium uppercase tracking-wide text-accent">
-                        Your payments
+                        Legacy settlement (escrow jobs only)
                       </p>
                       <dl className="space-y-3 border-b border-primary/30 pb-2">
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Released amount</dt>
+                          <dt className="text-muted-foreground">Settled / recorded to you</dt>
                           <dd className="text-right font-semibold tabular-nums text-primary">
                             {formatCurrency(panelReleased)}
                           </dd>
                         </div>
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Remaining amount</dt>
+                          <dt className="text-muted-foreground">Remaining settlement</dt>
                           <dd className="text-right font-semibold tabular-nums">{formatCurrency(panelRemaining)}</dd>
                         </div>
-                        {panelHasRefund && (
-                          <>
-                            {hasRefundDisplay(mergedPanelJob) && (
-                              <div className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2">
-                                <RefundSummaryLine
-                                  refundAmount={mergedPanelJob.refundAmount}
-                                  refundStatus={mergedPanelJob.refundStatus}
-                                />
-                              </div>
-                            )}
-                            {panelClawback > 0 && (
-                              <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Taken back from your balance</dt>
-                                <dd className="text-right font-semibold tabular-nums text-destructive">
-                                  −{formatCurrency(panelClawback)}
-                                </dd>
-                              </div>
-                            )}
-                            {panelEscrowReversed > 0 && (
-                              <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Escrow reversed (not released)</dt>
-                                <dd className="text-right font-semibold tabular-nums text-destructive">
-                                  −{formatCurrency(panelEscrowReversed)}
-                                </dd>
-                              </div>
-                            )}
-                            {panelRefundDebt > 0 && (
-                              <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Outstanding refund debt</dt>
-                                <dd className="text-right font-semibold tabular-nums text-destructive">
-                                  {formatCurrency(panelRefundDebt)}
-                                </dd>
-                              </div>
-                            )}
-                            <div className="flex justify-between gap-4 border-t border-border pt-2">
-                              <dt className="font-medium text-foreground">Net you kept from this job</dt>
-                              <dd className="text-right font-semibold tabular-nums">{formatCurrency(panelNetReleased)}</dd>
+                      </dl>
+                        </>
+                      )}
+                      {panelHasRefund ? (
+                        <dl className="space-y-3 border-b border-primary/30 pb-2">
+                          {hasRefundDisplay(mergedPanelJob) ? (
+                            <div className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2">
+                              <RefundSummaryLine
+                                refundAmount={mergedPanelJob.refundAmount}
+                                refundStatus={mergedPanelJob.refundStatus}
+                              />
                             </div>
-                          </>
-                        )}
+                          ) : null}
+                          {panelClawback > 0 ? (
+                            <div className="flex justify-between gap-4">
+                              <dt className="text-muted-foreground">Taken back from your balance</dt>
+                              <dd className="text-right font-semibold tabular-nums text-destructive">
+                                −{formatCurrency(panelClawback)}
+                              </dd>
+                            </div>
+                          ) : null}
+                          {panelEscrowReversed > 0 ? (
+                            <div className="flex justify-between gap-4">
+                              <dt className="text-muted-foreground">Settlement reversed (not paid out)</dt>
+                              <dd className="text-right font-semibold tabular-nums text-destructive">
+                                −{formatCurrency(panelEscrowReversed)}
+                              </dd>
+                            </div>
+                          ) : null}
+                          {panelRefundDebt > 0 ? (
+                            <div className="flex justify-between gap-4">
+                              <dt className="text-muted-foreground">Outstanding refund debt</dt>
+                              <dd className="text-right font-semibold tabular-nums text-destructive">
+                                {formatCurrency(panelRefundDebt)}
+                              </dd>
+                            </div>
+                          ) : null}
+                          <div className="flex justify-between gap-4 border-t border-border pt-2">
+                            <dt className="font-medium text-foreground">Net you kept from this job</dt>
+                            <dd className="text-right font-semibold tabular-nums">
+                              {formatCurrency(panelNetReleased)}
+                            </dd>
+                          </div>
+                        </dl>
+                      ) : null}
+                      <dl className="space-y-3 border-b border-primary/30 pb-2">
                         <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Status</dt>
+                          <dt className="text-muted-foreground">Job status</dt>
                           <dd className="text-right">
                             <p className={cn('font-semibold', getStatusColor(derivedDetailStatus))}>
                               {derivedDetailStatus}
@@ -753,7 +702,7 @@ export default function ProviderEarnings() {
                       </dl>
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>Release progress (your share)</span>
+                          <span>Provider share progress</span>
                           <span className="font-medium text-foreground">{panelPercentRounded}%</span>
                         </div>
                         <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
@@ -781,247 +730,37 @@ export default function ProviderEarnings() {
             </div>
           </TabsContent>
 
-          <TabsContent value="withdraw" className="mt-4 space-y-6">
-            <div className="card-elevated p-4 sm:p-6 space-y-4">
-              <div className="flex items-center gap-2">
-                <Landmark className="h-5 w-5 text-primary" />
-                <h2 className="text-lg font-semibold">Withdrawal methods</h2>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Bank details are stored encrypted. Ledger balance available to withdraw: {formatCurrency(available)}.
-              </p>
-              {refundDebtOwed > 0 && (
-                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
-                  <p>
-                    Outstanding refund debt (pay before {refundDebtDueLabel} or account will be blocked):{' '}
-                    <span className="font-semibold text-destructive tabular-nums">
-                      {formatCurrency(refundDebtOwed)}
-                    </span>
-                  </p>
-                </div>
-              )}
-              {refundDebtOwed > 0 && refundDebtDetail && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 space-y-3 text-sm">
-                  <p className="font-semibold text-destructive">Settle refund debt</p>
-                  {refundDebtDetail.dueAt && (
-                    <p className="text-muted-foreground">
-                      Due by: {new Date(refundDebtDetail.dueAt).toLocaleDateString('en-ZA')}
-                    </p>
-                  )}
-                  {refundDebtDetail.reference && (
-                    <p className="text-muted-foreground">
-                      Your payment reference:{' '}
-                      <span className="font-mono font-semibold text-foreground">{refundDebtDetail.reference}</span>
-                    </p>
-                  )}
-                  <div className="text-xs text-muted-foreground space-y-1 rounded border border-border bg-background/50 p-2">
-                    <p className="font-medium text-foreground">EloFix bank account</p>
-                    <p>{refundDebtDetail.platformBank.bankName}</p>
-                    <p>{refundDebtDetail.platformBank.accountName}</p>
-                    <p>Account: {refundDebtDetail.platformBank.accountNumber}</p>
-                    <p>Branch: {refundDebtDetail.platformBank.branchCode}</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    You can also clear debt automatically from future job earnings. Unpaid debt after the due date
-                    blocks your account and may lead to legal action.
-                  </p>
-                  {refundDebtDetail.pendingRepayment ? (
-                    <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-4">
-                      <p className="font-semibold text-primary">Waiting for admin approval</p>
-                      <p className="text-muted-foreground">
-                        Submitted{' '}
-                        <span className="font-semibold text-foreground tabular-nums">
-                          {formatCurrency(refundDebtDetail.pendingRepayment.amount)}
-                        </span>{' '}
-                        on{' '}
-                        {new Date(refundDebtDetail.pendingRepayment.createdAt).toLocaleString('en-ZA')}
-                      </p>
-                      <p className="text-muted-foreground">
-                        Reference:{' '}
-                        <span className="font-mono font-semibold text-foreground">
-                          {refundDebtDetail.pendingRepayment.reference}
-                        </span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Your payment is being reviewed. This usually takes less than 24 hours.
-                      </p>
-                      <Button type="button" variant="outline" disabled className="w-full sm:w-auto">
-                        Submitted {formatCurrency(refundDebtDetail.pendingRepayment.amount)} — awaiting review
-                      </Button>
-                    </div>
-                  ) : (
-                    <>
-                      {refundDebtDetail.lastRejectedRepayment && (
-                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
-                          <p className="font-medium text-destructive">Previous submission not accepted</p>
-                          <p className="mt-1 text-muted-foreground">
-                            {formatCurrency(refundDebtDetail.lastRejectedRepayment.amount)} with ref{' '}
-                            <span className="font-mono">{refundDebtDetail.lastRejectedRepayment.reference}</span>
-                            {refundDebtDetail.lastRejectedRepayment.adminNote
-                              ? ` — ${refundDebtDetail.lastRejectedRepayment.adminNote}`
-                              : null}
-                          </p>
-                          <p className="mt-1 text-muted-foreground">
-                            You can submit again after verifying your bank transfer.
-                          </p>
-                        </div>
-                      )}
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div>
-                          <Label htmlFor="repay-amt">Amount paid (ZAR)</Label>
-                          <Input
-                            id="repay-amt"
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={repayAmount}
-                            onChange={(e) => setRepayAmount(e.target.value)}
-                            className="mt-1"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="repay-ref">Bank reference used</Label>
-                          <Input
-                            id="repay-ref"
-                            value={repayReference}
-                            onChange={(e) => setRepayReference(e.target.value)}
-                            className="mt-1"
-                            placeholder={refundDebtDetail.reference || 'Your reference'}
-                          />
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={() => void handleSubmitRepayment()}
-                        disabled={submittingRepayment}
-                      >
-                        {submittingRepayment ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          'I have paid — submit for review'
-                        )}
-                      </Button>
-                    </>
-                  )}
-                </div>
-              )}
-              {bankMask && (
-                <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/30 px-3 py-2">
-                  On file: account {bankMask.account}, branch {bankMask.branch}. Enter new values below only if you
-                  want to change them.
-                </p>
-              )}
-              {profileLoading ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-                </div>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label htmlFor="bank-name">Bank name</Label>
-                    <Input
-                      id="bank-name"
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      className="mt-1"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="branch">Branch code</Label>
-                    <Input
-                      id="branch"
-                      value={branchCode}
-                      onChange={(e) => setBranchCode(e.target.value)}
-                      className="mt-1"
-                      autoComplete="off"
-                      placeholder={bankMask ? 'Leave blank to keep' : 'e.g. 632005'}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="account">Account number</Label>
-                    <Input
-                      id="account"
-                      value={accountNumber}
-                      onChange={(e) => setAccountNumber(e.target.value)}
-                      className="mt-1"
-                      autoComplete="off"
-                      placeholder={bankMask ? 'Leave blank to keep' : 'Account number'}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="holder">Account holder</Label>
-                    <Input
-                      id="holder"
-                      value={accountHolder}
-                      onChange={(e) => setAccountHolder(e.target.value)}
-                      className="mt-1"
-                      autoComplete="name"
-                    />
-                  </div>
-                </div>
-              )}
-              <Button type="button" onClick={() => void handleSaveBank()} disabled={savingBank || profileLoading}>
-                {savingBank ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save bank details'}
-              </Button>
-            </div>
-
-            <div className="card-elevated p-4 sm:p-6 space-y-4">
-              <h2 className="text-lg font-semibold">Request withdrawal</h2>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div className="flex-1">
-                  <Label htmlFor="withdraw-amt">Amount (ZAR)</Label>
-                  <Input
-                    id="withdraw-amt"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={withdrawAmount}
-                    onChange={(e) => setWithdrawAmount(e.target.value)}
-                    className="mt-1"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  onClick={() => guardAction(() => void handleWithdraw())}
-                  disabled={
-                    withdrawing ||
-                    available <= 0 ||
-                    withdrawExceeds ||
-                    !Number.isFinite(withdrawNum) ||
-                    withdrawNum <= 0
-                  }
-                  className="sm:mb-0"
-                >
-                  {withdrawing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Withdraw'}
-                </Button>
-              </div>
-              {withdrawExceeds && (
-                <p className="text-xs text-destructive">
-                  Amount exceeds available balance ({formatCurrency(available)}).
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Withdrawals are created as pending requests and processed according to platform policy.
-              </p>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="history" className="mt-4">
+          <TabsContent value="history" className="mt-4 space-y-4">
             <div className="card-elevated overflow-hidden">
               <div className="border-b border-border p-4 sm:p-6">
-                <h2 className="text-lg font-semibold">Transaction history</h2>
-                <p className="text-sm text-muted-foreground">
-                  Bank withdrawals and automatic refund deductions from your balance
-                </p>
+                <h2 className="text-lg font-semibold">Payment settlement records</h2>
+              </div>
+              <div className="p-4 sm:p-6">
+                {isLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Loading…
+                  </div>
+                ) : (
+                  <ProviderSettlementJobGroups
+                    groups={settlementGroups}
+                    variant="history"
+                    emptyMessage="No payment records yet."
+                  />
+                )}
+              </div>
+            </div>
+            {(transactions.length > 0 || transactionsLoading) && (
+            <div className="card-elevated overflow-hidden">
+              <div className="border-b border-border p-4 sm:p-6">
+                <h2 className="text-lg font-semibold">Adjustments</h2>
               </div>
               {transactionsLoading ? (
                 <div className="flex items-center justify-center gap-2 p-10 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" />
                   Loading…
                 </div>
-              ) : transactions.length > 0 ? (
+              ) : (
                 <ul className="divide-y divide-border p-4 sm:p-6 space-y-0">
                   {transactions.map((tx) => (
                     <li key={`${tx.kind}-${tx.id}`} className="card-elevated p-4 first:mt-0 mt-3">
@@ -1053,28 +792,15 @@ export default function ProviderEarnings() {
                       <p className="mt-2 text-sm text-muted-foreground">
                         {new Date(tx.createdAt).toLocaleString()}
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground">Ref: {tx.id.slice(0, 8)}…</p>
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <div className="flex flex-col items-center gap-3 p-10 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                    <Wallet className="h-6 w-6 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">No transactions yet</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Withdrawals and refund deductions will appear here.
-                    </p>
-                  </div>
-                </div>
               )}
             </div>
+            )}
           </TabsContent>
         </Tabs>
       </div>
-      <BlockedActionDialog {...dialogProps} />
     </DashboardLayout>
   );
 }

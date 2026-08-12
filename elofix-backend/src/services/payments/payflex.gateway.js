@@ -146,7 +146,15 @@ async function refund(gatewayTransactionId, amount) {
     body: JSON.stringify({ amount: Number(amount) }),
   });
   const json = await res.json().catch(() => ({}));
-  return { supported: true, ok: res.ok, data: json };
+  return {
+    supported: true,
+    ok: res.ok,
+    status: res.ok ? "COMPLETED" : "FAILED",
+    externalRefundId: json?.refundId || json?.id || null,
+    message: res.ok ? null : json?.message || `HTTP ${res.status}`,
+    requiresManualAction: false,
+    data: json,
+  };
 }
 
 module.exports = {
@@ -155,4 +163,34 @@ module.exports = {
   createCheckout,
   verifyWebhook,
   refund,
+  supportsMarketplaceSettlement: () => false,
+  createPayoutDestination: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "Payflex marketplace payout destinations are not supported",
+  }),
+  updatePayoutDestination: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "Payflex marketplace payout destinations are not supported",
+  }),
+  deactivatePayoutDestination: async () => ({
+    supported: false,
+    message: "Payflex payout deactivation is not supported",
+  }),
+  getPayoutDestinationStatus: async () => ({ supported: false }),
+  createBranchPayoutDestination: async (profile) =>
+    module.exports.createPayoutDestination(profile),
+  createProviderSettlement: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "Payflex marketplace provider settlement is not supported",
+  }),
+  createSupplierSettlement: async () => ({
+    supported: false,
+    requiresManualAction: true,
+    message: "Payflex marketplace branch settlement is not supported",
+  }),
+  getSettlementStatus: async () => ({ supported: false }),
+  verifySettlementWebhook: async () => ({ valid: false }),
 };

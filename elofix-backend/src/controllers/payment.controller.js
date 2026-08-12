@@ -163,6 +163,33 @@ async function payjustnowWebhook(req, res) {
   res.status(status).json({ success: status < 400, ...out });
 }
 
+async function settlementWebhook(req, res) {
+  const provider = String(req.params.provider || "").trim();
+  const branchSettlement = require("../services/branchSettlement.service");
+  const { marketplaceSettlementEnabled } = require("../services/payments/paymentConfig");
+
+  if (!marketplaceSettlementEnabled()) {
+    return res.status(501).json({ success: false, message: "Marketplace settlement is not enabled" });
+  }
+
+  let payload = req.body;
+  if (Buffer.isBuffer(payload)) {
+    try {
+      payload = JSON.parse(payload.toString("utf8"));
+    } catch {
+      payload = {};
+    }
+  }
+
+  try {
+    const out = await branchSettlement.handleSettlementWebhook(provider, payload, req.headers);
+    res.status(200).json({ success: true, ...out });
+  } catch (e) {
+    console.error(`[webhook settlement ${provider}]`, e);
+    res.status(e.statusCode || 500).json({ success: false, message: e.message || "Settlement webhook failed" });
+  }
+}
+
 module.exports = {
   getSavedCards,
   releaseEscrow,
@@ -181,4 +208,5 @@ module.exports = {
   payfastWebhook,
   payflexWebhook,
   payjustnowWebhook,
+  settlementWebhook,
 };

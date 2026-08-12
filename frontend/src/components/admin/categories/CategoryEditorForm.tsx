@@ -172,6 +172,49 @@ export function CategoryEditorForm({
         </div>
       </div>
 
+      <fieldset className="space-y-3 rounded-md border border-border p-4">
+        <legend className="px-1 text-sm font-semibold">PAYMENT MODEL</legend>
+        <div className="space-y-3">
+          {(
+            [
+              {
+                value: 'TWO_PAYMENT_50_50' as const,
+                label: '50% Deposit + 50% Completion',
+                description:
+                  'Customer pays 50% before the provider starts and the remaining 50% after completion.',
+              },
+              {
+                value: 'SINGLE_PAYMENT_UPFRONT' as const,
+                label: '100% Payment Upfront',
+                description: 'Customer pays the full amount before the service starts.',
+              },
+              {
+                value: 'SINGLE_PAYMENT_ON_COMPLETION' as const,
+                label: '100% Payment After Completion',
+                description: 'Customer pays the full amount after the provider completes the service.',
+              },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className="flex cursor-pointer gap-3 rounded-md border border-transparent p-2 hover:bg-muted/40"
+            >
+              <input
+                type="radio"
+                name="cat-payment-mode"
+                className="mt-1"
+                checked={form.paymentMode === opt.value}
+                onChange={() => onFormChange((f) => ({ ...f, paymentMode: opt.value }))}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{opt.label}</span>
+                <span className="block text-xs text-muted-foreground">{opt.description}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"

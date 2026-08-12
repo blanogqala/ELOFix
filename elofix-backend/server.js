@@ -219,45 +219,109 @@ function startIntervalsAfterListen() {
   }, 60 * 60 * 1000).unref();
 }
 
-(async () => {
-  await ensureProviderTotalReviewsColumn();
+function listenWithRetry(attempt = 0) {
+  const maxAttempts = 10;
+  const retryMs = 500;
 
+  const onError = (err) => {
+    if (err.code === "EADDRINUSE" && attempt < maxAttempts) {
+      console.warn(
+        `[startup] port ${PORT} in use, retrying in ${retryMs}ms (${attempt + 1}/${maxAttempts})`
+      );
+      setTimeout(() => listenWithRetry(attempt + 1), retryMs);
+      return;
+    }
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[FATAL] Port ${PORT} is already in use. Another EloFix backend is still running — often a leftover npm run dev after a terminal was closed. Stop that process, then start this one again.`
+      );
+      process.exit(1);
+    }
+    console.error("[startup] listen failed", err);
+    process.exit(1);
+  };
+
+  server.once("error", onError);
   server.listen(PORT, () => {
+    server.removeListener("error", onError);
     console.log(`Server listening on port ${PORT}`);
     startIntervalsAfterListen();
   });
+}
+
+(async () => {
+  await ensureProviderTotalReviewsColumn();
+  listenWithRetry();
 })().catch((e) => {
   console.error("[startup] prereq failed", e);
   process.exit(1);
 });
 
-function shutdown(signal) {
-  console.log(`${signal} received, closing HTTP server`);
-  server.close(async (closeErr) => {
-    if (closeErr) {
-      console.error("[shutdown] server.close error", closeErr);
-    }
+function closeHttpServer() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    const timer = setTimeout(finish, 1500);
+    timer.unref();
+
     try {
-      await prisma.$disconnect();
-    } catch (e) {
-      console.error("[shutdown] prisma.$disconnect error", e);
+      if (typeof io.disconnectSockets === "function") {
+        io.disconnectSockets(true);
+      }
+      if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
+    } catch (_) {
+      /* ignore — still attempt server.close */
     }
-    process.exit(closeErr ? 1 : 0);
-  });
 
-  setTimeout(() => {
-    console.error("[shutdown] force exit after timeout");
-    process.exit(1);
-  }, 10_000).unref();
-}
+    try {
+      io.close();
+    } catch (_) {
+      /* ignore */
+    }
 
-process.once("SIGINT", () => shutdown("SIGINT"));
-process.once("SIGTERM", () => shutdown("SIGTERM"));
-process.once("SIGUSR2", () => {
-  console.log("SIGUSR2 received (nodemon restart), closing HTTP server");
-  server.close(() => {
-    void prisma.$disconnect().finally(() => {
-      process.kill(process.pid, "SIGUSR2");
+    server.close((closeErr) => {
+      clearTimeout(timer);
+      if (closeErr && closeErr.code !== "ERR_SERVER_NOT_RUNNING") {
+        console.error("[shutdown] server.close", closeErr);
+      }
+      finish();
     });
   });
+}
+
+async function shutdown(signal) {
+  console.log(`${signal} received, closing HTTP server`);
+  const forceTimer = setTimeout(() => {
+    console.error("[shutdown] force exit after timeout");
+    process.exit(1);
+  }, 2_000);
+  forceTimer.unref();
+
+  try {
+    await closeHttpServer();
+    await prisma.$disconnect();
+    clearTimeout(forceTimer);
+    process.exit(0);
+  } catch (e) {
+    console.error("[shutdown] error", e);
+    clearTimeout(forceTimer);
+    process.exit(1);
+  }
+}
+
+process.once("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.once("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
+process.once("SIGUSR2", () => {
+  void shutdown("SIGUSR2");
 });

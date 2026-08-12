@@ -161,6 +161,57 @@ export interface AdminProviderAnalytics {
   };
 }
 
+export async function getAdminProviderPayoutProfile(userId: string): Promise<{
+  success: boolean;
+  profile: AdminPayoutProfileRow | null;
+  gatewaySettlementSupported: boolean;
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    profile: AdminPayoutProfileRow | null;
+    gatewaySettlementSupported: boolean;
+  }>(`/admin/providers/${encodeURIComponent(userId)}/payout-profile`);
+  return data;
+}
+
+export interface AdminPayoutProfileRow {
+  scope?: string;
+  entityId?: string;
+  bankName?: string;
+  accountHolder?: string;
+  accountType?: string | null;
+  accountNumberMasked?: string;
+  branchCodeMasked?: string;
+  verificationStatus?: string;
+  gatewaySettlementProfile?: {
+    status?: string | null;
+    provider?: string | null;
+    recipientConfigured?: boolean;
+  };
+  isActive?: boolean;
+  updatedAt?: string;
+  branchName?: string | null;
+  businessName?: string | null;
+}
+
+export async function getAdminBranchPayoutProfile(
+  supplierId: string,
+  branchId: string
+): Promise<{
+  success: boolean;
+  profile: AdminPayoutProfileRow | null;
+  gatewaySettlementSupported: boolean;
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    profile: AdminPayoutProfileRow | null;
+    gatewaySettlementSupported: boolean;
+  }>(
+    `/admin/suppliers/${encodeURIComponent(supplierId)}/branches/${encodeURIComponent(branchId)}/payout-profile`
+  );
+  return data;
+}
+
 export async function getAdminProviderAnalytics(userId: string): Promise<AdminProviderAnalytics> {
   const { data } = await apiClient.get<{ success: boolean; analytics: AdminProviderAnalytics }>(
     `/admin/providers/${userId}/analytics`,
@@ -306,11 +357,13 @@ export interface AdminSupplierBranchWithdrawalRow {
   createdAt: string;
 }
 
-export async function getAdminSupplierBranchWithdrawals(
+import type { BranchSettlementEventRow } from '@/lib/api/supplierPortal';
+
+export async function getAdminSupplierSettlementHistory(
   supplierId: string,
   filters?: { from?: string; to?: string; branchId?: string }
-): Promise<{ success: boolean; withdrawals: AdminSupplierBranchWithdrawalRow[] }> {
-  const { data } = await apiClient.get<{ success: boolean; withdrawals: AdminSupplierBranchWithdrawalRow[] }>(
+): Promise<{ success: boolean; events: BranchSettlementEventRow[] }> {
+  const { data } = await apiClient.get<{ success: boolean; events: BranchSettlementEventRow[] }>(
     `/admin/suppliers/${encodeURIComponent(supplierId)}/branch-withdrawals`,
     {
       params: {
@@ -322,25 +375,61 @@ export async function getAdminSupplierBranchWithdrawals(
   );
   return {
     success: Boolean(data?.success),
-    withdrawals: Array.isArray(data?.withdrawals) ? data.withdrawals : [],
+    events: Array.isArray(data?.events) ? data.events : [],
   };
 }
 
+export async function getAdminSupplierSettlementSummary(
+  supplierId: string,
+  filters?: { from?: string; to?: string }
+): Promise<{
+  totalPendingSettlement: number;
+  totalSettled: number;
+  gatewaySettlementSupported?: boolean;
+}> {
+  const { data } = await apiClient.get<{
+    success: boolean;
+    totalPendingSettlement?: number;
+    totalSettled?: number;
+    gatewaySettlementSupported?: boolean;
+  }>(`/admin/suppliers/${encodeURIComponent(supplierId)}/settlement-summary`, {
+    params: {
+      ...(filters?.from ? { from: filters.from } : {}),
+      ...(filters?.to ? { to: filters.to } : {}),
+    },
+  });
+  return {
+    totalPendingSettlement: Number(data?.totalPendingSettlement ?? 0),
+    totalSettled: Number(data?.totalSettled ?? 0),
+    gatewaySettlementSupported: Boolean(data?.gatewaySettlementSupported),
+  };
+}
+
+/** @deprecated use getAdminSupplierSettlementSummary */
 export async function getAdminSupplierAvailableWithdrawals(
   supplierId: string,
   filters?: { from?: string; to?: string }
 ): Promise<{ totalAvailableWithdrawals: number }> {
-  const { data } = await apiClient.get<{ success: boolean; totalAvailableWithdrawals: number }>(
-    `/admin/suppliers/${encodeURIComponent(supplierId)}/available-withdrawals`,
-    {
-      params: {
-        ...(filters?.from ? { from: filters.from } : {}),
-        ...(filters?.to ? { to: filters.to } : {}),
-      },
-    }
-  );
+  const summary = await getAdminSupplierSettlementSummary(supplierId, filters);
+  return { totalAvailableWithdrawals: summary.totalPendingSettlement };
+}
+
+/** @deprecated use getAdminSupplierSettlementHistory */
+export async function getAdminSupplierBranchWithdrawals(
+  supplierId: string,
+  filters?: { from?: string; to?: string; branchId?: string }
+): Promise<{ success: boolean; withdrawals: AdminSupplierBranchWithdrawalRow[] }> {
+  const { events } = await getAdminSupplierSettlementHistory(supplierId, filters);
   return {
-    totalAvailableWithdrawals: Number(data?.totalAvailableWithdrawals ?? 0),
+    success: true,
+    withdrawals: events.map((e) => ({
+      id: e.id,
+      branchId: e.branchId,
+      branchName: e.branchName || '',
+      amount: e.netAmount,
+      status: e.settlementStatus,
+      createdAt: e.createdAt,
+    })),
   };
 }
 

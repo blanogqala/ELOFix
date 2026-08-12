@@ -86,6 +86,7 @@ export const ProviderDisputeDetail = lazy(() => import('@/pages/provider/Dispute
 export const ProviderCancellationDetail = lazy(() => import('@/pages/provider/CancellationDetail'));
 export const ProviderJobBrowseMaterials = lazy(() => import('@/pages/provider/ProviderJobBrowseMaterials'));
 export const ProviderEarnings = lazy(() => import('@/pages/provider/Earnings'));
+export const ProviderJobRefundRepayment = lazy(() => import('@/pages/provider/JobRefundRepayment'));
 export const ProviderProfile = lazy(() => import('@/pages/provider/Profile'));
 export const ProviderDocuments = lazy(() => import('@/pages/provider/Documents'));
 export const ProviderTrustScoreDetails = lazy(() => import('@/pages/provider/TrustScoreDetails'));

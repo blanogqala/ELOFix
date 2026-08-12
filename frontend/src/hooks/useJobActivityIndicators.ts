@@ -5,6 +5,7 @@ import { getNotifications, markJobNotificationsRead } from '@/lib/api/notificati
 import {
   countSection,
   hasJobsNavActivity,
+  hasPaymentsNavActivity,
   hasRequestsNavActivity,
   jobIdsWithActivity,
   unreadForJob,
@@ -45,6 +46,7 @@ export function useJobActivityIndicators() {
     isLoading,
     hasJobsNavActivity: hasJobsNavActivity(notifications),
     hasRequestsNavActivity: hasRequestsNavActivity(notifications),
+    hasPaymentsNavActivity: hasPaymentsNavActivity(notifications),
     activeJobIds,
     jobHasActivity: (jobId: string) => activeJobIds.has(jobId),
     unreadCountForJob: (jobId: string) => unreadForJob(notifications, jobId).length,

@@ -10,14 +10,9 @@ import { getJobsByUser } from '@/lib/api/jobs';
 import { listDisputes } from '@/lib/api/disputes';
 import { formatRequestedResolution } from '@/lib/disputeLabels';
 import { queryKeys } from '@/lib/queryKeys';
-import { getJobPriceDisplay } from '@/lib/jobUtils';
-import {
-  RefundSummaryLine,
-  hasRefundDisplay,
-  isJobRefunded,
-} from '@/components/payments/RefundSummaryLine';
+import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { Job, JobDispute, JobStatus } from '@/types';
-import { Search, Briefcase, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Search, Briefcase, ArrowRight, AlertTriangle, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
@@ -27,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
+import { jobHasSubmittedReview } from '@/lib/jobReviewStatus';
 
 type JobsView = 'jobs' | 'review';
 
@@ -163,37 +159,17 @@ export default function UserJobs() {
         )}
       </div>
       <div className="text-right shrink-0 hidden sm:block">
-        {(() => {
-          const { text, isPaid, refundAmount, refundStatus, underAdminReview } = getJobPriceDisplay(job);
-          const showRefund = hasRefundDisplay({ refundAmount, refundStatus });
-          const processedRefund = isJobRefunded({ refundAmount, refundStatus });
-          return (
-            <>
-              <p className="font-medium">
-                {text}
-                {isPaid && !processedRefund && <span className="ml-1 text-xs text-success">(Paid)</span>}
-                {isPaid && processedRefund && (
-                  <span className="ml-1 text-xs text-destructive">(Refunded)</span>
-                )}
-              </p>
-              {underAdminReview && (
-                <p className="text-xs text-amber-700 dark:text-amber-200">Under admin review</p>
-              )}
-              {showRefund && (
-                <p className="text-xs">
-                  <RefundSummaryLine
-                    refundAmount={refundAmount}
-                    refundStatus={refundStatus}
-                    variant="inline"
-                  />
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">
-                {new Date(job.createdAt).toLocaleDateString()}
-              </p>
-            </>
-          );
-        })()}
+        <JobPaymentListSummary job={job} showDate />
+        {job.status === 'COMPLETED' ? (
+          jobHasSubmittedReview(job) ? (
+            <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Star className="h-3 w-3 fill-accent text-accent" aria-hidden />
+              {Number(job.jobReview?.rating ?? job.userRating)} · Review submitted
+            </p>
+          ) : (
+            <p className="mt-1 text-xs font-medium text-primary">Review provider →</p>
+          )
+        ) : null}
       </div>
       {jobHasActivity(job.id) && (
         <ActivityDot className="shrink-0" aria-label="This job needs your attention" />

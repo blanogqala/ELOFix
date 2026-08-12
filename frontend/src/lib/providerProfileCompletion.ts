@@ -6,12 +6,14 @@ export type ProviderProfileSection =
   | 'profileInfo'
   | 'skillsAndPrices'
   | 'documents'
+  | 'payoutBanking'
   | 'settings';
 
 export interface ProviderProfileSectionStatus {
   profileInfo: boolean;
   skillsAndPrices: boolean;
   documents: boolean;
+  payoutBanking: boolean;
   settings: boolean;
   /** 0–100 based on required onboarding sections (excludes optional work posts). */
   percentCore: number;
@@ -33,6 +35,7 @@ export function businessHoursComplete(settings?: ProviderSettings | null): boole
  * Core onboarding sections used for guided UX and progress bar.
  * Work posts are optional. Backend `profileCompleted` follows the same rules.
  * Pending service suggestions count toward skills & pricing until admin approves.
+ * Payout counts when a withdrawal/payout bank profile has been saved.
  */
 export function evaluateProviderCoreSections(
   provider: Provider | null | undefined,
@@ -44,6 +47,8 @@ export function evaluateProviderCoreSections(
     pricing: Provider['laborPricing'];
     settings?: ProviderSettings | null;
     hasPendingSkillSuggestion?: boolean;
+    /** True when ProviderWithdrawalProfile exists (masked fetch). */
+    hasPayoutProfile?: boolean;
   }
 ): ProviderProfileSectionStatus {
   const phone = local ? local.phone.trim() : String(provider?.phone || '').trim();
@@ -65,6 +70,7 @@ export function evaluateProviderCoreSections(
       : {};
   const settings = local?.settings ?? provider?.settings;
   const hasPendingSkillSuggestion = Boolean(local?.hasPendingSkillSuggestion);
+  const hasPayoutProfile = Boolean(local?.hasPayoutProfile);
 
   const profileInfo =
     phone.length > 0 && bio.length >= 20 && serviceAreas.length >= 1;
@@ -79,14 +85,18 @@ export function evaluateProviderCoreSections(
     !hasRejectedRequiredDocuments(provider?.documents);
 
   const settingsOk = businessHoursComplete(settings);
+  const payoutBanking = hasPayoutProfile;
 
-  const done = [profileInfo, skillsAndPrices, documents, settingsOk].filter(Boolean).length;
+  const done = [profileInfo, skillsAndPrices, documents, payoutBanking, settingsOk].filter(
+    Boolean
+  ).length;
 
   return {
     profileInfo,
     skillsAndPrices,
     documents,
+    payoutBanking,
     settings: settingsOk,
-    percentCore: Math.round((done / 4) * 100),
+    percentCore: Math.round((done / 5) * 100),
   };
 }

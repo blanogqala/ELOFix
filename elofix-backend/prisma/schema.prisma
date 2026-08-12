@@ -85,6 +85,8 @@ enum PaymentIntentKind {
   MATERIAL_ORDER
   JOB_STORE_ORDER
   DELIVERY_FEE
+  /// Provider pays EloFix to settle refund debt (not a customer labor payment)
+  PROVIDER_REFUND_REPAYMENT
 }
 
 enum PaymentState {
@@ -111,6 +113,53 @@ enum ProviderPayoutStatus {
   NONE
   PARTIAL
   COMPLETE
+}
+
+/// Branch material-order settlement to bank account (separate from customer payment).
+enum BranchSettlementStatus {
+  NOT_APPLICABLE
+  NOT_SUPPORTED
+  PENDING
+  PROCESSING
+  SETTLED
+  FAILED
+  REVERSED
+}
+
+enum BranchSettlementEventType {
+  MATERIAL_PAYMENT
+  PLATFORM_COMMISSION
+  BRANCH_SETTLEMENT
+  SETTLEMENT_PENDING
+  SETTLEMENT_COMPLETED
+  REFUND
+  REVERSAL
+  SETTLEMENT_FAILED
+}
+
+/// Admin-configurable service category payment strategy (snapshotted onto Job at accept).
+enum CategoryPaymentMode {
+  TWO_PAYMENT_50_50
+  SINGLE_PAYMENT_UPFRONT
+  SINGLE_PAYMENT_ON_COMPLETION
+}
+
+/// Progress of customer labor payments against the job snapshot schedule.
+enum JobPaymentProgress {
+  NONE
+  FIRST_PAID
+  FULLY_PAID
+}
+
+/// Stage/type of a single PaymentIntent (per-transaction accounting).
+enum PaymentType {
+  DEPOSIT
+  COMPLETION
+  FULL_UPFRONT
+  FULL_COMPLETION
+  MATERIAL_ORDER
+  DELIVERY_FEE
+  JOB_STORE_ORDER
 }
 
 enum DisputeStatus {
@@ -188,6 +237,12 @@ enum ProviderRefundRepaymentStatus {
   SUBMITTED
   CONFIRMED
   REJECTED
+}
+
+/// How the provider repaid EloFix toward refund debt.
+enum ProviderRefundRepaymentMethod {
+  GATEWAY
+  BANK_TRANSFER
 }
 
 model User {
@@ -418,9 +473,20 @@ model Job {
   isFullyReleased                  Boolean           @default(false)
   /// Prevents double second-tranche release on confirm-completion
   escrowSecondReleaseDone          Boolean           @default(false)
+  /// Payment mode frozen when quotation/price is accepted (admin category changes must not rewrite open jobs).
+  paymentModeSnapshot              CategoryPaymentMode?
+  /// Gross quoted labor amount at snapshot time
+  quotedAmount                     Decimal?          @db.Decimal(12, 2)
+  /// First customer payment amount (deposit or full, depending on mode)
+  firstPaymentAmount               Decimal?          @db.Decimal(12, 2)
+  /// Second customer payment amount (50/50 only); null for single-payment modes
+  secondPaymentAmount              Decimal?          @db.Decimal(12, 2)
+  paymentProgress                  JobPaymentProgress @default(NONE)
+  /// True for jobs that already had labor paid under escrow v2 with second tranche still held
+  legacyEscrowV2                   Boolean           @default(false)
   providerReview                   ProviderReview?
   earnings                         Earning[]
-  commissionLedger                 CommissionLedger?
+  commissionLedgers                CommissionLedger[]
   paystackCharges                  PaystackCharge[]
   paymentIntents                   PaymentIntent[]
   materialRequests                 MaterialRequest[]
@@ -428,6 +494,7 @@ model Job {
   completionEvidence               JobCompletionEvidence?
   dispute                          JobDispute?
   refundRecoveries                 RefundRecovery[]
+  refundRepayments                 ProviderRefundRepayment[]
 }
 
 model MaterialRequest {
@@ -449,18 +516,21 @@ model MaterialRequest {
   @@index([customerId])
 }
 
-/// One row per job after successful labor payment — admin aggregation
+/// One row per successful payment transaction (per PaymentIntent) — admin aggregation
 model CommissionLedger {
-  id         String   @id @default(uuid())
-  jobId      String   @unique
-  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  amount     Decimal  @db.Decimal(12, 2)
-  source     String   @default("labor_payment")
+  id              String         @id @default(uuid())
+  jobId           String?
+  job             Job?           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  paymentIntentId String?        @unique
+  paymentIntent   PaymentIntent? @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  amount          Decimal        @db.Decimal(12, 2)
+  source          String         @default("labor_payment")
   /// Full gross (customer payment) for reporting
-  totalPrice Decimal? @db.Decimal(12, 2)
-  currency   String?  @default("ZAR")
-  createdAt  DateTime @default(now())
+  totalPrice      Decimal?       @db.Decimal(12, 2)
+  currency        String?        @default("ZAR")
+  createdAt       DateTime       @default(now())
 
+  @@index([jobId])
   @@index([createdAt])
 }
 
@@ -470,13 +540,21 @@ model PaymentIntent {
   merchantReference    String               @unique
   provider             PaymentProvider
   kind                 PaymentIntentKind
+  /// Stage within kind (e.g. DEPOSIT vs COMPLETION for LABOR)
+  paymentType          PaymentType?
   userId               String
   user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   jobId                String?
   job                  Job?                 @relation(fields: [jobId], references: [id], onDelete: SetNull)
   materialOrderId      String?
   materialOrder        MaterialOrder?       @relation(fields: [materialOrderId], references: [id], onDelete: SetNull)
+  /// Provider or supplier user id receiving the 93% share (accounting only — not an internal wallet)
+  recipientUserId      String?
   amount               Decimal              @db.Decimal(12, 2)
+  /// Platform commission for THIS transaction (server-calculated)
+  commissionAmount     Decimal              @default(0) @db.Decimal(12, 2)
+  /// Recipient share for THIS transaction (gross − commission)
+  recipientAmount      Decimal              @default(0) @db.Decimal(12, 2)
   currency             String               @default("ZAR")
   state                PaymentState         @default(PENDING)
   escrowStatus         EscrowStatus         @default(NOT_APPLICABLE)
@@ -491,16 +569,29 @@ model PaymentIntent {
   cancelledAt          DateTime?
   refundedAt           DateTime?
   disputedAt           DateTime?
+  /// Cumulative amount already refunded via gateway against this intent (partial multi-refund)
+  refundedAmount       Decimal              @default(0) @db.Decimal(12, 2)
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   webhookEvents        PaymentWebhookEvent[]
+  commissionLedger     CommissionLedger?
+  providerRefundRepayment ProviderRefundRepayment?
+  /// Denormalized branch for material-order reconciliation
+  branchId               String?
+  branchSettlementStatus BranchSettlementStatus @default(NOT_APPLICABLE)
+  branchSettlementId     String?
+  branchSettlementEvents BranchSettlementEvent[]
 
   @@unique([materialOrderId, kind])
   @@index([jobId])
+  @@index([jobId, paymentType])
   @@index([materialOrderId])
   @@index([userId, createdAt])
   @@index([state])
+  @@index([paymentType])
   @@index([provider, gatewayTransactionId])
+  @@index([branchId])
+  @@index([branchSettlementStatus])
 }
 
 /// Idempotent webhook processing per provider event
@@ -581,20 +672,22 @@ model Earning {
 }
 
 model Category {
-  id                 String            @id
-  name               String            @unique
+  id                 String               @id
+  name               String               @unique
   icon               String
   description        String
-  requiresMaterials  Boolean           @default(false)
-  requiresInspection Boolean           @default(true)
+  requiresMaterials  Boolean              @default(false)
+  requiresInspection Boolean              @default(true)
+  /// Admin-configured payment strategy for this service category
+  paymentMode        CategoryPaymentMode  @default(TWO_PAYMENT_50_50)
   skills             String[]
   step3Type          CategoryStep3Type
   issueTypes         String[]
   commonItems        Json?
-  isActive           Boolean           @default(true)
-  sortOrder          Int               @default(0)
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  isActive           Boolean              @default(true)
+  sortOrder          Int                  @default(0)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 }
 
 model Notification {
@@ -688,17 +781,29 @@ model ProviderReview {
 }
 
 model ProviderWithdrawalProfile {
-  id             String   @id @default(uuid())
-  providerId     String   @unique
-  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  bankName       String
-  accountNumber  String
-  accountHolder  String
-  branchCode     String
-  bankAccountHash String?
-  updatedAt      DateTime @updatedAt
+  id                    String           @id @default(uuid())
+  providerId            String           @unique
+  provider              Provider         @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  bankName              String
+  accountNumber         String
+  accountHolder         String
+  branchCode            String
+  /// CHEQUE | SAVINGS | CURRENT
+  accountType           String?
+  /// NOT_CONFIGURED | PENDING_VERIFICATION | VERIFIED | ACTION_REQUIRED | REJECTED | SUSPENDED
+  verificationStatus    String?
+  gatewayProvider       PaymentProvider?
+  gatewayRecipientId    String?
+  gatewayProfileStatus  String?
+  gatewayProfilePayload Json?
+  bankAccountHash       String?
+  isActive              Boolean          @default(true)
+  deactivatedAt         DateTime?
+  updatedAt             DateTime         @updatedAt
 
   @@index([bankAccountHash])
+  @@index([verificationStatus])
+  @@index([isActive])
 }
 
 model WithdrawalRequest {
@@ -758,12 +863,32 @@ model JobDispute {
   messages            DisputeMessage[]
   resolutionLogs      DisputeResolutionLog[]
   rounds              JobDisputeRound[]
+  evidenceEntries     DisputeEvidence[]
   refundRecoveries    RefundRecovery[]
 
   @@index([status])
   @@index([providerId])
   @@index([customerId])
   @@index([openedAt])
+}
+
+/// Append-only evidence submissions for an open dispute (customer or provider).
+model DisputeEvidence {
+  id         String            @id @default(uuid())
+  disputeId  String
+  dispute    JobDispute        @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  jobId      String
+  authorId   String
+  authorRole DisputeSenderRole
+  comment    String
+  images     String[]          @default([])
+  videos     String[]          @default([])
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@index([disputeId, createdAt])
+  @@index([jobId])
+  @@index([authorId])
 }
 
 model JobDisputeRound {
@@ -1000,6 +1125,7 @@ model Branch {
   branchUsers           BranchUser[]
   withdrawalProfile     BranchWithdrawalProfile?
   withdrawalRequests    BranchWithdrawalRequest[]
+  settlementEvents      BranchSettlementEvent[]
 
   @@index([supplierId])
   @@index([supplierId, isActive])
@@ -1007,17 +1133,29 @@ model Branch {
 }
 
 model BranchWithdrawalProfile {
-  id              String   @id @default(uuid())
-  branchId        String   @unique
-  branch          Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  bankName        String
-  accountNumber   String
-  accountHolder   String
-  branchCode      String
-  bankAccountHash String?
-  updatedAt       DateTime @updatedAt
+  id                    String           @id @default(uuid())
+  branchId              String           @unique
+  branch                Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  bankName              String
+  accountNumber         String
+  accountHolder         String
+  branchCode            String
+  /// CHEQUE | SAVINGS | CURRENT
+  accountType           String?
+  /// NOT_CONFIGURED | PENDING_VERIFICATION | VERIFIED | ACTION_REQUIRED | REJECTED
+  verificationStatus    String           @default("NOT_CONFIGURED")
+  gatewayProvider       PaymentProvider?
+  gatewayRecipientId    String?
+  gatewayProfileStatus  String?
+  gatewayProfilePayload Json?
+  bankAccountHash       String?
+  isActive              Boolean          @default(true)
+  deactivatedAt         DateTime?
+  updatedAt             DateTime         @updatedAt
 
   @@index([bankAccountHash])
+  @@index([verificationStatus])
+  @@index([isActive])
 }
 
 model BranchWithdrawalRequest {
@@ -1120,19 +1258,56 @@ model MaterialOrder {
   refundReference        String?
   commissionReversed     Decimal                    @default(0) @db.Decimal(12, 2)
   payload                Json
+  /// Branch bank settlement status (separate from customer paymentStatus)
+  settlementStatus       BranchSettlementStatus     @default(NOT_APPLICABLE)
+  settlementAmount       Decimal                    @default(0) @db.Decimal(12, 2)
+  gatewaySettlementId    String?
+  settledAt              DateTime?
+  settlementFailureReason String?
   createdAt              DateTime                   @default(now())
   trackingSessions     TrackingSession[]
   materialRating       MaterialOrderRating?
+  settlementEvents     BranchSettlementEvent[]
 
   @@index([userId])
   @@index([supplierId])
   @@index([supplierId, fulfillmentStatus])
   @@index([branchId])
   @@index([branchId, fulfillmentStatus])
+  @@index([branchId, settlementStatus])
   @@index([createdAt])
   @@index([jobId])
   @@index([jobId, supplierId])
   @@index([jobId, branchId])
+}
+
+/// Financial event ledger for branch settlement history (not manual withdrawals).
+model BranchSettlementEvent {
+  id                  String                    @id @default(uuid())
+  branchId            String
+  branch              Branch                    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplierId          String
+  materialOrderId     String?
+  materialOrder       MaterialOrder?            @relation(fields: [materialOrderId], references: [id], onDelete: SetNull)
+  paymentIntentId     String?
+  paymentIntent       PaymentIntent?            @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  eventType           BranchSettlementEventType
+  grossAmount         Decimal                   @default(0) @db.Decimal(12, 2)
+  commissionAmount    Decimal                   @default(0) @db.Decimal(12, 2)
+  netAmount           Decimal                   @default(0) @db.Decimal(12, 2)
+  settlementStatus    BranchSettlementStatus    @default(NOT_APPLICABLE)
+  gatewayReference    String?
+  gatewaySettlementId String?
+  description         String?
+  createdAt           DateTime                  @default(now())
+
+  @@index([branchId])
+  @@index([branchId, createdAt])
+  @@index([supplierId])
+  @@index([materialOrderId])
+  @@index([paymentIntentId])
+  @@index([eventType])
+  @@index([settlementStatus])
 }
 
 /// Standalone customer delivery request (moving / courier without material purchase).
@@ -1264,21 +1439,30 @@ model RefundRecovery {
   @@index([dueAt])
 }
 
-/// Provider out-of-pocket bank transfer toward refund debt — admin confirms.
+/// Provider repayment toward refund debt (gateway checkout or bank transfer) — admin confirms.
 model ProviderRefundRepayment {
-  id          String                        @id @default(uuid())
-  providerId  String
-  provider    Provider                      @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  amount      Decimal                       @db.Decimal(12, 2)
-  reference   String
-  proofUrl    String?
-  status      ProviderRefundRepaymentStatus   @default(SUBMITTED)
-  reviewedBy  String?
-  reviewedAt  DateTime?
-  adminNote   String?
-  createdAt   DateTime                      @default(now())
+  id                   String                         @id @default(uuid())
+  providerId           String
+  provider             Provider                       @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  jobId                String?
+  job                  Job?                           @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  amount               Decimal                        @db.Decimal(12, 2)
+  reference            String
+  proofUrl             String?
+  method               ProviderRefundRepaymentMethod  @default(BANK_TRANSFER)
+  paymentIntentId      String?                        @unique
+  paymentIntent        PaymentIntent?                 @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  gatewayTransactionId String?
+  merchantReference    String?
+  status               ProviderRefundRepaymentStatus  @default(SUBMITTED)
+  reviewedBy           String?
+  reviewedAt           DateTime?
+  adminNote            String?
+  createdAt            DateTime                       @default(now())
 
   @@index([providerId])
+  @@index([jobId])
   @@index([status])
   @@index([createdAt])
+  @@index([method])
 }

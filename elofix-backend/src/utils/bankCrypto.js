@@ -120,8 +120,13 @@ function isEncryptedStored(value) {
   return s.startsWith(PREFIX_V1) || s.startsWith(PREFIX_V2);
 }
 
-function toPublicProfileRow(row) {
+function toPublicProfileRow(row, extras = {}) {
   if (!row) return null;
+  const gatewaySettlementProfile = {
+    status: row.gatewayProfileStatus || null,
+    provider: row.gatewayProvider || null,
+    recipientConfigured: Boolean(row.gatewayRecipientId),
+  };
   return {
     id: row.id,
     providerId: row.providerId,
@@ -129,6 +134,11 @@ function toPublicProfileRow(row) {
     accountHolder: row.accountHolder,
     accountNumberMasked: maskAccountNumber(row.accountNumber),
     branchCodeMasked: maskBranchCode(row.branchCode),
+    accountType: row.accountType || null,
+    verificationStatus: extras.verificationStatus || row.verificationStatus || null,
+    verifiedAt: extras.verifiedAt || null,
+    gatewaySettlementProfile,
+    isActive: row.isActive !== false,
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
   };
 }

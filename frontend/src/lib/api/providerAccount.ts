@@ -23,12 +23,19 @@ export interface ProviderEarningJobRow {
   providerAmount?: number;
   /** Cumulative amount released to provider (not platform fee) */
   releasedAmount?: number;
-  /** Provider share not yet released */
+  /** Provider share not yet released (legacy escrow only) */
   remainingAmount?: number;
   /** Optional: may appear on list payload or only on single-job earnings fetch */
   customerName?: string;
   /** Frontend workflow status from job meta (e.g. DISPUTED, IN_PROGRESS) */
   workflowStatus?: string;
+  paymentProgress?: string;
+  paymentLabel?: string;
+  legacyEscrowV2?: boolean;
+  customerPaidTotal?: number | null;
+  customerRemaining?: number | null;
+  providerShareRecorded?: number;
+  providerShareRemaining?: number;
   refundAmount?: number;
   refundStatus?: string;
   refundDetails?: {
@@ -48,13 +55,37 @@ export interface ProviderEarningJobRow {
   netReleasedAfterRefund?: number;
 }
 
+export interface ProviderSettlementRecord {
+  id: string;
+  jobId: string | null;
+  jobTitle?: string | null;
+  jobCategory?: string | null;
+  customerName?: string | null;
+  paymentType: string | null;
+  customerAmount: number;
+  commissionAmount: number;
+  providerShare: number;
+  merchantReference: string;
+  paidAt: string;
+}
+
 export interface ProviderEarningsResponse {
   success: boolean;
   summary: ProviderEarningsSummary;
   jobs: ProviderEarningJobRow[];
+  settlementRecords?: ProviderSettlementRecord[];
 }
 
 /** Bank details returned from API — account and branch are masked only. */
+export type WithdrawalAccountType = 'CHEQUE' | 'SAVINGS' | 'CURRENT';
+export type PayoutVerificationStatus =
+  | 'NOT_CONFIGURED'
+  | 'PENDING_VERIFICATION'
+  | 'VERIFIED'
+  | 'ACTION_REQUIRED'
+  | 'REJECTED'
+  | 'SUSPENDED';
+
 export interface WithdrawalProfile {
   id: string;
   providerId: string;
@@ -62,7 +93,25 @@ export interface WithdrawalProfile {
   accountHolder: string;
   accountNumberMasked: string;
   branchCodeMasked: string;
+  accountType?: WithdrawalAccountType | string | null;
+  verificationStatus?: PayoutVerificationStatus | string | null;
+  verifiedAt?: string | null;
+  gatewaySettlementProfile?: {
+    status?: string | null;
+    provider?: string | null;
+    recipientConfigured?: boolean;
+  };
+  isActive?: boolean;
   updatedAt: string;
+}
+
+export interface PayoutProfileResponse {
+  success: boolean;
+  profile: WithdrawalProfile | null;
+  verificationStatus?: PayoutVerificationStatus;
+  gatewaySettlementSupported?: boolean;
+  canRemove?: boolean;
+  removeBlockedReason?: string;
 }
 
 export interface ProviderBalanceSnapshot {
@@ -80,10 +129,15 @@ export interface ProviderEarningsSummary {
   available: number;
   refundDebtOwed?: number;
   totalClawback?: number;
-  /** Raw ledger pending credits (all jobs). */
+  /** Raw ledger pending credits (legacy Earning wallet). */
   pending?: number;
-  /** Provider-entitled escrow only — use for "Remaining to you" card. */
+  /** Legacy escrow unreleased only. */
   providerEscrowRemaining?: number;
+  /** SUM provider share from successful customer payments. */
+  totalProviderShareRecorded?: number;
+  /** Provider share still tied to unpaid payment stages. */
+  totalProviderShareRemaining?: number;
+  hasLegacyJobs?: boolean;
 }
 
 export interface ProviderWithdrawalRow {
@@ -122,18 +176,32 @@ export async function getProviderEarningJob(jobId: string): Promise<{
   return data;
 }
 
-export async function getWithdrawalProfile(): Promise<{ success: boolean; profile: WithdrawalProfile | null }> {
-  const { data } = await apiClient.get('/provider/withdrawal-profile');
+export async function getWithdrawalProfile(): Promise<PayoutProfileResponse> {
+  const { data } = await apiClient.get<PayoutProfileResponse>('/provider/withdrawal-profile');
   return data;
 }
 
-export async function saveWithdrawalProfile(body: {
+type SavePayoutBody = {
   bankName: string;
-  accountNumber: string;
   accountHolder: string;
-  branchCode: string;
-}): Promise<{ success: boolean; profile: WithdrawalProfile }> {
-  const { data } = await apiClient.put('/provider/withdrawal-profile', body);
+  accountNumber?: string;
+  branchCode?: string;
+  accountType?: WithdrawalAccountType | string;
+  confirmReplace?: boolean;
+};
+
+export async function saveWithdrawalProfile(body: SavePayoutBody): Promise<PayoutProfileResponse> {
+  const { data } = await apiClient.put<PayoutProfileResponse>('/provider/withdrawal-profile', body);
+  return data;
+}
+
+export async function replaceWithdrawalProfile(body: SavePayoutBody & { confirmReplace: true }): Promise<PayoutProfileResponse> {
+  const { data } = await apiClient.put<PayoutProfileResponse>('/provider/withdrawal-profile/replace', body);
+  return data;
+}
+
+export async function removeWithdrawalProfile(): Promise<PayoutProfileResponse> {
+  const { data } = await apiClient.delete<PayoutProfileResponse>('/provider/withdrawal-profile');
   return data;
 }
 
@@ -165,10 +233,39 @@ export async function getProviderWithdrawals(): Promise<{
   return data;
 }
 
+export type ProviderRepaymentStatus =
+  | 'REFUND_DUE'
+  | 'AWAITING_VERIFICATION'
+  | 'PAYMENT_REJECTED'
+  | 'PAYMENT_VERIFIED'
+  | 'REFUND_PROCESSING'
+  | 'REFUNDED'
+  | 'OVERDUE'
+  | string;
+
+export interface ProviderRefundRecoveryRow {
+  id: string;
+  jobId: string | null;
+  jobTitle: string | null;
+  customerId?: string | null;
+  customerName?: string | null;
+  totalPending: number;
+  recoveredAmount: number;
+  balance: number;
+  status: string;
+  repaymentStatus?: ProviderRepaymentStatus;
+  dueAt: string;
+  reference: string;
+  customerRefundPending?: number;
+  customerRefundImmediate?: number;
+  refundStatus?: string | null;
+}
+
 export interface ProviderRefundDebtSummary {
   totalOwed: number;
   dueAt: string | null;
   reference: string | null;
+  repaymentStatus?: ProviderRepaymentStatus;
   platformBank: {
     bankName: string;
     accountName: string;
@@ -181,6 +278,7 @@ export interface ProviderRefundDebtSummary {
     amount: number;
     reference: string;
     status: string;
+    jobId?: string | null;
     createdAt: string;
   } | null;
   lastRejectedRepayment?: {
@@ -189,17 +287,28 @@ export interface ProviderRefundDebtSummary {
     adminNote?: string | null;
     reviewedAt?: string | null;
   } | null;
-  recoveries: Array<{
-    id: string;
-    jobId: string | null;
-    jobTitle: string | null;
-    totalPending: number;
-    recoveredAmount: number;
-    balance: number;
-    status: string;
-    dueAt: string;
-    reference: string;
-  }>;
+  recoveries: ProviderRefundRecoveryRow[];
+}
+
+export interface ProviderJobRefundObligation {
+  jobId: string;
+  jobTitle: string | null;
+  customerId: string;
+  customerName: string | null;
+  amountDue: number;
+  dueAt: string | null;
+  reference: string | null;
+  repaymentStatus: ProviderRepaymentStatus;
+  recoveryStatus: string | null;
+  customerRefundPending: number;
+  customerRefundImmediate: number;
+  refundStatus: string | null;
+  customerRefundStatus?: string | null;
+  platformBank: ProviderRefundDebtSummary['platformBank'];
+  pendingRepayment: ProviderRefundDebtSummary['pendingRepayment'];
+  lastRejectedRepayment: ProviderRefundDebtSummary['lastRejectedRepayment'];
+  recoveries: ProviderRefundRecoveryRow[];
+  totalOwed: number;
 }
 
 export async function getProviderRefundDebt(): Promise<{ success: boolean } & ProviderRefundDebtSummary> {
@@ -209,11 +318,45 @@ export async function getProviderRefundDebt(): Promise<{ success: boolean } & Pr
   return data;
 }
 
-export async function submitProviderRefundRepayment(body: {
+export async function getProviderJobRefundObligation(
+  jobId: string
+): Promise<{ success: boolean; obligation: ProviderJobRefundObligation }> {
+  const { data } = await apiClient.get<{ success: boolean; obligation: ProviderJobRefundObligation }>(
+    `/provider/jobs/${jobId}/refund-obligation`
+  );
+  return data;
+}
+
+export async function createProviderRefundRepaymentCheckout(
+  jobId: string,
+  body?: { amount?: number; provider?: string }
+): Promise<{
+  success: boolean;
+  repaymentId: string;
+  intentId: string;
   amount: number;
+  provider: string;
+  merchantReference: string;
+  checkout: {
+    type: string;
+    url: string;
+    method?: string;
+    formFields?: Record<string, string>;
+  };
+  status: string;
+}> {
+  const { data } = await apiClient.post(`/provider/jobs/${jobId}/refund-obligation/checkout`, body ?? {}, {
+    headers: idempotencyHeaders(),
+  });
+  return data;
+}
+
+export async function submitProviderRefundRepayment(body: {
+  amount?: number;
   reference: string;
   proofUrl?: string;
-}): Promise<{ success: boolean; repayment: { id: string; status: string } }> {
+  jobId?: string;
+}): Promise<{ success: boolean; repayment: { id: string; status: string; amount?: number } }> {
   const { data } = await apiClient.post('/provider/refund-debt/repayments', body, {
     headers: idempotencyHeaders(),
   });

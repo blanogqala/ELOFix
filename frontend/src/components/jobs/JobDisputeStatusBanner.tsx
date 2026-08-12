@@ -14,6 +14,8 @@ type JobDisputeStatusBannerProps =
       variant: 'provider';
       caseKind?: 'dispute' | 'cancellation';
       disputeId?: string | null;
+      customerComment?: string;
+      openedAt?: string | null;
       onViewDisputeCase?: () => void;
     };
 
@@ -35,12 +37,12 @@ export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
               <p className="font-semibold text-destructive">
                 {caseKind === 'cancellation'
                   ? 'Cancellation opened — under review'
-                  : 'Dispatched — customer flagged work as not complete'}
+                  : 'Dispute requires investigation'}
               </p>
               <p className="text-sm text-muted-foreground">
                 {caseKind === 'cancellation'
                   ? 'Payment is on hold until this cancellation is reviewed and resolved.'
-                  : 'Payment is on hold until this case is investigated and resolved.'}
+                  : 'Customer rejected the provider’s completion claim. Payment is on hold until this case is investigated and resolved.'}
               </p>
               {(customerRequested || customerComment) && (
                 <div className="mt-3 space-y-1 text-sm">
@@ -67,7 +69,7 @@ export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
     );
   }
 
-  const { disputeId, onViewDisputeCase, caseKind = 'dispute' } = props;
+  const { disputeId, onViewDisputeCase, caseKind = 'dispute', customerComment, openedAt } = props;
   return (
     <div className="card-elevated border-l-4 border-l-destructive p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -80,8 +82,19 @@ export function JobDisputeStatusBanner(props: JobDisputeStatusBannerProps) {
             <p className="text-sm text-muted-foreground">
               {caseKind === 'cancellation'
                 ? 'This job was cancelled and is under review. Payment on hold until EloFix resolves the case.'
-                : 'A customer has disputed this job. Payment on hold until EloFix resolves the case.'}
+                : 'Customer rejected completion — dispute under review. EloFix is reviewing the case. No refund has been issued automatically.'}
             </p>
+            {openedAt ? (
+              <p className="text-xs text-muted-foreground">
+                Opened {new Date(openedAt).toLocaleString()}
+              </p>
+            ) : null}
+            {customerComment ? (
+              <p className="mt-2 text-sm">
+                <span className="text-muted-foreground">Customer reason: </span>
+                {customerComment}
+              </p>
+            ) : null}
           </div>
         </div>
         {disputeId && onViewDisputeCase && (

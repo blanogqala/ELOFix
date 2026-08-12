@@ -193,6 +193,10 @@ export function BranchEarningsWithdrawalTab({
 
       <div className="card-elevated space-y-4 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">Request withdrawal</h2>
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-100">
+          In-app withdrawals are disabled. Settlement is recorded per completed order; bank payout is
+          handled outside EloFix.
+        </div>
         <p className="text-xs text-muted-foreground">
           Total completed earnings: {balanceLoading ? '…' : formatCurrency(balance?.totalEarned ?? 0)} · Already
           withdrawn: {balanceLoading ? '…' : formatCurrency(balance?.totalWithdrawn ?? 0)}
@@ -208,31 +212,16 @@ export function BranchEarningsWithdrawalTab({
               value={withdrawAmount}
               onChange={(e) => setWithdrawAmount(e.target.value)}
               className="mt-1"
+              disabled
             />
           </div>
-          <Button
-            type="button"
-            onClick={() => void handleWithdraw()}
-            disabled={
-              withdrawing ||
-              balanceLoading ||
-              available <= 0 ||
-              withdrawExceeds ||
-              !Number.isFinite(withdrawNum) ||
-              withdrawNum <= 0
-            }
-            className="sm:mb-0"
-          >
-            {withdrawing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Withdraw'}
+          <Button type="button" disabled className="sm:mb-0">
+            Withdrawals disabled
           </Button>
         </div>
-        {withdrawExceeds && (
-          <p className="text-xs text-destructive">
-            Amount exceeds available balance ({formatCurrency(available)}).
-          </p>
-        )}
         <p className="text-xs text-muted-foreground">
-          You may withdraw any amount up to your branch&apos;s completed earnings, minus prior withdrawals.
+          Historical withdrawals remain available for reference. New withdrawal requests cannot be submitted
+          in-app.
         </p>
       </div>
     </div>

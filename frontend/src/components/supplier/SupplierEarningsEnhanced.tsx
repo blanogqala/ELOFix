@@ -5,7 +5,7 @@ import {
   getSupplierOrdersExport,
   getSupplierMe,
   getSupplierAnalyticsBranches,
-  getSupplierOrgBranchWithdrawals,
+  getSupplierOrgSettlementHistory,
   EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY,
   type SupplierOrdersExportRow,
 } from '@/lib/api/supplierPortal';
@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { SupplierOrgWithdrawalHistoryPanel } from '@/components/supplier/SupplierOrgWithdrawalHistoryPanel';
+import { SupplierSettlementHistoryPanel } from '@/components/supplier/SupplierSettlementHistoryPanel';
 
 export function toDateInputValue(d: Date): string {
   const yyyy = d.getFullYear();
@@ -505,7 +505,8 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
     enabled: Boolean(userId),
   });
   const branchRows = branchAnalyticsData?.branches ?? [];
-  const totalAvailableWithdrawals = branchAnalyticsData?.totalAvailableWithdrawals ?? 0;
+  const totalPendingSettlement = branchAnalyticsData?.totalPendingSettlement ?? 0;
+  const totalSettled = branchAnalyticsData?.totalSettled ?? 0;
 
   const hubSummary = hubExport?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
   const hubRows = hubExport?.rows ?? [];
@@ -519,7 +520,7 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
       {hubLoading || branchesLoading ? (
         <p className="text-sm text-muted-foreground">Loading summary…</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <Card className="card-elevated">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total revenue</CardTitle>
@@ -555,13 +556,24 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Available withdrawals</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Pending settlement</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-primary">
-                {formatCurrency(totalAvailableWithdrawals)}
+                {formatCurrency(totalPendingSettlement)}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">In selected date range · all branches</p>
+            </CardContent>
+          </Card>
+          <Card className="card-elevated sm:col-span-2 lg:col-span-1">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Settled</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {formatCurrency(totalSettled)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Verified branch settlements</p>
             </CardContent>
           </Card>
         </div>
@@ -662,9 +674,9 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Available withdrawals</span>
+                    <span className="text-muted-foreground">Pending settlement</span>
                     <span className="font-medium text-primary">
-                      {formatCurrency(b.availableWithdrawals ?? 0)}
+                      {formatCurrency(b.pendingSettlement ?? 0)}
                     </span>
                   </div>
                 </CardContent>
@@ -677,7 +689,7 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
       <Tabs defaultValue="orders" className="w-full">
         <TabsList className="grid w-full max-w-lg grid-cols-2">
           <TabsTrigger value="orders">List of Orders</TabsTrigger>
-          <TabsTrigger value="history">History of Withdrawals</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="orders" className="mt-4">
@@ -695,17 +707,17 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
         </TabsContent>
 
         <TabsContent value="history" className="mt-4">
-          <SupplierOrgWithdrawalHistoryPanel
+          <SupplierSettlementHistoryPanel
             queryKeyPrefix={`supplier-${userId}-earnings-hub`}
-            fetchWithdrawals={getSupplierOrgBranchWithdrawals}
+            fetchEvents={getSupplierOrgSettlementHistory}
+            branches={profile?.branches}
             initialFrom={from}
             initialTo={to}
             controlledFrom={from}
             controlledTo={to}
             onControlledFromChange={setFrom}
             onControlledToChange={setTo}
-            exportFileTag="supplier-earnings-withdrawals"
-            description="Past payout requests across all branches"
+            exportFileTag="supplier-earnings-settlements"
           />
         </TabsContent>
       </Tabs>

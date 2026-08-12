@@ -364,14 +364,22 @@ async function getAdminSupplierAvailableWithdrawals(req, res) {
   if (!supplier) {
     throw new AppError("Supplier not found", 404);
   }
-  const summary = await branchAccountService.computeSupplierAvailableWithdrawalsSummary(supplierId, {
+  const branchSettlement = require("../services/branchSettlement.service");
+  const summary = await branchSettlement.aggregateSupplierSettlementSummary(supplierId, {
     from: req.query.from || undefined,
     to: req.query.to || undefined,
   });
   res.json({
     success: true,
-    totalAvailableWithdrawals: summary.totalAvailable,
+    totalPendingSettlement: summary.totalPendingSettlement,
+    totalSettled: summary.totalSettled,
+    gatewaySettlementSupported: summary.gatewaySettlementSupported,
+    byBranchId: summary.byBranchId,
   });
+}
+
+async function getAdminSupplierSettlementSummary(req, res) {
+  return getAdminSupplierAvailableWithdrawals(req, res);
 }
 
 async function listSupplierMaterialOrders(req, res) {
@@ -590,10 +598,58 @@ async function rejectRefundRepayment(req, res) {
   res.json({ success: true, repayment: row });
 }
 
+async function processCustomerRefundFromRepayment(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const data = await refundRecovery.processAdminCustomerRefund(req.user.userId, req.params.id);
+  res.json({ success: true, ...data });
+}
+
 async function repairStaleCourierJobs(req, res) {
   const limit = req.body?.limit != null ? Number(req.body.limit) : 200;
   const result = await materialOrderService.repairAllStaleCourierJobs({ limit });
   res.json({ success: true, ...result });
+}
+
+async function getProviderPayoutProfile(req, res) {
+  const payoutDestinationService = require("../services/payoutDestination.service");
+  const prisma = require("../config/prisma");
+  const userId = String(req.params.userId || "").trim();
+  const provider = await prisma.provider.findUnique({ where: { userId }, select: { id: true } });
+  if (!provider) throw new AppError("Provider not found", 404);
+  const profile = await prisma.providerWithdrawalProfile.findUnique({
+    where: { providerId: provider.id },
+  });
+  res.json({
+    success: true,
+    profile: payoutDestinationService.toMaskedAdminProfile(profile, "provider", provider.id),
+    gatewaySettlementSupported: payoutDestinationService.gatewaySettlementSupported(),
+  });
+}
+
+async function getBranchPayoutProfile(req, res) {
+  const payoutDestinationService = require("../services/payoutDestination.service");
+  const prisma = require("../config/prisma");
+  const supplierId = String(req.params.supplierId || "").trim();
+  const branchId = String(req.params.branchId || "").trim();
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, supplierId },
+    select: { id: true },
+  });
+  if (!branch) throw new AppError("Branch not found", 404);
+  const profile = await prisma.branchWithdrawalProfile.findUnique({
+    where: { branchId: branch.id },
+  });
+  res.json({
+    success: true,
+    profile: payoutDestinationService.toMaskedAdminProfile(profile, "branch", branch.id),
+    gatewaySettlementSupported: payoutDestinationService.gatewaySettlementSupported(),
+  });
+}
+
+async function listPendingPayoutProfiles(req, res) {
+  const payoutDestinationService = require("../services/payoutDestination.service");
+  const data = await payoutDestinationService.listPendingVerificationProfiles();
+  res.json({ success: true, ...data });
 }
 
 module.exports = {
@@ -633,6 +689,7 @@ module.exports = {
   getAdminSupplierOrdersExport,
   getAdminSupplierBranchWithdrawals,
   getAdminSupplierAvailableWithdrawals,
+  getAdminSupplierSettlementSummary,
   listSupplierMaterialOrders,
   listAllPlatformMaterialOrders,
   listAdminDisputes,
@@ -660,6 +717,10 @@ module.exports = {
   listRefundRepayments,
   confirmRefundRepayment,
   rejectRefundRepayment,
+  processCustomerRefundFromRepayment,
   processAdminJobRefund,
   repairStaleCourierJobs,
+  getProviderPayoutProfile,
+  getBranchPayoutProfile,
+  listPendingPayoutProfiles,
 };

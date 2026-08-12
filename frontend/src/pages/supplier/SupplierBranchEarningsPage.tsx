@@ -13,8 +13,8 @@ import {
   SupplierEarningsOrdersPanel,
   parseInitialDate,
 } from '@/components/supplier/SupplierEarningsEnhanced';
-import { BranchEarningsWithdrawalTab } from '@/components/supplier/BranchEarningsWithdrawalTab';
-import { BranchWithdrawalHistoryTab } from '@/components/supplier/BranchWithdrawalHistoryTab';
+import { BranchBankDetailsTab } from '@/components/supplier/BranchBankDetailsTab';
+import { BranchSettlementHistoryTab } from '@/components/supplier/BranchSettlementHistoryTab';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -31,6 +31,7 @@ export default function SupplierBranchEarningsPage() {
   const branchId = branchParam ? decodeURIComponent(branchParam) : '';
   const initialFrom = searchParams.get('from');
   const initialTo = searchParams.get('to');
+  const defaultTab = searchParams.get('tab') === 'bank-details' ? 'bank-details' : 'orders';
 
   const today = new Date();
   const monthAgo = new Date();
@@ -52,8 +53,8 @@ export default function SupplierBranchEarningsPage() {
     enabled: Boolean(userId && branchId),
   });
 
-  const { data: balance, isLoading: balanceLoading } = useQuery({
-    queryKey: ['supplier', 'branch-balance', branchId, userId],
+  const { data: settlementSummary, isLoading: balanceLoading } = useQuery({
+    queryKey: ['supplier', 'branch-settlement-summary', branchId, userId],
     queryFn: () => getBranchBalance(branchId),
     enabled: Boolean(userId && branchId),
   });
@@ -64,7 +65,10 @@ export default function SupplierBranchEarningsPage() {
     return resolveActiveSummary(summary, rows);
   }, [ordersExport]);
 
-  const canWithdraw = user?.role === 'branch_staff';
+  const isBranchStaff = user?.role === 'branch_staff';
+  const canEditBankDetails =
+    user?.role === 'supplier' || (isBranchStaff && user?.branchUserRole === 'MANAGER');
+  const showBankDetailsTab = isBranchStaff || user?.role === 'supplier';
 
   if (!user?.id || !branchId) {
     return <Navigate to="/supplier/earnings" replace />;
@@ -100,7 +104,7 @@ export default function SupplierBranchEarningsPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold sm:text-2xl">Branch earnings · {title}</h1>
-            <p className="text-sm text-muted-foreground">Orders and payouts for this store.</p>
+            <p className="text-sm text-muted-foreground">Material sales and settlement for this store.</p>
           </div>
           {user.role === 'supplier' && (
             <Button variant="ghost" size="sm" asChild>
@@ -112,7 +116,7 @@ export default function SupplierBranchEarningsPage() {
           )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <Card className="card-elevated">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Revenue</CardTitle>
@@ -132,37 +136,48 @@ export default function SupplierBranchEarningsPage() {
               <p className="text-2xl font-bold tabular-nums">
                 {cardsLoading ? '…' : formatCurrency(activeSummary.commission)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">7% on active orders</p>
+              <p className="mt-1 text-xs text-muted-foreground">EloFix commission (7%)</p>
             </CardContent>
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Net Earnings</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Net earnings</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {cardsLoading ? '…' : formatCurrency(activeSummary.net)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Supplier share · excluding cancelled</p>
+              <p className="mt-1 text-xs text-muted-foreground">Branch share · excluding cancelled</p>
             </CardContent>
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Available to withdraw</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Pending settlement</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-primary">
-                {balanceLoading ? '…' : formatCurrency(balance?.available ?? 0)}
+                {balanceLoading ? '…' : formatCurrency(settlementSummary?.pendingSettlement ?? 0)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Completed earnings · excluding cancelled</p>
+              <p className="mt-1 text-xs text-muted-foreground">Awaiting gateway settlement</p>
+            </CardContent>
+          </Card>
+          <Card className="card-elevated">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Settled</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {balanceLoading ? '…' : formatCurrency(settlementSummary?.settled ?? 0)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Verified to branch bank</p>
             </CardContent>
           </Card>
         </div>
 
-        <Tabs defaultValue="orders" className="w-full">
-          <TabsList className={`grid w-full max-w-2xl ${canWithdraw ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <Tabs defaultValue={defaultTab} className="w-full">
+          <TabsList className={`grid w-full max-w-2xl ${showBankDetailsTab ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <TabsTrigger value="orders">Orders</TabsTrigger>
-            {canWithdraw ? <TabsTrigger value="withdraw">Withdrawal</TabsTrigger> : null}
+            {showBankDetailsTab ? <TabsTrigger value="bank-details">Bank Details</TabsTrigger> : null}
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
@@ -181,19 +196,18 @@ export default function SupplierBranchEarningsPage() {
             />
           </TabsContent>
 
-          {canWithdraw ? (
-          <TabsContent value="withdraw">
-            <BranchEarningsWithdrawalTab
-              branchId={branchId}
-              balance={balance ?? null}
-              balanceLoading={balanceLoading}
-              onWithdrawalComplete={() => undefined}
-            />
-          </TabsContent>
+          {showBankDetailsTab ? (
+            <TabsContent value="bank-details">
+              <BranchBankDetailsTab
+                branchId={branchId}
+                canEdit={canEditBankDetails}
+                settlementSummary={settlementSummary ?? null}
+              />
+            </TabsContent>
           ) : null}
 
           <TabsContent value="history">
-            <BranchWithdrawalHistoryTab
+            <BranchSettlementHistoryTab
               branchId={branchId}
               userId={user.id}
               initialFrom={from}

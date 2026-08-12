@@ -261,6 +261,42 @@ export interface BranchStaffUser {
 
 export type AuthUser = User | Provider | Admin | SupplierUser | BranchStaffUser;
 
+export type CategoryPaymentMode =
+  | 'TWO_PAYMENT_50_50'
+  | 'SINGLE_PAYMENT_UPFRONT'
+  | 'SINGLE_PAYMENT_ON_COMPLETION';
+
+export type JobPaymentProgress = 'NONE' | 'FIRST_PAID' | 'FULLY_PAID';
+
+export type JobPaymentSummaryTranche = {
+  amount: number;
+  status: 'PAID' | 'UNPAID';
+  paymentIntentId?: string | null;
+  commissionAmount?: number | null;
+  providerShare?: number | null;
+};
+
+export type JobPaymentSummary = {
+  mode: CategoryPaymentMode | string | null;
+  totalAmount: number;
+  deposit: JobPaymentSummaryTranche | null;
+  completion: JobPaymentSummaryTranche | null;
+  totalPaidByCustomer: number;
+  totalRemainingByCustomer: number;
+  providerShareRecorded: number;
+  providerShareRemaining: number;
+  commissionRecorded: number;
+  paymentProgress: JobPaymentProgress | string;
+  nextLaborPaymentType?: LaborPaymentType | null;
+  label?: string;
+};
+
+export type LaborPaymentType =
+  | 'DEPOSIT'
+  | 'COMPLETION'
+  | 'FULL_UPFRONT'
+  | 'FULL_COMPLETION';
+
 export interface Category {
   id: string;
   name: string;
@@ -277,6 +313,8 @@ export interface Category {
   updatedAt?: string;
   /** When false, provider goes straight to pricing after accepting the job */
   requiresInspection?: boolean;
+  /** Admin-configured payment strategy for this service category */
+  paymentMode?: CategoryPaymentMode;
 }
 
 export interface Product {
@@ -696,10 +734,62 @@ export interface Job {
   providerSuggestions?: ProviderSuggestion[];
   materialPayments?: MaterialPayment[];
   laborPaid: boolean;
-  /** True when escrow for this job has been fully released to the provider */
+  /** True when escrow for this job has been fully released to the provider (legacy escrow jobs) */
   paymentReleased?: boolean;
+  /** Grandfathered escrow-v2 job with second tranche still managed via release-on-completion */
+  legacyEscrowV2?: boolean;
+  paymentModeSnapshot?: CategoryPaymentMode | null;
+  quotedAmount?: number | null;
+  firstPaymentAmount?: number | null;
+  secondPaymentAmount?: number | null;
+  paymentProgress?: JobPaymentProgress;
+  paymentSchedule?: {
+    paymentMode?: CategoryPaymentMode | null;
+    quotedAmount?: number | null;
+    firstPaymentAmount?: number | null;
+    secondPaymentAmount?: number | null;
+    paymentProgress?: JobPaymentProgress;
+    legacyEscrowV2?: boolean;
+  } | null;
+  nextLaborPaymentType?: LaborPaymentType | null;
+  paymentSummary?: JobPaymentSummary | null;
+  depositPayment?: {
+    status: 'paid';
+    amount: number;
+    commissionAmount?: number;
+    recipientAmount?: number;
+    paymentType?: string;
+    paidAt: string;
+    paymentRef?: string;
+  } | null;
+  completionPayment?: {
+    status: 'paid';
+    amount: number;
+    commissionAmount?: number;
+    recipientAmount?: number;
+    paymentType?: string;
+    paidAt: string;
+    paymentRef?: string;
+  } | null;
+  /** After admin RELEASE_FUNDS on a completion dispute — customer must pay remaining COMPLETION. */
+  completionPaymentDue?: {
+    amountDue: number;
+    dueAt: string | null;
+    resolutionLogId?: string | null;
+    createdAt?: string | null;
+    notifiedAt?: string | null;
+  } | null;
   userRating?: number;
   userReview?: string;
+  /** Persisted ProviderReview summary from job enrich */
+  jobReview?: {
+    id?: string;
+    rating: number;
+    comment?: string;
+    images?: string[];
+    videos?: string[];
+    createdAt?: string | null;
+  } | null;
   cancellationReason?: string;
   cancellationDetails?: string;
   cancellationSource?: 'customer_cancel' | 'customer_changed_provider' | string | null;
@@ -771,6 +861,9 @@ export interface Job {
   paymentSettlementStatus?: 'released' | 'held' | 'pending' | 'refund';
   /** Refund status/kind when job was cancelled after payment */
   refundStatus?: string;
+  /** Explicit customer refund lifecycle from job.meta.refund */
+  customerRefundStatus?: string | null;
+  refundCompletedAt?: string | null;
   /** Per-refund breakdown from admin processing (includes staged refund split). */
   refundDetails?: {
     customerNet?: number;
@@ -784,6 +877,8 @@ export interface Job {
     pendingRefund?: number;
     cumulativeCustomerNet?: number;
     processedAt?: string | null;
+    completedAt?: string | null;
+    customerRefundStatus?: string | null;
   };
   providerRefundDebt?: number;
 }
@@ -881,11 +976,17 @@ export type AppNotificationType =
   | 'fraud_review'
   | 'admin_repayment_submitted'
   | 'admin_refund_debt_overdue'
+  | 'admin_refund_ready'
+  | 'admin_refund_manual_required'
+  | 'admin_refund_gateway_failed'
   | 'refund_processed'
   | 'refund_clawback'
   | 'refund_no_payout'
   | 'refund_partial'
   | 'refund_staged_payout'
+  | 'refund_processing'
+  | 'refund_failed'
+  | 'refund_completed'
   | 'refund_debt_due'
   | 'refund_debt_reminder'
   | 'refund_debt_overdue'
@@ -964,6 +1065,19 @@ export interface JobDisputeRound {
   resolvedAt?: string | null;
 }
 
+export interface DisputeEvidenceEntry {
+  id: string;
+  disputeId: string;
+  jobId: string;
+  authorId: string;
+  authorRole: 'CUSTOMER' | 'PROVIDER' | 'ADMIN';
+  comment: string;
+  images: string[];
+  videos: string[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface JobDispute {
   id: string;
   jobId: string;
@@ -983,6 +1097,7 @@ export interface JobDispute {
   resolvedAt?: string | null;
   customerName?: string;
   providerName?: string;
+  evidence?: DisputeEvidenceEntry[];
   messages?: Array<{
     id: string;
     senderId: string;
@@ -1007,6 +1122,14 @@ export interface JobDispute {
     categoryName?: string;
     status?: string;
     cancellationSource?: string | null;
+    paymentSummary?: JobPaymentSummary | null;
+    completionPaymentDue?: {
+      amountDue: number;
+      dueAt: string | null;
+      resolutionLogId?: string | null;
+      createdAt?: string | null;
+      notifiedAt?: string | null;
+    } | null;
   } | null;
 }
 

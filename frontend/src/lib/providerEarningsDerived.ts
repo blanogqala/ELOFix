@@ -116,13 +116,52 @@ export function getJobStatus(job: ProviderEarningJobRow): EarningsJobDisplayStat
   if (refundStatus === 'processed' || refundStatus === 'partial') return 'Refunded';
   if (job.workflowStatus === 'CANCELLED') return 'Cancelled';
   if (job.workflowStatus === 'DISPUTED') return 'Held';
+  if (job.workflowStatus === 'COMPLETED') return 'Completed';
+  if (job.workflowStatus === 'IN_PROGRESS' || job.workflowStatus === 'AWAITING_CONFIRMATION') {
+    return 'In Progress';
+  }
+  if (String(job.paymentProgress) === 'FIRST_PAID') return 'In Progress';
+  if (String(job.paymentProgress) === 'FULLY_PAID' && job.workflowStatus === 'COMPLETED') {
+    return 'Completed';
+  }
   const target = getJobProviderNet(job);
   const releasedAmount = getJobReleasedAmount(job);
   if (target <= 0) return 'Pending';
   if (releasedAmount === 0) return 'Pending';
-  if (releasedAmount > 0 && releasedAmount < target) return 'In Progress';
-  if (releasedAmount >= target) return 'Completed';
+  // Do not treat deposit-only (released == current providerAmount) as Completed for 50/50.
+  if (String(job.paymentProgress) === 'FIRST_PAID') return 'In Progress';
+  if (job.legacyEscrowV2 && releasedAmount > 0 && releasedAmount < target) return 'In Progress';
+  if (job.legacyEscrowV2 && releasedAmount >= target) return 'Completed';
+  if (String(job.paymentProgress) === 'FULLY_PAID') return 'Completed';
   return 'Pending';
+}
+
+export function getJobCustomerPaid(j: ProviderEarningJobRow): number {
+  const n = Number(j.customerPaidTotal);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return 0;
+}
+
+export function getJobCustomerRemaining(j: ProviderEarningJobRow): number {
+  const n = Number(j.customerRemaining);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return Math.max(0, getJobTotalPrice(j) - getJobCustomerPaid(j));
+}
+
+export function getJobProviderShareRecorded(j: ProviderEarningJobRow): number {
+  const n = Number(j.providerShareRecorded);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return getJobProviderNet(j);
+}
+
+export function getJobProviderShareRemaining(j: ProviderEarningJobRow): number {
+  const n = Number(j.providerShareRemaining);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return 0;
+}
+
+export function sumProviderShareRemainingAcrossJobs(jobs: ProviderEarningJobRow[]): number {
+  return jobs.reduce((s, j) => s + getJobProviderShareRemaining(j), 0);
 }
 
 /** Sum of API provider share (93%) across jobs — for dashboard / analytics. */

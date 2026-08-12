@@ -73,7 +73,7 @@ export const LEGAL_LABELS: Record<LegalDocumentId, string> = {
   'provider-agreement': 'Provider Agreement',
   'refund-policy': 'Refund and Cancellation Policy',
   'job-completion-verification': 'Job Completion Verification Policy',
-  'escrow-policy': 'Escrow and Payment Protection Policy',
+  'escrow-policy': 'Payment Schedule and Transparency Policy',
   'dispute-resolution': 'Dispute Resolution Policy',
   'admin-investigation': 'Admin Review and Investigation Policy',
   'corrective-work': 'Corrective Work Policy',

@@ -6,6 +6,7 @@ export const NAV_CLEARANCE_PATHS = [
   ...Object.keys(ADMIN_NAV_TYPE_MAP),
   '/user/jobs',
   '/user/material-orders',
+  '/user/payments',
   '/provider/jobs',
   '/provider/requests',
   '/provider/earnings',
@@ -18,7 +19,7 @@ export type NavClearancePath = (typeof NAV_CLEARANCE_PATHS)[number];
 
 const ROLE_ALLOWED_PATHS: Record<string, NavClearancePath[]> = {
   admin: Object.keys(ADMIN_NAV_TYPE_MAP) as NavClearancePath[],
-  user: ['/user/jobs', '/user/material-orders'],
+  user: ['/user/jobs', '/user/material-orders', '/user/payments'],
   provider: ['/provider/jobs', '/provider/requests', '/provider/earnings', '/provider/profile'],
   supplier: ['/supplier/orders', '/supplier/earnings'],
   branch_staff: ['/supplier/orders', '/supplier/earnings'],
@@ -36,6 +37,18 @@ export function resolveNavClearancePath(
   role: UserRole | undefined
 ): NavClearancePath | null {
   if (!role) return null;
+
+  // Dispute/cancellation detail pages share the Jobs unread badge (dispute_opened).
+  if (
+    role === 'admin' &&
+    (pathname.startsWith('/admin/disputes') ||
+      pathname.startsWith('/admin/cancellations') ||
+      pathname === '/admin/jobs' ||
+      pathname.startsWith('/admin/jobs/'))
+  ) {
+    return '/admin/jobs';
+  }
+
   const allowed = ROLE_ALLOWED_PATHS[role];
   if (!allowed?.length) return null;
 

@@ -19,7 +19,6 @@ import {
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
   deleteJob,
-  getLaborInvoiceByJobId,
   acceptProposedPrice,
   customerRejectMaterialBatch,
   dismissMaterialBatch,
@@ -35,6 +34,7 @@ import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/type
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
 import { JobCompletionEvidenceDialog } from '@/components/jobs/JobCompletionEvidenceDialog';
 import { JobDisputeDialog } from '@/components/jobs/JobDisputeDialog';
+import { buildJobCancellationFinancials } from '@/lib/jobCancellationFinancials';
 import { JobDetailPageSkeleton } from '@/components/common/loading';
 import { useTransactionOverlay } from '@/hooks/useTransactionOverlay';
 import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
@@ -44,11 +44,17 @@ import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { RejectedJobProviderSelectorDialog } from '@/components/jobs/RejectedJobProviderSelectorDialog';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { QuotationAttachmentCard } from '@/components/jobs/QuotationAttachmentCard';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { JobPaymentProgressCard } from '@/components/jobs/JobPaymentProgressCard';
+import { JobReviewFormCard } from '@/components/jobs/JobReviewFormCard';
+import { ServicePaymentInvoiceDialog } from '@/components/jobs/ServicePaymentInvoiceDialog';
 import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
 import { getProviderById } from '@/lib/api/providers';
+import { submitProviderReview } from '@/lib/api/providerReviews';
 import { Provider } from '@/types';
 import { getDeliveryProviders } from '@/lib/api/specials';
+import {
+  canShowPostCompleteReviewForm,
+} from '@/lib/jobReviewStatus';
 import { 
   ArrowLeft, 
   Send, 
@@ -68,6 +74,8 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { getUserLaborGross, getQuoteMaterialsTotal, getQuoteMaterialsRefundTotal, jobHasRefundedMaterials } from '@/lib/jobUtils';
 import { RefundSummaryLine, isJobRefunded, StagedRefundBreakdown } from '@/components/payments/RefundSummaryLine';
+import { resolveCustomerRefundDisplay } from '@/lib/refundStatusDisplay';
+import { format as formatDateFns, parseISO } from 'date-fns';
 import { JobDeliveryRequirementsBlock } from '@/components/jobs/JobDeliveryRequirementsBlock';
 import { JobCustomerRequirementsBlock } from '@/components/jobs/JobCustomerRequirementsBlock';
 import { isDeliveryOrMovingJob } from '@/lib/courierCategories';
@@ -76,6 +84,13 @@ import {
   getQuoteDeliveryLine,
   getQuoteLaborLine,
 } from '@/lib/jobQuoteDisplay';
+import {
+  canShowLaborPayCta,
+  formatZar,
+  laborPayButtonLabel,
+  laborPaymentTypeHint,
+  paymentModeLabel,
+} from '@/lib/paymentSchedule';
 import {
   getCustomerCancelPreview,
   getCustomerCancelForfeitToastMessage,
@@ -187,7 +202,6 @@ export default function JobDetail() {
   const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
   const [hoveredTimelineStep, setHoveredTimelineStep] = useState<number | null>(null);
   const [serviceInvoiceOpen, setServiceInvoiceOpen] = useState(false);
-  const [legacyInvoice, setLegacyInvoice] = useState<{ paidAt: string; cardLast4?: string } | null>(null);
   const [isActionPending, setIsActionPending] = useState(false);
   const [isMessageSending, setIsMessageSending] = useState(false);
 
@@ -240,16 +254,6 @@ export default function JobDetail() {
       });
     }
   }, [toast, user]);
-
-  useEffect(() => {
-    if (serviceInvoiceOpen && job?.laborPaid && !job.servicePayment) {
-      getLaborInvoiceByJobId(job.id).then(invoice => {
-        if (invoice) setLegacyInvoice({ paidAt: invoice.paidAt, cardLast4: invoice.cardLast4 });
-      });
-    } else {
-      setLegacyInvoice(null);
-    }
-  }, [serviceInvoiceOpen, job?.id, job?.laborPaid, job?.servicePayment]);
 
   useEffect(() => {
     if (!isError || !jobError) return;
@@ -407,6 +411,38 @@ export default function JobDetail() {
       toast({
         title: 'Error',
         description: 'Failed to complete job.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleSubmitStandaloneReview = async (payload: {
+    rating: number;
+    comment: string;
+    images: string[];
+    videos: string[];
+  }) => {
+    if (!job || isActionPending) return;
+    setIsActionPending(true);
+    try {
+      await submitProviderReview({
+        jobId: job.id,
+        rating: payload.rating,
+        comment: payload.comment,
+        images: payload.images,
+        videos: payload.videos,
+      });
+      await syncJobsAfterMutation();
+      toast({
+        title: 'Review submitted',
+        description: 'Thank you for rating your provider.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to submit review.',
         variant: 'destructive',
       });
     } finally {
@@ -773,11 +809,49 @@ export default function JobDetail() {
     !job.proposedLaborPrice &&
     !courierDeliveryPaid &&
     (job.servicePrice != null || drStatusLower === 'quoted' || drStatusLower === 'approved');
+  const paymentMode =
+    job.paymentModeSnapshot ?? job.paymentSchedule?.paymentMode ?? null;
+  const paymentProgress =
+    job.paymentProgress ?? job.paymentSchedule?.paymentProgress ?? 'NONE';
+  const quotedAmount =
+    job.quotedAmount ??
+    job.paymentSchedule?.quotedAmount ??
+    job.servicePrice?.amount ??
+    null;
+  const firstPaymentAmount =
+    job.firstPaymentAmount ?? job.paymentSchedule?.firstPaymentAmount ?? null;
+  const secondPaymentAmount =
+    job.secondPaymentAmount ?? job.paymentSchedule?.secondPaymentAmount ?? null;
+  const depositPaid =
+    Boolean(job.depositPayment) ||
+    paymentProgress === 'FIRST_PAID' ||
+    paymentProgress === 'FULLY_PAID';
+  const completionPaid =
+    Boolean(job.completionPayment) || paymentProgress === 'FULLY_PAID';
+  const showLaborPayCta = !isCourierJob && !jobDisputed && canShowLaborPayCta(job);
+  const laborPayDueBeforeConfirm =
+    job.nextLaborPaymentType === 'COMPLETION' ||
+    job.nextLaborPaymentType === 'FULL_COMPLETION';
+  const laborPayAmount =
+    job.nextLaborPaymentType === 'COMPLETION'
+      ? Number(job.secondPaymentAmount ?? 0)
+      : Number(
+          job.firstPaymentAmount ??
+            job.proposedLaborPrice?.amount ??
+            job.servicePrice?.amount ??
+            laborTotal
+        );
   const showRegularServiceCard =
     !isCourierJob &&
-    !job.laborPaid &&
     !job.proposedLaborPrice &&
-    (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED');
+    (job.servicePrice || job.status === 'SERVICE_PRICE_SUBMITTED') &&
+    (showLaborPayCta || (!job.laborPaid && !depositPaid && Boolean(job.servicePrice)));
+  const showPaidServiceCard =
+    !isCourierJob &&
+    Boolean(job.servicePrice) &&
+    !showLaborPayCta &&
+    (job.laborPaid || depositPaid);
+  const showPostCompleteReviewForm = canShowPostCompleteReviewForm(job);
   const timelineView = isCourierJob
     ? getCourierTimelineViewState(job, deliveryRequest ?? null, materialRequests)
     : getUserTimelineViewState(job, materialRequests);
@@ -850,6 +924,59 @@ export default function JobDetail() {
           hoveredTimelineStep={hoveredTimelineStep}
           setHoveredTimelineStep={setHoveredTimelineStep}
         />
+
+        {job.completionPaymentDue &&
+        Number(job.completionPaymentDue.amountDue) > 0 &&
+        !completionPaid ? (
+          <Card className="border-warning/50 bg-warning/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Clock className="h-5 w-5 text-warning" />
+                Remaining balance due
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p>
+                Amount due:{' '}
+                <span className="font-semibold tabular-nums">
+                  {formatCurrency(job.completionPaymentDue.amountDue, { decimals: 2 })}
+                </span>
+              </p>
+              {job.completionPaymentDue.dueAt ? (
+                <p className="text-muted-foreground">
+                  Pay by{' '}
+                  {new Date(job.completionPaymentDue.dueAt).toLocaleString('en-ZA', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
+                  . You have 30 days from the admin decision to settle. Failure to settle within
+                  the stated period may result in further action in accordance with EloFix&apos;s
+                  Terms and applicable law.
+                </p>
+              ) : (
+                <p className="text-muted-foreground">
+                  Please settle the outstanding completion amount. You have 30 days from the admin
+                  decision to pay.
+                </p>
+              )}
+              {showLaborPayCta ? (
+                <div className="pt-1">
+                  <Button
+                    className="btn-accent"
+                    disabled={jobPaymentBlocked}
+                    onClick={() => {
+                      if (jobPaymentBlocked) return;
+                      if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                      setPayLaborModalOpen(true);
+                    }}
+                  >
+                    Pay remaining balance
+                  </Button>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
 
         {isCourierJob && deliveryRequest ? (
           <JobDeliverySection
@@ -992,24 +1119,92 @@ export default function JobDetail() {
                 uploadedAt={job.quotationUploadedAt}
                 serviceNote={job.servicePrice?.note}
               />
-              <div className="flex justify-end">
-                <Button
-                  className="btn-accent"
-                  disabled={jobPaymentBlocked}
-                  onClick={() => {
-                    if (jobPaymentBlocked) return;
-                    if (!guardLoadedPaymentCards(savedCards, toast)) return;
-                    setPayLaborModalOpen(true);
-                  }}
-                >
-                  Pay service
-                </Button>
-              </div>
+              {job.paymentSummary ? (
+                <JobPaymentProgressCard
+                  job={job}
+                  variant="customer"
+                  action={
+                    showLaborPayCta ? (
+                      <div className="flex justify-end pt-1">
+                        <Button
+                          className="btn-accent"
+                          disabled={jobPaymentBlocked}
+                          onClick={() => {
+                            if (jobPaymentBlocked) return;
+                            if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                            setPayLaborModalOpen(true);
+                          }}
+                        >
+                          {laborPayButtonLabel(job)}
+                        </Button>
+                      </div>
+                    ) : null
+                  }
+                />
+              ) : job.servicePrice ? (
+                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Payment model</span>
+                    <span className="font-medium">{paymentModeLabel(paymentMode)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Total quote</span>
+                    <span className="font-semibold tabular-nums">
+                      {formatZar(quotedAmount ?? job.servicePrice.amount)}
+                    </span>
+                  </div>
+                  {paymentMode === 'TWO_PAYMENT_50_50' ? (
+                    <>
+                      <div className="flex justify-between gap-3 items-center">
+                        <span className="text-muted-foreground">Today — 50% deposit</span>
+                        <span className="inline-flex items-center gap-1.5 tabular-nums">
+                          {formatZar(firstPaymentAmount)}
+                          {depositPaid ? (
+                            <CheckCircle className="h-4 w-4 text-success" aria-label="Paid" />
+                          ) : null}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-3 items-center">
+                        <span className="text-muted-foreground">After completion — remaining 50%</span>
+                        <span className="inline-flex items-center gap-1.5 tabular-nums">
+                          {formatZar(secondPaymentAmount)}
+                          {completionPaid ? (
+                            <CheckCircle className="h-4 w-4 text-success" aria-label="Paid" />
+                          ) : null}
+                        </span>
+                      </div>
+                    </>
+                  ) : null}
+                  {paymentProgress === 'FIRST_PAID' && paymentMode === 'TWO_PAYMENT_50_50' ? (
+                    <Badge className="bg-success text-success-foreground">50% Deposit Paid</Badge>
+                  ) : null}
+                  {job.nextLaborPaymentType ? (
+                    <p className="text-xs text-muted-foreground pt-1">
+                      {laborPaymentTypeHint(job.nextLaborPaymentType)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {!job.paymentSummary && showLaborPayCta ? (
+                <div className="flex justify-end">
+                  <Button
+                    className="btn-accent"
+                    disabled={jobPaymentBlocked}
+                    onClick={() => {
+                      if (jobPaymentBlocked) return;
+                      if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                      setPayLaborModalOpen(true);
+                    }}
+                  >
+                    {laborPayButtonLabel(job)}
+                  </Button>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         )}
 
-        {job.laborPaid && job.servicePrice && (
+        {showPaidServiceCard && (
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Service price</CardTitle>
@@ -1022,29 +1217,147 @@ export default function JobDetail() {
                 uploadedAt={job.quotationUploadedAt}
                 serviceNote={job.servicePrice?.note}
               />
-              {job.refundAmount != null && job.refundAmount > 0 && (
-                <>
-                  <RefundSummaryLine refundAmount={job.refundAmount} refundStatus={job.refundStatus} />
-                  <StagedRefundBreakdown
-                    immediateRefund={job.refundDetails?.immediateRefund ?? undefined}
-                    pendingRefund={job.refundDetails?.pendingRefund ?? undefined}
-                  />
-                </>
-              )}
+              {job.paymentSummary ? (
+                <JobPaymentProgressCard job={job} variant="customer" />
+              ) : job.servicePrice ? (
+                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Payment model</span>
+                    <span className="font-medium">{paymentModeLabel(paymentMode)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Total quote</span>
+                    <span className="font-semibold tabular-nums">
+                      {formatZar(quotedAmount ?? getUserLaborGross(job))}
+                    </span>
+                  </div>
+                  {paymentMode === 'TWO_PAYMENT_50_50' ? (
+                    <>
+                      <div className="flex justify-between gap-3 items-center">
+                        <span className="text-muted-foreground">Today — 50% deposit</span>
+                        <span className="inline-flex items-center gap-1.5 tabular-nums">
+                          {formatZar(firstPaymentAmount)}
+                          {depositPaid ? (
+                            <CheckCircle className="h-4 w-4 text-success" aria-label="Paid" />
+                          ) : null}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-3 items-center">
+                        <span className="text-muted-foreground">After completion — remaining 50%</span>
+                        <span className="inline-flex items-center gap-1.5 tabular-nums">
+                          {formatZar(secondPaymentAmount)}
+                          {completionPaid ? (
+                            <CheckCircle className="h-4 w-4 text-success" aria-label="Paid" />
+                          ) : null}
+                        </span>
+                      </div>
+                      {paymentProgress === 'FIRST_PAID' ? (
+                        <Badge className="bg-success text-success-foreground">50% Deposit Paid</Badge>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              {(() => {
+                const refundUi = resolveCustomerRefundDisplay(job);
+                if (refundUi.mode === 'none' || refundUi.amount <= 0) return null;
+                const completedLabel =
+                  refundUi.completedAt
+                    ? (() => {
+                        try {
+                          return formatDateFns(parseISO(String(refundUi.completedAt)), 'd MMMM yyyy');
+                        } catch {
+                          return null;
+                        }
+                      })()
+                    : null;
+                return (
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="font-medium text-muted-foreground">Refund</span>
+                      <span
+                        className={cn(
+                          'font-semibold tabular-nums',
+                          refundUi.mode === 'completed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-100'
+                        )}
+                      >
+                        {refundUi.mode === 'completed' ? '−' : ''}
+                        {formatCurrency(refundUi.amount, { decimals: 2 })}
+                      </span>
+                    </div>
+                    <p
+                      className={cn(
+                        'text-xs',
+                        refundUi.mode === 'completed' ? 'text-success' : 'text-amber-800 dark:text-amber-100'
+                      )}
+                    >
+                      {refundUi.mode === 'completed'
+                        ? `✓ Refund completed${completedLabel ? ` · ${completedLabel}` : ''}`
+                        : refundUi.label}
+                    </p>
+                    <StagedRefundBreakdown
+                      immediateRefund={job.refundDetails?.immediateRefund ?? undefined}
+                      pendingRefund={job.refundDetails?.pendingRefund ?? undefined}
+                    />
+                  </div>
+                );
+              })()}
               <div className="flex items-center justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
                   View invoice
                 </Button>
-                {job.refundStatus === 'processed' || job.refundStatus === 'partial' ? (
+                {resolveCustomerRefundDisplay(job).mode === 'completed' ? (
                   <Badge variant="destructive">Refunded</Badge>
-                ) : (
-                  <Badge className="bg-success text-success-foreground">Paid</Badge>
-                )}
+                ) : resolveCustomerRefundDisplay(job).mode === 'pending' ? (
+                  <Badge variant="outline" className="border-amber-500/50 text-amber-800 dark:text-amber-100">
+                    Refund pending
+                  </Badge>
+                ) : job.paymentSummary ? null : paymentProgress === 'FIRST_PAID' ? (
+                  <Badge className="bg-success text-success-foreground">50% Deposit Paid</Badge>
+                ) : paymentProgress === 'FULLY_PAID' || job.laborPaid ? (
+                  <Badge className="bg-success text-success-foreground">Fully paid</Badge>
+                ) : null}
               </div>
             </CardContent>
           </Card>
         )}
 
+        {/* Remaining balance CTA after deposit when provider requests completion */}
+        {!showRegularServiceCard &&
+        showLaborPayCta &&
+        (job.nextLaborPaymentType === 'COMPLETION' ||
+          job.nextLaborPaymentType === 'FULL_COMPLETION') ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">
+                {job.nextLaborPaymentType === 'FULL_COMPLETION'
+                  ? 'Pay service amount'
+                  : 'Pay remaining balance'}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {laborPaymentTypeHint(job.nextLaborPaymentType)}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {paymentProgress === 'FIRST_PAID' ? (
+                <Badge className="bg-success text-success-foreground">50% Deposit Paid</Badge>
+              ) : null}
+              <div className="flex justify-end">
+                <Button
+                  className="btn-accent"
+                  disabled={jobPaymentBlocked}
+                  onClick={() => {
+                    if (jobPaymentBlocked) return;
+                    if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                    setPayLaborModalOpen(true);
+                  }}
+                >
+                  {laborPayButtonLabel(job)}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
         {linkedJobDelivery && deliveryRequest ? (
           <JobDeliverySection
             job={job}
@@ -1247,12 +1560,14 @@ export default function JobDetail() {
                             <Clock className="h-5 w-5 shrink-0 text-destructive mt-0.5" aria-hidden />
                             <div>
                               <p className="font-medium text-sm text-destructive">
-                                {isCancellationReview ? 'Cancellation opened' : 'Dispute opened'}
+                                {isCancellationReview
+                                  ? 'Cancellation opened — under EloFix review'
+                                  : 'Dispute opened — under EloFix review'}
                               </p>
                               <p className="text-sm text-muted-foreground mt-1">
                                 {isCancellationReview
                                   ? 'EloFix is reviewing this cancellation. View updates in your Review Center.'
-                                  : 'EloFix is reviewing this case. View updates in your Review Center.'}
+                                  : 'You rejected the provider’s completion claim. EloFix is reviewing the case. Your remaining payment is not charged while the dispute is open.'}
                               </p>
                               <Button
                                 type="button"
@@ -1277,41 +1592,115 @@ export default function JobDetail() {
                           </div>
                         ) : (
                           <>
-                        <ConfirmationCountdown deadlineAt={confirmationDeadlineAt} />
-                        <div className="flex flex-col gap-2 sm:flex-col">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="flex-1"
-                            disabled={isActionPending || job.status === 'DISPUTED'}
-                            title={
-                              job.status === 'DISPUTED'
-                                ? 'This job is under review. Actions are disabled until the case is resolved.'
-                                : undefined
-                            }
-                            onClick={() => setDisputeDialogOpen(true)}
-                          >
-                            No, not complete
-                          </Button>
-                          <Button
-                            type="button"
-                            className="btn-accent flex-1"
-                            disabled={isActionPending || job.status === 'DISPUTED'}
-                            title={
-                              job.status === 'DISPUTED'
-                                ? 'This job is under review. Actions are disabled until the case is resolved.'
-                                : undefined
-                            }
-                            onClick={() => setEvidenceDialogOpen(true)}
-                          >
-                            <CheckCircle className="mr-2 h-4 w-4" />
-                            Yes, completed
-                          </Button>
-                        </div>
+                            <div className="space-y-1">
+                              <p className="font-semibold text-sm">Job completion confirmation</p>
+                              <p className="text-sm text-muted-foreground">
+                                The provider has marked this job as complete. Is the job completed
+                                correctly? Review the work before making your final payment.
+                              </p>
+                            </div>
+                            <ConfirmationCountdown deadlineAt={confirmationDeadlineAt} />
+                            {(() => {
+                              const fin = buildJobCancellationFinancials(job);
+                              const showProgress =
+                                fin.depositStage != null || fin.completionStage != null;
+                              if (!showProgress && paymentProgress !== 'FIRST_PAID') return null;
+                              return (
+                                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2 text-sm">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Payment progress
+                                  </p>
+                                  {fin.depositStage ? (
+                                    <p className="flex justify-between gap-2">
+                                      <span>
+                                        {fin.depositStage.status === 'PAID' ? '✓ ' : '○ '}
+                                        Deposit paid
+                                      </span>
+                                      <span className="tabular-nums font-medium">
+                                        {formatCurrency(fin.depositStage.amount, { decimals: 2 })}
+                                      </span>
+                                    </p>
+                                  ) : paymentProgress === 'FIRST_PAID' ||
+                                    paymentProgress === 'FULLY_PAID' ? (
+                                    <Badge className="bg-success text-success-foreground">
+                                      50% Deposit Paid
+                                    </Badge>
+                                  ) : null}
+                                  {fin.completionStage ? (
+                                    <p className="flex justify-between gap-2 text-muted-foreground">
+                                      <span>
+                                        {fin.completionStage.status === 'PAID' ? '✓ ' : '○ '}
+                                        Final payment
+                                      </span>
+                                      <span className="tabular-nums font-medium text-foreground">
+                                        {formatCurrency(fin.completionStage.amount, { decimals: 2 })}
+                                      </span>
+                                    </p>
+                                  ) : null}
+                                </div>
+                              );
+                            })()}
+                            <div className="flex flex-col gap-2">
+                              {laborPayDueBeforeConfirm && showLaborPayCta ? (
+                                <Button
+                                  type="button"
+                                  className="btn-accent w-full"
+                                  disabled={jobPaymentBlocked || isActionPending}
+                                  onClick={() => {
+                                    if (jobPaymentBlocked) return;
+                                    if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                                    setPayLaborModalOpen(true);
+                                  }}
+                                >
+                                  {laborPayButtonLabel(job)}
+                                </Button>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  className="btn-accent w-full"
+                                  disabled={isActionPending}
+                                  onClick={() => setEvidenceDialogOpen(true)}
+                                >
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Yes, completed
+                                </Button>
+                              )}
+                              <div className="space-y-1.5 pt-1">
+                                <p className="text-sm text-muted-foreground">
+                                  Not satisfied with the work?
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="w-full border-destructive text-destructive hover:bg-accent/60"
+                                  disabled={isActionPending}
+                                  onClick={() => setDisputeDialogOpen(true)}
+                                >
+                                  Reject Completion
+                                </Button>
+                                <p className="text-xs text-muted-foreground">
+                                  Your remaining payment will not be charged while a dispute is being
+                                  reviewed.
+                                </p>
+                              </div>
+                            </div>
                           </>
                         )}
                       </div>
                     )}
+
+                    {showPostCompleteReviewForm ? (
+                      <div className="border-t pt-4">
+                        <JobReviewFormCard
+                          embedded
+                          jobId={job.id}
+                          providerName={job.providerName || provider?.name || 'Provider'}
+                          providerImage={provider?.profileImage}
+                          submitting={isActionPending}
+                          onSubmit={handleSubmitStandaloneReview}
+                        />
+                      </div>
+                    ) : null}
                   </>
                 ) : (
                   <p className="text-muted-foreground">No provider assigned yet</p>
@@ -1565,8 +1954,8 @@ export default function JobDetail() {
         onConfirm={handleCancelJob}
         hasMaterialsPaid={hasMaterialsPaid}
         materialsAmount={materialsTotal}
-        laborAmount={job.laborPaid ? getUserLaborGross(job) : laborTotal}
         cancelPreview={cancelPreview}
+        actor="customer"
       />
 
       <JobCompletionEvidenceDialog
@@ -1583,6 +1972,7 @@ export default function JobDetail() {
         open={disputeDialogOpen}
         onOpenChange={setDisputeDialogOpen}
         jobId={job.id}
+        job={job}
         loading={isActionPending}
         onSubmit={(payload) => void handleOpenDispute(payload)}
       />
@@ -1600,20 +1990,28 @@ export default function JobDetail() {
         open={payLaborModalOpen}
         onOpenChange={setPayLaborModalOpen}
         title="Pay Service / Labor"
-        description="Pay the provider's labor fee to proceed with the job."
-        amount={
-          job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? laborTotal
+        description={
+          job.nextLaborPaymentType
+            ? laborPaymentTypeHint(job.nextLaborPaymentType)
+            : "Pay the provider's labor fee to proceed with the job."
         }
+        amount={laborPayAmount}
         kind="LABOR"
         jobId={job.id}
+        paymentType={job.nextLaborPaymentType}
+        paymentMode={paymentMode}
+        metadata={{
+          paymentType: job.nextLaborPaymentType,
+          paymentMode,
+        }}
         breakdown={[
           {
-            label: 'Service / Labor',
-            amount: job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? laborTotal,
+            label: laborPayButtonLabel(job).replace(/\s*\(.*\)$/, '') || 'Service / Labor',
+            amount: laborPayAmount,
           },
           {
             label: 'Total Due',
-            amount: job.proposedLaborPrice?.amount ?? job.servicePrice?.amount ?? laborTotal,
+            amount: laborPayAmount,
             isBold: true,
           },
         ]}
@@ -1656,36 +2054,11 @@ export default function JobDetail() {
       ) : null}
 
       {/* Service Invoice Modal */}
-      <Dialog open={serviceInvoiceOpen} onOpenChange={setServiceInvoiceOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Service Payment Invoice</DialogTitle>
-            <DialogDescription>
-              Secure payment details. Sensitive fields are masked.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between p-3 rounded-lg bg-muted/50">
-              <span className="text-muted-foreground">Amount</span>
-              <span className="font-semibold">
-                {formatCurrency(job.servicePayment?.amount ?? getUserLaborGross(job), { decimals: 2 })}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Payment ref</span>
-              <span className="font-mono text-xs">{job.servicePayment?.paymentRef ?? 'Legacy record'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Payment method</span>
-              <span>{job.servicePayment?.maskedPaymentMethod ?? `**** **** **** ${legacyInvoice?.cardLast4 ?? '****'}`}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Paid at</span>
-              <span>{new Date(job.servicePayment?.paidAt ?? legacyInvoice?.paidAt ?? job.updatedAt).toLocaleString()}</span>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ServicePaymentInvoiceDialog
+        open={serviceInvoiceOpen}
+        onOpenChange={setServiceInvoiceOpen}
+        job={job}
+      />
     </DashboardLayout>
   );
 }

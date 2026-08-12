@@ -43,8 +43,10 @@ import {
 import { cn } from '@/lib/utils';
 import { BlockedProfileBanner } from '@/components/account/BlockedProfileBanner';
 import { ProviderVerificationDocuments } from '@/components/provider/ProviderVerificationDocuments';
+import { ProviderPayoutBankingPanel } from '@/components/provider/ProviderPayoutBankingPanel';
 import { ProviderReviewList } from '@/components/providers/ProviderReviewList';
 import { getProviderReviews } from '@/lib/api/providerReviews';
+import { getWithdrawalProfile } from '@/lib/api/providerAccount';
 import type { ProviderReview } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -169,6 +171,8 @@ export default function ProviderProfile() {
     [],
   );
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
+  /** True when ProviderWithdrawalProfile exists (payout banking saved). */
+  const [hasPayoutProfile, setHasPayoutProfile] = useState(false);
 
   useEffect(() => {
     if (user?.role === 'provider' && 'phone' in user && user.phone) {
@@ -275,14 +279,25 @@ export default function ProviderProfile() {
     }
   }, [user]);
 
+  const loadPayoutProfile = useCallback(async () => {
+    if (!user || user.role !== 'provider') return;
+    try {
+      const data = await getWithdrawalProfile();
+      setHasPayoutProfile(data.profile != null);
+    } catch {
+      /* leave previous state; panel shows its own error if opened */
+    }
+  }, [user]);
+
   useEffect(() => {
     if (user) {
       void loadProvider();
       void loadMySuggestions();
+      void loadPayoutProfile();
     }
     void loadCategories();
     void loadServiceAreas();
-  }, [user, loadCategories, loadProvider, loadServiceAreas, loadMySuggestions]);
+  }, [user, loadCategories, loadProvider, loadServiceAreas, loadMySuggestions, loadPayoutProfile]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -388,6 +403,7 @@ export default function ProviderProfile() {
         pricing,
         settings,
         hasPendingSkillSuggestion: suggestedServices.length > 0,
+        hasPayoutProfile,
       });
       if (refreshed.profileInfo) {
         setProfileTab('pricing');
@@ -475,6 +491,7 @@ export default function ProviderProfile() {
         pricing,
         settings: savedSet,
         hasPendingSkillSuggestion: suggestedServices.length > 0,
+        hasPayoutProfile,
       });
       if (refreshed.skillsAndPrices) {
         setProfileTab('docs');
@@ -571,8 +588,19 @@ export default function ProviderProfile() {
         pricing,
         settings,
         hasPendingSkillSuggestion: suggestedServices.length > 0,
+        hasPayoutProfile,
       }),
-    [provider, phone, bio, serviceAreas, selectedSkills, pricing, settings, suggestedServices.length]
+    [
+      provider,
+      phone,
+      bio,
+      serviceAreas,
+      selectedSkills,
+      pricing,
+      settings,
+      suggestedServices.length,
+      hasPayoutProfile,
+    ]
   );
 
   const completionPercent = coreSections.percentCore;
@@ -586,10 +614,18 @@ export default function ProviderProfile() {
       });
       return;
     }
-    setProfileTab('posts');
+    setProfileTab('payout');
     toast({
       title: 'Documents complete',
-      description: 'Work posts are optional. Continue to showcase your work or skip to Settings.',
+      description: 'Next: add your Payout & Banking details (required for profile completion).',
+    });
+  };
+
+  const handleContinueFromPayout = () => {
+    setProfileTab('posts');
+    toast({
+      title: 'Continue to Work Posts',
+      description: 'Work posts are optional. Showcase your work or continue to Settings.',
     });
   };
 
@@ -826,7 +862,7 @@ export default function ProviderProfile() {
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Profile completion (info · skills · documents · settings)</span>
+              <span>Profile completion (info · skills · documents · payout · settings)</span>
               <span>{completionPercent}%</span>
             </div>
             <Progress value={completionPercent} className="h-2" />
@@ -834,7 +870,7 @@ export default function ProviderProfile() {
         </div>
 
         <Tabs value={profileTab} onValueChange={setProfileTab} className="space-y-6">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
             <TabsTrigger value="info" className="gap-1.5 text-xs sm:text-sm ">
               Profile{' '}
               {isRejected ? (
@@ -857,6 +893,11 @@ export default function ProviderProfile() {
               ) : (
                 '⚠️'
               )}
+            </TabsTrigger>
+            <TabsTrigger value="payout" className="gap-1.5 text-xs sm:text-sm">
+              <span className="truncate">
+                Payout &amp; Banking {coreSections.payoutBanking ? '✅' : '⚠️'}
+              </span>
             </TabsTrigger>
             <TabsTrigger value="posts" className="gap-1.5 text-xs sm:text-sm">
               <span className="truncate">Work Posts</span>
@@ -1335,6 +1376,24 @@ export default function ProviderProfile() {
             </Button>
           </TabsContent>
 
+          {/* ═══ PAYOUT & BANKING ═══ */}
+          <TabsContent value="payout" className="space-y-6">
+            <div className="card-elevated p-4 sm:p-6">
+              <ProviderPayoutBankingPanel
+                showEarningsLink
+                onStatusChange={setHasPayoutProfile}
+                onContinue={handleContinueFromPayout}
+                onSaved={async (hasProfile) => {
+                  setHasPayoutProfile(hasProfile);
+                  await refreshProfile();
+                  if (hasProfile) {
+                    handleContinueFromPayout();
+                  }
+                }}
+              />
+            </div>
+          </TabsContent>
+
           {/* ═══ WORK POSTS ═══ */}
           <TabsContent value="posts" className="space-y-6">
             <div className="flex items-center justify-between">
@@ -1622,6 +1681,7 @@ export default function ProviderProfile() {
                     pricing,
                     settings: savedSettings,
                     hasPendingSkillSuggestion: suggestedServices.length > 0,
+                    hasPayoutProfile,
                   });
                   if (refreshed.percentCore === 100) {
                     toast({
@@ -1649,8 +1709,8 @@ export default function ProviderProfile() {
             <div>
               <h3 className="font-semibold">Customer Reviews</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Reviews from customers after job confirmation or when they report an issue. These are
-                visible on your public profile.
+                Reviews from customers after job confirmation and full payment. These are visible on
+                your public profile.
               </p>
             </div>
             <div className="card-elevated p-4 sm:p-6">

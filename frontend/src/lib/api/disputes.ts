@@ -46,6 +46,22 @@ export async function submitProviderDisputeEvidence(
   return data.dispute;
 }
 
+export async function submitDisputeEvidence(
+  disputeId: string,
+  payload: {
+    comment: string;
+    images?: string[];
+    videos?: string[];
+  }
+): Promise<JobDispute> {
+  const { data } = await apiClient.post<{ success: boolean; dispute: JobDispute }>(
+    `/disputes/${disputeId}/evidence`,
+    payload
+  );
+  if (!data?.dispute) throw new Error('Failed to submit evidence');
+  return data.dispute;
+}
+
 export async function getProviderDisputeStats(): Promise<{
   totalFlagged: number;
   openDisputes: number;

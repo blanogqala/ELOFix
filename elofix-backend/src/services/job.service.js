@@ -47,6 +47,16 @@ const jobInclude = {
   provider: {
     select: { id: true, name: true, email: true, role: true },
   },
+  providerReview: {
+    select: {
+      id: true,
+      rating: true,
+      comment: true,
+      images: true,
+      videos: true,
+      createdAt: true,
+    },
+  },
 };
 
 const {
@@ -205,7 +215,15 @@ async function resolveProviderUserId(selectedProviderId) {
       throw new AppError("Selected provider is not available for booking", 400);
     }
     const refundRecovery = require("./refundRecovery.service");
-    await refundRecovery.assertProviderNoOverdueRefundDebt(providerProfile.id);
+    try {
+      await refundRecovery.assertProviderNoOverdueRefundDebt(providerProfile.id);
+    } catch (err) {
+      // Customer-facing path: never surface provider "your account" debt copy.
+      if (err instanceof AppError && (err.statusCode === 403 || err.statusCode === 400)) {
+        throw new AppError("Selected provider is not available for booking", 400);
+      }
+      throw err;
+    }
     return providerProfile.userId;
   }
 
@@ -1193,7 +1211,9 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
     const metaBefore = await getJobMeta(jobId);
     const isCourier = Boolean(metaBefore?.courierFlow);
     const laborPaid = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);
-    if (!isCourier && !laborPaid) {
+    const allowsUnpaidComplete =
+      String(job.paymentModeSnapshot || "") === "SINGLE_PAYMENT_ON_COMPLETION";
+    if (!isCourier && !laborPaid && !allowsUnpaidComplete) {
       throw new AppError(
         "Service payment is required before marking the job complete.",
         409
@@ -1224,7 +1244,18 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
     await notificationEvents.notifyInspectionCompleted(job.customerId, jobId, job.title);
   }
   if (String(status) === "AWAITING_CONFIRMATION" && job.customerId) {
-    await notificationEvents.notifyCustomerConfirmationNeeded(job.customerId, jobId, job.title);
+    const paymentModeService = require("./payments/paymentMode.service");
+    const due = paymentModeService.resolveNextLaborPaymentType(
+      { ...job, paymentModeSnapshot: job.paymentModeSnapshot, paymentProgress: job.paymentProgress, legacyEscrowV2: job.legacyEscrowV2 },
+      meta
+    );
+    if (due === paymentModeService.PAYMENT_TYPES.COMPLETION) {
+      await notificationEvents.notifyCompletionPaymentRequired(job.customerId, jobId, job.title);
+    } else if (due === paymentModeService.PAYMENT_TYPES.FULL_COMPLETION) {
+      await notificationEvents.notifyCompletionPaymentRequired(job.customerId, jobId, job.title);
+    } else {
+      await notificationEvents.notifyCustomerConfirmationNeeded(job.customerId, jobId, job.title);
+    }
     if (job.providerId) {
       await notificationEvents.notifyJobMarkedComplete(job.providerId, jobId, job.title);
     }
@@ -1458,10 +1489,42 @@ async function submitServicePrice(jobId, amount, note, providerUserId) {
     )
   );
   const enriched = await finalizeJob(updated, meta);
+  // Snapshot payment schedule when provider submits the quote (frozen for this job).
+  // Fail closed: do not leave the job payable without a snapshot.
+  const paymentModeService = require("./payments/paymentMode.service");
+  await prisma.$transaction(async (tx) => {
+    await paymentModeService.snapshotPaymentModeOnJob(tx, jobId, {
+      quotedAmount: safeAmount,
+      categoryKey: updated.category,
+    });
+  });
+  const jobFresh = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  const metaFresh = await getJobMeta(jobId);
+  // ON_COMPLETION: provider may start work without customer payment.
+  if (
+    jobFresh?.paymentModeSnapshot === "SINGLE_PAYMENT_ON_COMPLETION" &&
+    String(metaFresh.statusOverride || "") === "SERVICE_PRICE_SUBMITTED"
+  ) {
+    const progressed = await mutateJobMeta(jobId, (m) =>
+      withStatusAndProgress({ ...m, hasStarted: true }, "IN_PROGRESS", {
+        ...jobFresh,
+        status: "IN_PROGRESS",
+      })
+    );
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { status: "IN_PROGRESS" },
+    });
+    const again = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+    if (job.customerId) {
+      await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
+    }
+    return finalizeJob(again, progressed);
+  }
   if (job.customerId) {
     await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
   }
-  return enriched;
+  return finalizeJob(jobFresh || updated, metaFresh || meta);
 }
 
 async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, route) {
@@ -1502,6 +1565,12 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
 
   if (!job.providerId) {
     throw new AppError("Job has no provider", 400);
+  }
+
+  const paymentModeService = require("./payments/paymentMode.service");
+  // Mock payLabor: legacy escrow only when legacyEscrowV2; otherwise require snapshot.
+  if (job.legacyEscrowV2 !== true) {
+    paymentModeService.assertPaymentModeReady(job);
   }
 
   const providerRow = await prisma.provider.findUnique({
@@ -2183,7 +2252,10 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   const expectedRefund =
     policy.refundAmount != null
       ? Number(policy.refundAmount) || 0
-      : paymentService.computeCancelRefundAmount(job, { courierFlow: Boolean(preMeta?.courierFlow) });
+      : paymentService.computeCancelRefundAmount(job, {
+          courierFlow: Boolean(preMeta?.courierFlow),
+          meta: preMeta,
+        });
   let refundStatusForMeta = "recorded";
   const laborPaidForRefund = isLaborPaid(job, preMeta);
   if (expectedRefund > 0 && laborPaidForRefund) {
@@ -2395,6 +2467,20 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
     const courierReady = await isCourierDeliveryReadyForConfirmation(job, metaBefore);
     if (!courierReady) {
       throw new AppError("Job is not awaiting confirmation", 400);
+    }
+  }
+
+  // Immediate-settlement modes that still owe a customer payment cannot complete via confirm alone.
+  // Missing snapshot on non-legacy jobs is also a configuration error (fail closed).
+  if (!job.legacyEscrowV2) {
+    const paymentModeService = require("./payments/paymentMode.service");
+    paymentModeService.assertPaymentModeReady(job);
+    const due = paymentModeService.resolveNextLaborPaymentType(job, metaBefore);
+    if (due === paymentModeService.PAYMENT_TYPES.COMPLETION || due === paymentModeService.PAYMENT_TYPES.FULL_COMPLETION) {
+      throw new AppError(
+        "Please pay the remaining service balance to complete this job. Completion is confirmed after successful payment.",
+        400
+      );
     }
   }
 
@@ -3356,6 +3442,12 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
   }
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
+  if (!job.legacyEscrowV2) {
+    throw new AppError(
+      "Manual escrow release is only available for legacy held-funds jobs. New jobs settle per payment transaction.",
+      400
+    );
+  }
   if (job.paymentReleased || (paymentService.isEscrowV2Job(job) && job.isFullyReleased)) {
     throw new AppError("Already released", 400);
   }

@@ -11,6 +11,9 @@ import {
 } from '@/lib/disputeLabels';
 import { cn } from '@/lib/utils';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { formatCurrency } from '@/lib/formatCurrency';
+import { DisputeEvidenceCard } from '@/components/disputes/DisputeEvidenceCard';
+import type { DisputeEvidenceEntry } from '@/types';
 
 function DisputeMediaGrid({ images = [], videos = [] }: { images?: string[]; videos?: string[] }) {
   if (images.length === 0 && videos.length === 0) {
@@ -73,6 +76,28 @@ interface DisputeCaseDetailViewProps {
   resolutionLogs?: JobDispute['resolutionLogs'];
   rounds?: JobDisputeRound[];
   jobTitle?: string | null;
+  /** Paid-tranche financial snapshot for admin (and optional parties). */
+  financialSummary?: {
+    servicePrice: number;
+    paidToDate: number;
+    unpaidRemaining: number;
+    amountUnderReview: number;
+  } | null;
+  evidenceEntries?: DisputeEvidenceEntry[];
+  evidenceJobId?: string;
+  canAddCustomerEvidence?: boolean;
+  canAddProviderEvidence?: boolean;
+  onAddCustomerEvidence?: (payload: {
+    comment: string;
+    images: string[];
+    videos: string[];
+  }) => void | Promise<void>;
+  onAddProviderEvidence?: (payload: {
+    comment: string;
+    images: string[];
+    videos: string[];
+  }) => void | Promise<void>;
+  addingEvidence?: boolean;
   footer?: ReactNode;
   caseKind?: 'dispute' | 'cancellation';
 }
@@ -83,6 +108,14 @@ export function DisputeCaseDetailView({
   resolutionLogs,
   rounds: roundsProp,
   jobTitle,
+  financialSummary,
+  evidenceEntries,
+  evidenceJobId,
+  canAddCustomerEvidence,
+  canAddProviderEvidence,
+  onAddCustomerEvidence,
+  onAddProviderEvidence,
+  addingEvidence,
   footer,
   caseKind = 'dispute',
 }: DisputeCaseDetailViewProps) {
@@ -137,9 +170,17 @@ export function DisputeCaseDetailView({
 
             {hasMultipleRounds ? (
               <div className="space-y-2">
-                <p className="text-sm font-medium">
-                  {caseKind === 'cancellation' ? 'Cases on this job' : 'Disputes on this job'} ({rounds.length})
-                </p>
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">
+                    {caseKind === 'cancellation'
+                      ? `Openings of this cancellation (${rounds.length})`
+                      : `Openings of this dispute (${rounds.length})`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Same job — each row is a reopen of this case after an earlier resolution, not a
+                    dispute from another job.
+                  </p>
+                </div>
                 <ul className="space-y-2">
                   {rounds.map((round) => {
                     const selected = round.roundNumber === selectedRound?.roundNumber;
@@ -161,7 +202,7 @@ export function DisputeCaseDetailView({
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-sm font-medium">
-                              {caseKind === 'cancellation' ? 'Case' : 'Dispute'} {round.roundNumber}
+                              Opening {round.roundNumber}
                               {selected ? ' · viewing' : ''}
                             </span>
                             <span
@@ -207,7 +248,7 @@ export function DisputeCaseDetailView({
 
       {hasMultipleRounds && selectedRound && (
         <p className="text-sm text-muted-foreground">
-          Showing dispute {selectedRound.roundNumber} of {rounds.length} for this job.
+          Viewing opening {selectedRound.roundNumber} of {rounds.length} for this case on this job.
         </p>
       )}
 
@@ -234,39 +275,109 @@ export function DisputeCaseDetailView({
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      {financialSummary ? (
         <div className="card-elevated space-y-3 p-5 sm:p-6">
-          <div className="space-y-1">
-            <h2 className="font-semibold">Customer evidence</h2>
-            <p className="text-xs text-muted-foreground">
-              {customerDisplayName} · Opened {openedAtLabel}
-            </p>
+          <h2 className="font-semibold">Financial summary</h2>
+          <p className="text-sm text-muted-foreground">
+            Only amounts already paid by the customer can be refunded. Unpaid completion tranches are
+            not a refund liability.
+          </p>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Quoted service amount</span>
+              <span className="font-medium tabular-nums">
+                {formatCurrency(financialSummary.servicePrice, { decimals: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Paid by customer</span>
+              <span className="font-medium tabular-nums">
+                {formatCurrency(financialSummary.paidToDate, { decimals: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Remaining unpaid</span>
+              <span className="font-medium tabular-nums">
+                {formatCurrency(financialSummary.unpaidRemaining, { decimals: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3 border-t border-border pt-2 font-semibold">
+              <span>Maximum refundable paid amount</span>
+              <span className="tabular-nums">
+                {formatCurrency(financialSummary.amountUnderReview, { decimals: 2 })}
+              </span>
+            </div>
           </div>
-          <p className="text-sm font-medium">Requested outcome: {requestLabel}</p>
-          {view.requestedResolution === 'OTHER' && view.otherResolutionDetail && (
-            <p className="border-l-2 border-muted pl-3 text-sm text-muted-foreground">
-              {view.otherResolutionDetail}
-            </p>
-          )}
-          <p className="text-sm">{view.customerComment}</p>
-          <DisputeMediaGrid images={view.customerImages} videos={view.customerVideos} />
         </div>
+      ) : null}
 
-        <div className="card-elevated space-y-3 p-5 sm:p-6">
-          <div className="space-y-1">
-            <h2 className="font-semibold">Provider response</h2>
-            <p className="text-xs text-muted-foreground">
-              {providerDisplayName} · Opened {openedAtLabel}
-            </p>
+      {(() => {
+        const list =
+          evidenceEntries ??
+          dispute.evidence ??
+          ([] as DisputeEvidenceEntry[]);
+        const jobId = evidenceJobId || dispute.jobId;
+        const hasModern = list.length > 0 || canAddCustomerEvidence || canAddProviderEvidence;
+        if (hasModern) {
+          return (
+            <div className="grid gap-4 md:grid-cols-2">
+              <DisputeEvidenceCard
+                title="Customer Evidence"
+                role="CUSTOMER"
+                evidence={list}
+                jobId={jobId}
+                canAdd={Boolean(canAddCustomerEvidence && onAddCustomerEvidence)}
+                onAdd={onAddCustomerEvidence}
+                adding={addingEvidence}
+              />
+              <DisputeEvidenceCard
+                title="Provider Response / Evidence"
+                role="PROVIDER"
+                evidence={list}
+                jobId={jobId}
+                canAdd={Boolean(canAddProviderEvidence && onAddProviderEvidence)}
+                onAdd={onAddProviderEvidence}
+                adding={addingEvidence}
+              />
+            </div>
+          );
+        }
+        return (
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="card-elevated space-y-3 p-5 sm:p-6">
+              <div className="space-y-1">
+                <h2 className="font-semibold">Customer evidence</h2>
+                <p className="text-xs text-muted-foreground">
+                  {customerDisplayName} · Opened {openedAtLabel}
+                </p>
+              </div>
+              <p className="text-sm font-medium">Requested outcome: {requestLabel}</p>
+              {view.requestedResolution === 'OTHER' && view.otherResolutionDetail && (
+                <p className="border-l-2 border-muted pl-3 text-sm text-muted-foreground">
+                  {view.otherResolutionDetail}
+                </p>
+              )}
+              <p className="text-sm">{view.customerComment}</p>
+              <DisputeMediaGrid images={view.customerImages} videos={view.customerVideos} />
+            </div>
+
+            <div className="card-elevated space-y-3 p-5 sm:p-6">
+              <div className="space-y-1">
+                <h2 className="font-semibold">Provider response</h2>
+                <p className="text-xs text-muted-foreground">
+                  {providerDisplayName} · Opened {openedAtLabel}
+                </p>
+              </div>
+              {view.providerComment ? (
+                <p className="text-sm">{view.providerComment}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">No provider response yet</p>
+              )}
+              <DisputeMediaGrid images={view.providerImages} videos={view.providerVideos} />
+            </div>
           </div>
-          {view.providerComment ? (
-            <p className="text-sm">{view.providerComment}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">No provider response yet</p>
-          )}
-          <DisputeMediaGrid images={view.providerImages} videos={view.providerVideos} />
-        </div>
-      </div>
+        );
+      })()}
 
       <div className="card-elevated p-5 sm:p-6">
         <h2 className="mb-4 font-semibold">Messages</h2>

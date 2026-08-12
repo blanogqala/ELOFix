@@ -19,6 +19,20 @@ async function putWithdrawalProfile(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function putWithdrawalProfileReplace(req, res) {
+  const data = await branchAccountService.replaceWithdrawalProfile(
+    req.user,
+    req.params.branchId,
+    req.body || {}
+  );
+  res.json({ success: true, ...data });
+}
+
+async function deleteWithdrawalProfile(req, res) {
+  const data = await branchAccountService.deactivateWithdrawalProfile(req.user, req.params.branchId);
+  res.json({ success: true, ...data });
+}
+
 async function postWithdraw(req, res) {
   const data = await branchAccountService.requestWithdrawal(
     req.user,
@@ -52,6 +66,8 @@ module.exports = {
   getBalance,
   getWithdrawalProfile,
   putWithdrawalProfile,
+  putWithdrawalProfileReplace,
+  deleteWithdrawalProfile,
   postWithdraw,
   getWithdrawals,
   getOrgBranchWithdrawals,

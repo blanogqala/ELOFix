@@ -73,6 +73,7 @@ function testJobsNavClearanceExcludesJobChat() {
   assert.ok(!NAV_PATH_TYPES["/provider/jobs"].includes("job_chat"));
   assert.ok(NAV_PATH_TYPES["/user/jobs"].includes("material_list_submitted"));
   assert.ok(NAV_PATH_TYPES["/provider/jobs"].includes("job_accepted"));
+  assert.ok(NAV_PATH_TYPES["/admin/jobs"].includes("dispute_opened"));
 }
 
 async function testSocketEmitRequiresIo() {

@@ -53,6 +53,16 @@ app.post(
   express.raw({ type: "application/json" }),
   asyncHandler(paymentController.payjustnowWebhook)
 );
+app.post(
+  "/api/payments/webhooks/:provider/settlement",
+  express.raw({ type: "application/json" }),
+  asyncHandler(paymentController.settlementWebhook)
+);
+app.post(
+  "/api/payments/webhooks/payfast/settlement",
+  express.urlencoded({ extended: false }),
+  asyncHandler(paymentController.settlementWebhook)
+);
 
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true, limit: "12mb" }));

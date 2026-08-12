@@ -17,6 +17,17 @@ describe('resolveNavClearancePath', () => {
     expect(resolveNavClearancePath('/user/jobs/job-1', 'user')).toBe('/user/jobs');
   });
 
+  it('resolves user payments for customer role', () => {
+    expect(resolveNavClearancePath('/user/payments', 'user')).toBe('/user/payments');
+  });
+
+  it('resolves admin jobs, disputes, and cancellations to /admin/jobs clearance', () => {
+    expect(resolveNavClearancePath('/admin/jobs', 'admin')).toBe('/admin/jobs');
+    expect(resolveNavClearancePath('/admin/jobs/abc', 'admin')).toBe('/admin/jobs');
+    expect(resolveNavClearancePath('/admin/disputes/abc', 'admin')).toBe('/admin/jobs');
+    expect(resolveNavClearancePath('/admin/cancellations/abc', 'admin')).toBe('/admin/jobs');
+  });
+
   it('returns null for unrelated paths', () => {
     expect(resolveNavClearancePath('/admin/dashboard', 'admin')).toBeNull();
     expect(resolveNavClearancePath('/admin/providers', 'user')).toBeNull();

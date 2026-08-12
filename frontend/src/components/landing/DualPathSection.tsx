@@ -24,7 +24,7 @@ export function DualPathSection() {
             <h3 className="mb-3 text-2xl font-bold">Request Services</h3>
             <p className="mb-6 text-muted-foreground">
               Post a job, get AI-assisted estimates, compare verified providers by ratings and portfolios, and pay
-              securely with escrow protection.
+              with flexible options — including staged payments on selected services.
             </p>
             <ul className="mb-8 space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
@@ -37,7 +37,7 @@ export function DualPathSection() {
               </li>
               <li className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Milestone-based payments
+                Flexible payment options by category
               </li>
             </ul>
             <Button className="btn-accent group/btn" onClick={() => navigate('/user/request/service')}>

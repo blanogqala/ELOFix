@@ -12,6 +12,7 @@ const {
   isValidCvv,
   parsePaymentCardFromGatewayPayload,
 } = require("../utils/paymentCard.util");
+const { paidLaborGrossFromJob } = require("../utils/refundMath.util");
 
 function maskLast4(number) {
   const digits = String(number || "").replace(/\D/g, "");
@@ -435,7 +436,9 @@ async function runSettleLaborInTransaction(
 
   const t1Key = idempotencyKeyForEarnings ? `${idempotencyKeyForEarnings}::t1` : `t1-${jobId}-${paymentRef}`;
 
-  const existingLedger = await tx.commissionLedger.findUnique({ where: { jobId } });
+  const existingLedger = await tx.commissionLedger.findFirst({
+    where: { jobId, source: "labor_payment" },
+  });
   if (existingLedger) {
     throw new AppError("Commission already recorded for this job", 400);
   }
@@ -450,6 +453,10 @@ async function runSettleLaborInTransaction(
     },
   });
 
+  // Legacy escrow hold ONLY for explicitly grandfathered escrow-v2 jobs.
+  // Missing paymentModeSnapshot must NEVER trigger escrow (fail-closed upstream).
+  const useLegacyEscrowHold = Boolean(job.legacyEscrowV2);
+
   const jobStatus = job.status;
   const statusPatch =
     jobStatus === "ACCEPTED" ? { status: "IN_PROGRESS", laborPaid: true } : { laborPaid: true };
@@ -458,6 +465,9 @@ async function runSettleLaborInTransaction(
     laborPaid: true,
     status: statusPatch.status || job.status,
   };
+
+  const heldAmount = useLegacyEscrowHold ? Number(secondTranche) : 0;
+  const releasedNow = useLegacyEscrowHold ? Number(firstTranche) : Number(providerAmount);
 
   const jobProgressUtil = require("../utils/jobProgress.util");
   const meta = await mutateJobMetaInTransaction(tx, jobId, (m) => {
@@ -475,8 +485,8 @@ async function runSettleLaborInTransaction(
         maskedPaymentMethod: `**** **** **** ${cardLast4 || "****"}`,
       },
       escrow: {
-        heldAmount: Number(secondTranche),
-        releasedAmount: Number(firstTranche),
+        heldAmount,
+        releasedAmount: releasedNow,
       },
       statusOverride: "SERVICE_PAID",
     };
@@ -491,33 +501,38 @@ async function runSettleLaborInTransaction(
       totalPrice: t,
       providerAmount,
       commissionAmount,
-      releasedAmount: firstTranche,
-      isFullyReleased: false,
-      paymentReleased: false,
-      escrowSecondReleaseDone: false,
+      releasedAmount: useLegacyEscrowHold ? firstTranche : providerAmount,
+      isFullyReleased: !useLegacyEscrowHold,
+      paymentReleased: !useLegacyEscrowHold,
+      escrowSecondReleaseDone: !useLegacyEscrowHold,
+      paymentProgress: useLegacyEscrowHold ? "FIRST_PAID" : "FULLY_PAID",
     },
   });
 
-  // Pending = full provider share; first 50% immediately goes available
-  await earningService.createLaborCreditPending(tx, {
-    providerId: providerProfileId,
-    jobId,
-    amount: Number(providerAmount),
-    idempotencyKey: null,
-  });
+  // Decision 1B: no new withdrawable earnings except legacy escrow path (ops grandfathering).
+  if (useLegacyEscrowHold) {
+    await earningService.createLaborCreditPending(tx, {
+      providerId: providerProfileId,
+      jobId,
+      amount: Number(providerAmount),
+      idempotencyKey: null,
+    });
 
-  await earningService.applyReleaseToLedger(tx, {
-    providerId: providerProfileId,
-    jobId,
-    releaseAmount: Number(firstTranche),
-    idempotencyKey: t1Key,
-  });
+    await earningService.applyReleaseToLedger(tx, {
+      providerId: providerProfileId,
+      jobId,
+      releaseAmount: Number(firstTranche),
+      idempotencyKey: t1Key,
+    });
+  }
 
   return { jobRow, meta, commissionAmount, providerAmount, firstTranche, secondTranche };
 }
 
 /**
  * Courier delivery fee is paid via DeliveryRequest — not runSettleLaborInTransaction.
+ * INTENTIONAL EXCEPTION (out of scope for payment-mode migration): courier holds use
+ * meta.courierFlow, not legacyEscrowV2. Labor immediate-settlement jobs never enter this path.
  * Backfill commission ledger + provider earnings when missing (legacy rows and repair path).
  * @param {import("@prisma/client").Prisma.TransactionClient} tx
  */
@@ -531,7 +546,9 @@ async function backfillCourierDeliveryEscrowInTransaction(tx, { job, jobId, prov
   let released = toPrismaDecimal(job.releasedAmount || 0);
   let jobRow = job;
 
-  const existingLedger = await tx.commissionLedger.findUnique({ where: { jobId: jobIdStr } });
+  const existingLedger = await tx.commissionLedger.findFirst({
+    where: { jobId: jobIdStr, source: "courier_delivery_payment" },
+  });
   if (!existingLedger) {
     const commissionAmount =
       job.commissionAmount != null
@@ -670,6 +687,11 @@ async function assertEscrowNotFrozen(tx, jobId) {
  */
 async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId }) {
   await assertEscrowNotFrozen(tx, jobId);
+  // Second-tranche release is exclusive to legacyEscrowV2 jobs.
+  // Courier delivery escrow uses a separate meta.courierFlow path (not gated here).
+  if (job && job.legacyEscrowV2 !== true) {
+    return { skipped: true, jobRow: null, reason: "immediate_settlement" };
+  }
   if (!job.laborPaid) {
     return { skipped: true, jobRow: null };
   }
@@ -819,10 +841,11 @@ function netCourierCancelRefundFromGross(gross) {
 
 /**
  * @param {import("@prisma/client").Job} job
- * @param {{ courierFlow?: boolean }} [options]
+ * @param {{ courierFlow?: boolean, meta?: object }} [options]
  */
 function computeCancelRefundAmount(job, options = {}) {
   const courierFlow = Boolean(options.courierFlow);
+  const meta = options.meta && typeof options.meta === "object" ? options.meta : {};
   if (!job.laborPaid) {
     return 0;
   }
@@ -830,11 +853,14 @@ function computeCancelRefundAmount(job, options = {}) {
     const legacy = Number(job.price) || 0;
     return courierFlow && legacy > 0 ? netCourierCancelRefundFromGross(legacy) : legacy;
   }
-  const total = toPrismaDecimal(job.totalPrice);
   const releasedToProvider = toPrismaDecimal(job.releasedAmount || 0);
-  // No funds released to provider yet → full gross (courier: minus 7% commission kept by platform).
+  const paidGross = paidLaborGrossFromJob(job, meta);
+  // No funds released to provider yet → refund based on actual paid tranches (courier: minus 7% commission kept).
   if (releasedToProvider.lte(0)) {
-    const gross = Number(total.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP));
+    const gross =
+      paidGross > 0
+        ? paidGross
+        : Number(toPrismaDecimal(job.totalPrice).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP));
     return courierFlow && gross > 0 ? netCourierCancelRefundFromGross(gross) : gross;
   }
   // After at least one tranche: refund only **remaining provider escrow** (not gross − released which would mis-count commission).

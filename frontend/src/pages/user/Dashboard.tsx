@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { getJobsByUser } from '@/lib/api/jobs';
 import { queryKeys } from '@/lib/queryKeys';
-import { getJobPriceDisplay } from '@/lib/jobUtils';
+import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { Job } from '@/types';
 import { SpecialsCarousel } from '@/components/dashboard/SpecialsCarousel';
 import { 
@@ -68,20 +68,7 @@ export default function UserDashboard() {
         <p className="truncate text-sm text-muted-foreground">{job.description}</p>
       </div>
       <div className="hidden shrink-0 text-right sm:block">
-        {(() => {
-          const { text, isPaid } = getJobPriceDisplay(job);
-          return (
-            <>
-              <p className="font-medium">
-                {text}
-                {isPaid && <span className="ml-1 text-xs text-success">(Paid)</span>}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {new Date(job.createdAt).toLocaleDateString()}
-              </p>
-            </>
-          );
-        })()}
+        <JobPaymentListSummary job={job} showDate compact />
       </div>
     </>
   );

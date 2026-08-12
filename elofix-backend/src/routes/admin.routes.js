@@ -39,6 +39,7 @@ router.patch("/customers/:userId/unblock", asyncHandler(adminController.unblockC
 router.patch("/customers/:userId/delete", asyncHandler(adminController.deleteCustomer));
 router.get("/providers", asyncHandler(adminController.listProviders));
 router.get("/providers/revenue-summary", asyncHandler(adminController.listProviderNetRevenues));
+router.get("/providers/:userId/payout-profile", asyncHandler(adminController.getProviderPayoutProfile));
 router.get("/providers/:userId/analytics", asyncHandler(adminController.getProviderAnalytics));
 router.get("/providers/:userId/trust-score", asyncHandler(adminController.getProviderTrustScore));
 router.patch(
@@ -79,12 +80,21 @@ router.get("/jobs/:jobId/completion-evidence/export", asyncHandler(adminControll
 
 router.get("/suppliers", asyncHandler(adminController.listSuppliers));
 router.post("/suppliers", asyncHandler(adminController.createSupplier));
+router.get(
+  "/suppliers/:supplierId/branches/:branchId/payout-profile",
+  asyncHandler(adminController.getBranchPayoutProfile)
+);
+router.get("/payout-profiles/pending-verification", asyncHandler(adminController.listPendingPayoutProfiles));
 router.get("/suppliers/:supplierId/material-orders", asyncHandler(adminController.listSupplierMaterialOrders));
 router.get("/suppliers/:supplierId/orders/export", asyncHandler(adminController.getAdminSupplierOrdersExport));
 router.get("/suppliers/:supplierId/branch-withdrawals", asyncHandler(adminController.getAdminSupplierBranchWithdrawals));
 router.get(
   "/suppliers/:supplierId/available-withdrawals",
   asyncHandler(adminController.getAdminSupplierAvailableWithdrawals)
+);
+router.get(
+  "/suppliers/:supplierId/settlement-summary",
+  asyncHandler(adminController.getAdminSupplierSettlementSummary)
 );
 router.get("/suppliers/:supplierId/orders", asyncHandler(adminController.listSupplierOrders));
 router.get("/suppliers/:supplierId", asyncHandler(adminController.getAdminSupplierDetail));
@@ -112,5 +122,9 @@ router.get("/audit-logs/export", asyncHandler(adminController.exportAuditLogs));
 router.get("/refund-repayments", asyncHandler(adminController.listRefundRepayments));
 router.post("/refund-repayments/:id/confirm", asyncHandler(adminController.confirmRefundRepayment));
 router.post("/refund-repayments/:id/reject", asyncHandler(adminController.rejectRefundRepayment));
+router.post(
+  "/refund-repayments/:id/process-customer-refund",
+  asyncHandler(adminController.processCustomerRefundFromRepayment)
+);
 
 module.exports = router;

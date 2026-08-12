@@ -335,10 +335,16 @@ export function isAdminCourierEscrowJob(job: Job): boolean {
   return job.courierFlow === true;
 }
 
-/** Admin manual release: courier jobs only after customer delivery confirmation. */
+/**
+ * Admin manual escrow release is limited to grandfathered escrow-v2 labor jobs.
+ * Courier jobs additionally require customer delivery confirmation.
+ * Immediate-settlement jobs have no releasable escrow hold.
+ */
 export function canAdminManualReleaseEscrow(job: Job): boolean {
-  if (!isAdminCourierEscrowJob(job)) return true;
-  return job.completionConfirmedByUser === true;
+  if (isAdminCourierEscrowJob(job)) {
+    return job.completionConfirmedByUser === true;
+  }
+  return job.legacyEscrowV2 === true;
 }
 
 /** Customer labor/service refund net (excludes material refunds). */

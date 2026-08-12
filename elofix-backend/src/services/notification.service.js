@@ -277,13 +277,23 @@ const WITHDRAWAL_NAV_TYPES = [
   "withdrawal_failed",
 ];
 
+/** Customer Payments orange-dot — refund completion events only (not refund_approved). */
+const PAYMENTS_NAV_TYPES = [
+  "refund_processed",
+  "refund_completed",
+  "refund_issued",
+  "refund_staged_payout",
+];
+
 const NAV_PATH_TYPES = {
   "/admin/providers": ["admin_provider_application_submitted"],
   "/admin/categories": ["category_suggestion"],
   "/admin/fraud-center": ["fraud_alert"],
-  "/admin/refund-repayments": ["admin_repayment_submitted", "admin_refund_debt_overdue"],
+  "/admin/refund-repayments": ["admin_repayment_submitted", "admin_refund_debt_overdue", "admin_refund_ready"],
+  "/admin/jobs": ["dispute_opened"],
   "/user/jobs": JOBS_NAV_TYPES,
   "/user/material-orders": MATERIAL_ORDER_NAV_TYPES,
+  "/user/payments": PAYMENTS_NAV_TYPES,
   "/provider/jobs": JOBS_NAV_TYPES,
   "/provider/requests": ["job_request"],
   "/provider/earnings": WITHDRAWAL_NAV_TYPES,

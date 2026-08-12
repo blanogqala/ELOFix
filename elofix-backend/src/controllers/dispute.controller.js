@@ -35,6 +35,16 @@ async function addProviderEvidence(req, res) {
   res.json({ success: true, dispute });
 }
 
+async function addEvidence(req, res) {
+  const dispute = await jobDisputeService.addDisputeEvidence(
+    req.params.id,
+    req.user.userId,
+    req.user.role,
+    req.body || {}
+  );
+  res.json({ success: true, dispute });
+}
+
 async function getProviderDisputeStats(req, res) {
   const stats = await jobDisputeService.getProviderDisputeStats(req.user.userId);
   res.json({ success: true, stats });
@@ -46,5 +56,6 @@ module.exports = {
   openJobDispute,
   addMessage,
   addProviderEvidence,
+  addEvidence,
   getProviderDisputeStats,
 };

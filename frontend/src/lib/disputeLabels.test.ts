@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { formatDisputeOpenedAt, formatMessageSenderLabel } from '@/lib/disputeLabels';
+import {
+  formatAdminResolutionAction,
+  formatDisputeOpenedAt,
+  formatMessageSenderLabel,
+} from '@/lib/disputeLabels';
 
 describe('disputeLabels', () => {
   it('formats opened timestamp', () => {
@@ -30,5 +34,14 @@ describe('disputeLabels', () => {
         senderRole: 'ADMIN',
       })
     ).toBe('EloFix Admin · Admin');
+  });
+
+  it('formats canonical admin resolution actions', () => {
+    expect(formatAdminResolutionAction('RELEASE_FUNDS')).toBe(
+      'Release remaining funds to provider'
+    );
+    expect(formatAdminResolutionAction('FULL_REFUND')).toBe('Refund customer');
+    expect(formatAdminResolutionAction('RETURN_PROVIDER')).toBe('Return provider to site');
+    expect(formatAdminResolutionAction('CLOSE_CASE')).toBe('Case closed');
   });
 });

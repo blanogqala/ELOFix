@@ -54,8 +54,8 @@ test('final validation smoke flow', async ({ page }) => {
   await page.getByLabel('Email').fill(userEmail);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign In' }).click();
-  // Current app behavior: email/password login routes to default dashboard for role.
-  await expect(page).toHaveURL(/\/user\/dashboard/);
+  // Accept either default dashboard or next=/user/jobs redirect after login.
+  await expect(page).toHaveURL(/\/user\/(dashboard|jobs)/, { timeout: 30_000 });
 
   // PROVIDER: register -> onboarding -> tab switch mid-save -> doc upload
   await page.goto(`${BASE_URL}/register?role=provider`);

@@ -6,6 +6,8 @@ async function createReview(req, res) {
     customerUserId: req.user.userId,
     rating: req.body?.rating,
     comment: req.body?.comment,
+    images: req.body?.images,
+    videos: req.body?.videos,
   });
   res.status(201).json({ success: true, review });
 }

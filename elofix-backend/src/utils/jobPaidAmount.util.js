@@ -19,12 +19,24 @@ function paidMaterialAmountFromMeta(meta) {
 
 /**
  * Paid labor from job meta + row.
- * Courier delivery fees are stored on servicePrice / Job columns (not servicePayment) when paid via DeliveryRequest.
+ * TWO_PAYMENT_50_50: sum depositPayment + completionPayment (not servicePayment alone).
+ * Courier delivery fees are stored on servicePrice / Job columns when paid via DeliveryRequest.
  */
 function paidLaborAmountFromMeta(meta, jobRow = null) {
   const safe = meta && typeof meta === "object" ? meta : {};
+  let sum = 0;
+  const dep = safe.depositPayment;
+  const comp = safe.completionPayment;
+  if (dep && String(dep.status || "").toLowerCase() === "paid" && dep.amount != null) {
+    sum += Number(dep.amount) || 0;
+  }
+  if (comp && String(comp.status || "").toLowerCase() === "paid" && comp.amount != null) {
+    sum += Number(comp.amount) || 0;
+  }
+  if (sum > 0) return roundMoney(sum);
+
   const sp = safe.servicePayment;
-  if (sp && sp.status === "paid" && sp.amount != null) {
+  if (sp && String(sp.status || "").toLowerCase() === "paid" && sp.amount != null) {
     return Number(sp.amount) || 0;
   }
   const laborPaid = Boolean(jobRow?.laborPaid) || Boolean(safe.laborPaid);

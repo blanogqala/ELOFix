@@ -15,63 +15,12 @@ function providerChannel(provider) {
 }
 
 /**
- * Settle labor escrow from a paid PaymentIntent.
+ * Settle labor from a paid PaymentIntent (immediate-settlement or legacy escrow).
  * @param {import("@prisma/client").Prisma.TransactionClient} tx
  */
 async function settleLaborFromIntent(tx, intent, gatewayPayload) {
-  const jobId = intent.jobId;
-  if (!jobId) {
-    throw new AppError("Labor payment requires jobId", 400);
-  }
-  const job = await tx.job.findUnique({ where: { id: jobId } });
-  if (!job) {
-    throw new AppError("Job not found", 404);
-  }
-  if (job.laborPaid) {
-    return { alreadySettled: true, job };
-  }
-  if (!job.providerId) {
-    throw new AppError("Job has no provider", 400);
-  }
-  const prov = await tx.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } });
-  if (!prov) {
-    throw new AppError("Provider profile not found", 404);
-  }
-
-  const meta = await getJobMeta(jobId);
-  const expected = paymentService.expectedLaborGrossFromJob(job, meta);
-  const gross = toAmountDecimal(intent.amount);
-  const diff = gross.sub(expected).abs();
-  if (diff.gt(0.02)) {
-    throw new AppError("Paid amount does not match job price", 400);
-  }
-
-  const paidAt = new Date().toISOString();
-  const last4 = String(gatewayPayload?.card_last4 || gatewayPayload?.last4 || "****");
-
-  await paymentService.runSettleLaborInTransaction(tx, {
-    job,
-    jobId,
-    customerUserId: intent.userId,
-    providerProfileId: prov.id,
-    gross,
-    paymentRef: intent.merchantReference,
-    paidAt,
-    cardLast4: last4,
-    idempotencyKeyForEarnings: intent.idempotencyKey ? `${intent.idempotencyKey}::t1` : `intent-${intent.id}`,
-    channel: providerChannel(intent.provider),
-  });
-
-  await tx.paymentIntent.update({
-    where: { id: intent.id },
-    data: {
-      escrowStatus: "PARTIALLY_RELEASED",
-      providerPayoutStatus: "PARTIAL",
-    },
-  });
-
-  const updated = await tx.job.findUnique({ where: { id: jobId } });
-  return { alreadySettled: false, job: updated, settledAudit: { intentId: intent.id, userId: intent.userId, jobId, amount: Number(intent.amount) } };
+  const settlement = require("./settlement.service");
+  return settlement.settleLaborFromIntent(tx, intent, gatewayPayload);
 }
 
 /**
@@ -89,7 +38,17 @@ async function settleMaterialOrderFromIntent(tx, intent) {
     return { alreadyPaid: true, order };
   }
 
-  const subtotal = toAmountDecimal(order.materialsSubtotal);
+  const subtotalPersisted = Number(order.materialsSubtotal);
+  const p = order.payload && typeof order.payload === "object" ? order.payload : {};
+  const subtotalMajor =
+    Number.isFinite(subtotalPersisted) && subtotalPersisted > 0
+      ? subtotalPersisted
+      : Number(p.totalAmount || p.total || p.materialsSubtotal || 0);
+  const subtotal = toAmountDecimal(subtotalMajor);
+  // Intent amount must match the persisted order subtotal (server-authoritative).
+  const paymentModeService = require("./paymentMode.service");
+  paymentModeService.assertAmountMatchesExpected(intent.amount, subtotal);
+
   const commission = subtotal.mul(0.07).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
   const supplierEarning = subtotal.sub(commission).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 
@@ -113,13 +72,19 @@ async function settleMaterialOrderFromIntent(tx, intent) {
     },
   });
 
+  const settlement = require("./settlement.service");
+  await settlement.stampIntentCommission(tx, intent, subtotal, null);
+
   await tx.paymentIntent.update({
     where: { id: intent.id },
     data: {
+      paymentType: "MATERIAL_ORDER",
       escrowStatus: "NOT_APPLICABLE",
-      providerPayoutStatus: "COMPLETE",
     },
   });
+
+  const branchSettlement = require("../branchSettlement.service");
+  await branchSettlement.initiateSettlementAfterPayment(tx, intent, updated);
 
   return { alreadyPaid: false, order: updated };
 }
@@ -147,11 +112,45 @@ async function settleJobStoreOrderFromIntent(intent) {
   if (!jobId) {
     throw new AppError("Job store payment requires jobId", 400);
   }
+
+  // Resolve store order from job meta (server-authoritative), using metadata as locator only.
+  const { getJobMeta } = require("../jobMeta.service");
+  const jobMeta = await getJobMeta(jobId);
+  const storeOrders = Array.isArray(jobMeta.storeOrders) ? jobMeta.storeOrders : [];
   const meta = checkoutMetaFromIntent(intent);
-  const supplierId = meta.supplierId ? String(meta.supplierId).trim() : "";
+  const orderIdHint = meta.orderId ? String(meta.orderId).trim() : "";
+  const supplierIdHint = meta.supplierId ? String(meta.supplierId).trim() : "";
+
+  const match = storeOrders.find((o) => {
+    if (!o || typeof o !== "object") return false;
+    if (orderIdHint && String(o.orderId || "") === orderIdHint) return true;
+    if (supplierIdHint && String(o.supplierId || "") === supplierIdHint) return true;
+    return false;
+  });
+  if (!match) {
+    throw new AppError("Store order not found for this job payment", 404);
+  }
+  if (match.payment?.materialsPaid === true) {
+    return { alreadyApplied: true };
+  }
+
+  const supplierId = String(match.supplierId || supplierIdHint || "").trim();
   if (!supplierId) {
     throw new AppError("Payment metadata missing supplierId", 400);
   }
+
+  // Reconcile intent amount against persisted store-order total.
+  const items = Array.isArray(match.items) ? match.items : [];
+  const materialsTotal = items.reduce(
+    (sum, item) => sum + Number(item.qty || 0) * Number(item.unitPrice || item.price || 0),
+    0
+  );
+  const deliveryFee = Number(
+    match.deliveryFee != null ? match.deliveryFee : match.delivery?.fee || meta.deliveryFee || 0
+  );
+  const expectedTotal = materialsTotal + (Number.isFinite(deliveryFee) ? deliveryFee : 0);
+  const paymentModeService = require("./paymentMode.service");
+  paymentModeService.assertAmountMatchesExpected(intent.amount, expectedTotal);
 
   const jobService = require("../job.service");
   try {
@@ -161,10 +160,12 @@ async function settleJobStoreOrderFromIntent(intent) {
       "****",
       {
         paymentIntentId: intent.id,
-        deliveryType: meta.deliveryType || "SELF",
-        deliveryFee: Number(meta.deliveryFee || 0),
-        deliveryProviderId: meta.deliveryProviderId ? String(meta.deliveryProviderId) : undefined,
-        orderId: meta.orderId ? String(meta.orderId) : undefined,
+        deliveryType: match.deliveryType || meta.deliveryType || "SELF",
+        deliveryFee,
+        deliveryProviderId:
+          match.deliveryProviderId ||
+          (meta.deliveryProviderId ? String(meta.deliveryProviderId) : undefined),
+        orderId: match.orderId ? String(match.orderId) : orderIdHint || undefined,
       },
       String(intent.userId || "")
     );

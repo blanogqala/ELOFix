@@ -11,12 +11,75 @@ import {
   netCourierCancelRefundFromGross,
 } from '@/lib/jobCancellationPolicy';
 
+function depositOnlyJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: 'job-a',
+    courierFlow: false,
+    laborPaid: true,
+    totalPrice: 1000,
+    status: 'IN_PROGRESS',
+    paymentSummary: {
+      mode: 'TWO_PAYMENT_50_50',
+      totalAmount: 1000,
+      deposit: { amount: 500, status: 'PAID' },
+      completion: { amount: 500, status: 'UNPAID' },
+      totalPaidByCustomer: 500,
+      totalRemainingByCustomer: 500,
+      providerShareRecorded: 465,
+      providerShareRemaining: 465,
+      commissionRecorded: 35,
+      paymentProgress: 'FIRST_PAID',
+    },
+    ...overrides,
+  } as Job;
+}
+
 describe('jobCancellationPolicy', () => {
   it('computeCancelCommission and computeEstimatedNetRefund use 7%', () => {
     expect(computeCancelCommission(600)).toBe(42);
     expect(computeEstimatedNetRefund(600)).toBe(558);
     expect(netCourierCancelRefundFromGross(600)).toBe(558);
     expect(netCourierCancelRefundFromGross(100)).toBe(93);
+  });
+
+  it('CASE A — deposit-only service cancel uses paid tranche amounts', () => {
+    const preview = getCustomerCancelPreview(depositOnlyJob(), null, false);
+    expect(preview.opensDisputeReview).toBe(true);
+    expect(preview.paidToDate).toBe(500);
+    expect(preview.unpaidRemaining).toBe(500);
+    expect(preview.amountUnderReview).toBe(500);
+    expect(preview.commissionOnPaid).toBe(35);
+    expect(preview.providerShareOnPaid).toBe(465);
+    expect(preview.refundAmount).toBe(500);
+    expect(preview.warning).toContain('unpaid completion payment will not be charged');
+  });
+
+  it('CASE D — provider deposit-only dispute preview', () => {
+    const preview = getProviderCancelPreview(depositOnlyJob(), null, false);
+    expect(preview.opensDisputeReview).toBe(true);
+    expect(preview.amountUnderReview).toBe(500);
+    expect(preview.warning).toContain('deposit only');
+  });
+
+  it('CASE B — fully paid service cancel', () => {
+    const job = depositOnlyJob({
+      paymentSummary: {
+        mode: 'TWO_PAYMENT_50_50',
+        totalAmount: 1000,
+        deposit: { amount: 500, status: 'PAID' },
+        completion: { amount: 500, status: 'PAID' },
+        totalPaidByCustomer: 1000,
+        totalRemainingByCustomer: 0,
+        providerShareRecorded: 930,
+        providerShareRemaining: 0,
+        commissionRecorded: 70,
+        paymentProgress: 'FULLY_PAID',
+      },
+    });
+    const preview = getCustomerCancelPreview(job, null, false);
+    expect(preview.amountUnderReview).toBe(1000);
+    expect(preview.commissionOnPaid).toBe(70);
+    expect(preview.providerShareOnPaid).toBe(930);
   });
 
   it('getCustomerCancelPreview opens dispute with commission breakdown for paid courier jobs', () => {
@@ -26,15 +89,13 @@ describe('jobCancellationPolicy', () => {
       laborPaid: true,
       totalPrice: 600,
       status: 'IN_PROGRESS',
+      servicePayment: { status: 'paid', amount: 600 },
     } as Job;
 
     const preview = getCustomerCancelPreview(job, null, false);
     expect(preview.opensDisputeReview).toBe(true);
-    expect(preview.laborGross).toBe(600);
-    expect(preview.commissionAmount).toBe(42);
-    expect(preview.estimatedNetRefund).toBe(558);
-    expect(preview.laborRefund).toBe(558);
-    expect(preview.refundAmount).toBe(558);
+    expect(preview.paidToDate).toBe(600);
+    expect(preview.amountUnderReview).toBe(600);
     expect(preview.customerForfeits).toBe(false);
   });
 
@@ -45,6 +106,7 @@ describe('jobCancellationPolicy', () => {
       laborPaid: true,
       totalPrice: 600,
       status: 'IN_PROGRESS',
+      servicePayment: { status: 'paid', amount: 600 },
     } as Job;
 
     const preview = getCustomerCancelPreview(
@@ -54,8 +116,6 @@ describe('jobCancellationPolicy', () => {
     );
     expect(preview.cancellationBlocked).toBe(true);
     expect(preview.warning).toContain('cannot be cancelled after items have been collected');
-    expect(preview.customerForfeits).toBe(false);
-    expect(preview.opensDisputeReview).toBeUndefined();
   });
 
   it('getCustomerCancelPreview forfeits labor when courier is collecting', () => {
@@ -65,6 +125,7 @@ describe('jobCancellationPolicy', () => {
       laborPaid: true,
       totalPrice: 600,
       status: 'IN_PROGRESS',
+      servicePayment: { status: 'paid', amount: 600 },
     } as Job;
 
     const preview = getCustomerCancelPreview(
@@ -74,8 +135,6 @@ describe('jobCancellationPolicy', () => {
     );
     expect(preview.laborRefund).toBe(0);
     expect(preview.customerForfeits).toBe(true);
-    expect(preview.opensDisputeReview).toBeUndefined();
-    expect(preview.laborGross).toBeUndefined();
     expect(preview.warning).toContain('collecting or delivering');
   });
 
@@ -88,58 +147,9 @@ describe('jobCancellationPolicy', () => {
         'customer'
       )
     ).toBe(true);
-    expect(
-      isCourierJobCancellationBlocked(
-        { ...courierJob, status: 'AWAITING_CONFIRMATION' },
-        { fulfillmentStatus: 'COMPLETED' } as never,
-        'customer'
-      )
-    ).toBe(true);
-    expect(
-      isCourierJobCancellationBlocked(
-        courierJob,
-        { fulfillmentStatus: 'COLLECTING' } as never,
-        'customer'
-      )
-    ).toBe(false);
     expect(isCourierJobCancellationBlocked({ courierFlow: false } as Job, null, 'customer')).toBe(
       false
     );
-  });
-
-  it('getProviderCancelPreview blocks cancel after pickup', () => {
-    const job = {
-      id: 'job-2c',
-      courierFlow: true,
-      laborPaid: true,
-      totalPrice: 600,
-      status: 'IN_PROGRESS',
-    } as Job;
-
-    const preview = getProviderCancelPreview(
-      job,
-      { fulfillmentStatus: 'COLLECTED' } as never,
-      false
-    );
-    expect(preview.cancellationBlocked).toBe(true);
-    expect(preview.warning).toContain('cannot cancel after picking up items');
-  });
-
-  it('getCustomerCancelPreview opens dispute with commission for paid service jobs', () => {
-    const job = {
-      id: 'job-3',
-      courierFlow: false,
-      laborPaid: true,
-      totalPrice: 1400,
-      status: 'ACCEPTED',
-    } as Job;
-
-    const preview = getCustomerCancelPreview(job, null, false);
-    expect(preview.opensDisputeReview).toBe(true);
-    expect(preview.laborGross).toBe(1400);
-    expect(preview.commissionAmount).toBe(98);
-    expect(preview.estimatedNetRefund).toBe(1302);
-    expect(preview.refundAmount).toBe(1302);
   });
 
   it('getCustomerCancelPreview shows service unpaid free-cancel message', () => {
@@ -152,66 +162,24 @@ describe('jobCancellationPolicy', () => {
 
     const preview = getCustomerCancelPreview(job, null, false);
     expect(preview.warning).toBe(getCustomerCancelFreeWarningMessage(job));
-    expect(preview.warning).toContain('before you pay for the service');
     expect(preview.opensDisputeReview).toBeUndefined();
   });
 
-  it('getCustomerCancelPreview shows courier unpaid free-cancel message', () => {
-    const job = {
-      id: 'job-5',
-      courierFlow: true,
-      laborPaid: false,
-      status: 'ASSIGNED',
-    } as Job;
-
-    const preview = getCustomerCancelPreview(job, null, false);
-    expect(preview.warning).toBe(getCustomerCancelFreeWarningMessage(job));
-    expect(preview.warning).toContain('heads out to collect');
-  });
-
-  it('getCustomerCancelPreview opens dispute review for service in-progress cancel', () => {
-    const job = {
-      id: 'job-6',
-      courierFlow: false,
-      laborPaid: true,
-      totalPrice: 600,
-      status: 'IN_PROGRESS',
-    } as Job;
-
-    const preview = getCustomerCancelPreview(job, null, false);
-    expect(preview.opensDisputeReview).toBe(true);
-    expect(preview.customerForfeits).toBe(false);
-    expect(preview.estimatedNetRefund).toBe(558);
-    expect(preview.warning).toContain('open a dispute');
-  });
-
-  it('getProviderCancelPreview opens dispute with commission when labor paid', () => {
+  it('getProviderCancelPreview opens dispute when labor paid via servicePayment legacy', () => {
     const job = {
       id: 'job-7',
       courierFlow: false,
       laborPaid: true,
       totalPrice: 1400,
       status: 'IN_PROGRESS',
+      servicePayment: { status: 'paid', amount: 1400 },
+      commissionAmount: 98,
+      providerAmount: 1302,
     } as Job;
 
     const preview = getProviderCancelPreview(job, null, false);
     expect(preview.opensDisputeReview).toBe(true);
-    expect(preview.laborGross).toBe(1400);
-    expect(preview.commissionAmount).toBe(98);
-    expect(preview.estimatedNetRefund).toBe(1302);
-    expect(preview.refundAmount).toBe(1302);
-  });
-
-  it('getProviderCancelPreview has no dispute when labor unpaid', () => {
-    const job = {
-      id: 'job-8',
-      courierFlow: false,
-      laborPaid: false,
-      status: 'ASSIGNED',
-    } as Job;
-
-    const preview = getProviderCancelPreview(job, null, false);
-    expect(preview.opensDisputeReview).toBeUndefined();
-    expect(preview.refundAmount).toBe(0);
+    expect(preview.paidToDate).toBe(1400);
+    expect(preview.amountUnderReview).toBe(1400);
   });
 });

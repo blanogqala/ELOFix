@@ -86,7 +86,7 @@ export function Footer() {
             © {new Date().getFullYear()} EloFix. All rights reserved.
           </p>
           <p className="text-xs text-primary-foreground/50">
-            Secure payments · Escrow protection · Real-time tracking
+            Secure payments · Flexible options · Real-time tracking
           </p>
         </div>
       </div>

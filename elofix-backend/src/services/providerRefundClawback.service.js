@@ -6,6 +6,9 @@ const {
   EPS,
   roundMoney,
   laborGrossFromJob,
+  paidLaborGrossFromJob,
+  remainingRefundableLaborGross,
+  netCourierCancelRefundFromGross,
   grossToNetLaborRefund,
   disputeGrossToLaborNet,
   classifyGatewayRefundResult,
@@ -47,12 +50,12 @@ async function applyProviderRefundClawbackInTransaction(tx, {
   const priorCumulative =
     Number(existingRefund.cumulativeCustomerNet ?? existingRefund.amount ?? 0) || 0;
 
-  const laborGross = laborGrossFromJob(job, metaBefore);
-  const maxNetLabor = roundMoney(laborGross * 0.93);
+  const paidGross = paidLaborGrossFromJob(job, metaBefore);
+  const maxNetLabor = netCourierCancelRefundFromGross(paidGross);
   if (laborNet > 0 && priorCumulative + laborNet > maxNetLabor + EPS) {
     const AppError = require("../utils/AppError");
     throw new AppError(
-      `Labor refund exceeds maximum net refund of R${maxNetLabor.toFixed(2)} (93% of R${laborGross.toFixed(2)})`,
+      `Labor refund exceeds maximum refundable amount of R${maxNetLabor.toFixed(2)} (paid tranches minus prior refunds)`,
       400
     );
   }
@@ -214,26 +217,32 @@ async function applyProviderRefundClawbackInTransaction(tx, {
 }
 
 async function findRefundableLaborIntent(jobId) {
-  const prisma = require("../config/prisma");
-  return prisma.paymentIntent.findFirst({
-    where: {
-      jobId,
-      kind: "LABOR",
-      state: { in: ["PAID", "PARTIALLY_REFUNDED", "DISPUTED"] },
-    },
-    orderBy: { paidAt: "desc" },
-  });
+  const intents = await refundService.findRefundableLaborIntents(jobId);
+  // Prefer oldest unpaid-refundable slice; keep helper name for callers.
+  return intents[0] || null;
 }
 
 /**
  * Attempt gateway refund before ledger clawback when the provider supports API refunds.
+ * Uses FIFO across paid LABOR intents (deposit then completion).
  */
 async function attemptGatewayRefundFirst(jobId, laborNet) {
   if (laborNet <= EPS) {
     return { attempted: false, result: { ok: false, reason: "zero_amount" }, manualOnly: false, failed: false };
   }
-  const intent = await findRefundableLaborIntent(jobId);
-  if (!intent) {
+  const multi = await refundService.refundJobLaborAcrossIntents(jobId, laborNet, {
+    idempotencyKey: `staged:${jobId}:${Number(laborNet).toFixed(2)}`,
+  });
+  const result = {
+    ok: multi.ok,
+    supported: multi.supported,
+    requiresManualAction: multi.requiresManualAction,
+    message: multi.message,
+    reason: multi.message,
+    results: multi.results,
+    refundedTotal: multi.refundedTotal,
+  };
+  if (!multi.originalPaymentIntentIds?.length && multi.message === "no_paid_intent") {
     return {
       attempted: false,
       result: { ok: false, reason: "no_intent" },
@@ -241,7 +250,6 @@ async function attemptGatewayRefundFirst(jobId, laborNet) {
       failed: false,
     };
   }
-  const result = await refundService.requestGatewayRefund(intent.id, laborNet);
   const { manualOnly, success, failed } = classifyGatewayRefundResult(result);
   return { attempted: !manualOnly, result, manualOnly, failed };
 }
@@ -384,25 +392,23 @@ async function processGatewayRefundForJob(jobId, laborNet) {
   if (laborNet <= EPS) return { ok: false, reason: "zero_amount" };
 
   const prisma = require("../config/prisma");
-  const intent = await prisma.paymentIntent.findFirst({
-    where: {
-      jobId,
-      kind: "LABOR",
-      state: { in: ["PAID", "PARTIALLY_REFUNDED"] },
-    },
-    orderBy: { paidAt: "desc" },
+  const gatewayResult = await refundService.refundJobLaborAcrossIntents(jobId, laborNet, {
+    idempotencyKey: `process:${jobId}:${Number(laborNet).toFixed(2)}`,
   });
-  if (!intent) return { ok: false, reason: "no_intent" };
-
-  const gatewayResult = await refundService.requestGatewayRefund(intent.id, laborNet);
   if (!gatewayResult.ok) {
     await prisma.$transaction(async (tx) => {
       await mutateJobMetaInTransaction(tx, jobId, (m) => ({
         ...m,
         refund: {
           ...(m.refund && typeof m.refund === "object" ? m.refund : {}),
-          status: "gateway_failed",
+          status: gatewayResult.requiresManualAction
+            ? "pending_manual_gateway"
+            : "gateway_failed",
+          customerRefundStatus: gatewayResult.requiresManualAction
+            ? "REFUND_MANUAL_ACTION_REQUIRED"
+            : "REFUND_FAILED",
           gatewayResult,
+          originalPaymentIntentIds: gatewayResult.originalPaymentIntentIds || [],
         },
       }));
     });
@@ -414,6 +420,8 @@ module.exports = {
   EPS,
   roundMoney,
   laborGrossFromJob,
+  paidLaborGrossFromJob,
+  remainingRefundableLaborGross,
   grossToNetLaborRefund,
   disputeGrossToLaborNet,
   applyProviderRefundClawbackInTransaction,

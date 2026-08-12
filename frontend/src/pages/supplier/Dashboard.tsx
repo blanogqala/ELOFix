@@ -8,7 +8,14 @@ import {
   getSupplierOrders,
   getSupplierAnalyticsOverview,
   getSupplierAnalyticsBranches,
+  getBranchBalance,
+  getBranchWithdrawalProfile,
 } from '@/lib/api/supplierPortal';
+import { BranchBankOnboardingBanner, BranchBankOnboardingModal } from '@/components/supplier/BranchBankOnboardingModal';
+import {
+  bankOnboardingDismissKey,
+  shouldShowBankOnboarding,
+} from '@/lib/branchSettlementDisplay';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -33,6 +40,47 @@ export default function SupplierDashboard() {
   const { user } = useAuth();
   const userId = user?.id ?? '';
   const isBranchStaff = user?.role === 'branch_staff';
+  const branchStaffId = isBranchStaff && user && 'branchId' in user ? user.branchId : '';
+
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+
+  const { data: branchPayoutProfile } = useQuery({
+    queryKey: ['supplier', 'branch-payout-profile', branchStaffId],
+    queryFn: () => getBranchWithdrawalProfile(branchStaffId),
+    enabled: Boolean(isBranchStaff && branchStaffId),
+  });
+
+  const { data: branchSettlement } = useQuery({
+    queryKey: ['supplier', 'branch-settlement-summary', branchStaffId],
+    queryFn: () => getBranchBalance(branchStaffId),
+    enabled: Boolean(isBranchStaff && branchStaffId),
+  });
+
+  const showBankOnboarding =
+    isBranchStaff &&
+    Boolean(branchStaffId) &&
+    !onboardingDismissed &&
+    shouldShowBankOnboarding({
+      verificationStatus: branchPayoutProfile?.verificationStatus,
+      bankProfileComplete: branchPayoutProfile?.bankProfileComplete,
+      profile: branchPayoutProfile?.profile,
+    }) &&
+    (() => {
+      try {
+        return sessionStorage.getItem(bankOnboardingDismissKey(branchStaffId)) !== '1';
+      } catch {
+        return true;
+      }
+    })();
+
+  const showBankBanner =
+    isBranchStaff &&
+    Boolean(branchStaffId) &&
+    shouldShowBankOnboarding({
+      verificationStatus: branchPayoutProfile?.verificationStatus,
+      bankProfileComplete: branchPayoutProfile?.bankProfileComplete,
+      profile: branchPayoutProfile?.profile,
+    });
 
   const [dashBranchFilter, setDashBranchFilter] = useState<'all' | string>('all');
   const defaultedBranchRef = useRef(false);
@@ -251,7 +299,15 @@ export default function SupplierDashboard() {
 
   return (
     <DashboardLayout>
+      {branchStaffId ? (
+        <BranchBankOnboardingModal
+          open={showBankOnboarding}
+          branchId={branchStaffId}
+          onDismissSession={() => setOnboardingDismissed(true)}
+        />
+      ) : null}
       <div className="animate-fade-in space-y-6 md:space-y-8">
+        {showBankBanner && branchStaffId ? <BranchBankOnboardingBanner branchId={branchStaffId} /> : null}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Branch dashboard</h1>
@@ -265,7 +321,7 @@ export default function SupplierDashboard() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
           <Card className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
@@ -273,7 +329,7 @@ export default function SupplierDashboard() {
               </div>
               <div>
                 <p className="text-xl font-bold sm:text-2xl">{orders.length}</p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Total orders</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Today's orders</p>
               </div>
             </div>
           </Card>
@@ -288,20 +344,46 @@ export default function SupplierDashboard() {
               </div>
             </div>
           </Card>
-          <Card className="card-elevated p-4 sm:p-6 sm:col-span-2">
+          <Card className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10">
                 <DollarSign className="h-4 w-4 text-emerald-600" />
               </div>
               <div>
                 <p className="text-xl font-bold sm:text-2xl">
-                  {overview != null
-                    ? formatCurrency(supplierOverviewGrossRevenue(overview) ?? 0)
+                  {branchSettlement != null
+                    ? formatCurrency(branchSettlement.netBranchEarnings)
                     : '—'}
                 </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">
-                  {SUPPLIER_GROSS_EARNINGS_LABEL} ({SUPPLIER_GROSS_EARNINGS_HINT.toLowerCase()})
+                <p className="text-xs text-muted-foreground sm:text-sm">Net branch earnings</p>
+              </div>
+            </div>
+          </Card>
+          <Card className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <DollarSign className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <p className="text-xl font-bold sm:text-2xl">
+                  {branchSettlement != null
+                    ? formatCurrency(branchSettlement.pendingSettlement)
+                    : '—'}
                 </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Pending settlement</p>
+              </div>
+            </div>
+          </Card>
+          <Card className="card-elevated p-4 sm:p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10">
+                <DollarSign className="h-4 w-4 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-xl font-bold sm:text-2xl">
+                  {branchSettlement != null ? formatCurrency(branchSettlement.settled) : '—'}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Settled</p>
               </div>
             </div>
           </Card>
