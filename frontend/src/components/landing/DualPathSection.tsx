@@ -11,7 +11,7 @@ export function DualPathSection() {
       <SectionHeader
         eyebrow="Two ways to get things done"
         title="Services or materials — your choice"
-        description="Whether you need a skilled professional or building supplies from trusted hardware stores, EloFix connects you in minutes."
+        description="Whether you need a skilled professional or building supplies from participating suppliers, EloFix connects you through one marketplace."
       />
 
       <div className="grid gap-6 md:grid-cols-2 lg:gap-8">
@@ -23,17 +23,17 @@ export function DualPathSection() {
             </div>
             <h3 className="mb-3 text-2xl font-bold">Request Services</h3>
             <p className="mb-6 text-muted-foreground">
-              Post a job, get AI-assisted estimates, compare verified providers by ratings and portfolios, and pay
-              with flexible options — including staged payments on selected services.
+              Post a job, receive quotes from independent providers, compare ratings and portfolios, and pay
+              with flexible options in South African Rand (ZAR) — including staged payments on selected services.
             </p>
             <ul className="mb-8 space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Plumbing, electrical, tiling & more
+                Plumbing, electrical, cleaning, construction, tiling, painting, moving & property maintenance
               </li>
               <li className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Materials bundled with your job
+                Quotation-based pricing in ZAR — no fixed labour price list
               </li>
               <li className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" />
@@ -55,13 +55,13 @@ export function DualPathSection() {
             </div>
             <h3 className="mb-3 text-2xl font-bold">Order Materials</h3>
             <p className="mb-6 text-muted-foreground">
-              Browse approved supplier catalogs, pick your nearest branch, and checkout for delivery or collection —
-              no service provider required.
+              Browse catalogues from participating suppliers, pick a branch, and check out for delivery or collection —
+              no service provider required. Material prices are listed in ZAR by the supplier.
             </p>
             <ul className="mb-8 space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                Builders, BUCO, Cashbuild & more
+                Building, hardware, and project materials
               </li>
               <li className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent" />

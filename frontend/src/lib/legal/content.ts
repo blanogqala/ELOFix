@@ -30,6 +30,7 @@ export {
 } from './documents/trust-policies';
 export { supplierAgreement, supplierParticipation } from './documents/supplier-policies';
 export { dataProcessing, communityStandards, cookiePolicy } from './documents/privacy-ext';
+export { deliveryPolicy } from './documents/delivery-policy';
 
 import { termsOfService } from './documents/terms';
 import { privacyPolicy } from './documents/privacy';
@@ -46,6 +47,7 @@ import {
 } from './documents/trust-policies';
 import { supplierAgreement, supplierParticipation } from './documents/supplier-policies';
 import { dataProcessing, communityStandards, cookiePolicy } from './documents/privacy-ext';
+import { deliveryPolicy } from './documents/delivery-policy';
 
 export const LEGAL_DOCUMENTS: Record<LegalDocumentId, LegalDocument> = {
   terms: termsOfService,
@@ -68,6 +70,7 @@ export const LEGAL_DOCUMENTS: Record<LegalDocumentId, LegalDocument> = {
   'community-standards': communityStandards,
   'cookie-policy': cookiePolicy,
   'platform-activity-records': platformActivityRecords,
+  'delivery-policy': deliveryPolicy,
 };
 
 export function getLegalDocument(id: LegalDocumentId): LegalDocument {

@@ -1,7 +1,8 @@
 import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
+import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'June 24, 2026';
+const EFFECTIVE = 'August 18, 2026';
 
 export const portfolioContentRights: LegalDocument = {
   id: 'portfolio-content-rights',
@@ -14,7 +15,8 @@ export const portfolioContentRights: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the rights granted to EloFix (Pty) Ltd to display Customer-submitted completion content on Provider portfolios and Platform marketing.',
+        `This policy describes the rights granted to ${COMPANY.legalName}, operating the EloFix Platform, to display Customer-submitted completion content on Provider portfolios and Platform marketing.`,
+        LEGAL_OPERATOR_INTRO,
       ],
     },
     {
@@ -41,7 +43,7 @@ export const portfolioContentRights: LegalDocument = {
       title: '4. Content Removal',
       content: [
         'EloFix may remove or restrict content that violates the Community Standards, infringes third-party rights, or is required to be removed by law.',
-        'Customers may request review of portfolio content through support@elofix.com. EloFix will assess requests in accordance with POPIA and this policy.',
+        `Customers may request review of portfolio content through ${COMPANY.email}. EloFix will assess requests in accordance with POPIA and this policy.`,
       ],
     },
     {
@@ -55,7 +57,7 @@ export const portfolioContentRights: LegalDocument = {
       id: 'contact',
       title: '6. Contact',
       content: [
-        'Portfolio content questions: support@elofix.com.',
+        `Portfolio content questions: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -72,7 +74,8 @@ export const providerVerification: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the verification requirements for Providers on EloFix (Pty) Ltd before they may accept paid Jobs and receive payouts.',
+        `This policy describes the verification requirements for Providers on the EloFix Platform, operated by ${COMPANY.legalName}, before they may accept paid Jobs and receive settlement of eligible funds where supported.`,
+        LEGAL_OPERATOR_INTRO,
       ],
     },
     {
@@ -83,7 +86,7 @@ export const providerVerification: LegalDocument = {
         'South African identity document (ID book or smart card).',
         'Business registration documents (company registration certificate or equivalent for registered businesses).',
         'Proof of address (not older than 3 months where applicable).',
-        'Banking information for payout processing.',
+        'Banking information for a settlement destination profile. Bank details saved is not the same as bank account verification pending, gateway payout destination verified, settlement supported, or settlement completed.',
         'Optional: proof of skill, trade certifications, or professional qualifications.',
         'EloFix may request additional documentation at any time.',
       ],
@@ -95,6 +98,7 @@ export const providerVerification: LegalDocument = {
         'Providers upload documents through the Platform. Documents are reviewed by EloFix administrators.',
         'Each document may be individually approved or rejected with feedback.',
         'Provider account approval requires all mandatory documents to be approved, profile completion, and clearance of fraud review.',
+        'Banking details may remain pending verification. Adding banking details does not authorize EloFix to debit the account and does not guarantee that automatic bank settlement is available.',
       ],
     },
     {
@@ -119,7 +123,7 @@ export const providerVerification: LegalDocument = {
       title: '6. POPIA and Special Personal Information',
       content: [
         'Identity documents and banking details constitute special personal information under POPIA Section 26.',
-        'EloFix processes this information based on contractual necessity for Provider onboarding and legitimate interest for fraud prevention and payout integrity.',
+        'EloFix processes this information based on contractual necessity for Provider onboarding and legitimate interest for fraud prevention and settlement-destination integrity.',
         'Sensitive fields are encrypted or hashed where appropriate. See the Privacy Policy.',
       ],
     },
@@ -127,7 +131,7 @@ export const providerVerification: LegalDocument = {
       id: 'contact',
       title: '7. Contact',
       content: [
-        'Verification questions: support@elofix.com.',
+        `Verification questions: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -144,7 +148,8 @@ export const fraudPrevention: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes how EloFix (Pty) Ltd monitors for and responds to fraudulent activity on the Platform.',
+        `This policy describes how ${COMPANY.legalName}, operating the EloFix Platform, monitors for and responds to fraudulent activity on the Platform.`,
+        LEGAL_OPERATOR_INTRO,
       ],
     },
     {
@@ -179,7 +184,7 @@ export const fraudPrevention: LegalDocument = {
         'Reject new registrations.',
         'Block Provider approval pending fraud review.',
         'Revoke verification status.',
-        'Withhold or reverse payouts.',
+        'Withhold or reverse settlement instructions or recorded payouts where supported by Platform accounting and the payment service provider.',
         'Report activity to law enforcement where appropriate.',
       ],
     },
@@ -195,7 +200,7 @@ export const fraudPrevention: LegalDocument = {
       id: 'contact',
       title: '6. Contact',
       content: [
-        'Fraud concerns: support@elofix.com.',
+        `Fraud concerns: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -212,7 +217,7 @@ export const deviceSecurity: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the device and session information collected by EloFix (Pty) Ltd for security, fraud prevention, and account protection, in alignment with POPIA.',
+        `This policy describes the device and session information collected by ${COMPANY.legalName}, operating the EloFix Platform, for security, fraud prevention, and account protection, in alignment with POPIA.`,
         'This policy supplements the Privacy Policy.',
       ],
     },
@@ -262,14 +267,14 @@ export const deviceSecurity: LegalDocument = {
       id: 'your-rights',
       title: '6. Your Rights',
       content: [
-        'You may contact privacy@elofix.com to exercise POPIA rights regarding device data, including access and objection where applicable.',
+        `You may contact ${COMPANY.email} to exercise POPIA rights regarding device data, including access and objection where applicable.`,
       ],
     },
     {
       id: 'contact',
       title: '7. Contact',
       content: [
-        'Device security questions: privacy@elofix.com.',
+        `Device security questions: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -286,7 +291,7 @@ export const providerReputation: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the EloFix (Pty) Ltd Provider trust score system and how it may affect Provider visibility and ranking on the Platform.',
+        `This policy describes the EloFix Provider trust score system operated by ${COMPANY.legalName} and how it may affect Provider visibility and ranking on the Platform.`,
         'Trust scores are an internal reputation metric. They are not a guarantee of service quality.',
       ],
     },
@@ -340,7 +345,7 @@ export const providerReputation: LegalDocument = {
       id: 'contact',
       title: '6. Contact',
       content: [
-        'Trust score questions: support@elofix.com.',
+        `Trust score questions: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -357,7 +362,7 @@ export const platformActivityRecords: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the Platform activity records maintained by EloFix (Pty) Ltd.',
+        `This policy describes the Platform activity records maintained by ${COMPANY.legalName}, operating the EloFix Platform.`,
         'This policy supplements the Privacy Policy.',
       ],
     },
@@ -367,11 +372,11 @@ export const platformActivityRecords: LegalDocument = {
       content: [
         'EloFix may store the following categories of activity records:',
         'Login and authentication records.',
-        'Payment and escrow transaction records.',
+        'Payment and payment-schedule transaction records.',
         'Provider verification and document review records.',
         'Fraud investigation and alert records.',
         'Dispute submissions, messages, and resolution actions.',
-        'Administrator actions on accounts, payments, disputes, and withdrawals.',
+        'Administrator actions on accounts, payments, disputes, refunds, and settlement records.',
         'Job status changes, completion events, and automatic acceptance events.',
         'Review and rating submissions.',
         'Device session records.',
@@ -409,7 +414,7 @@ export const platformActivityRecords: LegalDocument = {
       id: 'contact',
       title: '6. Contact',
       content: [
-        'Records inquiries: privacy@elofix.com.',
+        `Records inquiries: ${COMPANY.email}.`,
       ],
     },
   ],

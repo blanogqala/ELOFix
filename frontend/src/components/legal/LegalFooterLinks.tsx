@@ -58,5 +58,5 @@ export const LEGAL_LINKS = [
   { to: '/legal', label: 'All Legal Policies' },
   { to: '/terms', label: 'Terms of Service' },
   { to: '/privacy', label: 'Privacy Policy' },
-  { to: '/refund-policy', label: 'Refund Policy' },
+  { to: '/refund-policy', label: 'Refund, Returns & Cancellation Policy' },
 ] as const;

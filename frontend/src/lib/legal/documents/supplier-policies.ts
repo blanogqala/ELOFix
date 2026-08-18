@@ -1,7 +1,8 @@
 import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
+import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'June 24, 2026';
+const EFFECTIVE = 'August 18, 2026';
 
 export const supplierAgreement: LegalDocument = {
   id: 'supplier-agreement',
@@ -14,8 +15,9 @@ export const supplierAgreement: LegalDocument = {
       id: 'relationship',
       title: '1. Independent Supplier Relationship',
       content: [
-        'This Supplier Agreement supplements the EloFix Terms of Service for businesses that register as Suppliers on EloFix (Pty) Ltd.',
-        'You are an independent business and not an employee, agent, joint venturer, or partner of EloFix.',
+        `This Supplier Agreement supplements the EloFix Terms of Service for businesses that register as Suppliers on the EloFix Platform, operated by ${COMPANY.legalName}.`,
+        LEGAL_OPERATOR_INTRO,
+        `You are an independent business and not an employee, agent, joint venturer, or partner of ${COMPANY.legalName}.`,
         'You are solely responsible for the products you list, sell, and deliver through the Platform.',
       ],
     },
@@ -33,9 +35,10 @@ export const supplierAgreement: LegalDocument = {
       title: '3. Commission and Payments',
       content: [
         'EloFix charges a platform commission of 7% on the materials subtotal for orders fulfilled through the Platform.',
-        'Your earning is the materials subtotal minus the platform commission.',
-        'Payments are settled upon payment confirmation through licensed payment partners. Material payments are not held in job-completion escrow.',
-        'EloFix may deduct refunds, chargebacks, and adjustments from amounts payable to you.',
+        'Your earning is the materials subtotal minus the platform commission and is recorded after Customer payment confirmation through the applicable payment service provider.',
+        'Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible Supplier or branch funds may be settled to a nominated verified bank account. EloFix does not promise automatic bank settlement where marketplace settlement is not supported. Banking details must be accurate and may require verification; saving bank details is not the same as verified settlement or completed settlement.',
+        'Material payments are not subject to job-completion staged payment holds.',
+        'EloFix may deduct refunds, chargebacks, and adjustments from amounts recorded as payable to you through supported Platform accounting and repayment mechanisms.',
       ],
     },
     {
@@ -51,8 +54,8 @@ export const supplierAgreement: LegalDocument = {
       id: 'refunds-chargebacks',
       title: '5. Refunds and Chargebacks',
       content: [
-        'You are responsible for refund and chargeback costs associated with your orders, including commission reversals where applicable.',
-        'Refund eligibility depends on fulfilment stage as described in the Refund and Cancellation Policy.',
+        'You are responsible for refund and chargeback costs associated with your orders, including commission reversals where applicable, through supported Platform accounting and repayment mechanisms.',
+        'Refund eligibility depends on fulfilment stage as described in the Refund, Returns & Cancellation Policy.',
       ],
     },
     {
@@ -60,14 +63,14 @@ export const supplierAgreement: LegalDocument = {
       title: '6. Data Handling',
       content: [
         'You must handle Customer personal information received through orders in compliance with POPIA. You may only use such data for order fulfilment.',
-        'See the Data Processing Policy for EloFix\'s role as operator.',
+        'See the Data Processing Policy for EloFix\'s role as responsible party.',
       ],
     },
     {
       id: 'indemnification',
       title: '7. Indemnification and Liability',
       content: [
-        'You indemnify EloFix for claims arising from products you supply, including defective goods, incorrect items, delivery failures, and regulatory non-compliance.',
+        `You indemnify ${COMPANY.legalName} for claims arising from products you supply, including defective goods, incorrect items, delivery failures, and regulatory non-compliance.`,
         'You are solely responsible for product quality, safety, labelling, and compliance with South African consumer protection law.',
       ],
     },
@@ -100,7 +103,8 @@ export const supplierParticipation: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the responsibilities of Suppliers participating in the EloFix (Pty) Ltd materials marketplace.',
+        `This policy describes the responsibilities of Suppliers participating in the EloFix materials marketplace operated by ${COMPANY.legalName}.`,
+        LEGAL_OPERATOR_INTRO,
       ],
     },
     {
@@ -155,7 +159,7 @@ export const supplierParticipation: LegalDocument = {
       id: 'contact',
       title: '8. Contact',
       content: [
-        'Supplier participation questions: support@elofix.com.',
+        `Supplier participation questions: ${COMPANY.email}.`,
       ],
     },
   ],

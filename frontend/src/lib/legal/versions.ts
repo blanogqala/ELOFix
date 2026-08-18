@@ -1,25 +1,26 @@
 /** Legal document versions — must match elofix-backend/src/config/legalVersions.js */
 export const LEGAL_VERSIONS = {
-  terms: '2026-06-24',
-  privacy: '2026-06-24',
-  providerAgreement: '2026-06-29',
-  refundPolicy: '2026-06-29',
-  jobCompletionVerification: '2026-06-24',
-  escrowPolicy: '2026-06-29',
-  disputeResolution: '2026-06-29',
-  adminInvestigation: '2026-06-24',
-  correctiveWork: '2026-06-24',
-  portfolioContentRights: '2026-06-24',
-  providerVerification: '2026-06-24',
-  fraudPrevention: '2026-06-24',
-  deviceSecurity: '2026-06-24',
-  providerReputation: '2026-06-24',
-  supplierAgreement: '2026-06-24',
-  supplierParticipation: '2026-06-24',
-  dataProcessing: '2026-06-24',
-  communityStandards: '2026-06-24',
-  cookiePolicy: '2026-06-24',
-  platformActivityRecords: '2026-06-24',
+  terms: '2026-08-18',
+  privacy: '2026-08-18',
+  providerAgreement: '2026-08-18',
+  refundPolicy: '2026-08-18',
+  jobCompletionVerification: '2026-08-18',
+  escrowPolicy: '2026-08-18',
+  disputeResolution: '2026-08-18',
+  adminInvestigation: '2026-08-18',
+  correctiveWork: '2026-08-18',
+  portfolioContentRights: '2026-08-18',
+  providerVerification: '2026-08-18',
+  fraudPrevention: '2026-08-18',
+  deviceSecurity: '2026-08-18',
+  providerReputation: '2026-08-18',
+  supplierAgreement: '2026-08-18',
+  supplierParticipation: '2026-08-18',
+  dataProcessing: '2026-08-18',
+  communityStandards: '2026-08-18',
+  cookiePolicy: '2026-08-18',
+  platformActivityRecords: '2026-08-18',
+  deliveryPolicy: '2026-08-18',
 } as const;
 
 export type LegalDocumentId =
@@ -42,7 +43,8 @@ export type LegalDocumentId =
   | 'data-processing'
   | 'community-standards'
   | 'cookie-policy'
-  | 'platform-activity-records';
+  | 'platform-activity-records'
+  | 'delivery-policy';
 
 export const LEGAL_ROUTES: Record<LegalDocumentId, string> = {
   terms: '/terms',
@@ -65,13 +67,14 @@ export const LEGAL_ROUTES: Record<LegalDocumentId, string> = {
   'community-standards': '/community-standards',
   'cookie-policy': '/cookie-policy',
   'platform-activity-records': '/platform-activity-records',
+  'delivery-policy': '/delivery-policy',
 };
 
 export const LEGAL_LABELS: Record<LegalDocumentId, string> = {
   terms: 'Terms of Service',
   privacy: 'Privacy Policy',
   'provider-agreement': 'Provider Agreement',
-  'refund-policy': 'Refund and Cancellation Policy',
+  'refund-policy': 'Refund, Returns & Cancellation Policy',
   'job-completion-verification': 'Job Completion Verification Policy',
   'escrow-policy': 'Payment Schedule and Transparency Policy',
   'dispute-resolution': 'Dispute Resolution Policy',
@@ -88,6 +91,7 @@ export const LEGAL_LABELS: Record<LegalDocumentId, string> = {
   'community-standards': 'Community Standards',
   'cookie-policy': 'Cookie Policy',
   'platform-activity-records': 'Platform Activity Records Policy',
+  'delivery-policy': 'Delivery & Collection Policy',
 };
 
 export type LegalDocumentCategory =
@@ -101,7 +105,7 @@ export type LegalDocumentCategory =
 export const LEGAL_CATEGORIES: Record<LegalDocumentCategory, { label: string; documents: LegalDocumentId[] }> = {
   marketplace: {
     label: 'Marketplace',
-    documents: ['terms', 'community-standards', 'refund-policy'],
+    documents: ['terms', 'community-standards', 'refund-policy', 'delivery-policy'],
   },
   payments: {
     label: 'Payments & Disputes',

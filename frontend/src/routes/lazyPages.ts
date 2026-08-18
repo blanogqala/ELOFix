@@ -18,6 +18,7 @@ export const AuthSuccess = lazy(() => import('@/pages/auth/AuthSuccess'));
 export const NotFound = lazy(() => import('@/pages/NotFound'));
 export const Unauthorized = lazy(() => import('@/pages/Unauthorized'));
 export const TrackDelivery = lazy(() => import('@/pages/TrackDelivery'));
+export const ContactPage = lazy(() => import('@/pages/Contact'));
 export const LegalIndexPage = lazy(() => import('@/pages/legal/LegalIndex'));
 
 export const TermsPage = namedPage(() => import('@/pages/legal/pages'), 'TermsPage');
@@ -55,6 +56,7 @@ export const PlatformActivityRecordsPage = namedPage(
   () => import('@/pages/legal/pages'),
   'PlatformActivityRecordsPage',
 );
+export const DeliveryPolicyPage = namedPage(() => import('@/pages/legal/pages'), 'DeliveryPolicyPage');
 
 // User pages
 export const UserDashboard = lazy(() => import('@/pages/user/Dashboard'));

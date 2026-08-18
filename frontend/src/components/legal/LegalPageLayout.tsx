@@ -162,7 +162,7 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
                 Privacy
               </Link>
               <Link to="/escrow-policy" className="text-primary hover:underline">
-                Escrow
+                Payment Schedule
               </Link>
               <Link to="/dispute-resolution" className="text-primary hover:underline">
                 Disputes
@@ -171,7 +171,10 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
                 Provider Agreement
               </Link>
               <Link to="/refund-policy" className="text-primary hover:underline">
-                Refund Policy
+                Refunds & Returns
+              </Link>
+              <Link to="/delivery-policy" className="text-primary hover:underline">
+                Delivery & Collection
               </Link>
             </div>
           </footer>

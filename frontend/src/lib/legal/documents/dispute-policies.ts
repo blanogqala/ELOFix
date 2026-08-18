@@ -1,7 +1,8 @@
 import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
+import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'June 24, 2026';
+const EFFECTIVE = 'August 18, 2026';
 
 export const disputeResolution: LegalDocument = {
   id: 'dispute-resolution',
@@ -14,8 +15,10 @@ export const disputeResolution: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes how Customers and Providers resolve disagreements about completed service work on EloFix (Pty) Ltd.',
+        `This policy describes how Customers and Providers resolve disagreements about completed service work on the EloFix Platform, operated by ${COMPANY.legalName}.`,
+        LEGAL_OPERATOR_INTRO,
         'EloFix provides dispute facilitation and investigation. EloFix does not guarantee any particular outcome.',
+        'Disputed payment amounts are managed according to payment status and Platform accounting. EloFix does not hold disputed money as a deposit-taking escrow agent.',
       ],
     },
     {
@@ -54,27 +57,28 @@ export const disputeResolution: LegalDocument = {
         'EloFix administrators review submitted evidence, Platform records, payment history, completion evidence, and communications.',
         'Disputes may be marked as open, under investigation, resolved, or closed.',
         'Multi-round dispute history is maintained. A resolved or closed dispute may be reopened if new issues arise, creating a new dispute round.',
-        'During investigation, the remaining escrow tranche remains frozen and the labor payment intent is marked as disputed.',
+        'During investigation, any remaining staged payment tranche remains paused and the labor payment intent is marked as disputed.',
       ],
     },
     {
       id: 'outcomes',
       title: '6. Possible Outcomes',
       content: [
-        'Release Funds: The remaining escrow tranche is released to the Provider. The Job is marked Completed and the dispute is closed.',
-        'Partial Refund: A specified net amount (up to 93% of gross labor) is refunded to the Customer. Provider clawback is applied from escrow or earnings. The Job may be cancelled.',
-        'Full Refund: The maximum net labor refund (93% of gross) is approved for the Customer. Provider clawback is applied. The Job is cancelled.',
+        'Release remaining payment: Any remaining staged payment tranche becomes payable to the Provider according to the Payment Schedule and Transparency Policy. The Job is marked Completed and the dispute is closed.',
+        'Partial Refund: A specified net amount based on eligible paid labor (up to 93% of gross labor paid) may be approved for the Customer. Provider clawback or repayment obligations may apply. The Job may be cancelled.',
+        'Full Refund: The maximum net labor refund based on eligible paid labor (93% of gross labor paid) may be approved for the Customer. Provider clawback or repayment obligations may apply. The Job is cancelled.',
         'Return Provider (Corrective Work): The Provider is instructed to return and fix the work. The Job reopens to In Progress. See the Corrective Work Policy.',
-        'Close Case: The dispute is resolved without fund release or refund adjustment, based on administrator determination.',
+        'Close Case: The dispute is resolved without remaining-payment release or refund adjustment, based on administrator determination.',
       ],
     },
     {
       id: 'refund-processing',
       title: '7. Refund Processing',
       content: [
-        'Approved refunds are processed to the original payment method where possible, typically within 5–10 business days for the immediately available portion.',
-        'Customer refunds are calculated on net labor (93% of gross labor; platform commission is retained). Provider clawback is calculated on the provider share.',
-        'Staged payout: Funds still in escrow or immediately clawed back from the Provider are refunded to the Customer at once. Any shortfall is recovered from the Provider within 30 days (bank transfer and/or future job earnings) and paid to the Customer as recovery completes.',
+        'Approved refunds follow the Refund, Returns & Cancellation Policy sequence, including provider repayment where required, admin verification, and payment-service-provider processing.',
+        'Customer refunds are calculated on eligible paid labor (93% of gross labor paid; platform commission is retained). Provider clawback is calculated on the provider share.',
+        'Refund statuses may include approved, processing, completed, requires manual processing, or could not be completed. A refund is described as returned to the original payment method only after payment-service-provider confirmation.',
+        'When recovery from a Provider is required, that portion is not guaranteed instantly. Providers must complete repayment within 30 days through supported gateway repayment and/or bank transfer / EFT (and/or recovery from future earnings where applicable).',
         'Providers who fail to settle refund debt within 30 days may have accounts blocked and may be referred for legal recovery.',
         'Trust score adjustments may apply following dispute outcomes.',
       ],
@@ -91,7 +95,7 @@ export const disputeResolution: LegalDocument = {
       id: 'contact',
       title: '9. Contact',
       content: [
-        'Dispute support: support@elofix.com with your Job reference number.',
+        `Dispute support: ${COMPANY.email} with your Job reference number.`,
       ],
     },
   ],
@@ -108,7 +112,8 @@ export const adminInvestigation: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the authority and procedures of EloFix (Pty) Ltd administrators in reviewing Platform activity, investigating issues, and making binding Platform decisions.',
+        `This policy describes the authority and procedures of administrators of ${COMPANY.legalName}, operating the EloFix Platform, in reviewing Platform activity, investigating issues, and making binding Platform decisions.`,
+        LEGAL_OPERATOR_INTRO,
       ],
     },
     {
@@ -117,16 +122,16 @@ export const adminInvestigation: LegalDocument = {
       content: [
         'EloFix administrators may, as necessary to operate the Platform safely and lawfully:',
         'Review dispute evidence, completion evidence, and communications between users.',
-        'Investigate payment activity, escrow status, refunds, and chargebacks.',
+        'Investigate payment activity, payment-schedule status, refunds, provider repayment, and chargebacks.',
         'Review Provider verification documents and approve or reject verification.',
         'Review fraud alerts, device intelligence records, and duplicate identity signals.',
         'Review audit logs and Platform activity records.',
         'Block or unblock user accounts.',
         'Approve or reject Provider applications and individual KYC documents.',
         'Set Provider fraud review status.',
-        'Release or withhold escrow funds.',
-        'Resolve disputes with outcomes including refunds, fund release, corrective work orders, or case closure.',
-        'Approve, reject, or mark failed Provider withdrawal requests.',
+        'Release remaining payment, pause settlement steps, or process refund-related actions according to Platform payment status and payment-service-provider capabilities.',
+        'Resolve disputes with outcomes including refunds, release of remaining payment, corrective work orders, or case closure.',
+        'Review settlement and banking-destination records for Providers and Suppliers. In-app withdrawal of earnings is not a current Platform product feature.',
         'Manage Supplier accounts and material order issues.',
       ],
     },
@@ -134,9 +139,9 @@ export const adminInvestigation: LegalDocument = {
       id: 'investigation-process',
       title: '3. Investigation Process',
       content: [
-        'Administrators act on information available through the Platform, including user-submitted evidence, system records, payment partner data, and audit logs.',
+        'Administrators act on information available through the Platform, including user-submitted evidence, system records, payment service provider data, and audit logs.',
         'Administrators may request additional information or verification from users during an investigation.',
-        'Investigations may result in account restrictions, verification revocation, escrow actions, refunds, or referral to law enforcement where appropriate.',
+        'Investigations may result in account restrictions, verification revocation, payment-status actions, refunds, or referral to law enforcement where appropriate.',
       ],
     },
     {
@@ -145,7 +150,7 @@ export const adminInvestigation: LegalDocument = {
       content: [
         'Administrator decisions on the Platform are final unless otherwise required by applicable South African law.',
         'Mandatory consumer rights under the Consumer Protection Act, data subject rights under POPIA, and other non-waivable legal rights are not affected by this policy.',
-        'Users may contact support@elofix.com to request review of administrator actions. EloFix is not obligated to reopen decided matters except where required by law.',
+        `Users may contact ${COMPANY.email} to request review of administrator actions. EloFix is not obligated to reopen decided matters except where required by law.`,
       ],
     },
     {
@@ -160,7 +165,7 @@ export const adminInvestigation: LegalDocument = {
       id: 'contact',
       title: '6. Contact',
       content: [
-        'Administrator action inquiries: support@elofix.com.',
+        `Administrator action inquiries: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -177,7 +182,7 @@ export const correctiveWork: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes what happens when a Provider is instructed to return to a Job site to complete corrective or remedial work on EloFix (Pty) Ltd.',
+        `This policy describes what happens when a Provider is instructed to return to a Job site to complete corrective or remedial work on the EloFix Platform, operated by ${COMPANY.legalName}.`,
       ],
     },
     {
@@ -201,7 +206,7 @@ export const correctiveWork: LegalDocument = {
       id: 'payment-protection',
       title: '4. Payment Protection',
       content: [
-        'The remaining escrow tranche (final provider payment) remains held and is not released until the Customer verifies the remedial work.',
+        'Any remaining staged payment tranche (final provider payment) remains paused and does not become payable until the Customer verifies the remedial work.',
         'No additional labor charge applies for corrective work ordered through dispute resolution unless separately agreed through Platform flows.',
       ],
     },
@@ -226,7 +231,7 @@ export const correctiveWork: LegalDocument = {
       id: 'contact',
       title: '7. Contact',
       content: [
-        'Corrective work questions: support@elofix.com.',
+        `Corrective work questions: ${COMPANY.email}.`,
       ],
     },
   ],

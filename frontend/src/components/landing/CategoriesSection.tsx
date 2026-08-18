@@ -28,7 +28,7 @@ export function CategoriesSection() {
       <SectionHeader
         eyebrow="Maintenance services"
         title="Browse service categories"
-        description="All providers are verified and vetted. Select a category to start your service request."
+        description="Select a listed category to start a service request. Labour is quotation-based and shown in South African Rand (ZAR)."
       />
 
       {isLoading ? (

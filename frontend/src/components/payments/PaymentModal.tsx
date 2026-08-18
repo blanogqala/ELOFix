@@ -27,6 +27,7 @@ import { SavedCard } from '@/types';
 import { Lock, AlertCircle, Loader2, CreditCard } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
+import type { CategoryPaymentMode, LaborPaymentType } from '@/types';
 
 interface PaymentBreakdownItem {
   label: string;
@@ -45,9 +46,28 @@ interface PaymentModalProps {
   jobId?: string;
   materialOrderId?: string;
   metadata?: Record<string, unknown>;
+  /** Labor tranche / schedule context for schedule-aware copy */
+  paymentType?: LaborPaymentType | null;
+  paymentMode?: CategoryPaymentMode | string | null;
   initialCardId?: string;
   initialCvv?: string;
   onCancel?: () => void;
+}
+
+function laborSecurePaymentHint(
+  paymentType?: LaborPaymentType | null,
+  paymentMode?: CategoryPaymentMode | string | null
+): string {
+  const type = String(paymentType || '');
+  const mode = String(paymentMode || '');
+  const isDepositFlow =
+    type === 'DEPOSIT' ||
+    type === 'COMPLETION' ||
+    mode === 'TWO_PAYMENT_50_50';
+  if (isDepositFlow) {
+    return 'You will be redirected to complete payment securely. This service uses two separate transactions: a deposit and a completion payment.';
+  }
+  return 'You will be redirected to complete payment securely.';
 }
 
 function isValidCvc(value: string): boolean {
@@ -65,6 +85,8 @@ export function PaymentModal({
   jobId,
   materialOrderId,
   metadata,
+  paymentType,
+  paymentMode,
   initialCardId,
   initialCvv,
   onCancel,
@@ -163,7 +185,7 @@ export function PaymentModal({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md max-h-[min(90vh,720px)] flex flex-col overflow-hidden gap-0 p-0">
+        <DialogContent className="sm:max-w-md sm:max-h-[min(90vh,720px)] md:max-h-[min(85vh,720px)] max-h-[min(85vh,720px)] flex flex-col overflow-hidden gap-0 p-0">
           <DialogHeader className="shrink-0 px-6 pt-6 pr-12">
             <DialogTitle className="flex items-center gap-2">
               <Lock className="h-5 w-5 text-muted-foreground" />
@@ -249,8 +271,18 @@ export function PaymentModal({
             </div>
 
             <p className="text-xs text-muted-foreground">
-              You will be redirected to complete payment securely. Funds are held in escrow until job
-              completion.
+              {kind === 'LABOR'
+                ? laborSecurePaymentHint(
+                    paymentType ??
+                      (typeof metadata?.paymentType === 'string'
+                        ? (metadata.paymentType as LaborPaymentType)
+                        : null),
+                    paymentMode ??
+                      (typeof metadata?.paymentMode === 'string'
+                        ? (metadata.paymentMode as CategoryPaymentMode)
+                        : null)
+                  )
+                : 'You will be redirected to complete payment securely.'}
             </p>
 
             {error && (

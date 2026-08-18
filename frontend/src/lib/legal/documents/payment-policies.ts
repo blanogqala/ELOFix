@@ -1,7 +1,8 @@
 import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
+import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'June 24, 2026';
+const EFFECTIVE = 'August 18, 2026';
 
 export const jobCompletionVerification: LegalDocument = {
   id: 'job-completion-verification',
@@ -14,7 +15,8 @@ export const jobCompletionVerification: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes the process by which Providers mark Jobs as complete and Customers verify completed work on EloFix (Pty) Ltd.',
+        `This policy describes the process by which Providers mark Jobs as complete and Customers verify completed work on the EloFix Platform, operated by ${COMPANY.legalName}.`,
+        LEGAL_OPERATOR_INTRO,
         'It forms part of the Payment Schedule and Transparency Policy and governs when the final provider payment tranche may become payable for staged-payment Jobs.',
       ],
     },
@@ -78,7 +80,7 @@ export const jobCompletionVerification: LegalDocument = {
       id: 'contact',
       title: '8. Contact',
       content: [
-        'Questions about job completion verification: support@elofix.com.',
+        `Questions about job completion verification: ${COMPANY.email}.`,
       ],
     },
   ],
@@ -95,30 +97,32 @@ export const escrowPolicy: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        'This policy describes how EloFix (Pty) Ltd facilitates Customer payments to Providers and Suppliers according to transparent payment schedules for each service or order type.',
+        `This policy describes how ${COMPANY.legalName}, operating the EloFix Platform, facilitates Customer payments to Providers and Suppliers according to transparent payment schedules for each service or order type.`,
+        LEGAL_OPERATOR_INTRO,
         'EloFix is a marketplace facilitator, not a bank, deposit-taker, or escrow agent. EloFix does not hold Customer funds as deposits and does not guarantee Provider or Supplier earnings.',
-        'Settlement is processed through third-party licensed payment providers (including PayFast, Payflex, and PayJustNow). Whether any arrangement is treated as escrow or another regulated payment activity under South African law depends on the licensed provider\'s product and requires appropriate legal advice. This document is informational platform policy only and is not legal advice or a claim of regulatory approval.',
+        'Customer payments are processed through third-party payment service providers. EloFix records applicable transaction information, platform commissions, and recipient shares. Actual settlement to a Provider or Supplier bank account depends on the supported payment service provider and settlement configuration. Whether any arrangement is treated as escrow or another regulated payment activity under South African law depends on the licensed provider\'s product and requires appropriate legal advice. This document is informational platform policy only and is not legal advice or a claim of regulatory approval.',
       ],
     },
     {
       id: 'labor-payment-schedule',
       title: '2. Labor Payment Schedules',
       content: [
-        'When a Customer pays for labor on a Job, EloFix collects the gross labor amount through a licensed payment partner.',
-        'EloFix retains a platform commission of 7% of the gross labor amount. The Provider share is 93% of gross.',
+        'When a Customer pays for labor on a Job, the gross labor amount is processed through the applicable payment service provider.',
+        'EloFix retains a platform commission of 7% of the gross labor amount. The Provider share is 93% of gross and is recorded in EloFix\'s financial ledger.',
         'Flexible payment options apply by service category:',
-        'Staged (two-stage) payments — Selected services: approximately 50% of the Provider share is payable as a mobilisation payment when labor payment is confirmed and the Provider may commence work; the remaining approximately 50% is payable upon Customer confirmation of completed work, administrator release, or automatic acceptance after the 7-day verification window under the Job Completion Verification Policy.',
+        'Staged (two-stage) payments — Selected services: approximately 50% of the Provider share becomes payable as a mobilisation payment when labor payment is confirmed and the Provider may commence work; the remaining approximately 50% becomes payable upon Customer confirmation of completed work, administrator release, or automatic acceptance after the 7-day verification window under the Job Completion Verification Policy.',
         'Single payment — Some services use a single payment, depending on the service category, as shown at checkout and in the Job details.',
         'Provider workflow: receive requests → quote → receive the applicable payment for that category model → perform work → request completion → receive any remaining payment where applicable.',
+        'A recorded or payable share is not automatically a cash deposit into the Provider\'s bank account.',
       ],
     },
     {
       id: 'material-payments',
       title: '3. Material and Supplier Payments',
       content: [
-        'Material order payments are subject to a 7% platform commission on the materials subtotal. The supplier earning is the subtotal minus commission.',
-        'Material payments are settled to Suppliers upon payment confirmation according to the supplier payment schedule and are not subject to job-completion staged holds.',
-        'Delivery fees are processed as separate payment intents and follow their own settlement timing with the payment partner.',
+        'Material order payments are subject to a 7% platform commission on the materials subtotal. The supplier earning is the subtotal minus commission and is recorded after payment confirmation.',
+        'Material payments are not subject to job-completion staged payment holds. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible Supplier or branch funds may be settled to a nominated verified bank account. EloFix does not promise automatic bank settlement where marketplace settlement is not supported.',
+        'Delivery fees are processed as separate payment intents and follow their own timing with the payment service provider.',
       ],
     },
     {
@@ -127,17 +131,17 @@ export const escrowPolicy: LegalDocument = {
       content: [
         'Customers see the applicable payment model (staged or single) before confirming payment for a Job.',
         'For staged Jobs, Customers may dispute completed work within the 7-day verification window, which may pause final tranche settlement pending investigation.',
-        'Cancellation refunds follow the Refund and Cancellation Policy, including en-route forfeiture rules where applicable.',
+        'Cancellation refunds follow the Refund, Returns & Cancellation Policy, including en-route forfeiture rules where applicable.',
       ],
     },
     {
       id: 'provider-transparency',
       title: '5. Provider Transparency',
       content: [
-        'Providers receive the mobilisation tranche (where applicable) upon confirmed labor payment, according to the category payment model shown on the Job.',
+        'Providers see the mobilisation tranche (where applicable) become payable upon confirmed labor payment, according to the category payment model shown on the Job.',
         'Any remaining tranche becomes payable upon Customer acceptance, automatic acceptance, or admin resolution in the Provider\'s favour.',
-        'EloFix does not promise to hold, safeguard, or guarantee Provider money. Timing of settlement depends on the licensed payment partner and Platform status rules (including open disputes).',
-        'Final staged tranches generally do not settle while an open dispute exists, except by administrator decision.',
+        'EloFix does not promise to hold, safeguard, or guarantee Provider money as deposits. Timing of any bank settlement depends on the payment service provider and Platform status rules (including open disputes).',
+        'Final staged tranches generally do not become payable for settlement while an open dispute exists, except by administrator decision.',
       ],
     },
     {
@@ -145,25 +149,25 @@ export const escrowPolicy: LegalDocument = {
       title: '6. EloFix Rights and Commission',
       content: [
         'EloFix retains the 7% platform commission on confirmed labor and material transactions.',
-        'EloFix may delay, withhold instructions for, or reverse payouts for fraud review, chargebacks, policy violations, open disputes, or legal compliance, subject to payment-partner capabilities.',
+        'EloFix may delay, withhold instructions for, or reverse settlement steps for fraud review, chargebacks, policy violations, open disputes, or legal compliance, subject to payment-service-provider capabilities.',
         'Commission is not refunded to Providers on labor refunds processed through dispute resolution.',
-        'When refund recovery from a Provider is required, EloFix may stage Customer refunds: amounts immediately recoverable first, with any remainder paid as Provider debt is recovered within approximately 30 days.',
+        'When refund recovery from a Provider is required, Customer refunds follow the Refund, Returns & Cancellation Policy: provider repayment where required, admin verification, then payment-service-provider refund processing (which may complete, require manual processing, or fail).',
       ],
     },
     {
       id: 'cancellation-refunds',
       title: '7. Cancellation and Refund Impact on Payment Schedules',
       content: [
-        'Before any provider share is released: net labor refund to Customer (93% of gross), subject to payment-partner processing.',
-        'After a mobilisation tranche is released on a staged Job: refund may be limited to any remaining unsettled balance plus recoverable provider amounts; any shortfall is recovered from the Provider over up to 30 days.',
-        'Admin partial or full refunds through dispute resolution may trigger provider clawback from unsettled balances, available earnings, or recorded refund debt as applicable.',
+        'Before provider amounts become payable under the schedule: net labor refund to Customer (93% of eligible paid gross), subject to payment-service-provider processing and confirmation.',
+        'After a mobilisation tranche has become payable on a staged Job: refund may be limited to any remaining unsettled balance plus recoverable provider amounts; any shortfall is recovered from the Provider over up to 30 days.',
+        'Admin partial or full refunds through dispute resolution may trigger provider clawback from unsettled balances, recorded earnings, or recorded refund debt as applicable.',
       ],
     },
     {
       id: 'disputes',
       title: '8. Disputes and Payment Pause',
       content: [
-        'When a Customer opens a dispute, the labor payment intent is marked as disputed and any remaining staged tranche does not settle until the dispute is resolved.',
+        'When a Customer opens a dispute, the labor payment intent is marked as disputed and any remaining staged tranche does not become payable for settlement until the dispute is resolved.',
         'Administrator outcomes may include full refund, partial refund, release of remaining payment, return for corrective work, or case closure. See the Dispute Resolution Policy.',
       ],
     },
@@ -171,8 +175,8 @@ export const escrowPolicy: LegalDocument = {
       id: 'limitation',
       title: '9. Limitation of Liability',
       content: [
-        'EloFix is not liable for failures, delays, or errors of payment partners, banks, or card networks.',
-        'EloFix does not guarantee that Providers or Suppliers will perform to Customer expectations, and does not guarantee that payments will settle on any particular date beyond what the payment partner facilitates.',
+        'EloFix is not liable for failures, delays, or errors of payment service providers, banks, or card networks.',
+        'EloFix does not guarantee that Providers or Suppliers will perform to Customer expectations, and does not guarantee that payments will settle on any particular date beyond what the payment service provider facilitates.',
         'To the maximum extent permitted by South African law, EloFix\'s aggregate liability for payment-schedule-related claims is limited to the greater of platform fees paid by you in the prior 12 months or R1,500, except where prohibited by the CPA, ECTA, or other mandatory law.',
         'Nothing in this policy limits mandatory consumer rights under South African law.',
       ],
@@ -181,7 +185,7 @@ export const escrowPolicy: LegalDocument = {
       id: 'contact',
       title: '10. Contact',
       content: [
-        'Payment schedule questions: support@elofix.com.',
+        `Payment schedule questions: ${COMPANY.email}.`,
       ],
     },
   ],

@@ -26,7 +26,8 @@ export default function LegalIndexPage() {
             Legal Policies
           </h1>
           <p className="mt-3 max-w-2xl text-muted-foreground">
-            All legal documents governing use of the EloFix marketplace. Effective June 24, 2026.
+            All legal documents governing use of the EloFix marketplace, operated by LITI Holdings (Pty) Ltd. See
+            each document for its effective date and version.
           </p>
         </header>
 

@@ -363,8 +363,8 @@ export default function Register() {
           </h2>
           <p className="text-primary-foreground/80">
             {role === 'provider'
-              ? 'Join thousands of verified providers earning on EloFix. Get access to quality leads and secure payments.'
-              : 'Connect with verified professionals for all your home and business maintenance needs. Secure payments and quality guaranteed.'}
+              ? 'Register as an independent provider on EloFix. Complete verification to receive job requests and get paid through supported payment flows.'
+              : 'Connect with independent professionals for home and business maintenance. Service quotes and material prices are shown in South African Rand (ZAR).'}
           </p>
         </div>
       </div>

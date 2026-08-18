@@ -139,7 +139,7 @@ export default function AdminSupplierDetail() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Revenue</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Revenue (excl. Delivery Fees)</p>
                     <p className="mt-2 text-2xl font-semibold tabular-nums">
                       {formatCurrency(analytics?.totalRevenue ?? 0)}
                     </p>
@@ -152,7 +152,7 @@ export default function AdminSupplierDetail() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Commission</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Commission (incl. Delivery Fees)</p>
                     <p className="mt-2 text-2xl font-semibold tabular-nums text-accent">
                       {formatCurrency(analytics?.totalCommission ?? 0)}
                     </p>

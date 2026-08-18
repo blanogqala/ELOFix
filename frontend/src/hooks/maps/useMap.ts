@@ -94,6 +94,7 @@ export function useMapInstance({
   onReady,
 }: UseMapInstanceOptions) {
   const { isLoaded, loadError, maplibre, styleUrl } = useMapLibre();
+  const appliedStyleRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isLoaded || !maplibre || !containerRef.current || mapRef.current) return;
@@ -108,6 +109,7 @@ export function useMapInstance({
     });
 
     mapRef.current = map;
+    appliedStyleRef.current = styleUrl;
     map.on('load', () => onReady?.(map));
 
     const ro = new ResizeObserver(() => map.resize());
@@ -117,6 +119,7 @@ export function useMapInstance({
       ro.disconnect();
       map.remove();
       mapRef.current = null;
+      appliedStyleRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial mount only
   }, [isLoaded, maplibre, styleUrl, containerRef, mapRef, interactive]);
@@ -124,6 +127,10 @@ export function useMapInstance({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) return;
+    // Avoid setStyle on the style the map was already created with — that tears down
+    // GeoJSON route layers and can leave RouteRenderer waiting on a one-shot `load`.
+    if (appliedStyleRef.current === styleUrl) return;
+    appliedStyleRef.current = styleUrl;
     map.setStyle(styleUrl);
   }, [styleUrl, isLoaded, mapRef]);
 

@@ -18,7 +18,7 @@ export function FinalCTASection() {
             Ready to fix, build, or renovate?
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base text-primary-foreground/95 drop-shadow-sm md:text-lg">
-            Join thousands of satisfied customers and trusted partners. Your next project is just a few clicks away.
+            Request a service, order materials, or register as a provider or supplier on EloFix.
           </p>
 
           <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

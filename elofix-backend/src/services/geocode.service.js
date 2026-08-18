@@ -285,13 +285,29 @@ function normalizeForwardQuery(raw) {
 
 function forwardQueryVariants(query) {
   const base = normalizeForwardQuery(query);
-  const variants = [base];
-  if (!/\bsouth africa\b/i.test(base)) {
-    variants.push(`${base}, South Africa`);
+  const parts = base
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const dedupedParts = [];
+  const seen = new Set();
+  for (const part of parts) {
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    dedupedParts.push(part);
   }
-  const parts = base.split(',').map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    variants.push(`${parts[0]}, ${parts[parts.length - 1]}, South Africa`);
+  const deduped = dedupedParts.join(", ");
+  const variants = [deduped || base];
+  if (base !== deduped) variants.unshift(base);
+  if (!/\bsouth africa\b/i.test(deduped || base)) {
+    variants.push(`${deduped || base}, South Africa`);
+  }
+  if (dedupedParts.length >= 2) {
+    variants.push(`${dedupedParts[0]}, ${dedupedParts[dedupedParts.length - 1]}, South Africa`);
+  }
+  if (dedupedParts.length >= 3) {
+    variants.push(`${dedupedParts[0]}, ${dedupedParts[1]}, South Africa`);
   }
   return [...new Set(variants)];
 }

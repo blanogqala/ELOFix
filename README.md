@@ -69,3 +69,12 @@ Next additions (already planned in the folder layout):
 ## Notes
 - This is designed so you can start free and scale later.
 - If you want, we can add Stripe/PayFast later for payments.
+
+## Maps (MapLibre + OpenStreetMap)
+
+Live delivery tracking uses **MapLibre GL JS** with OSM tiles. Google Maps has been fully removed.
+
+- **Docs:** [`docs/maps/`](docs/maps/) — architecture, API contracts, deployment, env vars
+- **Frontend env:** `VITE_MAPTILER_API_KEY` (production tiles; OpenFreeMap used when unset)
+- **Backend env:** `OPENROUTESERVICE_API_KEY` (driving directions proxy)
+- **Tracking data:** PostgreSQL `TrackingSession` + Socket.IO (not Firestore)

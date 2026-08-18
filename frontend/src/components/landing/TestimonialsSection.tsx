@@ -4,12 +4,16 @@ import { TESTIMONIALS } from './landingData';
 import { LandingSection, SectionHeader } from './LandingSection';
 
 export function TestimonialsSection() {
+  if (TESTIMONIALS.length === 0) {
+    return null;
+  }
+
   return (
     <LandingSection id="testimonials" className="border-y border-border/60 bg-muted/20">
       <SectionHeader
         eyebrow="Customer stories"
-        title="Trusted by homeowners, managers & partners"
-        description="Real feedback from customers, property managers, providers, and supplier branch teams."
+        title="What customers say"
+        description="Published only when EloFix has real, consented customer feedback to display."
       />
 
       <div className="grid gap-5 md:grid-cols-2 lg:gap-6">

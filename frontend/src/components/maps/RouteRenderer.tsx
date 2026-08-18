@@ -70,14 +70,24 @@ export function RouteRenderer({ map, geometry }: RouteRendererProps) {
       });
     };
 
+    const onStyleReady = () => {
+      ensureLayer();
+    };
+
     if (map.isStyleLoaded()) {
       ensureLayer();
     } else {
-      map.once('load', ensureLayer);
+      map.once('load', onStyleReady);
+      map.once('style.load', onStyleReady);
     }
 
+    // Re-apply after setStyle / theme changes wipe custom sources.
+    map.on('style.load', ensureLayer);
+
     return () => {
-      map.off('load', ensureLayer);
+      map.off('load', onStyleReady);
+      map.off('style.load', onStyleReady);
+      map.off('style.load', ensureLayer);
     };
   }, [map, geometry]);
 

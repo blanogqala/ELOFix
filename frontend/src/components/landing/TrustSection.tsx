@@ -6,8 +6,8 @@ export function TrustSection() {
     <LandingSection id="why-choose-us" className="bg-accent/20 backdrop-blur-sm">
       <SectionHeader
         eyebrow="Trust & safety"
-        title="Why thousands choose EloFix"
-        description="We prioritize your safety, convenience, and satisfaction at every step of the journey."
+        title="What EloFix is built for"
+        description="Verification, payments, tracking, and fulfilment tools designed for South African maintenance work."
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">

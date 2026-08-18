@@ -1,8 +1,8 @@
 import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
+import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'June 24, 2026';
-const ENTITY = 'EloFix (Pty) Ltd';
+const EFFECTIVE = 'August 18, 2026';
 
 export const dataProcessing: LegalDocument = {
   id: 'data-processing',
@@ -15,7 +15,8 @@ export const dataProcessing: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        `This Data Processing Policy describes how ${ENTITY} ("EloFix") processes personal information in its role as responsible party under POPIA.`,
+        `This Data Processing Policy describes how ${COMPANY.legalName}, operating the EloFix Platform ("EloFix"), processes personal information in its role as responsible party under POPIA.`,
+        LEGAL_OPERATOR_INTRO,
         'This policy supplements the Privacy Policy.',
       ],
     },
@@ -23,8 +24,8 @@ export const dataProcessing: LegalDocument = {
       id: 'roles',
       title: '2. Roles',
       content: [
-        'EloFix acts as the responsible party (operator) for personal information collected through the Platform.',
-        'Payment gateways, hosting providers, and device intelligence services act as operators or processors processing data on EloFix\'s instructions.',
+        'EloFix acts as the responsible party for personal information collected through the Platform. Whether EloFix or a third party also acts as an operator for specific processing activities depends on the contractual arrangement and requires appropriate legal review.',
+        'Payment service providers, hosting providers, and device intelligence services process payment or technical data according to their roles and EloFix\'s instructions where applicable.',
         'Providers and Suppliers who receive Customer data through Jobs or orders must process that data in compliance with POPIA for their own purposes.',
       ],
     },
@@ -33,7 +34,7 @@ export const dataProcessing: LegalDocument = {
       title: '3. Subprocessors',
       content: [
         'EloFix uses the following categories of subprocessors:',
-        'Payment processors: PayFast, Payflex, PayJustNow, and legacy payment integrations.',
+        'Third-party payment service providers that process Customer payments, refunds, and related payment events.',
         'Cloud hosting and database infrastructure providers.',
         'Device intelligence: FingerprintJS or equivalent fingerprinting technology.',
         'Email and notification delivery services.',
@@ -51,6 +52,7 @@ export const dataProcessing: LegalDocument = {
         'Audit logging of sensitive operations.',
         'Hashing of identity and bank account numbers for duplicate detection.',
         'Regular security reviews of Platform infrastructure.',
+        'EloFix does not store CVV. Full payment-card details, where collected at all, are handled according to the applicable payment service provider\'s systems and tokenization practices.',
       ],
     },
     {
@@ -58,7 +60,7 @@ export const dataProcessing: LegalDocument = {
       title: '5. Data Breach Notification',
       content: [
         'In the event of a personal information breach, EloFix will assess the breach and notify the Information Regulator and affected data subjects as required by POPIA Section 22.',
-        'Breach reports may be sent to privacy@elofix.com.',
+        `Breach reports may be sent to ${COMPANY.email}.`,
       ],
     },
     {
@@ -73,7 +75,7 @@ export const dataProcessing: LegalDocument = {
       id: 'contact',
       title: '7. Contact',
       content: [
-        'Data processing inquiries: privacy@elofix.com (Information Officer).',
+        `Data processing inquiries: ${COMPANY.email} (Information Officer).`,
       ],
     },
   ],
@@ -90,7 +92,8 @@ export const communityStandards: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        `These Community Standards describe expected behaviour for all users of ${ENTITY} ("EloFix").`,
+        `These Community Standards describe expected behaviour for all users of the EloFix Platform, operated by ${COMPANY.legalName}.`,
+        LEGAL_OPERATOR_INTRO,
         'Violations may result in content removal, account restrictions, or permanent removal from the Platform.',
       ],
     },
@@ -149,7 +152,7 @@ export const communityStandards: LegalDocument = {
       id: 'contact',
       title: '8. Report Violations',
       content: [
-        'Report Community Standards violations to support@elofix.com.',
+        `Report Community Standards violations to ${COMPANY.email}.`,
       ],
     },
   ],
@@ -166,7 +169,7 @@ export const cookiePolicy: LegalDocument = {
       id: 'overview',
       title: '1. Overview',
       content: [
-        `This Cookie Policy explains how ${ENTITY} ("EloFix") uses cookies and similar technologies on the Platform.`,
+        `This Cookie Policy explains how ${COMPANY.legalName}, operating the EloFix Platform ("EloFix"), uses cookies and similar technologies on the Platform.`,
         'This policy supplements the Privacy Policy.',
       ],
     },
@@ -200,14 +203,14 @@ export const cookiePolicy: LegalDocument = {
       title: '5. Managing Cookies',
       content: [
         'You can manage cookies through your browser settings. Disabling essential cookies may prevent you from logging in or using core Platform features.',
-        'To exercise broader privacy rights, contact privacy@elofix.com.',
+        `To exercise broader privacy rights, contact ${COMPANY.email}.`,
       ],
     },
     {
       id: 'contact',
       title: '6. Contact',
       content: [
-        'Cookie questions: privacy@elofix.com.',
+        `Cookie questions: ${COMPANY.email}.`,
       ],
     },
   ],

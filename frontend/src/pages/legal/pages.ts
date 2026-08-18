@@ -20,3 +20,4 @@ export const DataProcessingPage = createLegalPage('data-processing');
 export const CommunityStandardsPage = createLegalPage('community-standards');
 export const CookiePolicyPage = createLegalPage('cookie-policy');
 export const PlatformActivityRecordsPage = createLegalPage('platform-activity-records');
+export const DeliveryPolicyPage = createLegalPage('delivery-policy');

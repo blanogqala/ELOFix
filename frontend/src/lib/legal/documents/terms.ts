@@ -1,8 +1,13 @@
 import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
+import {
+  COMPANY,
+  LEGAL_OPERATOR_INTRO,
+  formatRegisteredAddress,
+  formatRegistrationNumber,
+} from '../../company';
 
-const ENTITY = 'EloFix (Pty) Ltd';
-const EFFECTIVE = 'June 24, 2026';
+const EFFECTIVE = 'August 18, 2026';
 
 export const termsOfService: LegalDocument = {
   id: 'terms',
@@ -15,7 +20,8 @@ export const termsOfService: LegalDocument = {
       id: 'introduction',
       title: '1. Introduction',
       content: [
-        `Welcome to ${ENTITY} ("EloFix", "we", "us", or "our"). These Terms of Service ("Terms") govern your access to and use of the EloFix platform, including our website, mobile experiences, and related services (collectively, the "Platform").`,
+        `Welcome to EloFix, a marketplace platform and trading brand operated by ${COMPANY.legalName} ("LITI", "we", "us", or "our"). These Terms of Service ("Terms") govern your access to and use of the EloFix platform, including our website, mobile experiences, and related services (collectively, the "Platform").`,
+        LEGAL_OPERATOR_INTRO,
         'By creating an account, checking an acceptance box, or using the Platform, you agree to these Terms and to the policies incorporated by reference in Section 2. If you do not agree, you may not use EloFix.',
         'These Terms are subject to the Electronic Communications and Transactions Act 25 of 2002 (ECTA). Your electronic acceptance constitutes a binding agreement.',
       ],
@@ -26,7 +32,7 @@ export const termsOfService: LegalDocument = {
       content: [
         'The following policies form part of your agreement with EloFix and are available on the Platform:',
         'Privacy Policy, Data Processing Policy, Cookie Policy, Device Security Policy, and Platform Activity Records Policy.',
-        'Refund and Cancellation Policy, Escrow and Payment Protection Policy, Job Completion Verification Policy, Dispute Resolution Policy, and Corrective Work Policy.',
+        'Refund, Returns & Cancellation Policy, Delivery & Collection Policy, Payment Schedule and Transparency Policy, Job Completion Verification Policy, Dispute Resolution Policy, and Corrective Work Policy.',
         'Provider Agreement, Provider Verification Policy, Provider Reputation Policy, and Portfolio Content Rights (for Providers).',
         'Supplier Agreement and Supplier Participation Policy (for Suppliers).',
         'Community Standards, Fraud Prevention Policy, and Admin Review and Investigation Policy.',
@@ -42,8 +48,8 @@ export const termsOfService: LegalDocument = {
         '"Supplier" means a business that lists and fulfils materials or products through the EloFix supplier marketplace.',
         '"Branch User" means staff authorised to act on behalf of a Supplier branch.',
         '"Job" means a service engagement arranged between a Customer and a Provider through EloFix.',
-        '"Materials" means products ordered through EloFix partner Suppliers in connection with a Job or store checkout.',
-        '"Escrow" means the temporary holding and staged release of Customer payments as described in the Escrow and Payment Protection Policy.',
+        '"Materials" means products ordered through participating EloFix Suppliers in connection with a Job or store checkout.',
+        '"Payment Schedule" means the staged or single payment model applicable to a Job or order, including payment milestones and status, as described in the Payment Schedule and Transparency Policy. EloFix records applicable commissions and recipient shares; actual bank settlement depends on the applicable payment service provider and settlement configuration.',
         '"Dispute" means a formal disagreement raised through the Platform regarding Job completion or payment.',
         '"Trust Score" means EloFix\'s internal reputation metric for Providers as described in the Provider Reputation Policy.',
         '"Admin" means an authorised EloFix administrator.',
@@ -66,7 +72,7 @@ export const termsOfService: LegalDocument = {
         'EloFix is a technology marketplace that connects Customers with independent Providers and Suppliers. EloFix is not the employer of Providers, is not a supplier of goods, and does not perform the services listed on the Platform.',
         'Providers are solely responsible for the quality, safety, legality, licensing, and delivery of their services. Customers contract directly with Providers for service work.',
         'Suppliers are solely responsible for the accuracy, quality, legality, and delivery of products they list and fulfil.',
-        'EloFix may facilitate payments, escrow, communications, scheduling, verification, fraud prevention, and dispute support, but does not guarantee outcomes of any Job, order, or Dispute.',
+        'EloFix may facilitate payments through third-party payment service providers, record transaction and commission information, support communications, scheduling, verification, fraud prevention, and dispute processes, but does not guarantee outcomes of any Job, order, or Dispute.',
       ],
     },
     {
@@ -74,7 +80,7 @@ export const termsOfService: LegalDocument = {
       title: '6. Accounts and Security',
       content: [
         'You must provide accurate registration information and keep your account credentials secure.',
-        'You are responsible for all activity under your account. Notify us immediately of unauthorized access at support@elofix.com.',
+        `You are responsible for all activity under your account. Notify us immediately of unauthorized access at ${COMPANY.email}.`,
         'We may suspend, restrict, or terminate accounts that violate these Terms, incorporated policies, applicable law, or Platform integrity requirements, including findings under the Fraud Prevention Policy.',
       ],
     },
@@ -82,9 +88,9 @@ export const termsOfService: LegalDocument = {
       id: 'payments',
       title: '7. Payments and Fees',
       content: [
-        'Customers authorize EloFix and its licensed payment partners (including PayFast, Payflex, and PayJustNow) to process charges for Jobs, materials, delivery, and applicable platform fees.',
-        'EloFix charges a platform commission of 7% on labor and materials transactions as further described in the Escrow and Payment Protection Policy.',
-        'Providers receive payouts according to staged escrow release rules, subject to verification, chargebacks, refunds, disputes, and compliance reviews.',
+        'Customers authorize EloFix and its applicable third-party payment service providers to process charges for Jobs, materials, delivery, and applicable platform fees.',
+        'EloFix charges a platform commission of 7% on labor and materials transactions as further described in the Payment Schedule and Transparency Policy.',
+        'Provider and Supplier shares are recorded according to the Platform payment model. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible funds may be settled to a nominated verified bank account. Recording a share is not the same as depositing cash into a bank account.',
         'All prices, fees, and taxes are displayed or communicated before payment confirmation where required by the Consumer Protection Act 68 of 2008 (CPA) and ECTA.',
       ],
     },
@@ -110,8 +116,8 @@ export const termsOfService: LegalDocument = {
       id: 'indemnification',
       title: '10. Indemnification',
       content: [
-        'You agree to indemnify, defend, and hold harmless EloFix, its directors, officers, employees, and agents from claims, losses, damages, liabilities, and expenses (including reasonable legal fees) arising from your use of the Platform, your breach of these Terms or incorporated policies, or your violation of law or third-party rights.',
-        'Providers and Suppliers additionally indemnify EloFix for claims arising from services performed or products supplied by them, including personal injury, property damage, defective work, and regulatory non-compliance.',
+        `You agree to indemnify, defend, and hold harmless ${COMPANY.legalName} (operating the EloFix Platform), its directors, officers, employees, and agents from claims, losses, damages, liabilities, and expenses (including reasonable legal fees) arising from your use of the Platform, your breach of these Terms or incorporated policies, or your violation of law or third-party rights.`,
+        `Providers and Suppliers additionally indemnify ${COMPANY.legalName} for claims arising from services performed or products supplied by them, including personal injury, property damage, defective work, and regulatory non-compliance.`,
       ],
     },
     {
@@ -129,7 +135,7 @@ export const termsOfService: LegalDocument = {
       content: [
         'To the maximum extent permitted by law, EloFix is not liable for indirect, incidental, special, consequential, or punitive damages arising from your use of the Platform.',
         `EloFix's aggregate liability for claims relating to the Platform will not exceed the greater of (a) amounts paid by you to EloFix as platform fees in the twelve months before the claim, or (b) R1,500 (one thousand five hundred South African Rand), except where prohibited by law.`,
-        'EloFix is not a bank, deposit-taker, or insurer. Payment processing and escrow facilitation are subject to the Escrow and Payment Protection Policy.',
+        'EloFix is not a bank, deposit-taker, escrow agent, or insurer. Customer payments are processed by third-party payment service providers. EloFix\'s payment recording, commission accounting, and settlement rules are described in the Payment Schedule and Transparency Policy.',
       ],
     },
     {
@@ -167,8 +173,8 @@ export const termsOfService: LegalDocument = {
       id: 'contact',
       title: '17. Contact',
       content: [
-        'Questions about these Terms may be sent to legal@elofix.com.',
-        `Responsible party: ${ENTITY}. Registered office: South Africa (full address to be published prior to public launch).`,
+        `Questions about these Terms may be sent to ${COMPANY.email}.`,
+        `Legal entity: ${COMPANY.legalName}. ${COMPANY.operatorStatement} Company registration number: ${formatRegistrationNumber()}. Registered / physical business address: ${formatRegisteredAddress()}. Country of domicile: ${COMPANY.country}.`,
       ],
     },
   ],

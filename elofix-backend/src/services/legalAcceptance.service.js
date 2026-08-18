@@ -42,7 +42,7 @@ function validateLegalAcceptance(body, role) {
       );
     }
     validateVersion(providerAgreementVersion, LEGAL_VERSIONS.providerAgreement, "Provider Agreement");
-    validateVersion(refundPolicyVersion, LEGAL_VERSIONS.refundPolicy, "Refund and Cancellation Policy");
+    validateVersion(refundPolicyVersion, LEGAL_VERSIONS.refundPolicy, "Refund, Returns & Cancellation Policy");
   }
 
   if (role === "SUPPLIER") {

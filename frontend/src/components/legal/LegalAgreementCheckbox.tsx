@@ -42,7 +42,7 @@ export function LegalAgreementCheckbox({
     <>
       I agree to the {renderDocLink('terms')}, {renderDocLink('privacy')},{' '}
       {renderDocLink('provider-agreement', 'Provider Agreement')}, and{' '}
-      {renderDocLink('refund-policy', 'Refund Policy')}
+      {renderDocLink('refund-policy')}
     </>
   );
 

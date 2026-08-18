@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, ShoppingCart, Sparkles, Wrench } from 'lucide-react';
+import { ArrowRight, ShoppingCart, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LANDING_STATS } from './landingData';
 
@@ -21,8 +21,8 @@ export function HeroSection() {
           </h1>
 
           <p className="landing-fade-in landing-delay-2 mx-auto mb-10 max-w-2xl text-base leading-relaxed text-white/80 md:text-lg lg:text-xl">
-            Request verified professionals, order hardware from approved suppliers, and track everything —
-            from quote to delivery — with flexible payment options for every service.
+            Request independent professionals, order hardware from participating suppliers, and track jobs and
+            deliveries — from quote to fulfilment — with flexible payment options in South African Rand (ZAR).
           </p>
 
           <div className="landing-fade-in landing-delay-3 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -49,11 +49,11 @@ export function HeroSection() {
           <div className="landing-fade-in landing-delay-4 mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-white/70">
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
-              Verified providers
+              Independent providers
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
-              Flexible payments
+              Payments in ZAR
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />

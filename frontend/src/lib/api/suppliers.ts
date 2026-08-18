@@ -1,5 +1,6 @@
 import type { Product, Supplier } from '@/types';
 import apiClient from '@/api/client';
+import { mapPublicShowcaseSuppliers, type PublicShowcaseSupplier } from '@/lib/publicSupplierShowcase';
 
 interface SuppliersResponse {
   success: boolean;
@@ -19,6 +20,15 @@ interface ProductsResponse {
 export async function getSuppliers(): Promise<Supplier[]> {
   const { data } = await apiClient.get<SuppliersResponse>('/suppliers');
   return Array.isArray(data?.suppliers) ? data.suppliers : [];
+}
+
+/**
+ * Landing-safe projection of GET /api/suppliers.
+ * Only approved-visible orgs with active branches are mapped (no phone, address, products, or financial fields).
+ * Future: replace with a slim public showcase endpoint if catalog payloads become too heavy for the landing page.
+ */
+export async function getPublicShowcaseSuppliers(): Promise<PublicShowcaseSupplier[]> {
+  return mapPublicShowcaseSuppliers(await getSuppliers());
 }
 
 export async function getSupplierById(id: string): Promise<Supplier | null> {

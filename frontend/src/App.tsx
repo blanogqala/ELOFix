@@ -41,11 +41,14 @@ const App = () => (
             <Route path="/auth/success" element={<RouteSuspense><Pages.AuthSuccess /></RouteSuspense>} />
             <Route path="/unauthorized" element={<RouteSuspense><Pages.Unauthorized /></RouteSuspense>} />
             <Route path="/track/:trackingId" element={<RouteSuspense><Pages.TrackDelivery /></RouteSuspense>} />
+            <Route path="/contact" element={<RouteSuspense><Pages.ContactPage /></RouteSuspense>} />
             <Route path="/legal" element={<RouteSuspense><Pages.LegalIndexPage /></RouteSuspense>} />
             <Route path="/terms" element={<RouteSuspense><Pages.TermsPage /></RouteSuspense>} />
             <Route path="/privacy" element={<RouteSuspense><Pages.PrivacyPage /></RouteSuspense>} />
             <Route path="/provider-agreement" element={<RouteSuspense><Pages.ProviderAgreementPage /></RouteSuspense>} />
             <Route path="/refund-policy" element={<RouteSuspense><Pages.RefundPolicyPage /></RouteSuspense>} />
+            <Route path="/returns-policy" element={<RouteSuspense><Pages.RefundPolicyPage /></RouteSuspense>} />
+            <Route path="/delivery-policy" element={<RouteSuspense><Pages.DeliveryPolicyPage /></RouteSuspense>} />
             <Route path="/job-completion-verification" element={<RouteSuspense><Pages.JobCompletionVerificationPage /></RouteSuspense>} />
             <Route path="/escrow-policy" element={<RouteSuspense><Pages.EscrowPolicyPage /></RouteSuspense>} />
             <Route path="/dispute-resolution" element={<RouteSuspense><Pages.DisputeResolutionPage /></RouteSuspense>} />

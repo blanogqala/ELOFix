@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { EloFixLogo } from '@/components/EloFixLogo';
+import { COMPANY, formatCopyright } from '@/lib/company';
 
 const FOOTER_LINKS = {
   platform: [
@@ -7,6 +8,7 @@ const FOOTER_LINKS = {
     { to: '/#platform', label: 'Order Materials' },
     { to: '/#how-it-works', label: 'How It Works' },
     { to: '/#suppliers', label: 'Suppliers' },
+    { to: '/contact', label: 'Contact Us' },
   ],
   partners: [
     { to: '/register?role=provider', label: 'Become a Provider' },
@@ -14,11 +16,13 @@ const FOOTER_LINKS = {
     { to: '/login', label: 'Supplier Login' },
   ],
   legal: [
-    { to: '/legal', label: 'All Legal Policies' },
+    { to: '/terms', label: 'Terms & Conditions' },
     { to: '/privacy', label: 'Privacy Policy' },
-    { to: '/terms', label: 'Terms of Service' },
+    { to: '/refund-policy', label: 'Refund, Returns & Cancellation Policy' },
+    { to: '/delivery-policy', label: 'Delivery & Collection Policy' },
     { to: '/provider-agreement', label: 'Provider Agreement' },
-    { to: '/refund-policy', label: 'Refund Policy' },
+    { to: '/supplier-agreement', label: 'Supplier Agreement' },
+    { to: '/legal', label: 'All Legal Policies' },
   ],
 };
 
@@ -30,8 +34,12 @@ export function Footer() {
           <div className="sm:col-span-2 lg:col-span-1">
             <EloFixLogo variant="light" className="mb-4 h-14" clickable={false} />
             <p className="max-w-xs text-sm leading-relaxed text-primary-foreground/70">
-              South Africa&apos;s trusted marketplace for maintenance services, hardware materials, and supplier
-              procurement — all in one platform.
+              EloFix is a South African marketplace for maintenance services and building materials. Request
+              independent providers or order from participating suppliers — with quotation-based service pricing in
+              ZAR.
+            </p>
+            <p className="mt-4 max-w-xs text-sm font-medium text-primary-foreground/80">
+              {COMPANY.operatorStatement}
             </p>
           </div>
 
@@ -71,7 +79,7 @@ export function Footer() {
             </h4>
             <ul className="space-y-2.5 text-sm text-primary-foreground/70">
               {FOOTER_LINKS.legal.map((link) => (
-                <li key={link.label}>
+                <li key={link.to}>
                   <Link to={link.to} className="transition-colors hover:text-primary-foreground">
                     {link.label}
                   </Link>
@@ -82,12 +90,8 @@ export function Footer() {
         </div>
 
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-primary-foreground/10 pt-8 md:flex-row">
-          <p className="text-sm text-primary-foreground/60">
-            © {new Date().getFullYear()} EloFix. All rights reserved.
-          </p>
-          <p className="text-xs text-primary-foreground/50">
-            Secure payments · Flexible options · Real-time tracking
-          </p>
+          <p className="text-center text-sm text-primary-foreground/60 md:text-left">{formatCopyright()}</p>
+          <p className="text-xs text-primary-foreground/50">Secure payments · Flexible options · Real-time tracking</p>
         </div>
       </div>
     </footer>

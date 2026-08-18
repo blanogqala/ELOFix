@@ -107,6 +107,32 @@ function resolveDeliveryRejectionReason(
   return undefined;
 }
 
+function finiteLatLng(raw: unknown): { lat: number; lng: number } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const lat = Number((raw as { lat?: unknown }).lat);
+  const lng = Number((raw as { lng?: unknown }).lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+/** Prefer explicit coords, then order destination / customer location from the API. */
+function resolveMaterialOrderDestinationCoords(
+  mo: Record<string, unknown> | null | undefined,
+  fallback?: { lat: number; lng: number } | null
+): { lat: number; lng: number } | null {
+  if (fallback && Number.isFinite(fallback.lat) && Number.isFinite(fallback.lng)) {
+    return { lat: Number(fallback.lat), lng: Number(fallback.lng) };
+  }
+  if (!mo) return null;
+  const destinationPoint = mo.destinationPoint as { coordinates?: unknown } | undefined;
+  const customerLocation = mo.customerLocation as { coordinates?: unknown } | undefined;
+  return (
+    finiteLatLng(destinationPoint?.coordinates) ||
+    finiteLatLng(customerLocation?.coordinates) ||
+    null
+  );
+}
+
 function mergeTrackingFields(
   normalized: NormalizedOrder,
   mo: Record<string, unknown> | null | undefined,
@@ -138,7 +164,7 @@ function mergeTrackingFields(
   const dest =
     options?.destinationCoords !== undefined
       ? options.destinationCoords
-      : normalized.destinationCoords;
+      : resolveMaterialOrderDestinationCoords(mo, normalized.destinationCoords ?? null);
   const fs = String(mo.fulfillmentStatus || '').toUpperCase();
   const trackingEligible = fs === 'OUT_FOR_DELIVERY';
   const activeTrackingId = trackingEligible && typeof mo.activeTrackingId === 'string' ? mo.activeTrackingId : undefined;
@@ -442,7 +468,11 @@ export default function OrderDetails() {
         setOrder(
           applyEffectiveDeliveryFee(
             enrichOrderContact(
-              mergeTrackingFields(normalized, found as unknown as Record<string, unknown>),
+              mergeTrackingFields(normalized, found as unknown as Record<string, unknown>, {
+                destinationCoords: resolveMaterialOrderDestinationCoords(
+                  found as unknown as Record<string, unknown>
+                ),
+              }),
               supplier,
               provider ?? undefined
             )
@@ -541,7 +571,10 @@ export default function OrderDetails() {
           applyEffectiveDeliveryFee(
             enrichOrderContact(
               mergeTrackingFields(normalized, moRow as unknown as Record<string, unknown>, {
-                destinationCoords: job.location?.coordinates ?? null,
+                destinationCoords: resolveMaterialOrderDestinationCoords(
+                  moRow as unknown as Record<string, unknown>,
+                  job.location?.coordinates ?? null
+                ),
               }),
               supplier,
               provider ?? undefined

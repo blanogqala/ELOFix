@@ -75,7 +75,7 @@ function MapBody({
 }: Omit<DeliveryMapProps, 'className'> & { className?: string }) {
   const prevDriverRef = useRef<{ lat: number; lng: number } | null>(null);
   const [headingDeg, setHeadingDeg] = useState(0);
-  const [mapReady, setMapReady] = useState(false);
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const proximityRef = useRef({ near: false, arriving: false, distanceMeters: null as number | null });
   const onProximityChangeRef = useRef(onProximityChange);
   onProximityChangeRef.current = onProximityChange;
@@ -84,6 +84,7 @@ function MapBody({
 
   const { isLoaded, loadError } = useMapLibre();
   const { mapRef, fitBounds, fitPoints, setCenter } = useMap();
+  const mapReady = mapInstance != null;
 
   const rawDriverPos =
     lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
@@ -118,6 +119,19 @@ function MapBody({
     routePhase === 'to_collection' || routePhase === 'at_collection' ? 'collection' : 'delivery';
 
   const { route, etaText } = useRoute(rawDriverPos, destForRoute);
+
+  /** Road route when available; otherwise a straight connector so the map still shows van → destination. */
+  const routeGeometry = useMemo(() => {
+    if (route?.geometry?.coordinates?.length) return route.geometry;
+    if (!rawDriverPos || !destForRoute) return null;
+    return {
+      type: 'LineString' as const,
+      coordinates: [
+        [rawDriverPos.lng, rawDriverPos.lat],
+        [destForRoute.lng, destForRoute.lat],
+      ] as [number, number][],
+    };
+  }, [route?.geometry, rawDriverPos, destForRoute]);
 
   useEffect(() => {
     onEtaChangeRef.current?.(etaText);
@@ -224,8 +238,6 @@ function MapBody({
     );
   }
 
-  const mapInstance = mapRef.current;
-
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
       {trackingEnded ? (
@@ -242,6 +254,11 @@ function MapBody({
               : destForRoute
                 ? 'Waiting for driver location…'
                 : 'Waiting for driver location and a routable destination…'}
+        </p>
+      ) : null}
+      {driverPos && !destForRoute && (geocodeError || (Boolean(destination?.trim()) && !geocoding && !hasExplicitDest)) ? (
+        <p className="border-b border-border bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100">
+          Could not pin the delivery address on the map, so the route line cannot be drawn yet.
         </p>
       ) : null}
       {destination ? (
@@ -269,11 +286,11 @@ function MapBody({
           center={center}
           zoom={driverPos ? MAP_DRIVER_ZOOM : 12}
           mapRef={mapRef}
-          onMapReady={() => setMapReady(true)}
+          onMapReady={(map) => setMapInstance(map)}
         />
-        {mapReady && mapInstance ? (
+        {mapInstance ? (
           <>
-            <RouteRenderer map={mapInstance} geometry={route?.geometry ?? null} />
+            <RouteRenderer map={mapInstance} geometry={routeGeometry} />
             <MapMarker map={mapInstance} position={driverPos} kind="vehicle" headingDeg={headingDeg} />
             <MapMarker map={mapInstance} position={destForRoute} kind="destination" pinKind={pinKind} />
             <MapControls map={mapInstance} focusPoint={driverPos ?? destForRoute} />
