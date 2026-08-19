@@ -2,6 +2,7 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const {
   getJobMeta,
   mutateJobMeta,
@@ -410,6 +411,14 @@ async function postCreateDisputeSideEffects(dispute, job, actorUserId, options =
     disputeId: dispute.id,
     jobTitle: job.title,
     cancellationActorRole,
+  });
+  emitDomainUpdate({
+    domain: "dispute",
+    action: "created",
+    jobId: job.id,
+    disputeId: dispute.id,
+    userIds: [job.customerId, job.providerId].filter(Boolean),
+    adminRoom: true,
   });
 }
 

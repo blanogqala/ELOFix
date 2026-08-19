@@ -12,12 +12,17 @@ import { formatRequestedResolution } from '@/lib/disputeLabels';
 import { queryKeys } from '@/lib/queryKeys';
 import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { Job, JobDispute, JobStatus } from '@/types';
-import { Search, Briefcase, ArrowRight, AlertTriangle, Star } from 'lucide-react';
+import { Search, Briefcase, ArrowRight, AlertTriangle, Star, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { groupJobsForList } from '@/lib/jobListGrouping';
 import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { getJobDisplayStatusLabel, getUserJobBadgeClassForJob } from '@/lib/jobProgressDisplay';
 import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import {
+  formatCompletionPaymentDueDate,
+  isAdminRequiredCompletionPayment,
+  isCompletionPaymentOverdue,
+} from '@/lib/completionPaymentDue';
 import { useToast } from '@/hooks/use-toast';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
@@ -215,6 +220,44 @@ export default function UserJobs() {
     );
   };
 
+  const renderAdminPaymentRequiredNote = (job: Job) => {
+    if (!isAdminRequiredCompletionPayment(job)) return null;
+    const overdue = isCompletionPaymentOverdue(job);
+    const dueLabel = formatCompletionPaymentDueDate(job);
+    const providerName = job.providerName || 'your provider';
+    return (
+      <div
+        className={cn(
+          'border-t px-4 py-3',
+          overdue ? 'border-destructive/30 bg-destructive/5' : 'border-warning/30 bg-warning/5'
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-2 text-sm">
+          <Clock
+            className={cn('h-4 w-4 shrink-0 mt-0.5', overdue ? 'text-destructive' : 'text-warning')}
+            aria-hidden
+          />
+          <div className="min-w-0">
+            <p className={cn('font-medium', overdue ? 'text-destructive' : 'text-foreground')}>
+              {overdue ? 'Payment overdue — case resolved' : 'Payment required — case resolved'}
+            </p>
+            <p className="text-muted-foreground mt-0.5">
+              EloFix resolved your case — the remaining balance must be paid to {providerName}
+              {dueLabel ? ` by ${dueLabel}` : ' by the due date'}.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const adminPaymentRowClass = (job: Job) =>
+    isAdminRequiredCompletionPayment(job)
+      ? isCompletionPaymentOverdue(job)
+        ? 'border-l-4 border-destructive'
+        : 'border-l-4 border-warning'
+      : undefined;
+
   const disputedRowClass =
     jobsView === 'review' ? 'border-l-4 border-destructive bg-destructive/5' : undefined;
 
@@ -240,9 +283,11 @@ export default function UserJobs() {
       <div key={key} className="card-elevated overflow-hidden transition-shadow hover:shadow-lg">
         <JobListGroup
           entry={entry}
+          className={adminPaymentRowClass(primaryJob)}
           onJobClick={(job) => navigate(`/user/jobs/${job.id}`)}
           renderRow={renderJobRow}
         />
+        {renderAdminPaymentRequiredNote(primaryJob)}
       </div>
     );
   };

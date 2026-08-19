@@ -58,4 +58,25 @@ describe('admin cancel refund display', () => {
     expect(refundRow?.amount).toBe(558);
     expect(refundRow?.by).toBe('Customer cancel');
   });
+
+  it('shows Payment required when the customer still owes admin-required completion', () => {
+    const job = {
+      id: 'job-1200',
+      status: 'IN_PROGRESS',
+      laborPaid: true,
+      paymentProgress: 'FIRST_PAID',
+      totalPrice: 1200,
+      commissionAmount: 42,
+      providerAmount: 558,
+      releasedAmount: 558,
+      completionPaymentDue: {
+        amountDue: 600,
+        dueAt: '2026-08-26T00:00:00.000Z',
+        status: 'DUE',
+        source: 'ADMIN_RELEASE',
+        resolutionLogId: 'res-1',
+      },
+    } as Job;
+    expect(getAdminPaymentStatusDisplay(job).label).toBe('Payment required');
+  });
 });

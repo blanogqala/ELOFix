@@ -56,12 +56,16 @@ export const providerAgreement: LegalDocument = {
       id: 'payments-payouts',
       title: '5. Payments and Settlement',
       content: [
-        'Customer labor payments are processed through EloFix\'s applicable third-party payment service providers. EloFix records platform commission (7% of gross labor) and your provider share (93% of gross) according to the Payment Schedule and Transparency Policy.',
-        'Recording your share in EloFix\'s ledger is not the same as depositing cash into your bank account. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible provider funds may be settled to your nominated verified bank account.',
-        'For staged-payment Jobs, approximately 50% of your provider share becomes payable as a mobilisation tranche when the applicable labor payment is confirmed; the remaining share becomes payable upon Customer confirmation, admin release, or automatic acceptance after the 7-day completion window.',
-        'Settlement timing and eligibility may be delayed or paused for fraud review, open disputes, chargebacks, policy violations, incomplete verification, or legal compliance, subject to payment-service-provider capabilities.',
+        'Customer labor payments are processed through EloFix\'s applicable third-party payment service providers. EloFix records the current contractual platform commission of 7% of each collected customer labor payment tranche and your provider share (93% of that collected tranche) according to the Payment Schedule and Transparency Policy.',
+        'Recording your share in EloFix\'s ledger is not the same as depositing cash into your bank account. Customer payment timing is not the same as provider settlement timing. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible provider funds may be settled to your nominated verified bank account.',
+        'The Platform supports three live labor payment modes, as shown on the Job:',
+        'TWO_PAYMENT_50_50 — the Customer pays an approximately 50% first tranche, then a remaining completion tranche according to the Job workflow. Commission of 7% applies to each collected customer payment tranche.',
+        'SINGLE_PAYMENT_UPFRONT — the Customer pays the full service amount before work progresses.',
+        'SINGLE_PAYMENT_ON_COMPLETION — the Customer does not pay labor upfront. Payment becomes due after the configured completion or confirmation flow.',
+        'Not all Jobs use escrow. EloFix does not hold all provider shares as deposits.',
+        'Settlement timing and eligibility may be delayed or paused for fraud review, open disputes, chargebacks, policy violations, incomplete verification, overdue refund repayment, or legal compliance, subject to payment-service-provider capabilities.',
         'You authorize EloFix to deduct applicable platform fees, refunds, clawbacks, adjustments, and chargebacks from amounts otherwise recorded as payable to you.',
-        'If a Customer refund requires recovery from you after amounts attributable to you have already been accounted for or paid out, you must complete provider repayment within 30 days through the supported mechanisms (gateway repayment checkout where available, and/or bank transfer / EFT using the reference EloFix provides). Failure to repay may result in account blocking and legal action. Entering banking details does not authorize EloFix to debit your bank account automatically unless a payment service provider expressly supports that capability and you are notified of such terms.',
+        'If a Customer refund requires recovery from you after amounts attributable to you have already been accounted for or paid out, you must complete provider repayment within 30 calendar days through the supported mechanisms (gateway repayment checkout where available, and/or bank transfer / EFT using the reference EloFix provides). Failure to settle an approved refund repayment or other recoverable amount within 30 calendar days may result in restrictions on new work, settlement restrictions, account blocking, referral for lawful debt recovery, and further legal action where appropriate. You may still log in, view Jobs and earnings, access the repayment page, submit repayment, and contact EloFix. Entering banking details does not authorize EloFix to debit your bank account automatically unless a payment service provider expressly supports that capability and you are notified of such terms.',
       ],
     },
     {
@@ -159,10 +163,11 @@ export const refundPolicy: LegalDocument = {
       id: 'service-after-work',
       title: '3. Service Transactions — Cancellation After Work Starts',
       content: [
-        'Once work has started, refunds are generally limited to documented incomplete work, Platform-verified service failures, or admin resolution through the Dispute Resolution Policy.',
-        'If a Provider is en route or work is actively in progress (including IN_PROGRESS or AWAITING_CONFIRMATION status, or active courier delivery states), and the Customer cancels, the Customer may forfeit the labor payment and receive R0 refund.',
-        'This en-route rule applies where the Provider has already incurred travel, preparation, or commencement costs.',
-        'If the Provider cancels while en route without valid reason, the Customer may receive a labor refund of eligible paid amounts (net of platform commission where applicable under Platform policy).',
+        'Once work has started on a standard service Job, a Customer cancellation of paid work does not automatically forfeit the paid amount and does not automatically produce a R0 refund.',
+        'If labor has been paid and the Customer cancels after work has started, EloFix may open an administrator review or cancellation dispute. A refund is not guaranteed. An administrator determines the outcome according to the circumstances, the Job records, and eligible paid amounts.',
+        'Unpaid payment tranches are not automatically charged merely because a cancellation or review was opened. Only eligible paid amounts can be considered for refund.',
+        'Administrators may resolve a cancellation review using the existing dispute outcomes described in the Dispute Resolution Policy (including refund, partial refund, release of remaining payment, return for corrective work, or case closure).',
+        'Courier and moving Jobs follow separate hard cancellation rules in Section 3A and in the Delivery & Collection Policy. Those courier rules are not the same as ordinary service cancellation.',
       ],
     },
     {
@@ -176,11 +181,22 @@ export const refundPolicy: LegalDocument = {
       ],
     },
     {
+      id: 'courier-cancellation',
+      title: '4A. Courier and Moving Jobs — Cancellation Restrictions',
+      content: [
+        'Courier and moving Jobs have separate cancellation rules from ordinary service Jobs.',
+        'A Customer generally cannot cancel a courier or moving Job after items have been collected (picked up), or while the Job is awaiting completion confirmation.',
+        'While a courier Provider is collecting items and labor has been paid, Customer cancellation may result in no labor refund (R0) under the en-route forfeiture rule implemented on the Platform.',
+        'These courier restrictions remain even where ordinary service cancellation would instead open an administrator review.',
+        'Material-order refunds, if any, remain subject to the material-order rules in this policy and the Delivery & Collection Policy.',
+      ],
+    },
+    {
       id: 'provider-cancellations',
       title: '5. Provider Cancellations',
       content: [
         'Providers should avoid cancellations after acceptance. Repeated cancellations may affect account standing, trust score, visibility, and settlement eligibility.',
-        'If a Provider cancels without valid reason, EloFix may assist the Customer with reassignment, credits, or refunds where appropriate.',
+        'If a Provider cancels without valid reason, EloFix may assist the Customer with reassignment or a refund of eligible paid amounts where appropriate. EloFix does not issue account credits, store credit, wallet credit, or EloFix credit.',
       ],
     },
     {
@@ -196,10 +212,12 @@ export const refundPolicy: LegalDocument = {
       id: 'disputes',
       title: '7. Disputes',
       content: [
-        'Customers may open a dispute during the Job completion verification window. See the Dispute Resolution Policy for full procedures.',
+        'Customers may open a completion dispute while the Job is in Awaiting Confirmation, as described in the Dispute Resolution Policy.',
+        'A cancellation request on an eligible Job may also open an administrator dispute or review from other Job statuses. Not all disputes are limited to Awaiting Confirmation.',
         'Requesting a refund in a dispute does not automatically trigger a refund. EloFix administrators investigate and may order full refund, partial refund, release of remaining payment, return for corrective work, or case closure.',
         'Open disputes may pause settlement of any remaining staged payment tranche until resolved.',
-        'When part of an approved refund must be recovered from a Provider, that portion is not guaranteed instantly. The Provider has 30 days to complete repayment via supported gateway repayment and/or bank transfer / EFT (and/or recovery from future earnings where applicable) before account restrictions apply.',
+        'When part of an approved refund must be recovered from a Provider, that portion is not guaranteed instantly. The Provider has 30 calendar days to complete repayment via supported gateway repayment and/or bank transfer / EFT (and/or recovery from future earnings where applicable) before account restrictions on new work may apply.',
+        'Failure to settle an approved refund repayment or other recoverable amount within 30 calendar days may result in restrictions on new work, settlement restrictions, account blocking, referral for lawful debt recovery, and further legal action where appropriate.',
       ],
     },
     {
@@ -254,8 +272,8 @@ export const refundPolicy: LegalDocument = {
         'A refund is described as returned to the original payment method only after the applicable payment service provider confirms the refund. Before confirmation, EloFix will show accurate processing status, including where manual processing by the payment service provider is required.',
         'Processing times vary by payment service provider and bank. EloFix does not promise instant or automatic refunds to a Customer\'s card or bank account.',
         'Customer labor refunds are calculated on eligible paid labor amounts, net of the platform commission (93% of gross labor paid). The 7% platform fee is not refunded.',
-        'When part of an approved refund depends on recovering amounts from a Provider, that portion is not guaranteed instantly. EloFix processes the Customer refund as recovery and admin processing complete, within approximately 30 days for the Provider repayment obligation where applicable.',
-        'EloFix may issue account credits instead of cash refunds when permitted by policy or requested by the user.',
+        'When part of an approved refund depends on recovering amounts from a Provider, that portion is not guaranteed instantly. EloFix processes the Customer refund as recovery and admin processing complete, within approximately 30 calendar days for the Provider repayment obligation where applicable.',
+        'EloFix does not operate an account-credit, store-credit, wallet-credit, or EloFix-credit product. Supported refund outcomes are a refund to the original payment method where the payment service provider confirms it, manual processing where required, provider repayment or recovery, administrator review, and failed or manual statuses.',
         'Platform commission on labor is not refunded to Providers on labor refunds processed through admin dispute resolution.',
       ],
     },
@@ -264,7 +282,7 @@ export const refundPolicy: LegalDocument = {
       title: '13. Automatic Acceptance',
       content: [
         'If a Customer does not accept or dispute completed work within 7 calendar days, the Job may be automatically approved under the Job Completion Verification Policy.',
-        'Automatic acceptance may make any remaining staged payment tranche payable according to the Payment Schedule and Transparency Policy and closes the transaction. The Customer is deemed to have accepted the work quality by failing to respond within the verification window.',
+        'Automatic acceptance may make any remaining customer payment tranche payable according to the Payment Schedule and Transparency Policy. Customer payment timing is not the same as provider bank settlement timing.',
       ],
     },
     {
@@ -280,6 +298,16 @@ export const refundPolicy: LegalDocument = {
       title: '15. Non-Refundable Items',
       content: [
         'Completed services properly delivered and accepted (including by automatic acceptance), non-returnable materials, third-party fees already incurred, and applicable platform service fees may be non-refundable except where required by the CPA or other mandatory law.',
+      ],
+    },
+    {
+      id: 'outstanding-payments',
+      title: '15A. Outstanding Customer Payments',
+      content: [
+        'If an administrator resolution or normal Job workflow makes an outstanding customer service balance payable, the Customer must settle that amount within 30 calendar days of the due date shown on the Platform.',
+        'Until the due date, the Customer may continue to use the marketplace, subject to other Platform rules.',
+        'If the amount remains unpaid after the due date, new marketplace transactions may be restricted. The Customer may still log in, view Jobs, disputes, invoices, and payment obligations, pay the outstanding amount, and contact EloFix.',
+        'Failure to settle an outstanding amount within 30 calendar days may result in restrictions on new marketplace transactions, account suspension or blocking, referral for lawful debt recovery, and further legal action where appropriate.',
       ],
     },
     {

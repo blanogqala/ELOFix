@@ -138,4 +138,31 @@ function approxEqual(a, b, eps = 0.001) {
   approxEqual(Number(odd.firstPaymentAmount) + Number(odd.secondPaymentAmount), 100.01);
 }
 
+// --- Payment summary: ignore draft job.price until provider submits service price ---
+{
+  const draftJob = {
+    price: 23,
+    quotedAmount: null,
+    paymentModeSnapshot: null,
+    paymentProgress: "NONE",
+    legacyEscrowV2: false,
+  };
+  assert.strictEqual(paymentModeService.buildPaymentSummary(draftJob, {}), null);
+
+  const quotedJob = {
+    price: 4500,
+    quotedAmount: 4500,
+    paymentModeSnapshot: "TWO_PAYMENT_50_50",
+    paymentProgress: "NONE",
+    legacyEscrowV2: false,
+    firstPaymentAmount: 2250,
+    secondPaymentAmount: 2250,
+  };
+  const summary = paymentModeService.buildPaymentSummary(quotedJob, {
+    servicePrice: { amount: 4500, submittedAt: new Date().toISOString() },
+  });
+  assert.ok(summary);
+  approxEqual(summary.totalAmount, 4500);
+}
+
 console.log("paymentModes.test.js: OK");

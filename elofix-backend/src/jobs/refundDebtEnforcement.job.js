@@ -22,7 +22,7 @@ async function processRefundDebtEnforcement() {
   let recoveries;
   try {
     recoveries = await prisma.refundRecovery.findMany({
-      where: { status: { in: ["PENDING", "PARTIALLY_RECOVERED"] } },
+      where: { status: { in: ["PENDING", "PARTIALLY_RECOVERED", "OVERDUE"] } },
       take: BATCH_SIZE,
       orderBy: { dueAt: "asc" },
       include: {
@@ -73,45 +73,58 @@ async function processRefundDebtEnforcement() {
         continue;
       }
 
+      const alreadyOverdue = String(row.status) === "OVERDUE";
+      const alreadyBlocked = Boolean(row.provider?.refundDebtBlockedAt) && Boolean(row.provider?.blocked);
+
       await prisma.$transaction(async (tx) => {
         await tx.refundRecovery.update({
           where: { id: row.id },
           data: {
             status: "OVERDUE",
-            legalActionAt: now,
+            legalActionAt: row.legalActionAt || now,
             updatedAt: now,
           },
         });
-        await tx.provider.update({
-          where: { id: row.providerId },
-          data: {
-            blocked: true,
-            blockedReason: REFUND_DEBT_BLOCK_REASON,
-            blockedAt: now,
-            refundDebtBlockedAt: now,
-          },
+        if (!alreadyBlocked) {
+          await tx.provider.update({
+            where: { id: row.providerId },
+            data: {
+              blocked: true,
+              blockedReason: REFUND_DEBT_BLOCK_REASON,
+              blockedAt: row.provider?.blockedAt || now,
+              refundDebtBlockedAt: row.provider?.refundDebtBlockedAt || now,
+            },
+          });
+        }
+      });
+
+      if (!alreadyOverdue) {
+        await notificationEvents.notifyProviderRefundDebtOverdue(row.provider.userId, balance);
+        await notificationEvents.notifyAccountBlocked(row.provider.user.id, REFUND_DEBT_BLOCK_REASON);
+        await notificationEvents.notifyAdminRefundDebtOverdue(row.provider.userId, balance);
+        if (row.job?.customerId) {
+          await notificationEvents.notifyCustomerRefundDebtOverdue(
+            row.job.customerId,
+            row.job.id,
+            balance
+          );
+        }
+        await logAudit(AUDIT_ACTIONS.PROVIDER_REPAYMENT_OVERDUE, {
+          actorType: ACTOR_TYPES.SYSTEM,
+          entityType: ENTITY_TYPES.PROVIDER,
+          entityId: row.providerId,
+          newValue: { recoveryId: row.id, balance },
         });
-      });
-
-      await notificationEvents.notifyProviderRefundDebtOverdue(row.provider.userId, balance);
-      await notificationEvents.notifyAccountBlocked(row.provider.user.id, REFUND_DEBT_BLOCK_REASON);
-      await notificationEvents.notifyAdminRefundDebtOverdue(row.provider.userId, balance);
-      if (row.job?.customerId) {
-        await notificationEvents.notifyCustomerRefundDebtOverdue(
-          row.job.customerId,
-          row.job.id,
-          balance
-        );
+        if (!alreadyBlocked) {
+          await logAudit(AUDIT_ACTIONS.PROVIDER_RESTRICTION_APPLIED, {
+            actorType: ACTOR_TYPES.SYSTEM,
+            entityType: ENTITY_TYPES.PROVIDER,
+            entityId: row.providerId,
+            newValue: { reason: "overdue_refund_debt", recoveryId: row.id, balance },
+          });
+        }
+        stats.blocked++;
       }
-
-      await logAudit(AUDIT_ACTIONS.ADMIN_PROVIDER_BLOCKED, {
-        actorType: ACTOR_TYPES.SYSTEM,
-        entityType: ENTITY_TYPES.PROVIDER,
-        entityId: row.providerId,
-        newValue: { reason: "overdue_refund_debt", recoveryId: row.id, balance },
-      });
-
-      stats.blocked++;
     } catch (e) {
       stats.errors++;
       console.error("[refundDebtEnforcement] row failed", row.id, e?.message || e);

@@ -1,6 +1,7 @@
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const { parseCameraAssist } = require("../utils/measurements");
 const { randomUUID } = require("crypto");
 const {
@@ -23,6 +24,7 @@ const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
+const jobDeletePolicy = require("../utils/jobDeletePolicy.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
 const { expandLaborPricingFromPaidJob, isProviderAvailable } = require("./provider.service");
 const { assertCustomerNotBlocked } = require("./accountStatus.service");
@@ -423,11 +425,8 @@ function assertProviderOwnsJob(job, actorUserId) {
 }
 
 async function createJob(userId, body) {
-  const customer = await prisma.user.findUnique({
-    where: { id: String(userId) },
-    select: { blocked: true },
-  });
-  assertCustomerNotBlocked(customer);
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerCanStartPaidTransaction(userId);
 
   const { title, description, price, category, location, width, height, length, area, images, measurements, materials, selectedProviderId } = body;
 
@@ -593,6 +592,7 @@ async function createJob(userId, body) {
   const enriched = await finalizeJob(job, normalizeMeta(job.meta));
   if (job.providerId) {
     await notificationEvents.notifyJobRequest(job.providerId, job.id, job.title);
+    emitDomainUpdate({ domain: "job", action: "created", jobId: job.id, userIds: [job.providerId] });
   }
   return enriched;
 }
@@ -724,6 +724,8 @@ async function acceptJob(jobId, userId) {
   if (providerProfile) {
     const refundRecovery = require("./refundRecovery.service");
     await refundRecovery.assertProviderNoOverdueRefundDebt(providerProfile.id);
+    const { assertLegalCurrent } = require("./legalAcceptance.service");
+    await assertLegalCurrent(userId, "PROVIDER");
   }
 
   await assertProviderCanActOnPendingJob(jobId, userId);
@@ -764,6 +766,7 @@ async function acceptJob(jobId, userId) {
   const enriched = await finalizeJob(updated, meta);
   if (updated.customerId) {
     await notificationEvents.notifyJobAccepted(updated.customerId, jobId, updated.title);
+    emitDomainUpdate({ domain: "job", action: "status-changed", jobId, userIds: [updated.customerId] });
   }
   return enriched;
 }
@@ -1166,6 +1169,24 @@ async function finalizeJob(job, meta) {
   }
 
   const base = enrichJob(workingJob, workingMeta);
+  let completionPaymentDue = base.completionPaymentDue;
+  try {
+    const obligationService = require("./customerPaymentObligation.service");
+    const row = await obligationService.getOpenObligationForJob(workingJob.id);
+    if (row) {
+      const display = obligationService.deriveDisplayStatus(row);
+      completionPaymentDue = {
+        ...(completionPaymentDue || {}),
+        amountDue: Number(row.amount),
+        dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
+        status: display,
+        obligationId: row.id,
+        source: row.source,
+      };
+    }
+  } catch (_e) {
+    /* table may be absent before migration */
+  }
   const slug = String(base.category || "").trim();
   const {
     requiresInspection,
@@ -1185,6 +1206,7 @@ async function finalizeJob(job, meta) {
 
   return {
     ...base,
+    completionPaymentDue,
     requiresInspection,
     requiresMaterials,
     categoryStep3Type,
@@ -1209,6 +1231,14 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
   }
   if (String(status) === "AWAITING_CONFIRMATION") {
     const metaBefore = await getJobMeta(jobId);
+    const jobMarkComplete = require("../utils/jobMarkComplete.util");
+    jobMarkComplete.assertNotAlreadyAwaitingConfirmation(toFrontendStatus(job.status, metaBefore));
+    const cancellationPolicy = require("../utils/jobCancellationPolicy.util");
+    await cancellationPolicy.assertNoBlockingAdminCompletionPayment(
+      job,
+      metaBefore,
+      cancellationPolicy.ADMIN_PAYMENT_MARK_COMPLETE_BLOCKED_MSG
+    );
     const isCourier = Boolean(metaBefore?.courierFlow);
     const laborPaid = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);
     const allowsUnpaidComplete =
@@ -1242,6 +1272,7 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
   const result = await finalizeJob(updatedJob, meta);
   if (String(status) === "INSPECTED" && job.customerId) {
     await notificationEvents.notifyInspectionCompleted(job.customerId, jobId, job.title);
+    emitDomainUpdate({ domain: "job", action: "status-changed", jobId, userIds: [job.customerId] });
   }
   if (String(status) === "AWAITING_CONFIRMATION" && job.customerId) {
     const paymentModeService = require("./payments/paymentMode.service");
@@ -1258,6 +1289,19 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
     }
     if (job.providerId) {
       await notificationEvents.notifyJobMarkedComplete(job.providerId, jobId, job.title);
+    }
+    emitDomainUpdate({
+      domain: "job",
+      action: "status-changed",
+      jobId,
+      userIds: [job.customerId, job.providerId].filter(Boolean),
+    });
+    const obligationService = require("./customerPaymentObligation.service");
+    const jobAfter = await prisma.job.findUnique({ where: { id: jobId } });
+    if (jobAfter) {
+      await obligationService.ensureObligationForJobIfPaymentDue(jobAfter, meta, {
+        source: "COMPLETION_WORKFLOW",
+      });
     }
   }
   return result;
@@ -1281,6 +1325,9 @@ async function deleteJob(jobId, actorUserId, actorRole) {
   } else {
     throw new AppError("Forbidden", 403);
   }
+
+  const meta = await getJobMeta(jobId);
+  jobDeletePolicy.assertRefundSettledForDelete(meta);
 
   // Soft-hide for this actor only — do not delete the job row (other party keeps it).
   await mutateJobMeta(jobId, (m) => {
@@ -1518,11 +1565,13 @@ async function submitServicePrice(jobId, amount, note, providerUserId) {
     const again = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
     if (job.customerId) {
       await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
+      emitDomainUpdate({ domain: "job", action: "updated", jobId, userIds: [job.customerId] });
     }
     return finalizeJob(again, progressed);
   }
   if (job.customerId) {
     await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
+    emitDomainUpdate({ domain: "job", action: "updated", jobId, userIds: [job.customerId] });
   }
   return finalizeJob(jobFresh || updated, metaFresh || meta);
 }
@@ -1654,6 +1703,12 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
       "The customer paid for labor / service.",
       "labor"
     );
+    emitDomainUpdate({
+      domain: "payment",
+      action: "paid",
+      jobId,
+      userIds: [job.providerId],
+    });
   }
   return enriched;
 }
@@ -1853,6 +1908,7 @@ async function deleteCancelledRequestFromProviderView(jobId, actorUserId) {
   if (String(job.providerId || "") !== String(actorUserId)) {
     throw new AppError("Forbidden", 403);
   }
+  jobDeletePolicy.assertRefundSettledForDelete(meta);
   await mutateJobMeta(jobId, (m) => ({
     ...m,
     dismissedFromProviderInbox: [
@@ -2123,11 +2179,14 @@ async function proposeNewLaborPrice(jobId, amount, reason, actorUserId) {
   const enriched = await finalizeJob(job, meta);
   if (job.customerId) {
     await notificationEvents.notifyPriceSubmitted(job.customerId, jobId, job.title);
+    emitDomainUpdate({ domain: "job", action: "updated", jobId, userIds: [job.customerId] });
   }
   return enriched;
 }
 
 async function acceptProposedPrice(jobId, actorUserId) {
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerCanStartPaidTransaction(actorUserId);
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   assertCustomerOwnsJob(job, actorUserId);
@@ -2149,6 +2208,7 @@ async function acceptProposedPrice(jobId, actorUserId) {
   const enriched = await finalizeJob(job, meta);
   if (hadProposal && job.providerId) {
     await notificationEvents.notifyProposedPriceAccepted(job.providerId, jobId, job.title);
+    emitDomainUpdate({ domain: "job", action: "updated", jobId, userIds: [job.providerId] });
   }
   return enriched;
 }
@@ -2364,6 +2424,12 @@ async function cancelJob(jobId, reason, details, actorUserId, actorRole) {
   if (Number(refundAmount) > 0) {
     await notificationEvents.notifyCustomerRefundProcessed(job.customerId, jobId, refundAmount);
   }
+  emitDomainUpdate({
+    domain: "job",
+    action: "cancelled",
+    jobId,
+    userIds: [job.customerId, job.providerId].filter(Boolean),
+  });
 
   if (
     Boolean(preMeta?.courierFlow) &&
@@ -2671,6 +2737,19 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
       await notificationEvents.notifyPaymentReleased(job.providerId, jobId, job.title);
     }
   }
+
+  emitDomainUpdate({
+    domain: "job",
+    action: "completed",
+    jobId,
+    userIds: [job.customerId, job.providerId].filter(Boolean),
+  });
+  emitDomainUpdate({
+    domain: "earnings",
+    action: "updated",
+    jobId,
+    userIds: [job.providerId].filter(Boolean),
+  });
 
   const finalMeta = await getJobMeta(jobId);
   return await finalizeJob(updated, finalMeta);
@@ -3596,6 +3675,18 @@ async function releaseEscrowPayment(jobId, amount, idempotencyKey, requestHash, 
     newValue: { jobId, amount: release, providerId: providerRow.id },
   });
   await notificationEvents.notifyAdminEscrowReleased(job.providerId, jobId, job.title, release);
+  emitDomainUpdate({
+    domain: "payment",
+    action: "paid",
+    jobId,
+    userIds: [job.providerId, job.customerId].filter(Boolean),
+  });
+  emitDomainUpdate({
+    domain: "earnings",
+    action: "updated",
+    jobId,
+    userIds: [job.providerId].filter(Boolean),
+  });
 
   return finalizeJob(jobRow, meta);
 }

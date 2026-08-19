@@ -2,6 +2,18 @@
 
 export type UserRole = 'user' | 'provider' | 'admin' | 'supplier' | 'branch_staff';
 
+export interface LegalAcceptanceStatus {
+  current: boolean;
+  staleDocuments?: string[];
+  requiredDocuments?: Array<{
+    key: string;
+    label: string;
+    currentVersion: string;
+    acceptedVersion: string | null;
+    stale: boolean;
+  }>;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -12,6 +24,9 @@ export interface User {
   createdAt: string;
   blocked?: boolean;
   blockedReason?: string;
+  marketplaceRestricted?: boolean;
+  marketplaceRestrictedReason?: string;
+  legalStatus?: LegalAcceptanceStatus;
 }
 
 export interface WorkPost {
@@ -141,6 +156,7 @@ export interface Provider {
   blockedReason?: string;
   blockedAt?: string;
   refundDebtBlockedAt?: string;
+  legalStatus?: LegalAcceptanceStatus;
   rejectionReason?: string;
   rejectedAt?: string;
   deletedAt?: string;
@@ -246,6 +262,7 @@ export interface SupplierUser {
   role: 'supplier';
   createdAt: string;
   supplierProfile: SupplierAccountProfile | null;
+  legalStatus?: LegalAcceptanceStatus;
 }
 
 export interface BranchStaffUser {
@@ -775,6 +792,9 @@ export interface Job {
   completionPaymentDue?: {
     amountDue: number;
     dueAt: string | null;
+    status?: 'NOT_DUE' | 'DUE' | 'PAID' | 'OVERDUE' | 'CANCELLED' | string;
+    obligationId?: string | null;
+    source?: string | null;
     resolutionLogId?: string | null;
     createdAt?: string | null;
     notifiedAt?: string | null;
@@ -1330,6 +1350,8 @@ export interface AdminCustomerListItem {
   profileImage: string | null;
   authProvider: string;
   blocked: boolean;
+  marketplaceRestricted?: boolean;
+  marketplaceRestrictedReason?: string | null;
   deletedAt: string | null;
   city: string | null;
   registeredAt: string;
@@ -1375,4 +1397,13 @@ export interface AdminCustomerDetail extends AdminCustomerListItem {
   topMaterialStore: AdminCustomerMaterialStore | null;
   materialStores: AdminCustomerMaterialStore[];
   jobs: AdminCustomerJobRow[];
+  paymentObligations?: Array<{
+    id: string;
+    jobId: string;
+    amountDue: number;
+    dueAt: string;
+    status: string;
+    displayStatus?: string;
+    source?: string;
+  }>;
 }

@@ -40,6 +40,12 @@ interface BackendUser {
   reviewSubmittedAt?: string;
   rejectionReason?: string;
   rejectedAt?: string;
+  marketplaceRestricted?: boolean;
+  marketplaceRestrictedReason?: string | null;
+  legalStatus?: {
+    current: boolean;
+    staleDocuments?: string[];
+  };
   supplierProfile?: SupplierAccountProfile | null;
   completedLaborByCategory?: Provider['completedLaborByCategory'];
 }
@@ -149,6 +155,7 @@ function toAuthUser(user: BackendUser): AuthUser {
       blockedReason: user.blockedReason || undefined,
       blockedAt: user.blockedAt || undefined,
       refundDebtBlockedAt: user.refundDebtBlockedAt || undefined,
+      legalStatus: user.legalStatus,
       reviewSubmittedAt: user.reviewSubmittedAt,
       rejectionReason: user.rejectionReason || undefined,
       rejectedAt: user.rejectedAt || undefined,
@@ -169,6 +176,7 @@ function toAuthUser(user: BackendUser): AuthUser {
       role: 'supplier',
       createdAt: user.createdAt ?? new Date().toISOString(),
       supplierProfile: user.supplierProfile ?? null,
+      legalStatus: user.legalStatus,
     };
     return su;
   }
@@ -196,6 +204,9 @@ function toAuthUser(user: BackendUser): AuthUser {
     createdAt: user.createdAt ?? new Date().toISOString(),
     blocked: Boolean(user.blocked),
     blockedReason: user.blockedReason || undefined,
+    marketplaceRestricted: Boolean(user.marketplaceRestricted),
+    marketplaceRestrictedReason: user.marketplaceRestrictedReason || undefined,
+    legalStatus: user.legalStatus,
   };
 }
 

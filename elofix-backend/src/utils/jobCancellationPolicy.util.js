@@ -84,6 +84,35 @@ function mapActorRole(role) {
   return null;
 }
 
+const ADMIN_PAYMENT_CANCEL_BLOCKED_MSG =
+  "This job cannot be cancelled while an outstanding admin-required payment is due.";
+const ADMIN_PAYMENT_MARK_COMPLETE_BLOCKED_MSG =
+  "Cannot mark complete while an outstanding admin-required payment is due.";
+
+async function assertNoBlockingAdminCompletionPayment(
+  job,
+  meta,
+  message = ADMIN_PAYMENT_CANCEL_BLOCKED_MSG
+) {
+  const obligationService = require("../services/customerPaymentObligation.service");
+  const open = await obligationService.getOpenObligationForJob(job.id);
+  if (open && String(open.source || "").toUpperCase() === "ADMIN_RELEASE") {
+    throw new AppError(message, 400);
+  }
+
+  const due = meta?.completionPaymentDue;
+  if (due && typeof due === "object" && due.resolutionLogId) {
+    const amountDue = Number(due.amountDue) || 0;
+    if (amountDue > 0) {
+      throw new AppError(message, 400);
+    }
+  }
+}
+
+async function assertAdminRequiredPaymentAllowsCancel(job, meta) {
+  return assertNoBlockingAdminCompletionPayment(job, meta, ADMIN_PAYMENT_CANCEL_BLOCKED_MSG);
+}
+
 /**
  * Resolve who is cancelling and what refund applies before the job is marked cancelled.
  */
@@ -107,6 +136,8 @@ async function resolveJobCancellationPolicy(job, meta, actorUserId, actorRole) {
   if (actor === "provider" && String(job.providerId) !== String(actorUserId)) {
     throw new AppError("Forbidden", 403);
   }
+
+  await assertAdminRequiredPaymentAllowsCancel(job, meta);
 
   await assertCourierCancellationAllowed(job, meta, actorRole);
 
@@ -163,7 +194,11 @@ async function resolveJobCancellationPolicy(job, meta, actorUserId, actorRole) {
 module.exports = {
   EN_ROUTE_COURIER_FULFILLMENT,
   COURIER_POST_PICKUP_FULFILLMENT,
+  ADMIN_PAYMENT_CANCEL_BLOCKED_MSG,
+  ADMIN_PAYMENT_MARK_COMPLETE_BLOCKED_MSG,
   assertCourierCancellationAllowed,
+  assertNoBlockingAdminCompletionPayment,
+  assertAdminRequiredPaymentAllowsCancel,
   getCourierCancellationBlockedMessage,
   isLaborPaid,
   isProviderEnRouteToService,

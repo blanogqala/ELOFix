@@ -197,7 +197,14 @@ async function testConfirmMatchingRepayment(refundRecovery, fixtures) {
   }
   assert.strictEqual(blockedProcess, true, "process customer refund before confirm must fail");
 
-  await refundRecovery.confirmAdminRefundRepayment(adminUser.id, row.id);
+  const confirmed = await refundRecovery.confirmAdminRefundRepayment(adminUser.id, row.id);
+  assert.ok(confirmed && confirmed.repayment, "confirm should return repayment wrapper");
+  assert.ok(confirmed.customerRefund, "confirm should include customerRefund payout outcome");
+  assert.strictEqual(
+    confirmed.customerRefund.status,
+    "NONE",
+    "fixtures without a job should not invent a leftover payout"
+  );
 
   const summary = await refundRecovery.getProviderRefundDebtSummary(provider.id);
   assert.ok(summary.totalOwed <= 1e-6, "full confirm should clear debt");
@@ -407,8 +414,29 @@ async function runDbIntegrationTests() {
 }
 
 async function main() {
+  const refundRecovery = require("../src/services/refundRecovery.service");
+  assert.strictEqual(
+    refundRecovery.summarizeCustomerRefundPayoutResults([{ status: "REFUND_COMPLETED" }]),
+    "REFUND_COMPLETED"
+  );
+  assert.strictEqual(
+    refundRecovery.summarizeCustomerRefundPayoutResults([
+      { status: "REFUND_COMPLETED" },
+      { status: "REFUND_FAILED" },
+    ]),
+    "REFUND_FAILED"
+  );
+  assert.strictEqual(
+    refundRecovery.summarizeCustomerRefundPayoutResults([
+      { status: "REFUND_MANUAL_ACTION_REQUIRED" },
+    ]),
+    "REFUND_MANUAL_ACTION_REQUIRED"
+  );
+  assert.strictEqual(refundRecovery.summarizeCustomerRefundPayoutResults([]), "NONE");
+  console.log("refundRepayment.test.js: summarizeCustomerRefundPayoutResults OK");
+
   if (!process.env.DATABASE_URL) {
-    console.log("refundRepayment.test.js: skipped (no DATABASE_URL)");
+    console.log("refundRepayment.test.js: skipped DB integration (no DATABASE_URL)");
     return;
   }
   await runDbIntegrationTests();

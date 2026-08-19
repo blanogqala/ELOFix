@@ -1,13 +1,13 @@
 /** Legal document versions — must match elofix-backend/src/config/legalVersions.js */
 export const LEGAL_VERSIONS = {
-  terms: '2026-08-18',
+  terms: '2026-08-18-r2',
   privacy: '2026-08-18',
-  providerAgreement: '2026-08-18',
-  refundPolicy: '2026-08-18',
+  providerAgreement: '2026-08-18-r2',
+  refundPolicy: '2026-08-18-r2',
   jobCompletionVerification: '2026-08-18',
-  escrowPolicy: '2026-08-18',
-  disputeResolution: '2026-08-18',
-  adminInvestigation: '2026-08-18',
+  escrowPolicy: '2026-08-18-r2',
+  disputeResolution: '2026-08-18-r2',
+  adminInvestigation: '2026-08-18-r2',
   correctiveWork: '2026-08-18',
   portfolioContentRights: '2026-08-18',
   providerVerification: '2026-08-18',
@@ -20,7 +20,7 @@ export const LEGAL_VERSIONS = {
   communityStandards: '2026-08-18',
   cookiePolicy: '2026-08-18',
   platformActivityRecords: '2026-08-18',
-  deliveryPolicy: '2026-08-18',
+  deliveryPolicy: '2026-08-18-r2',
 } as const;
 
 export type LegalDocumentId =

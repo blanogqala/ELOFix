@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveProviderRefundDisplay,
   resolveCustomerRefundDisplay,
+  isJobRefundUnsettled,
+  getRefundBlocksDeleteMessage,
   PAYMENTS_NAV_TYPES,
 } from '@/lib/refundStatusDisplay';
 import { hasPaymentsNavActivity } from '@/lib/jobActivityIndicators';
@@ -55,11 +57,30 @@ describe('resolveProviderRefundDisplay', () => {
 });
 
 describe('resolveCustomerRefundDisplay', () => {
-  it('shows pending from pendingRefund', () => {
+  it('shows processing after provider repayment is verified', () => {
+    const d = resolveCustomerRefundDisplay({
+      refundAmount: 232.5,
+      refundDetails: { pendingRefund: 232.5, immediateRefund: 0 },
+      customerRefundStatus: 'REFUND_MANUAL_ACTION_REQUIRED',
+    });
+    expect(d.mode).toBe('processing');
+    expect(d.label).toBe('Refund processing');
+  });
+
+  it('shows processing for READY', () => {
     const d = resolveCustomerRefundDisplay({
       refundAmount: 697.5,
       refundDetails: { pendingRefund: 697.5, immediateRefund: 0 },
       customerRefundStatus: 'READY',
+    });
+    expect(d.mode).toBe('processing');
+    expect(d.label).toBe('Refund processing');
+  });
+
+  it('shows pending when recovery is still waiting on the provider', () => {
+    const d = resolveCustomerRefundDisplay({
+      refundAmount: 232.5,
+      refundDetails: { pendingRefund: 232.5, immediateRefund: 0 },
     });
     expect(d.mode).toBe('pending');
     expect(d.label).toBe('Refund pending');
@@ -74,6 +95,67 @@ describe('resolveCustomerRefundDisplay', () => {
     });
     expect(d.mode).toBe('completed');
     expect(d.label).toBe('Refunded');
+  });
+});
+
+describe('isJobRefundUnsettled', () => {
+  it('blocks delete when refund is pending', () => {
+    expect(
+      isJobRefundUnsettled({
+        refundAmount: 232.5,
+        refundDetails: { pendingRefund: 232.5, immediateRefund: 0 },
+      })
+    ).toBe(true);
+  });
+
+  it('blocks delete while customer refund is still processing', () => {
+    expect(
+      isJobRefundUnsettled({
+        refundAmount: 232.5,
+        refundDetails: { pendingRefund: 232.5, immediateRefund: 0 },
+        customerRefundStatus: 'REFUND_MANUAL_ACTION_REQUIRED',
+      })
+    ).toBe(true);
+  });
+
+  it('blocks delete when refund failed', () => {
+    expect(
+      isJobRefundUnsettled({
+        refundAmount: 232.5,
+        customerRefundStatus: 'REFUND_FAILED',
+      })
+    ).toBe(true);
+  });
+
+  it('blocks delete when provider still owes clawback', () => {
+    expect(
+      isJobRefundUnsettled({
+        customerRefundStatus: 'REFUND_COMPLETED',
+        refundDetails: { pendingRefund: 0, immediateRefund: 232.5 },
+        providerRefundDebt: 232.5,
+      })
+    ).toBe(true);
+  });
+
+  it('allows delete when refund is completed and no provider debt', () => {
+    expect(
+      isJobRefundUnsettled({
+        refundAmount: 232.5,
+        customerRefundStatus: 'REFUND_COMPLETED',
+        refundDetails: { pendingRefund: 0, immediateRefund: 232.5 },
+        providerRefundDebt: 0,
+      })
+    ).toBe(false);
+  });
+
+  it('allows delete when there is no refund', () => {
+    expect(isJobRefundUnsettled({})).toBe(false);
+  });
+
+  it('returns the shared delete-block message', () => {
+    expect(getRefundBlocksDeleteMessage()).toBe(
+      'This job cannot be removed until the pending refund is fully settled.'
+    );
   });
 });
 

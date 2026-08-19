@@ -181,6 +181,11 @@ async function settleLaborTransactionInTx(
     data: statusPatch,
   });
 
+  if (isCompletionPay) {
+    const obligationService = require("../customerPaymentObligation.service");
+    await obligationService.markObligationPaidForJob(jobId, tx);
+  }
+
   return {
     jobRow,
     meta,
@@ -189,6 +194,7 @@ async function settleLaborTransactionInTx(
     paymentType: type,
     nextProgress,
     notifyDepositPaid: isDeposit,
+    obligationPaidCustomerId: isCompletionPay ? String(customerUserId) : null,
   };
 }
 
@@ -315,6 +321,7 @@ async function settleLaborFromIntent(tx, intent, gatewayPayload) {
     alreadySettled: false,
     job: result.jobRow,
     notifyDepositPaid: Boolean(result.notifyDepositPaid),
+    obligationPaidCustomerId: result.obligationPaidCustomerId || null,
     settledAudit: {
       intentId: intent.id,
       userId: intent.userId,

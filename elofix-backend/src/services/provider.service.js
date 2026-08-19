@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const notificationEvents = require("./notificationEvents.service");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const fraudDetection = require("./fraudDetection.service");
 const providerTrustScore = require("./providerTrustScore.service");
 const { logAudit } = require("./auditLog.service");
@@ -1418,6 +1419,7 @@ async function approveProviderByUserId(targetUserId, auditOpts = {}) {
   });
 
   await notificationEvents.notifyProviderApproved(targetUserId);
+  emitDomainUpdate({ domain: "profile", action: "updated", entityId: targetUserId, userIds: [targetUserId], adminRoom: true });
 
   await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_APPROVED, {
     userId: auditOpts.userId,
@@ -1458,6 +1460,7 @@ async function rejectProviderByUserId(targetUserId, reason, auditOpts = {}) {
   });
 
   await notificationEvents.notifyProviderApplicationRejected(targetUserId, trimmedReason);
+  emitDomainUpdate({ domain: "profile", action: "updated", entityId: targetUserId, userIds: [targetUserId], adminRoom: true });
 
   await logAudit(AUDIT_ACTIONS.VERIFICATION_PROVIDER_REJECTED, {
     userId: auditOpts.userId,
@@ -1512,6 +1515,7 @@ async function unrejectProviderByUserId(targetUserId, auditOpts = {}) {
   });
 
   await notificationEvents.notifyProviderApplicationUnrejected(targetUserId);
+  emitDomainUpdate({ domain: "profile", action: "updated", entityId: targetUserId, userIds: [targetUserId], adminRoom: true });
 
   return getProviderById(targetUserId);
 }
@@ -1545,6 +1549,7 @@ async function blockProviderByUserId(targetUserId, auditOpts = {}) {
 
   const notificationEvents = require("./notificationEvents.service");
   await notificationEvents.notifyAccountBlocked(targetUserId, reason);
+  emitDomainUpdate({ domain: "profile", action: "restricted", entityId: targetUserId, userIds: [targetUserId], adminRoom: true });
 
   return getProviderById(targetUserId);
 }
@@ -1578,6 +1583,7 @@ async function unblockProviderByUserId(targetUserId, auditOpts = {}) {
 
   const notificationEvents = require("./notificationEvents.service");
   await notificationEvents.notifyAccountUnblocked(targetUserId);
+  emitDomainUpdate({ domain: "profile", action: "unrestricted", entityId: targetUserId, userIds: [targetUserId], adminRoom: true });
 
   return getProviderById(targetUserId);
 }

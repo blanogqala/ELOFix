@@ -49,7 +49,7 @@ export const termsOfService: LegalDocument = {
         '"Branch User" means staff authorised to act on behalf of a Supplier branch.',
         '"Job" means a service engagement arranged between a Customer and a Provider through EloFix.',
         '"Materials" means products ordered through participating EloFix Suppliers in connection with a Job or store checkout.',
-        '"Payment Schedule" means the staged or single payment model applicable to a Job or order, including payment milestones and status, as described in the Payment Schedule and Transparency Policy. EloFix records applicable commissions and recipient shares; actual bank settlement depends on the applicable payment service provider and settlement configuration.',
+        '"Payment Schedule" means the applicable labor payment mode for a Job (TWO_PAYMENT_50_50, SINGLE_PAYMENT_UPFRONT, or SINGLE_PAYMENT_ON_COMPLETION) or the payment model for an order, including payment milestones and status, as described in the Payment Schedule and Transparency Policy. EloFix records applicable commissions and recipient shares; actual bank settlement depends on the applicable payment service provider and settlement configuration. Customer payment timing is not the same as provider settlement timing.',
         '"Dispute" means a formal disagreement raised through the Platform regarding Job completion or payment.',
         '"Trust Score" means EloFix\'s internal reputation metric for Providers as described in the Provider Reputation Policy.',
         '"Admin" means an authorised EloFix administrator.',
@@ -89,8 +89,10 @@ export const termsOfService: LegalDocument = {
       title: '7. Payments and Fees',
       content: [
         'Customers authorize EloFix and its applicable third-party payment service providers to process charges for Jobs, materials, delivery, and applicable platform fees.',
-        'EloFix charges a platform commission of 7% on labor and materials transactions as further described in the Payment Schedule and Transparency Policy.',
+        'The current contractual EloFix platform commission is 7% on collected labor and materials transactions as further described in the Payment Schedule and Transparency Policy.',
         'Provider and Supplier shares are recorded according to the Platform payment model. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible funds may be settled to a nominated verified bank account. Recording a share is not the same as depositing cash into a bank account.',
+        'If an outstanding customer service balance becomes payable, it is due within 30 calendar days. Failure to settle an outstanding amount within 30 calendar days may result in restrictions on new marketplace transactions, account suspension or blocking, referral for lawful debt recovery, and further legal action where appropriate. Login remains available so the Customer can pay the outstanding amount and contact EloFix.',
+        'EloFix does not operate an account-credit, store-credit, wallet-credit, or EloFix-credit product.',
         'All prices, fees, and taxes are displayed or communicated before payment confirmation where required by the Consumer Protection Act 68 of 2008 (CPA) and ECTA.',
       ],
     },
@@ -165,8 +167,8 @@ export const termsOfService: LegalDocument = {
       id: 'changes',
       title: '16. Changes to These Terms',
       content: [
-        'We may update these Terms from time to time. When we make material changes, we will update the effective date and version and may require renewed acceptance before continued use.',
-        'Your continued use after changes become effective constitutes acceptance of the updated Terms, unless additional consent is required by law or by Platform notice.',
+        'We may update these Terms from time to time. When we make material changes, we will update the effective date and version and may require renewed acceptance before new marketplace transactions. You may still log in, view existing Jobs and disputes, settle outstanding payments, and access legal and contact pages.',
+        'Your electronic acceptance of the updated documents is recorded. Previous acceptance records are retained.',
       ],
     },
     {

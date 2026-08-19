@@ -7,6 +7,11 @@ import {
   getProviderStatusBadgeVariant,
 } from '@/lib/jobStatusMapping';
 import { getCourierJobDisplayStatusLabel, getCourierTimelineStepIndex } from '@/lib/courierJobTimeline';
+import {
+  getAdminCompletionPaymentStatusLabel,
+  isAdminRequiredCompletionPayment,
+  isCompletionPaymentOverdue,
+} from '@/lib/completionPaymentDue';
 
 /** Re-export canonical six timeline labels (Provider & Customer). */
 export const JOB_TIMELINE_LABELS = UNIFIED_TIMELINE_STEPS;
@@ -29,6 +34,9 @@ export function getJobDisplayStatusLabel(job: Job): string {
     }
     return 'Disputed';
   }
+  if (isAdminRequiredCompletionPayment(job)) {
+    return getAdminCompletionPaymentStatusLabel(job);
+  }
   if (job.courierFlow) {
     return getCourierJobDisplayStatusLabel(job);
   }
@@ -39,6 +47,9 @@ export function getJobDisplayStatusLabel(job: Job): string {
 }
 
 export function getUserJobBadgeClassForJob(job: Job): string {
+  if (isAdminRequiredCompletionPayment(job)) {
+    return isCompletionPaymentOverdue(job) ? 'status-cancelled' : 'status-assigned';
+  }
   if (job.status === 'CANCELLED' || job.status === 'REJECTED' || job.status === 'DISPUTED') {
     return getUserStatusBadgeClass(job.status);
   }

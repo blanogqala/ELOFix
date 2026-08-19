@@ -2,6 +2,7 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const supplierService = require("./supplier.service");
 const notificationService = require("./notification.service");
 const trackingService = require("./tracking.service");
@@ -679,11 +680,8 @@ async function createMaterialOrder(params) {
   const { prismaRow, order } = normalizeOrder(clean);
 
   if (prismaRow.userId) {
-    const customer = await prisma.user.findUnique({
-      where: { id: String(prismaRow.userId) },
-      select: { blocked: true },
-    });
-    assertCustomerNotBlocked(customer);
+    const obligationService = require("./customerPaymentObligation.service");
+    await obligationService.assertCustomerCanStartPaidTransaction(prismaRow.userId);
   }
 
   if (clean.paymentIntentId) {
@@ -2475,6 +2473,23 @@ async function updateMaterialOrderFulfillment(orderId, supplierId, nextStatus, o
           fulfillmentStatus: next,
           materialBatch: p.materialBatch,
         });
+        // Also emit domain:update to the provider linked to this order's job
+        try {
+          if (row.jobId) {
+            const orderJob = await prisma.job.findUnique({ where: { id: row.jobId }, select: { providerId: true } });
+            if (orderJob?.providerId) {
+              emitDomainUpdate({
+                domain: "material-order",
+                action: "status-changed",
+                orderId: String(orderId),
+                jobId: row.jobId,
+                userIds: [orderJob.providerId],
+              });
+            }
+          }
+        } catch (provEmitErr) {
+          console.error("postFulfillmentNotify provider emit", provEmitErr);
+        }
       }
       if (next === "OUT_FOR_DELIVERY") {
         const pay = enriched && typeof enriched === "object" ? enriched : {};

@@ -10,10 +10,12 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { useAdminActivityIndicators } from '@/hooks/useAdminActivityIndicators';
 import { useNavNotificationClearance } from '@/hooks/useNavNotificationClearance';
 import { useNotificationSocketSync } from '@/hooks/useNotificationSocketSync';
+import { useRealtimeDomainSync } from '@/hooks/useRealtimeDomainSync';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { getSupplierMe } from '@/lib/api/supplierPortal';
 import { ProfileAvatar } from '@/components/common/ProfileAvatar';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
+import { LegalReacceptanceModal } from '@/components/legal/LegalReacceptanceModal';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -232,6 +234,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     }
   }, [queryClient, refreshProfile, user?.id, user?.role]);
   useNotificationSocketSync({ onNotificationNew: handleNotificationNew });
+  useRealtimeDomainSync();
 
   useEffect(() => {
     if (user?.role !== 'provider' && user?.role !== 'user') return;
@@ -668,6 +671,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </main>
       </div>
+      <LegalReacceptanceModal />
     </div>
   );
 }

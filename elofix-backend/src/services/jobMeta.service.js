@@ -358,6 +358,9 @@ function enrichJob(job, meta) {
         ? {
             amountDue: Number(safeMeta.completionPaymentDue.amountDue) || 0,
             dueAt: safeMeta.completionPaymentDue.dueAt || null,
+            status: safeMeta.completionPaymentDue.status || "DUE",
+            obligationId: safeMeta.completionPaymentDue.obligationId || null,
+            source: safeMeta.completionPaymentDue.source || null,
             resolutionLogId: safeMeta.completionPaymentDue.resolutionLogId || null,
             createdAt: safeMeta.completionPaymentDue.createdAt || null,
             notifiedAt: safeMeta.completionPaymentDue.notifiedAt || null,

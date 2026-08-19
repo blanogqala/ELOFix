@@ -145,6 +145,7 @@ async function processWebhookResult(providerKey, verifyResult) {
             settledAudit,
             notifyDepositPaid: Boolean(laborSettleExtra?.notifyDepositPaid),
             laborJobId: fresh.jobId || null,
+            obligationPaidCustomerId: laborSettleExtra?.obligationPaidCustomerId || null,
           };
         }
 
@@ -257,6 +258,14 @@ async function processWebhookResult(providerKey, verifyResult) {
         }
       } catch (notifyErr) {
         console.error("[processWebhookResult] deposit notify failed", notifyErr);
+      }
+    }
+    if (result?.obligationPaidCustomerId) {
+      try {
+        const obligationService = require("../customerPaymentObligation.service");
+        await obligationService.afterObligationPaid(result.obligationPaidCustomerId);
+      } catch (clearErr) {
+        console.error("[processWebhookResult] obligation restriction clear failed", clearErr);
       }
     }
     if (result?.postSettleProviderRepayment && result?.intentId) {

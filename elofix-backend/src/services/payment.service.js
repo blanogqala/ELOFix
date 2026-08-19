@@ -2,6 +2,7 @@ const { randomUUID, createHmac, timingSafeEqual } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const earningService = require("./earning.service");
 const { mutateJobMetaInTransaction, getJobMeta, normalizeMeta } = require("./jobMeta.service");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
@@ -1168,6 +1169,22 @@ async function processPaystackWebhookBuffer(rawBuffer, signatureHeader) {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       }
     );
+    // Emit domain update after successful (non-duplicate) webhook settlement
+    if (inner && !inner.duplicate && inner.processed) {
+      try {
+        const settledJob = await prisma.job.findUnique({ where: { id: String(jobId) }, select: { customerId: true, providerId: true } });
+        if (settledJob) {
+          emitDomainUpdate({
+            domain: "payment",
+            action: "paid",
+            jobId: String(jobId),
+            userIds: [settledJob.customerId, settledJob.providerId].filter(Boolean),
+          });
+        }
+      } catch (emitErr) {
+        console.error("[payment.service] webhook emit error:", emitErr?.message || emitErr);
+      }
+    }
     return { httpStatus: 200, result: inner };
   } catch (e) {
     if (e instanceof AppError) {

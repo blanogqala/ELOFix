@@ -53,10 +53,11 @@ describe('legal identity and public documents', () => {
     expect(getLegalDocument('delivery-policy').title).toBe('Delivery & Collection Policy');
   });
 
-  it('bumps changed documents to 2026-08-18 and does not require delivery policy at signup', () => {
-    expect(LEGAL_VERSIONS.terms).toBe('2026-08-18');
-    expect(LEGAL_VERSIONS.refundPolicy).toBe('2026-08-18');
-    expect(LEGAL_VERSIONS.deliveryPolicy).toBe('2026-08-18');
+  it('bumps material workflow documents to 2026-08-18-r2 and does not require delivery policy at signup', () => {
+    expect(LEGAL_VERSIONS.terms).toBe('2026-08-18-r2');
+    expect(LEGAL_VERSIONS.refundPolicy).toBe('2026-08-18-r2');
+    expect(LEGAL_VERSIONS.deliveryPolicy).toBe('2026-08-18-r2');
+    expect(LEGAL_VERSIONS.privacy).toBe('2026-08-18');
     expect(getRequiredDocuments('user')).not.toContain('delivery-policy');
     expect(getRequiredDocuments('provider')).not.toContain('delivery-policy');
     expect(getRequiredDocuments('supplier')).not.toContain('delivery-policy');

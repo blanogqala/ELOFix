@@ -4,7 +4,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Input } from '@/components/ui/input';
 import { getJobs } from '@/lib/api/jobs';
 import { getCategories } from '@/lib/api/categories';
-import { getAdminCommissions } from '@/lib/api/admin';
+import { getAdminCommissions, getAdminPaymentObligations } from '@/lib/api/admin';
 import { Category, Job } from '@/types';
 import { DollarSign, Clock, CheckCircle, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -54,6 +54,12 @@ export default function AdminPayments() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<AdminPaymentStatusFilter>('all');
+  const [customerObligations, setCustomerObligations] = useState<
+    Awaited<ReturnType<typeof getAdminPaymentObligations>>['customerObligations']
+  >([]);
+  const [providerRefundDebts, setProviderRefundDebts] = useState<
+    Awaited<ReturnType<typeof getAdminPaymentObligations>>['providerRefundDebts']
+  >([]);
 
   useEffect(() => {
     void loadJobs();
@@ -83,6 +89,14 @@ export default function AdminPayments() {
         setCommissionBreakdown({ labor, material, total });
       } catch {
         setCommissionBreakdown({ labor: 0, material: 0, total: 0 });
+      }
+      try {
+        const debt = await getAdminPaymentObligations();
+        setCustomerObligations(debt.customerObligations);
+        setProviderRefundDebts(debt.providerRefundDebts);
+      } catch {
+        setCustomerObligations([]);
+        setProviderRefundDebts([]);
       }
     } catch (error) {
       console.error('Failed to load jobs:', error);
@@ -147,6 +161,61 @@ export default function AdminPayments() {
           <h1 className="text-2xl font-bold">Jobs Payments</h1>
           <p className="text-muted-foreground">Monitor escrow and payment transactions (ZAR)</p>
         </div>
+
+        {(customerObligations.length > 0 || providerRefundDebts.length > 0) && (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="card-elevated overflow-hidden">
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-semibold">Customer payment obligations</h2>
+              </div>
+              <div className="max-h-56 overflow-auto text-sm">
+                {customerObligations.slice(0, 20).map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-muted/40"
+                    onClick={() => navigate(`/admin/customers/${row.customerId}`)}
+                  >
+                    <span className="min-w-0 truncate">
+                      {row.customerName || row.customerEmail || row.customerId}
+                      {row.marketplaceRestricted ? ' · restricted' : ''}
+                    </span>
+                    <span className="shrink-0 tabular-nums">
+                      {formatCurrency(row.amountDue)} · {row.displayStatus || row.status}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="card-elevated overflow-hidden">
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-semibold">Provider refund debt</h2>
+              </div>
+              <div className="max-h-56 overflow-auto text-sm">
+                {providerRefundDebts.slice(0, 20).map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-muted/40"
+                    onClick={() =>
+                      row.providerUserId
+                        ? navigate(`/admin/providers/${row.providerUserId}`)
+                        : navigate('/admin/refund-repayments')
+                    }
+                  >
+                    <span className="min-w-0 truncate">
+                      {row.providerName || row.providerEmail || row.providerId}
+                      {row.restrictionActive ? ' · restricted' : ''}
+                    </span>
+                    <span className="shrink-0 tabular-nums">
+                      {formatCurrency(row.amountDue)} · {row.status}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="space-y-3">

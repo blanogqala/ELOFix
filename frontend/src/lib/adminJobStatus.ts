@@ -1,5 +1,9 @@
 import type { Job } from '@/types';
 import { ACTIVE_WORKFLOW_JOB_STATUSES } from '@/lib/jobStatusMapping';
+import {
+  getAdminCompletionPaymentStatusLabel,
+  isAdminRequiredCompletionPayment,
+} from '@/lib/completionPaymentDue';
 
 export type AdminJobStatusCounts = {
   total: number;
@@ -112,8 +116,6 @@ function isPartialRefundDisplay(job: Job): boolean {
 
 export function getAdminPaymentStatusDisplay(job: Job): { label: string; class: string } {
   const settlement = resolveAdminPaymentSettlementStatus(job);
-  if (settlement === 'released') return { label: 'Released', class: 'text-success' };
-  if (settlement === 'held') return { label: 'Held', class: 'text-warning' };
   if (settlement === 'refund') {
     if (job.status === 'CANCELLED') {
       return { label: 'Cancelled · refunded', class: 'text-destructive' };
@@ -123,5 +125,10 @@ export function getAdminPaymentStatusDisplay(job: Job): { label: string; class: 
       class: 'text-destructive',
     };
   }
+  if (isAdminRequiredCompletionPayment(job)) {
+    return { label: getAdminCompletionPaymentStatusLabel(job), class: 'text-warning' };
+  }
+  if (settlement === 'released') return { label: 'Released', class: 'text-success' };
+  if (settlement === 'held') return { label: 'Held', class: 'text-warning' };
   return { label: 'Pending', class: 'text-muted-foreground' };
 }

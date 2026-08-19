@@ -3,6 +3,11 @@ import { getJobPriceDisplay } from '@/lib/jobUtils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { cn } from '@/lib/utils';
 import { resolveCustomerRefundDisplay } from '@/lib/refundStatusDisplay';
+import {
+  getCompletionPaymentDueSummaryLine,
+  isAdminRequiredCompletionPayment,
+  isCompletionPaymentOverdue,
+} from '@/lib/completionPaymentDue';
 
 type Props = {
   job: Job;
@@ -29,7 +34,11 @@ export function JobPaymentListSummary({ job, className, showDate = false, compac
   } = display;
   const refundUi = resolveCustomerRefundDisplay(job);
   const processedRefund = refundUi.mode === 'completed';
-  const pendingRefund = refundUi.mode === 'pending';
+  const refundInFlight =
+    refundUi.mode === 'pending' || refundUi.mode === 'processing' || refundUi.mode === 'failed';
+  const adminPaymentRequired = isAdminRequiredCompletionPayment(job);
+  const adminPaymentOverdue = adminPaymentRequired && isCompletionPaymentOverdue(job);
+  const adminDueSummaryLine = getCompletionPaymentDueSummaryLine(job);
 
   const statusClass = isFullyPaid
     ? 'text-success'
@@ -43,21 +52,21 @@ export function JobPaymentListSummary({ job, className, showDate = false, compac
         {text}
         {processedRefund ? (
           <span className="ml-1 text-xs text-destructive">(Refunded)</span>
-        ) : pendingRefund ? (
-          <span className="ml-1 text-xs text-amber-700 dark:text-amber-200">(Refund pending)</span>
+        ) : refundInFlight ? (
+          <span className="ml-1 text-xs text-amber-700 dark:text-amber-200">({refundUi.label})</span>
         ) : paymentStatusLabel && (isFullyPaid || isPartialPaid) ? (
           <span className={cn('ml-1 text-xs font-medium', statusClass)}>({paymentStatusLabel})</span>
         ) : null}
       </p>
 
-      {(processedRefund || pendingRefund) && refundUi.amount > 0 ? (
+      {(processedRefund || refundInFlight) && refundUi.amount > 0 ? (
         <p className="mt-0.5 text-xs tabular-nums text-destructive">
-          {pendingRefund ? 'Refund pending' : 'Refunded'} {formatCurrency(refundUi.amount, { decimals: 2 })}
+          {processedRefund ? 'Refunded' : refundUi.label} {formatCurrency(refundUi.amount, { decimals: 2 })}
           {processedRefund ? ' ✓' : ''}
         </p>
       ) : null}
 
-      {!processedRefund && !pendingRefund && isPartialPaid && paidAmount != null && remainingAmount != null ? (
+      {!processedRefund && !refundInFlight && isPartialPaid && paidAmount != null && remainingAmount != null ? (
         <p className="mt-0.5 text-xs text-muted-foreground">
           <span className="tabular-nums">Paid {formatCurrency(paidAmount, { decimals: 2 })}</span>
           <span className="mx-1">·</span>
@@ -67,8 +76,30 @@ export function JobPaymentListSummary({ job, className, showDate = false, compac
         </p>
       ) : null}
 
-      {!processedRefund && !pendingRefund && isPartialPaid ? (
-        <p className="mt-0.5 text-[11px] font-medium text-primary">Payment remaining</p>
+      {!processedRefund && !refundInFlight && isPartialPaid ? (
+        <p
+          className={cn(
+            'mt-0.5 text-[11px] font-medium',
+            adminPaymentRequired
+              ? adminPaymentOverdue
+                ? 'text-destructive'
+                : 'text-warning'
+              : 'text-primary'
+          )}
+        >
+          {adminPaymentRequired ? 'Payment required' : 'Payment remaining'}
+        </p>
+      ) : null}
+
+      {adminDueSummaryLine ? (
+        <p
+          className={cn(
+            'mt-0.5 text-xs tabular-nums',
+            adminPaymentOverdue ? 'text-destructive font-medium' : 'text-muted-foreground'
+          )}
+        >
+          {adminDueSummaryLine}
+        </p>
       ) : null}
 
       {underAdminReview ? (

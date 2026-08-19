@@ -18,7 +18,7 @@ function refundLabel(status?: string): string {
   if (s === 'gateway_failed') return 'Refund recorded';
   if (s === 'partial_pending_recovery') return 'Refund in progress';
   if (s === 'partial') return 'Partial refund';
-  if (s === 'processed') return 'Refunded';
+  if (s === 'processed') return 'Refund completed';
   if (s === 'recorded' || s === 'pending') return 'Refund pending';
   return 'Refund';
 }
@@ -66,25 +66,43 @@ export function isJobRefunded(job: { refundAmount?: number; refundStatus?: strin
 type StagedProps = {
   immediateRefund?: number;
   pendingRefund?: number;
+  /** When repayment is already verified, do not imply the provider still owes. */
+  customerRefundStatus?: string | null;
   className?: string;
 };
 
+const PROCESSING_CUSTOMER_REFUND = new Set([
+  'READY',
+  'REFUND_READY',
+  'REFUND_REQUESTED',
+  'REFUND_PROCESSING',
+  'REFUND_MANUAL_ACTION_REQUIRED',
+]);
+
 /** Shows refunded-now vs pending-recovery breakdown for staged dispute refunds. */
-export function StagedRefundBreakdown({ immediateRefund, pendingRefund, className }: StagedProps) {
+export function StagedRefundBreakdown({
+  immediateRefund,
+  pendingRefund,
+  customerRefundStatus,
+  className,
+}: StagedProps) {
   const immediate = Number(immediateRefund) || 0;
   const pending = Number(pendingRefund) || 0;
   if (pending <= 0 && immediate <= 0) return null;
+  const processing = PROCESSING_CUSTOMER_REFUND.has(String(customerRefundStatus || '').trim().toUpperCase());
   return (
     <div className={cn('space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs', className)}>
       {immediate > 0 && (
         <p className="text-muted-foreground">
-          Refunded to your card:{' '}
+          Refund approved for original payment method:{' '}
           <span className="font-semibold text-success tabular-nums">{formatCurrency(immediate)}</span>
         </p>
       )}
       {pending > 0 && (
         <p className="text-muted-foreground">
-          Pending (recovered from provider, up to ~30 days):{' '}
+          {processing
+            ? 'Provider repaid EloFix — sending to your original payment method:'
+            : 'Pending (recovered from provider, up to ~30 days):'}{' '}
           <span className="font-semibold text-amber-700 dark:text-amber-400 tabular-nums">
             {formatCurrency(pending)}
           </span>

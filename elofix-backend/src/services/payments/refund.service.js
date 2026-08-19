@@ -4,6 +4,7 @@ const escrowSettlement = require("./escrowSettlement.service");
 const { logAudit } = require("../auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
 const { roundMoney, EPS } = require("../../utils/refundMath.util");
+const { emitDomainUpdate } = require("../../utils/realtimeEmitter");
 
 const REFUNDABLE_STATES = new Set(["PAID", "PARTIALLY_REFUNDED", "DISPUTED"]);
 
@@ -164,6 +165,24 @@ async function requestGatewayRefund(intentId, amount, opts = {}) {
       }
       if (intent.materialOrderId) {
         await escrowSettlement.markMaterialIntentRefunded(intent.materialOrderId, Boolean(amount));
+      }
+      // Emit refund domain update — look up customerId from job
+      try {
+        const refundJobId = intent.jobId || null;
+        if (refundJobId) {
+          const refundJob = await prisma.job.findUnique({ where: { id: refundJobId }, select: { customerId: true } });
+          if (refundJob?.customerId) {
+            emitDomainUpdate({
+              domain: "refund",
+              action: "updated",
+              jobId: refundJobId,
+              entityId: intent.id,
+              userIds: [refundJob.customerId],
+            });
+          }
+        }
+      } catch (emitErr) {
+        console.error("[refund.service] emitDomainUpdate error:", emitErr?.message || emitErr);
       }
     }
 

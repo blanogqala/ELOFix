@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getJobById, releaseEscrowPayment } from '@/lib/api/jobs';
-import { getAdminJobCompletionEvidence, getAdminDisputeDetail, adminCompletionEvidenceExportUrl } from '@/lib/api/adminDisputes';
-import type { AdminDisputeRow } from '@/lib/api/adminDisputes';
+import { getAdminJobCompletionEvidence, getAdminDisputeDetail, adminCompletionEvidenceExportUrl, getAdminJobCaseSummary } from '@/lib/api/adminDisputes';
+import type { AdminDisputeRow, AdminJobCaseSummary } from '@/lib/api/adminDisputes';
 import { formatRequestedResolution } from '@/lib/disputeLabels';
 import { JobDisputeStatusBanner } from '@/components/jobs/JobDisputeStatusBanner';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
@@ -42,6 +42,7 @@ import { AdminJobPaymentBreakdownCard } from '@/components/admin/AdminJobPayment
 import { AdminMaterialStoreBreakdown } from '@/components/admin/AdminMaterialStoreBreakdown';
 import { AdminJobQuoteBreakdown } from '@/components/admin/AdminJobQuoteBreakdown';
 import { canAdminManualReleaseEscrow, getAdminJobQuoteBreakdown } from '@/lib/adminJobFinancial';
+import { AdminJobCaseResolutionCard } from '@/components/admin/AdminJobCaseResolutionCard';
 import { getStoreOrderDeliveryLine } from '@/lib/jobQuoteDisplay';
 import { resolveMaterialOrderForStoreOrder } from '@/lib/providerMaterialOrderHelpers';
 import { MeasurementCard } from '@/components/measurements/MeasurementCard';
@@ -79,6 +80,7 @@ export default function AdminJobDetail() {
   const [materialRequests, setMaterialRequests] = useState<MaterialRequestDto[]>([]);
   const [completionEvidence, setCompletionEvidence] = useState<JobCompletionEvidence | null>(null);
   const [openDispute, setOpenDispute] = useState<AdminDisputeRow | null>(null);
+  const [caseSummary, setCaseSummary] = useState<AdminJobCaseSummary | null>(null);
   const [lockedTimelineStep, setLockedTimelineStep] = useState<number | null>(null);
   const [hoveredTimelineStep, setHoveredTimelineStep] = useState<number | null>(null);
 
@@ -130,6 +132,13 @@ export default function AdminJobDetail() {
         }
       } else {
         setOpenDispute(null);
+      }
+      // Load case resolution summary (works even after disputeId is cleared from meta).
+      try {
+        const summary = await getAdminJobCaseSummary(id);
+        setCaseSummary(summary);
+      } catch {
+        setCaseSummary(null);
       }
     } catch (error) {
       console.error('Failed to load job:', error);
@@ -287,6 +296,10 @@ export default function AdminJobDetail() {
             setHoveredTimelineStep={setHoveredTimelineStep}
           />
         </div>
+
+        {caseSummary && (
+          <AdminJobCaseResolutionCard summary={caseSummary} />
+        )}
 
         {(job.status === 'DISPUTED' || job.disputeId) && (
           <JobDisputeStatusBanner

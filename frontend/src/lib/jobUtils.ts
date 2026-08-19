@@ -199,5 +199,11 @@ export function getJobPriceDisplay(job: Job): JobPriceDisplay {
       };
     }
   }
+  if (job.status === 'REJECTED') {
+    return { text: 'Rejected', refundAmount, refundStatus, underAdminReview };
+  }
+  if (job.status === 'CANCELLED') {
+    return { text: 'Cancelled', refundAmount, refundStatus, underAdminReview };
+  }
   return { text: 'Price pending inspection', refundAmount, refundStatus, underAdminReview };
 }

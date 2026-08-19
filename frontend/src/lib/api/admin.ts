@@ -119,6 +119,50 @@ export async function getAdminCommissions(params?: { from?: string; to?: string 
   return data;
 }
 
+export interface AdminCustomerPaymentObligationRow {
+  id: string;
+  customerId: string;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  jobId: string;
+  jobTitle?: string | null;
+  amountDue: number;
+  dueAt: string;
+  status: string;
+  displayStatus?: string;
+  marketplaceRestricted?: boolean;
+}
+
+export interface AdminProviderRefundDebtRow {
+  id: string;
+  providerId: string;
+  providerUserId?: string | null;
+  providerName?: string | null;
+  providerEmail?: string | null;
+  jobId: string | null;
+  jobTitle?: string | null;
+  amountDue: number;
+  dueAt: string;
+  status: string;
+  restrictionActive?: boolean;
+}
+
+export async function getAdminPaymentObligations(params?: {
+  overdueOnly?: boolean;
+  status?: string;
+}): Promise<{
+  success: boolean;
+  customerObligations: AdminCustomerPaymentObligationRow[];
+  providerRefundDebts: AdminProviderRefundDebtRow[];
+}> {
+  const { data } = await apiClient.get('/admin/payment-obligations', { params });
+  return {
+    success: Boolean(data?.success),
+    customerObligations: Array.isArray(data?.customerObligations) ? data.customerObligations : [],
+    providerRefundDebts: Array.isArray(data?.providerRefundDebts) ? data.providerRefundDebts : [],
+  };
+}
+
 export interface AdminProviderRevenueSummaryRow {
   providerId: string;
   /** Provider share of completed + paid labor jobs (sum(job.providerAmount)). */

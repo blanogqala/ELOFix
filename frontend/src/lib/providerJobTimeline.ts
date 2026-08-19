@@ -2,6 +2,10 @@ import type { Job } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
 import { UNIFIED_TIMELINE_STEPS } from '@/lib/jobStatusMapping';
+import {
+  getProviderAdminPaymentTimelineInsight,
+  isAdminRequiredCompletionPayment,
+} from '@/lib/completionPaymentDue';
 
 export const PROVIDER_JOB_TIMELINE_STEPS = UNIFIED_TIMELINE_STEPS;
 
@@ -44,7 +48,9 @@ export function getProviderTimelineStepInsight(
       ? 'Customer must pay the service fee and every material batch.'
       : 'Submit materials for the customer to review and pay.',
     3: 'Active work on site. Update the customer and mark complete when finished.',
-    4: 'Waiting for the customer to confirm completion.',
+    4: isAdminRequiredCompletionPayment(job)
+      ? getProviderAdminPaymentTimelineInsight()
+      : 'Waiting for the customer to confirm completion.',
     5: 'Job completed.',
   };
 

@@ -12,9 +12,12 @@ const prisma = require("../src/config/prisma");
 const {
   resolveJobCancellationPolicy,
   isProviderEnRouteToService,
+  assertNoBlockingAdminCompletionPayment,
+  ADMIN_PAYMENT_MARK_COMPLETE_BLOCKED_MSG,
 } = require("../src/utils/jobCancellationPolicy.util");
 
 const originalFindFirst = prisma.deliveryRequest.findFirst;
+const originalObligationFindFirst = prisma.customerPaymentObligation?.findFirst;
 
 async function testUnpaidLaborNoDispute() {
   const policy = await resolveJobCancellationPolicy(
@@ -189,6 +192,95 @@ async function testMetaLaborPaidOnlyOpensDispute() {
   assert.strictEqual(policy.refundAmount, 0);
 }
 
+async function testAdminReleaseObligationBlocksCancel() {
+  prisma.customerPaymentObligation.findFirst = async () => ({
+    id: "obl-1",
+    jobId: "j8",
+    source: "ADMIN_RELEASE",
+    status: "DUE",
+    amount: 600,
+  });
+  let threw = false;
+  try {
+    await resolveJobCancellationPolicy(
+      { id: "j8", customerId: "c1", providerId: "p1", laborPaid: true, status: "AWAITING_CONFIRMATION" },
+      { statusOverride: "AWAITING_CONFIRMATION" },
+      "c1",
+      "CUSTOMER"
+    );
+  } catch (e) {
+    threw = true;
+    assert.strictEqual(e.statusCode, 400);
+    assert.match(e.message, /outstanding admin-required payment is due/i);
+  }
+  assert.strictEqual(threw, true);
+  prisma.customerPaymentObligation.findFirst = originalObligationFindFirst;
+}
+
+async function testMetaResolutionLogIdBlocksCancelWhenAmountDue() {
+  prisma.customerPaymentObligation.findFirst = async () => null;
+  let threw = false;
+  try {
+    await resolveJobCancellationPolicy(
+      { id: "j9", customerId: "c1", providerId: "p1", laborPaid: true, status: "AWAITING_CONFIRMATION" },
+      {
+        statusOverride: "AWAITING_CONFIRMATION",
+        completionPaymentDue: { amountDue: 600, resolutionLogId: "log-1" },
+      },
+      "c1",
+      "CUSTOMER"
+    );
+  } catch (e) {
+    threw = true;
+    assert.strictEqual(e.statusCode, 400);
+    assert.match(e.message, /outstanding admin-required payment is due/i);
+  }
+  assert.strictEqual(threw, true);
+  prisma.customerPaymentObligation.findFirst = originalObligationFindFirst;
+}
+
+async function testNonAdminObligationDoesNotBlockCancel() {
+  prisma.customerPaymentObligation.findFirst = async () => ({
+    id: "obl-2",
+    jobId: "j10",
+    source: "COMPLETION_WORKFLOW",
+    status: "DUE",
+    amount: 600,
+  });
+  const policy = await resolveJobCancellationPolicy(
+    { id: "j10", customerId: "c1", providerId: "p1", laborPaid: true, status: "AWAITING_CONFIRMATION" },
+    { statusOverride: "AWAITING_CONFIRMATION" },
+    "c1",
+    "CUSTOMER"
+  );
+  assert.strictEqual(policy.opensDisputeReview, true);
+  prisma.customerPaymentObligation.findFirst = originalObligationFindFirst;
+}
+
+async function testAssertNoBlockingAdminCompletionPaymentMarkCompleteMessage() {
+  prisma.customerPaymentObligation.findFirst = async () => ({
+    id: "obl-3",
+    jobId: "j11",
+    source: "ADMIN_RELEASE",
+    status: "DUE",
+    amount: 600,
+  });
+  let threw = false;
+  try {
+    await assertNoBlockingAdminCompletionPayment(
+      { id: "j11" },
+      {},
+      ADMIN_PAYMENT_MARK_COMPLETE_BLOCKED_MSG
+    );
+  } catch (e) {
+    threw = true;
+    assert.strictEqual(e.statusCode, 400);
+    assert.match(e.message, /Cannot mark complete/i);
+  }
+  assert.strictEqual(threw, true);
+  prisma.customerPaymentObligation.findFirst = originalObligationFindFirst;
+}
+
 async function run() {
   await testUnpaidLaborNoDispute();
   await testPaidServiceCustomerOpensDispute();
@@ -201,11 +293,16 @@ async function run() {
   await testCourierNotEnRouteCustomerOpensDispute();
   await testServiceEnRouteDetection();
   await testMetaLaborPaidOnlyOpensDispute();
+  await testAdminReleaseObligationBlocksCancel();
+  await testMetaResolutionLogIdBlocksCancelWhenAmountDue();
+  await testNonAdminObligationDoesNotBlockCancel();
+  await testAssertNoBlockingAdminCompletionPaymentMarkCompleteMessage();
   console.log("jobCancellationPolicy.util.test.js: all passed");
 }
 
 run().catch((e) => {
   prisma.deliveryRequest.findFirst = originalFindFirst;
+  prisma.customerPaymentObligation.findFirst = originalObligationFindFirst;
   console.error(e);
   process.exit(1);
 });

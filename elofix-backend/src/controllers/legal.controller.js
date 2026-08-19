@@ -6,10 +6,17 @@ const {
   buildLegalAcceptanceData,
   buildBranchUserLegalAcceptanceData,
   getLegalVersions,
+  getLegalStatusForUser,
+  recordLegalAcceptanceEvent,
 } = require("../services/legalAcceptance.service");
 
 async function getVersions(_req, res) {
   res.json({ success: true, versions: getLegalVersions() });
+}
+
+async function getLegalStatus(req, res) {
+  const status = await getLegalStatusForUser(req.user.userId, req.user.role);
+  res.json({ success: true, ...status, versions: getLegalVersions() });
 }
 
 async function acceptLegalDocuments(req, res) {
@@ -29,6 +36,7 @@ async function acceptLegalDocuments(req, res) {
         acceptedAt: true,
       },
     });
+    await recordLegalAcceptanceEvent(req.user.userId, "BRANCH_STAFF", "REACCEPT", data);
     return res.json({ success: true, acceptance: updated });
   }
 
@@ -47,6 +55,7 @@ async function acceptLegalDocuments(req, res) {
         acceptedAt: true,
       },
     });
+    await recordLegalAcceptanceEvent(req.user.userId, "SUPPLIER", "REACCEPT", data);
     return res.json({ success: true, acceptance: updated });
   }
 
@@ -66,10 +75,12 @@ async function acceptLegalDocuments(req, res) {
         acceptedAt: true,
       },
     });
+    await recordLegalAcceptanceEvent(req.user.userId, prismaRole, "REACCEPT", data);
     return res.json({ success: true, acceptance: updated });
   }
 
   throw new AppError("Forbidden", 403);
 }
 
-module.exports = { getVersions, acceptLegalDocuments };
+module.exports = { getVersions, getLegalStatus, acceptLegalDocuments };
+

@@ -5,6 +5,7 @@ const archiver = require("archiver");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const {
@@ -45,6 +46,41 @@ const VALID_ACTIONS = new Set([
 function isCancellationDispute(meta) {
   const src = String(meta?.cancellationSource || "").toLowerCase();
   return src === "customer_cancel" || src === "provider_cancel";
+}
+
+/**
+ * Derive who owes money and a plain-English summary line for admin display.
+ * Returns { payerRole, payerSummary }.
+ */
+function derivePayerInfo(action, { amountDue, dueAt, refundLaborNet, providerDebtAmount }) {
+  if (action === "RELEASE_FUNDS") {
+    let summary = "Customer must pay remaining balance to provider.";
+    if (amountDue > 0) {
+      summary = `Customer must pay R ${Number(amountDue).toFixed(2)} to provider`;
+      if (dueAt) {
+        const d = new Date(dueAt);
+        summary += ` by ${d.toLocaleDateString("en-ZA", { dateStyle: "medium" })}`;
+      }
+      summary += ".";
+    }
+    return { payerRole: "customer", payerSummary: summary };
+  }
+  if (action === "FULL_REFUND" || action === "PARTIAL_REFUND") {
+    if (providerDebtAmount > 0) {
+      return {
+        payerRole: "provider",
+        payerSummary: `Customer refund issued. Provider must repay R ${Number(providerDebtAmount).toFixed(2)} to EloFix.`,
+      };
+    }
+    return {
+      payerRole: "none",
+      payerSummary: `Customer refund of R ${Number(refundLaborNet).toFixed(2)} issued.`,
+    };
+  }
+  if (action === "RETURN_PROVIDER") {
+    return { payerRole: "none", payerSummary: "Provider instructed to return to site and complete the work." };
+  }
+  return { payerRole: "none", payerSummary: "Case closed without financial movement." };
 }
 
 async function releaseHeldEscrowToProviderInTransaction(tx, jobId, providerProfileId) {
@@ -226,6 +262,14 @@ async function updateDisputeStatus(adminUserId, disputeId, status, adminNotes) {
     newValue: { status: st, adminNotes: adminNotes != null ? String(adminNotes) : undefined },
   });
 
+  emitDomainUpdate({
+    domain: "dispute",
+    action: "updated",
+    jobId: row.jobId,
+    disputeId: row.id,
+    userIds: [row.customerId, row.providerId].filter(Boolean),
+  });
+
   return getDisputeDetail(row.id);
 }
 
@@ -402,7 +446,10 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           statusOverride: "CANCELLED",
           disputeId: null,
           escrowFrozen: false,
+          completionPaymentDue: null,
         }));
+        const obligationService = require("./customerPaymentObligation.service");
+        await obligationService.cancelOpenObligationForJob(job.id, tx);
         if (providerRow) {
           trustUpdate = {
             providerProfileId: providerRow.id,
@@ -438,6 +485,8 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           });
           return patched;
         });
+        const obligationService = require("./customerPaymentObligation.service");
+        await obligationService.cancelOpenObligationForJob(job.id, tx);
       } else if (action === "CLOSE_CASE") {
         await mutateJobMetaInTransaction(tx, job.id, (m) => {
           const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
@@ -488,6 +537,41 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
     return getDisputeDetail(dispute.id);
   }
 
+  // Persist resolution snapshot for admin job detail display.
+  try {
+    const resolvedAt = new Date().toISOString();
+    const metaSnap = await getJobMeta(job.id);
+    const amountDue = Number(metaSnap?.completionPaymentDue?.amountDue) || 0;
+    const dueAt = metaSnap?.completionPaymentDue?.dueAt || null;
+    const providerDebtAmount = Number(metaSnap?.refund?.providerDebtAdded) || 0;
+    const { payerRole, payerSummary } = derivePayerInfo(action, {
+      amountDue,
+      dueAt,
+      refundLaborNet,
+      providerDebtAmount,
+    });
+    const { mutateJobMeta } = require("./jobMeta.service");
+    await mutateJobMeta(job.id, (m) => ({
+      ...m,
+      adminCaseResolution: {
+        disputeId: dispute.id,
+        caseKind: cancellationDispute ? "cancellation" : "dispute",
+        action,
+        notes,
+        resolvedAt,
+        payerRole,
+        payerSummary,
+        amountDue: amountDue > 0 ? amountDue : null,
+        dueAt,
+        refundToCustomer: refundLaborNet > 0 ? refundLaborNet : null,
+        providerDebtAmount: providerDebtAmount > 0 ? providerDebtAmount : null,
+        openedBy: cancellationDispute ? (String(metaSnap?.cancelledBy || "")).toLowerCase() || null : null,
+      },
+    }));
+  } catch (e) {
+    console.error("[disputeAdmin] adminCaseResolution persist failed", job.id, e);
+  }
+
   if (trustUpdate) {
     await providerTrustScore.onDisputeRefundResolved(trustUpdate.providerProfileId, trustUpdate.kind);
   }
@@ -532,6 +616,22 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
     disputeId: dispute.id,
     action,
   });
+
+  if (action === "RELEASE_FUNDS") {
+    try {
+      const obligationService = require("./customerPaymentObligation.service");
+      const jobAfter = await prisma.job.findUnique({ where: { id: job.id } });
+      const metaAfter = await getJobMeta(job.id);
+      const dueAtRaw = metaAfter?.completionPaymentDue?.dueAt;
+      await obligationService.ensureObligationForJobIfPaymentDue(jobAfter, metaAfter, {
+        source: "ADMIN_RELEASE",
+        disputeId: dispute.id,
+        dueAt: dueAtRaw ? new Date(dueAtRaw) : undefined,
+      });
+    } catch (e) {
+      console.error("[disputeAdmin] ensureObligation RELEASE_FUNDS", job.id, e);
+    }
+  }
 
   if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
     try {
@@ -583,6 +683,15 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
     newValue: { action, amount },
   });
 
+  emitDomainUpdate({
+    domain: "dispute",
+    action: "resolved",
+    jobId: job.id,
+    disputeId: dispute.id,
+    userIds: [dispute.customerId, dispute.providerId].filter(Boolean),
+    adminRoom: true,
+  });
+
   return getDisputeDetail(dispute.id);
 }
 
@@ -603,6 +712,80 @@ async function exportJobCompletionEvidence(jobId) {
   const files = [...(evidence.images || []), ...(evidence.videos || [])];
 
   return { manifest, files, evidence };
+}
+
+const ACTION_LABELS = {
+  RELEASE_FUNDS: "Release remaining funds to provider",
+  FULL_REFUND: "Full refund issued to customer",
+  PARTIAL_REFUND: "Partial refund issued to customer",
+  RETURN_PROVIDER: "Provider returned to site",
+  CLOSE_CASE: "Case closed",
+};
+
+async function getAdminJobCaseSummary(jobId) {
+  const meta = await getJobMeta(String(jobId));
+
+  // Fast path: resolution already persisted on job meta.
+  if (meta?.adminCaseResolution && typeof meta.adminCaseResolution === "object") {
+    const r = meta.adminCaseResolution;
+    return {
+      disputeId: String(r.disputeId || ""),
+      caseKind: String(r.caseKind || "dispute"),
+      status: "RESOLVED",
+      action: String(r.action || ""),
+      actionLabel: ACTION_LABELS[String(r.action || "").toUpperCase()] || String(r.action || ""),
+      notes: r.notes || null,
+      resolvedAt: r.resolvedAt || null,
+      payerRole: String(r.payerRole || "none"),
+      payerSummary: String(r.payerSummary || ""),
+      amountDue: r.amountDue != null ? Number(r.amountDue) : undefined,
+      dueAt: r.dueAt || null,
+      refundToCustomer: r.refundToCustomer != null ? Number(r.refundToCustomer) : undefined,
+      providerDebtAmount: r.providerDebtAmount != null ? Number(r.providerDebtAmount) : undefined,
+      openedBy: r.openedBy || null,
+    };
+  }
+
+  // Fallback: look up dispute row and latest resolution log by jobId.
+  const dispute = await prisma.jobDispute.findUnique({
+    where: { jobId: String(jobId) },
+    include: { resolutionLogs: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+  if (!dispute) return null;
+
+  const latestLog = dispute.resolutionLogs[0] || null;
+  if (!latestLog) return null;
+
+  const action = String(latestLog.action || "").toUpperCase();
+  const cancellationKind = isCancellationDispute(meta);
+  const amountDue = Number(meta?.completionPaymentDue?.amountDue) || 0;
+  const dueAt = meta?.completionPaymentDue?.dueAt || null;
+  const providerDebt = Number(meta?.refund?.providerDebtAdded) || 0;
+  const refundNet =
+    Number(meta?.refund?.cumulativeCustomerNet ?? meta?.refund?.customerNet ?? meta?.refund?.amount) || 0;
+  const { payerRole, payerSummary } = derivePayerInfo(action, {
+    amountDue,
+    dueAt,
+    refundLaborNet: refundNet,
+    providerDebtAmount: providerDebt,
+  });
+
+  return {
+    disputeId: String(dispute.id),
+    caseKind: cancellationKind ? "cancellation" : "dispute",
+    status: String(dispute.status || "RESOLVED"),
+    action,
+    actionLabel: ACTION_LABELS[action] || action,
+    notes: latestLog.notes || dispute.adminNotes || null,
+    resolvedAt: dispute.resolvedAt instanceof Date ? dispute.resolvedAt.toISOString() : dispute.resolvedAt || null,
+    payerRole,
+    payerSummary,
+    amountDue: amountDue > 0 ? amountDue : undefined,
+    dueAt,
+    refundToCustomer: refundNet > 0 ? refundNet : undefined,
+    providerDebtAmount: providerDebt > 0 ? providerDebt : undefined,
+    openedBy: cancellationKind ? (String(meta?.cancelledBy || "")).toLowerCase() || null : null,
+  };
 }
 
 async function streamEvidenceZip(jobId, res) {
@@ -629,6 +812,7 @@ module.exports = {
   getDisputeDetail,
   updateDisputeStatus,
   resolveDispute,
+  getAdminJobCaseSummary,
   exportJobCompletionEvidence,
   streamEvidenceZip,
   isCancellationDispute,

@@ -9,6 +9,8 @@ const notificationEvents = require("./notificationEvents.service");
 const { PLATFORM_BANK, REFUND_DEBT_DUE_DAYS, getRefundDebtDueMs } = require("../config/refundRecovery.config");
 const { generateRefundReference } = require("../utils/refundReference.util");
 const { roundMoney, EPS } = require("../utils/refundMath.util");
+const { logAudit } = require("./auditLog.service");
+const { AUDIT_ACTIONS, ACTOR_TYPES, ENTITY_TYPES } = require("../constants/auditActions");
 
 const ACTIVE_RECOVERY_STATUSES = ["PENDING", "PARTIALLY_RECOVERED", "OVERDUE"];
 
@@ -1079,6 +1081,17 @@ async function executeCustomerRefundPayouts(adminUserId, repayment, payouts) {
   return { repaymentId: repayment.id, results };
 }
 
+function summarizeCustomerRefundPayoutResults(results) {
+  const statuses = (results || []).map((r) => String(r.status || ""));
+  if (!statuses.length) return "NONE";
+  if (statuses.every((s) => s === "REFUND_COMPLETED")) return "REFUND_COMPLETED";
+  if (statuses.some((s) => s === "REFUND_FAILED")) return "REFUND_FAILED";
+  if (statuses.some((s) => s === "REFUND_MANUAL_ACTION_REQUIRED")) {
+    return "REFUND_MANUAL_ACTION_REQUIRED";
+  }
+  return statuses[0] || "UNKNOWN";
+}
+
 function mapAdminRefundRepaymentRow(row, expectedCtx) {
   const rawAmount = row.amount;
   const submittedNum = Number(rawAmount);
@@ -1419,7 +1432,7 @@ async function confirmAdminRefundRepayment(
       },
     });
 
-    // Mark customer refund READY — do NOT auto-process gateway refund here.
+    // Mark READY first so processAdminCustomerRefund / retry can find the job.
     for (const pay of p) {
       if (!pay.jobId || pay.amount <= EPS) continue;
       await mutateJobMetaInTransaction(tx, pay.jobId, (m) => {
@@ -1444,12 +1457,11 @@ async function confirmAdminRefundRepayment(
     repayment.provider.userId,
     amount
   );
-  await notificationEvents.notifyAdminCustomerRefundReady({
-    repaymentId: repayment.id,
-    providerId: repayment.provider.userId,
-    amount,
-    jobIds: payouts.map((p) => p.jobId).filter(Boolean),
-  });
+  try {
+    await clearProviderRefundDebtRestrictionIfClear(repayment.providerId);
+  } catch (e) {
+    console.error("[refundRecovery] clear provider restriction failed", e);
+  }
   for (const p of payouts) {
     if (p.customerId) {
       await notificationEvents.notifyCustomerRefundApproved({
@@ -1460,7 +1472,31 @@ async function confirmAdminRefundRepayment(
     }
   }
 
-  return repayment;
+  let customerRefund = { status: "NONE", results: [] };
+  const shouldPayout =
+    Boolean(repayment.jobId) ||
+    (payouts || []).some((p) => p.jobId && Number(p.amount) > EPS);
+  if (shouldPayout) {
+    try {
+      const payoutResult = await processAdminCustomerRefund(adminUserId, repayment.id);
+      customerRefund = {
+        status: summarizeCustomerRefundPayoutResults(payoutResult?.results),
+        results: payoutResult?.results || [],
+      };
+    } catch (e) {
+      console.error("[refundRecovery] auto customer refund after confirm failed", e);
+      customerRefund = {
+        status: "REFUND_FAILED",
+        results: [],
+        error: e?.message || String(e),
+      };
+    }
+  }
+
+  return {
+    repayment,
+    customerRefund,
+  };
 }
 
 async function rejectAdminRefundRepayment(adminUserId, repaymentId, { adminNote } = {}) {
@@ -1553,6 +1589,48 @@ async function ensureRefundRecoveriesForProvider(providerProfileId) {
   }
 }
 
+/**
+ * Lift refund-debt new-work restriction when no OVERDUE recoveries remain.
+ * Does not clear an admin block that was not applied for refund debt.
+ */
+async function clearProviderRefundDebtRestrictionIfClear(providerId) {
+  const overdue = await prisma.refundRecovery.findFirst({
+    where: { providerId: String(providerId), status: "OVERDUE" },
+    select: { id: true },
+  });
+  if (overdue) return false;
+  const provider = await prisma.provider.findUnique({
+    where: { id: String(providerId) },
+    select: {
+      id: true,
+      userId: true,
+      blocked: true,
+      refundDebtBlockedAt: true,
+      blockedReason: true,
+    },
+  });
+  if (!provider?.refundDebtBlockedAt) return false;
+  await prisma.provider.update({
+    where: { id: provider.id },
+    data: {
+      blocked: false,
+      blockedReason: null,
+      blockedAt: null,
+      refundDebtBlockedAt: null,
+    },
+  });
+  await logAudit(AUDIT_ACTIONS.PROVIDER_RESTRICTION_CLEARED, {
+    actorType: ACTOR_TYPES.SYSTEM,
+    entityType: ENTITY_TYPES.PROVIDER,
+    entityId: provider.id,
+    newValue: { cleared: true },
+  });
+  const notificationEvents = require("./notificationEvents.service");
+  await notificationEvents.notifyProviderRestrictionCleared(provider.userId);
+  await notificationEvents.notifyAccountUnblocked(provider.userId);
+  return true;
+}
+
 module.exports = {
   REFUND_DEBT_DUE_DAYS,
   PLATFORM_BANK,
@@ -1570,9 +1648,11 @@ module.exports = {
   createProviderRefundRepaymentCheckout,
   markGatewayRepaymentPaidFromIntent,
   processAdminCustomerRefund,
+  summarizeCustomerRefundPayoutResults,
   listAdminRefundRepayments,
   confirmAdminRefundRepayment,
   rejectAdminRefundRepayment,
   ensureRefundRecoveriesForProvider,
   dueAtFromNow,
+  clearProviderRefundDebtRestrictionIfClear,
 };

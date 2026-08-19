@@ -3,6 +3,7 @@ import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { UNIFIED_TIMELINE_STEPS } from '@/lib/jobStatusMapping';
 import { allMaterialsPaidAggregate, getMonotonicTimelineStepIndex } from '@/lib/jobProgressDisplay';
 import { getUserTimelineViewState } from '@/lib/userJobTimeline';
+import { isAdminRequiredCompletionPayment } from '@/lib/completionPaymentDue';
 
 export interface TimelineStepInsight {
   stepIndex: number;
@@ -80,8 +81,9 @@ export function getTimelineStepInsight(
     return {
       stepIndex,
       stepLabel,
-      nextAction:
-        job.status === 'AWAITING_CONFIRMATION'
+      nextAction: isAdminRequiredCompletionPayment(job)
+        ? 'Pay the remaining balance by the due date to complete this job.'
+        : job.status === 'AWAITING_CONFIRMATION'
           ? 'Confirm completion when satisfied with the work.'
           : 'Provider will mark the job complete to reach this step.',
       isDone,

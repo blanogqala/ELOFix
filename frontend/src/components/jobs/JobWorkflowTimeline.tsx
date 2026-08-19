@@ -5,6 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UNIFIED_TIMELINE_STEPS } from '@/lib/jobStatusMapping';
+import { isAdminRequiredCompletionPayment } from '@/lib/completionPaymentDue';
 
 const DEFAULT_STEPS = UNIFIED_TIMELINE_STEPS;
 import type { UserTimelineViewState } from '@/lib/userJobTimeline';
@@ -51,7 +52,10 @@ export function JobWorkflowTimeline({
   function stepLabel(index: number, defaultLabel: string): string {
     if (isCancellationReview && index === currentIdx) return 'Cancellation opened';
     if (!isCancellationReview && index === 4 && isDisputed) return 'Dispute opened';
-    if (index === 4 && isAwaitingConfirmation) return 'Waiting for customer confirmation';
+    if (index === 4 && isAwaitingConfirmation) {
+      if (isAdminRequiredCompletionPayment(job)) return 'Payment required';
+      return 'Waiting for customer confirmation';
+    }
     if (index === 5 && job.status === 'COMPLETED') return 'Completed';
     return defaultLabel;
   }

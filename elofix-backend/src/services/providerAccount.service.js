@@ -13,6 +13,7 @@ const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTran
 const { enrichJob, normalizeMeta } = require("./jobMeta.service");
 const payoutDestinationService = require("./payoutDestination.service");
 const paymentService = require("./payment.service");
+const { sumProviderShareTotals } = require("../utils/providerEarningsSummary.util");
 
 function coerceMoney(value) {
   const n = Number(value);
@@ -32,7 +33,8 @@ async function requireProviderByUserId(userId) {
 }
 
 function jobToEarningRow(job, clawbackFromLedger = 0) {
-  const e = enrichJob(job, normalizeMeta(job.meta));
+  const meta = normalizeMeta(job.meta);
+  const e = enrichJob(job, meta);
   const amount = e.totalPrice != null && !Number.isNaN(Number(e.totalPrice)) ? Number(e.totalPrice) : Number(job.price) || 0;
   const released = Boolean(job.paymentReleased);
   const paidLabor = Boolean(job.laborPaid);
@@ -85,8 +87,11 @@ function jobToEarningRow(job, clawbackFromLedger = 0) {
     clawbackFromReleased,
     escrowReversed,
     netReleasedAfterRefund,
+    completionPaymentDue: e.completionPaymentDue || null,
+    completionPayment: e.completionPayment || null,
     createdAt: job.createdAt instanceof Date ? job.createdAt.toISOString() : String(job.createdAt),
     customerName: job.customer?.name,
+    courierFlow: Boolean(meta.courierFlow),
   };
 }
 
@@ -159,6 +164,38 @@ async function getProviderBalance(userId) {
   };
 }
 
+async function getDeliveryContextByJobIds(jobIds) {
+  const ids = (jobIds || []).map((id) => String(id)).filter(Boolean);
+  const map = new Map();
+  if (!ids.length) return map;
+  const rows = await prisma.deliveryRequest.findMany({
+    where: { jobId: { in: ids } },
+    select: { jobId: true, status: true, fulfillmentStatus: true, payload: true },
+  });
+  for (const row of rows) {
+    if (!row.jobId) continue;
+    const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+    const payment = payload.payment && typeof payload.payment === "object" ? payload.payment : {};
+    const drStatus = String(row.status || "").toLowerCase();
+    const deliveryPaid =
+      ["paid", "in_transit", "completed"].includes(drStatus) || payment.deliveryPaid === true;
+    map.set(String(row.jobId), {
+      fulfillmentStatus: row.fulfillmentStatus ? String(row.fulfillmentStatus) : null,
+      deliveryPaid,
+    });
+  }
+  return map;
+}
+
+function withDeliveryContext(row, deliveryByJob) {
+  const ctx = deliveryByJob.get(String(row.id)) || {};
+  return {
+    ...row,
+    fulfillmentStatus: ctx.fulfillmentStatus || null,
+    deliveryPaid: Boolean(ctx.deliveryPaid),
+  };
+}
+
 async function getProviderEarnings(userId) {
   const provider = await requireProviderByUserId(userId);
   const providerUserId = provider.userId;
@@ -203,23 +240,23 @@ async function getProviderEarnings(userId) {
 
   const jobIds = jobs.map((j) => j.id);
   const clawbackMap = await getJobClawbackMap(provider.id, jobIds);
+  const deliveryByJob = await getDeliveryContextByJobIds(jobIds);
 
-  const earningRows = jobs.map((job) => ({
-    ...jobToEarningRow(job, clawbackMap[job.id] || 0),
-    customerName: job.customer?.name || null,
-  }));
+  const earningRows = jobs.map((job) =>
+    withDeliveryContext(
+      {
+        ...jobToEarningRow(job, clawbackMap[job.id] || 0),
+        customerName: job.customer?.name || null,
+      },
+      deliveryByJob
+    )
+  );
   const providerEscrowRemaining = earningRows.reduce(
     (sum, row) => sum + Math.max(0, Number(row.remainingAmount) || 0),
     0
   );
-  const totalProviderShareRecorded = earningRows.reduce(
-    (sum, row) => sum + Math.max(0, Number(row.providerShareRecorded) || 0),
-    0
-  );
-  const totalProviderShareRemaining = earningRows.reduce(
-    (sum, row) => sum + Math.max(0, Number(row.providerShareRemaining) || 0),
-    0
-  );
+  const { totalProviderShareRecorded, totalProviderShareRemaining } =
+    sumProviderShareTotals(earningRows);
   const hasLegacyJobs = earningRows.some((row) => row.legacyEscrowV2);
 
   const paidIntents =
@@ -323,11 +360,15 @@ async function getProviderEarningJob(userId, jobId) {
     });
   }
   const clawbackMap = await getJobClawbackMap(provider.id, [job.id]);
+  const deliveryByJob = await getDeliveryContextByJobIds([job.id]);
   return {
-    job: {
-      ...jobToEarningRow(job, clawbackMap[job.id] || 0),
-      customerName: job.customer?.name,
-    },
+    job: withDeliveryContext(
+      {
+        ...jobToEarningRow(job, clawbackMap[job.id] || 0),
+        customerName: job.customer?.name,
+      },
+      deliveryByJob
+    ),
   };
 }
 

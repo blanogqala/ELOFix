@@ -1,5 +1,6 @@
 const { roundMoney } = require("./jobPaidAmount.util");
 const { enrichJob, normalizeMeta } = require("../services/jobMeta.service");
+const { isDeadOrRefundedForRemaining } = require("./providerEarningsSummary.util");
 
 function sumJobFinancials(jobs) {
   let totalEarnings = 0;
@@ -19,12 +20,23 @@ function sumJobFinancials(jobs) {
       Number(refundDetails.cumulativeCustomerNet) ||
       Number(refundDetails.customerNet) ||
       escrow + clawback + debt;
+    const deadForRemaining = isDeadOrRefundedForRemaining({
+      workflowStatus: e.status,
+      status: e.status,
+      refundStatus: e.refundStatus,
+      refundAmount: e.refundAmount,
+      refundDetails,
+      clawbackFromReleased: clawback,
+    });
 
     if (Number.isFinite(providerAmount) && providerAmount >= 0) {
       totalEarnings += Math.max(0, providerAmount - netLaborRefunded);
     }
     if (Number.isFinite(releasedAmount) && releasedAmount >= 0) {
       releasedByPlatform += Math.max(0, releasedAmount - clawback - debt);
+    }
+    if (deadForRemaining) {
+      continue;
     }
     if (Number.isFinite(remainingAmount) && remainingAmount >= 0) {
       remainingInEscrow += remainingAmount;

@@ -359,7 +359,9 @@ export default function ProviderEarnings() {
                   {refundDebtOwed > 0
                     ? refundDebtDetail?.pendingRepayment
                       ? 'Repayment submitted'
-                      : 'Refund required'
+                      : String(refundDebtDetail?.repaymentStatus || '').toUpperCase() === 'OVERDUE'
+                        ? 'Payment overdue'
+                        : 'Refund repayment due'
                     : 'Refund owed'}
                 </p>
                 {refundDebtOwed > 0 ? (

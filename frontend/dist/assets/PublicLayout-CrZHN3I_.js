@@ -1,1 +1,0 @@
-import{j as e}from"./react-vendor-CZBNkCpJ.js";import{H as r,F as o}from"./Footer-B98pwCn0.js";function i({children:s,wide:a=!1}){return e.jsxs("div",{className:"min-h-screen flex flex-col bg-background",children:[e.jsx(r,{}),e.jsx("main",{className:a?"flex-1":"flex-1 container py-8 md:py-12",children:s}),e.jsx(o,{})]})}export{i as P};

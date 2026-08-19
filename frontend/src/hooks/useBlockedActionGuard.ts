@@ -9,8 +9,21 @@ export function useBlockedActionGuard() {
   const [open, setOpen] = useState(false);
 
   const isBlocked = Boolean(user && 'blocked' in user && user.blocked);
+  const marketplaceRestricted = Boolean(
+    user && 'marketplaceRestricted' in user && user.marketplaceRestricted
+  );
+  const legalStale = Boolean(
+    user && 'legalStatus' in user && user.legalStatus && user.legalStatus.current === false
+  );
+  const isTransactionRestricted = isBlocked || marketplaceRestricted || legalStale;
   const blockedReason =
-    user && 'blockedReason' in user ? user.blockedReason : undefined;
+    user && 'marketplaceRestrictedReason' in user && user.marketplaceRestrictedReason
+      ? String(user.marketplaceRestrictedReason)
+      : user && 'blockedReason' in user
+        ? user.blockedReason
+        : legalStale
+          ? 'Updated legal documents must be accepted before starting a new marketplace transaction.'
+          : undefined;
 
   const supportHref =
     user?.role === 'provider' ? '/provider/notifications' : '/user/notifications';
@@ -18,8 +31,9 @@ export function useBlockedActionGuard() {
     user?.role === 'provider' ? '/provider/profile' : '/user/profile';
 
   const showPayBalance =
-    user?.role === 'provider' &&
-    (Boolean(user.refundDebtBlockedAt) || /refund debt/i.test(blockedReason || ''));
+    (user?.role === 'provider' &&
+      (Boolean(user.refundDebtBlockedAt) || /refund debt|refund repayment/i.test(blockedReason || ''))) ||
+    (user?.role === 'user' && marketplaceRestricted);
 
   const dialogProps: BlockedActionDialogProps = useMemo(
     () => ({
@@ -28,26 +42,31 @@ export function useBlockedActionGuard() {
       blockedReason,
       supportHref,
       profileHref,
-      payBalanceHref: '/provider/earnings',
+      payBalanceHref: user?.role === 'provider' ? '/provider/earnings' : '/user/payments',
       showPayBalance,
     }),
-    [open, blockedReason, supportHref, profileHref, showPayBalance],
+    [open, blockedReason, supportHref, profileHref, showPayBalance, user?.role],
   );
 
   const guardAction = useCallback(
     (action: () => void | Promise<void>) => {
-      if (isBlocked) {
+      if (isTransactionRestricted) {
         setOpen(true);
         return;
       }
       void action();
     },
-    [isBlocked],
+    [isTransactionRestricted],
   );
 
   const openIfBlockedMessage = useCallback(
     (message: string) => {
-      if (message.includes(BLOCKED_ACTION_MESSAGE) || /profile is blocked/i.test(message)) {
+      if (
+        message.includes(BLOCKED_ACTION_MESSAGE) ||
+        /profile is blocked/i.test(message) ||
+        /marketplace transactions are restricted/i.test(message) ||
+        /legal documents must be accepted/i.test(message)
+      ) {
         setOpen(true);
         return true;
       }
@@ -57,7 +76,7 @@ export function useBlockedActionGuard() {
   );
 
   return {
-    isBlocked,
+    isBlocked: isTransactionRestricted,
     blockedReason,
     dialogProps,
     guardAction,

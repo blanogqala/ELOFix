@@ -245,6 +245,13 @@ enum ProviderRefundRepaymentMethod {
   BANK_TRANSFER
 }
 
+enum CustomerPaymentObligationStatus {
+  DUE
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
 model User {
   id                  String               @id @default(uuid())
   email               String               @unique
@@ -260,6 +267,10 @@ model User {
   blocked             Boolean              @default(false)
   blockedReason       String?
   blockedAt           DateTime?
+  /// Overdue marketplace debt — login remains allowed; new paid transactions are restricted.
+  marketplaceRestricted         Boolean   @default(false)
+  marketplaceRestrictedAt       DateTime?
+  marketplaceRestrictedReason   String?
   deletedAt           DateTime?
   createdAt           DateTime             @default(now())
   acceptedTerms                        Boolean   @default(false)
@@ -278,6 +289,8 @@ model User {
   providerProfile     Provider?
   jobsAsCustomer      Job[]                @relation("JobCustomer")
   jobsAsProvider      Job[]                @relation("JobProvider")
+  customerPaymentObligations CustomerPaymentObligation[]
+  legalAcceptanceEvents      LegalAcceptanceEvent[]
   categorySuggestions CategorySuggestion[]
   notifications       Notification[]
   paymentIntents      PaymentIntent[]
@@ -495,6 +508,7 @@ model Job {
   dispute                          JobDispute?
   refundRecoveries                 RefundRecovery[]
   refundRepayments                 ProviderRefundRepayment[]
+  customerPaymentObligations       CustomerPaymentObligation[]
 }
 
 model MaterialRequest {
@@ -1465,4 +1479,48 @@ model ProviderRefundRepayment {
   @@index([status])
   @@index([createdAt])
   @@index([method])
+}
+
+/// Customer labor balance that has become payable (completion/on-completion/admin release).
+model CustomerPaymentObligation {
+  id                     String                            @id @default(uuid())
+  customerId             String
+  customer               User                              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  jobId                  String
+  job                    Job                               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  disputeId              String?
+  amount                 Decimal                           @db.Decimal(12, 2)
+  dueAt                  DateTime
+  status                 CustomerPaymentObligationStatus   @default(DUE)
+  source                 String                            @default("COMPLETION_WORKFLOW")
+  paidAt                 DateTime?
+  reminder7SentAt        DateTime?
+  reminder1SentAt        DateTime?
+  overdueNotifiedAt      DateTime?
+  restrictionAppliedAt   DateTime?
+  createdAt              DateTime                          @default(now())
+  updatedAt              DateTime                          @updatedAt
+
+  @@index([customerId, status])
+  @@index([jobId, status])
+  @@index([dueAt])
+  @@index([status, dueAt])
+}
+
+/// Immutable legal-acceptance history. User columns remain the current snapshot.
+model LegalAcceptanceEvent {
+  id                                      String   @id @default(uuid())
+  userId                                  String
+  user                                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                                    String
+  source                                  String
+  termsVersion                            String?
+  privacyVersion                          String?
+  providerAgreementVersion                String?
+  refundPolicyVersion                     String?
+  supplierAgreementVersion                String?
+  supplierParticipationPolicyVersion      String?
+  acceptedAt                              DateTime @default(now())
+
+  @@index([userId, acceptedAt])
 }

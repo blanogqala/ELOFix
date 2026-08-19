@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const authService = require("./auth.service");
-const { validateLegalAcceptance, truthy } = require("./legalAcceptance.service");
+const { validateLegalAcceptance, truthy, recordLegalAcceptanceEvent } = require("./legalAcceptance.service");
 const { shouldSyncGoogleAvatarOnLogin } = require("../utils/avatarUrl.util");
 
 const OAUTH_STATE_TTL = "10m";
@@ -248,6 +248,9 @@ async function findOrCreateGoogleUser(profile, statePayload = {}) {
       },
       select: authService.userPublicSelect,
     });
+    if (mode === "register") {
+      await recordLegalAcceptanceEvent(user.id, roleToUse, "REGISTER", legalData);
+    }
     return { user, isNewUser: true };
   } catch (err) {
     if (err.code === "P2002") {

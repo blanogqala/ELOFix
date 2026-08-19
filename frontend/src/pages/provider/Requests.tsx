@@ -21,9 +21,12 @@ import { DeleteRejectedRequestDialog } from '@/components/jobs/DeleteRejectedReq
 import { cn } from '@/lib/utils';
 import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
 import { ProviderRequestCard } from '@/components/jobs/ProviderRequestCard';
+import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { isJobRefundUnsettled, getRefundBlocksDeleteMessage } from '@/lib/refundStatusDisplay';
 
 export default function ProviderRequests() {
   const { user } = useAuth();
+  const { requestHasActivity } = useJobActivityIndicators();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [pendingJobs, setPendingJobs] = useState<Job[]>([]);
@@ -78,6 +81,7 @@ export default function ProviderRequests() {
 
   const handleDeleteCancelled = async () => {
     if (!user || !jobToDelete) return;
+    if (isJobRefundUnsettled(jobToDelete)) return;
     try {
       await deleteCancelledRequestFromProviderView(user.id, jobToDelete.id);
       setCancelledJobs(prev => prev.filter(j => j.id !== jobToDelete.id));
@@ -152,7 +156,12 @@ export default function ProviderRequests() {
             {isLoading ? <SkeletonCards /> : pendingJobs.length > 0 ? (
               <div className="space-y-4">
                 {pendingJobs.map(job => (
-                  <ProviderRequestCard key={job.id} job={job} variant="pending" />
+                  <ProviderRequestCard
+                    key={job.id}
+                    job={job}
+                    variant="pending"
+                    showActivityDot={requestHasActivity(job.id)}
+                  />
                 ))}
               </div>
             ) : (
@@ -231,8 +240,11 @@ export default function ProviderRequests() {
                           variant="outline"
                           size="sm"
                           className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
+                          disabled={isJobRefundUnsettled(job)}
+                          title={isJobRefundUnsettled(job) ? getRefundBlocksDeleteMessage() : undefined}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (isJobRefundUnsettled(job)) return;
                             setJobToDelete(job);
                             setDeleteCancelledDialogOpen(true);
                           }}

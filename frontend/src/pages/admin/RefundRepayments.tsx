@@ -29,6 +29,7 @@ import {
   processAdminCustomerRefund,
   type AdminRefundRepaymentRow,
 } from '@/lib/api/adminRefundRepayments';
+import { canRetryCustomerRefund, confirmCustomerRefundToast } from '@/lib/adminRefundRepaymentUi';
 import { unblockProvider } from '@/lib/api/providers';
 import { ExternalLink, Loader2, RotateCcw, Search } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -227,14 +228,15 @@ export default function AdminRefundRepayments() {
   const runConfirm = async (row: AdminRefundRepaymentRow, acknowledgePartial = false) => {
     setActingId(row.id);
     try {
-      await confirmAdminRefundRepayment(row.id, {
+      const res = await confirmAdminRefundRepayment(row.id, {
         acknowledgePartial: acknowledgePartial || undefined,
       });
+      const payoutToast = confirmCustomerRefundToast(res.customerRefund?.status);
       toast({
-        title: 'Confirmed',
+        title: payoutToast.title,
         description: acknowledgePartial
-          ? 'Partial repayment applied. Customer refund is READY — use Process Customer Refund when ready.'
-          : 'Repayment verified. Customer refund is READY — use Process Customer Refund when ready.',
+          ? `Partial repayment applied. ${payoutToast.description}`
+          : payoutToast.description,
       });
       setConfirmPrompt(null);
       await load();
@@ -314,7 +316,7 @@ export default function AdminRefundRepayments() {
       const res = await processAdminCustomerRefund(id);
       const statuses = (res.results || []).map((r) => r.status).join(', ') || 'done';
       toast({
-        title: 'Customer refund processed',
+        title: 'Customer refund retried',
         description: statuses,
       });
       await load();
@@ -343,7 +345,8 @@ export default function AdminRefundRepayments() {
             Refund repayments
           </h1>
           <p className="text-muted-foreground">
-            Verify provider repayments, then process the customer refund against the original payment.
+            Confirm that the provider repaid EloFix. Confirmation also sends the customer refund
+            against the original payment. Retry from History only if the gateway refund fails.
           </p>
         </div>
 
@@ -472,10 +475,7 @@ export default function AdminRefundRepayments() {
                           <p className="text-foreground/80">Note: {row.adminNote}</p>
                         )}
                       </div>
-                      {row.status === 'CONFIRMED' &&
-                      ['READY', 'REFUND_FAILED', 'REFUND_MANUAL_ACTION_REQUIRED'].includes(
-                        String(row.customerRefundStatus || '')
-                      ) ? (
+                      {row.status === 'CONFIRMED' && canRetryCustomerRefund(row.customerRefundStatus) ? (
                         <div className="pt-1">
                           <Button
                             size="sm"
@@ -485,7 +485,7 @@ export default function AdminRefundRepayments() {
                             {actingId === row.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              'Process Customer Refund'
+                              'Retry customer refund'
                             )}
                           </Button>
                         </div>
@@ -534,14 +534,13 @@ export default function AdminRefundRepayments() {
                   </>
                 ) : (
                   <p>
-                    Mark this repayment as verified. The customer refund will become READY — you must
-                    still click Process Customer Refund to initiate the original-payment refund for{' '}
+                    Mark this repayment as verified. EloFix will also attempt the customer refund of{' '}
                     <span className="font-medium text-foreground">
                       {moneyOrMissing(
                         confirmPrompt?.row.submittedAmount ?? confirmPrompt?.row.amount
                       )}
-                    </span>
-                    .
+                    </span>{' '}
+                    against the original payment.
                   </p>
                 )}
               </div>

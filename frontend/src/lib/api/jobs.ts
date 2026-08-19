@@ -292,6 +292,9 @@ function toFrontendJob(job: BackendJob): Job {
       ? {
           amountDue: Number(job.completionPaymentDue.amountDue) || 0,
           dueAt: job.completionPaymentDue.dueAt ?? null,
+          status: job.completionPaymentDue.status ?? undefined,
+          obligationId: job.completionPaymentDue.obligationId ?? null,
+          source: job.completionPaymentDue.source ?? null,
           resolutionLogId: job.completionPaymentDue.resolutionLogId ?? null,
           createdAt: job.completionPaymentDue.createdAt ?? null,
           notifiedAt: job.completionPaymentDue.notifiedAt ?? null,

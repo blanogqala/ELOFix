@@ -78,3 +78,27 @@ export function adminCompletionEvidenceExportUrl(jobId: string): string {
   const base = import.meta.env.VITE_API_URL || '/api';
   return `${base}/admin/jobs/${jobId}/completion-evidence/export`;
 }
+
+export interface AdminJobCaseSummary {
+  disputeId: string;
+  caseKind: 'dispute' | 'cancellation';
+  status: string;
+  action: string;
+  actionLabel: string;
+  notes: string | null;
+  resolvedAt: string | null;
+  payerRole: 'customer' | 'provider' | 'none';
+  payerSummary: string;
+  amountDue?: number;
+  dueAt?: string | null;
+  refundToCustomer?: number;
+  providerDebtAmount?: number;
+  openedBy?: 'customer' | 'provider' | null;
+}
+
+export async function getAdminJobCaseSummary(jobId: string): Promise<AdminJobCaseSummary | null> {
+  const { data } = await apiClient.get<{ success: boolean; summary: AdminJobCaseSummary | null }>(
+    `/admin/jobs/${jobId}/case-summary`
+  );
+  return data?.summary ?? null;
+}

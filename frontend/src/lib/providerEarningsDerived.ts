@@ -1,6 +1,22 @@
 import type { ProviderEarningJobRow } from '@/lib/api/providerAccount';
+import {
+  getAdminCompletionPaymentStatusLabel,
+  isAdminRequiredCompletionPayment,
+} from '@/lib/completionPaymentDue';
 
-export type EarningsJobDisplayStatus = 'Pending' | 'In Progress' | 'Completed' | 'Held' | 'Cancelled' | 'Refunded';
+export type EarningsJobDisplayStatus =
+  | 'Pending'
+  | 'In Progress'
+  | 'Collecting'
+  | 'Delivery'
+  | 'Awaiting Confirmation'
+  | 'Payment required'
+  | 'Payment overdue'
+  | 'Completed'
+  | 'Held'
+  | 'Cancelled'
+  | 'Rejected'
+  | 'Refunded';
 
 /** Customer gross (what the user paid for labor) — from API, not recalculated. */
 export function getJobTotalPrice(j: ProviderEarningJobRow): number {
@@ -115,8 +131,20 @@ export function getJobStatus(job: ProviderEarningJobRow): EarningsJobDisplayStat
   const refundStatus = String(job.refundStatus || '').toLowerCase();
   if (refundStatus === 'processed' || refundStatus === 'partial') return 'Refunded';
   if (job.workflowStatus === 'CANCELLED') return 'Cancelled';
+  if (job.workflowStatus === 'REJECTED') return 'Rejected';
   if (job.workflowStatus === 'DISPUTED') return 'Held';
   if (job.workflowStatus === 'COMPLETED') return 'Completed';
+  if (isAdminRequiredCompletionPayment(job)) {
+    return getAdminCompletionPaymentStatusLabel(job) as 'Payment required' | 'Payment overdue';
+  }
+  if (job.courierFlow) {
+    const fs = String(job.fulfillmentStatus || '').toUpperCase();
+    if (job.workflowStatus === 'AWAITING_CONFIRMATION' || (fs === 'COMPLETED' && job.workflowStatus !== 'COMPLETED')) {
+      return 'Awaiting Confirmation';
+    }
+    if (fs === 'OUT_FOR_DELIVERY' || fs === 'AT_DESTINATION') return 'Delivery';
+    if (fs === 'COLLECTING' || fs === 'COLLECTED' || job.deliveryPaid) return 'Collecting';
+  }
   if (job.workflowStatus === 'IN_PROGRESS' || job.workflowStatus === 'AWAITING_CONFIRMATION') {
     return 'In Progress';
   }
@@ -195,11 +223,22 @@ export function getStatusColor(status: EarningsJobDisplayStatus): string {
       return 'text-yellow-500';
     case 'In Progress':
       return 'text-blue-500';
+    case 'Collecting':
+      return 'text-blue-500';
+    case 'Delivery':
+      return 'text-blue-500';
+    case 'Awaiting Confirmation':
+      return 'text-blue-500';
+    case 'Payment required':
+    case 'Payment overdue':
+      return 'text-warning';
     case 'Completed':
       return 'text-green-500';
     case 'Held':
       return 'text-warning';
     case 'Cancelled':
+      return 'text-destructive';
+    case 'Rejected':
       return 'text-destructive';
     case 'Refunded':
       return 'text-destructive';

@@ -148,6 +148,8 @@ function mapCustomerRow(user, jobs, categoryNameById, materialOrders) {
     profileImage: user.profileImage || null,
     authProvider: user.authProvider || "LOCAL",
     blocked: Boolean(user.blocked),
+    marketplaceRestricted: Boolean(user.marketplaceRestricted),
+    marketplaceRestrictedReason: user.marketplaceRestrictedReason || null,
     deletedAt: user.deletedAt || null,
     city: latestCityFromJobs(jobs),
     registeredAt: user.createdAt,
@@ -283,6 +285,8 @@ async function getCustomerById(userId) {
       profileImage: true,
       authProvider: true,
       blocked: true,
+      marketplaceRestricted: true,
+      marketplaceRestrictedReason: true,
       deletedAt: true,
       createdAt: true,
     },
@@ -358,12 +362,28 @@ async function getCustomerById(userId) {
 
   const cities = [...new Set(jobs.map(cityFromJobRow).filter(Boolean))];
 
+  let paymentObligations = [];
+  try {
+    const obligationService = require("./customerPaymentObligation.service");
+    const rows = await prisma.customerPaymentObligation.findMany({
+      where: { customerId: userId, status: { in: obligationService.OPEN_STATUSES } },
+      orderBy: { dueAt: "asc" },
+    });
+    paymentObligations = rows.map((row) => ({
+      ...obligationService.toObligationDto(row),
+      displayStatus: obligationService.deriveDisplayStatus(row),
+    }));
+  } catch (_e) {
+    paymentObligations = [];
+  }
+
   return {
     ...profile,
     cities,
     topMaterialStore,
     materialStores,
     jobs: jobRows,
+    paymentObligations,
   };
 }
 

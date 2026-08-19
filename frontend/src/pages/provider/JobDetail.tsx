@@ -70,6 +70,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { ConfirmationCountdown } from '@/components/jobs/ConfirmationCountdown';
+import { ProviderAdminPaymentWaitingCard } from '@/components/jobs/ProviderAdminPaymentWaitingCard';
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { JobDisputeStatusBanner } from '@/components/jobs/JobDisputeStatusBanner';
 import { QuotationFileActions } from '@/components/jobs/QuotationFileActions';
@@ -80,6 +81,10 @@ import {
   getProviderJobBadgeVariantForJob,
 } from '@/lib/jobProgressDisplay';
 import { ACTIVE_WORKFLOW_JOB_STATUSES } from '@/lib/jobStatusMapping';
+import {
+  AWAITING_CONFIRMATION_MARK_COMPLETE_MSG,
+  isProviderMarkCompleteDisabled,
+} from '@/lib/providerJobActions';
 import {
   getProviderJobTimelineViewState,
   getProviderTimelineStepInsight,
@@ -126,6 +131,7 @@ import {
   mergeJobMeasurementPayload,
 } from '@/lib/jobSpecifications';
 import { cn } from '@/lib/utils';
+import { isAdminRequiredCompletionPayment } from '@/lib/completionPaymentDue';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
   if (!values) return undefined;
@@ -549,6 +555,8 @@ export default function ProviderJobDetail() {
 
   const handleMarkComplete = async () => {
     if (!job) return;
+    if (isProviderMarkCompleteDisabled(job)) return;
+    if (isAdminRequiredCompletionPayment(job)) return;
     const mayMarkComplete =
       job.laborPaid || job.paymentModeSnapshot === 'SINGLE_PAYMENT_ON_COMPLETION';
     if (!mayMarkComplete) {
@@ -570,6 +578,7 @@ export default function ProviderJobDetail() {
 
   const handleCancel = async (reason: string, details: string) => {
     if (!job) return;
+    if (isAdminRequiredCompletionPayment(job)) return;
     try {
       const result = await cancelJob(job.id, reason, details);
       await syncJobsAfterMutation();
@@ -808,6 +817,10 @@ export default function ProviderJobDetail() {
     ? (ACTIVE_WORKFLOW_JOB_STATUSES.includes(job.status) || job.status === 'AWAITING_CONFIRMATION') &&
       !isCourierJobCancellationBlocked(job, deliveryRequest ?? null, 'provider')
     : false;
+  const awaitingConfirmationBlocksMarkComplete = job
+    ? isProviderMarkCompleteDisabled(job)
+    : false;
+  const adminPaymentBlocksActions = job ? isAdminRequiredCompletionPayment(job) : false;
 
   const getStatusBadge = (current: Job) => (
     <Badge variant={getProviderJobBadgeVariantForJob(current)}>
@@ -1159,7 +1172,7 @@ export default function ProviderJobDetail() {
                 </p>
               </>
             ) : null}
-            {job.paymentSummary ? (
+            {job.paymentSummary && (job.servicePrice || job.laborPaid || depositPaid) ? (
               <div onClick={(e) => e.stopPropagation()}>
                 <JobPaymentProgressCard job={job} variant="provider" className="bg-background/60" />
               </div>
@@ -1204,6 +1217,7 @@ export default function ProviderJobDetail() {
               return (
                 <div className="mt-3 space-y-1.5" onClick={(e) => e.stopPropagation()}>
                   {display.showRepayCta ? (
+                    <>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-medium text-destructive">
                         {display.label}{' '}
@@ -1215,9 +1229,25 @@ export default function ProviderJobDetail() {
                         size="sm"
                         onClick={() => navigate(`/provider/jobs/${job.id}/refund`)}
                       >
-                        Repay {formatCurrency(jobRefundDebt.amountDue, { decimals: 2 })}
+                        Repay
                       </Button>
                     </div>
+                    {jobRefundDebt.dueAt ? (
+                      <p
+                        className={
+                          display.mode === 'overdue'
+                            ? 'text-xs text-destructive'
+                            : 'text-xs text-muted-foreground'
+                        }
+                      >
+                        {display.mode === 'overdue'
+                          ? 'This refund repayment is overdue. New work is restricted until the outstanding amount is settled.'
+                          : `Due ${new Date(jobRefundDebt.dueAt).toLocaleDateString('en-ZA', {
+                              dateStyle: 'medium',
+                            })}`}
+                      </p>
+                    ) : null}
+                    </>
                   ) : (
                     <p
                       className={
@@ -1723,10 +1753,19 @@ export default function ProviderJobDetail() {
               <Button
                 className="flex-1 h-12"
                 onClick={handleMarkComplete}
-                disabled={!canMarkJobComplete || job.status === 'DISPUTED'}
+                disabled={
+                  !canMarkJobComplete ||
+                  job.status === 'DISPUTED' ||
+                  adminPaymentBlocksActions ||
+                  awaitingConfirmationBlocksMarkComplete
+                }
                 title={
                   job.status === 'DISPUTED'
                     ? 'This job is under review. Actions are disabled until the case is resolved.'
+                    : awaitingConfirmationBlocksMarkComplete
+                      ? AWAITING_CONFIRMATION_MARK_COMPLETE_MSG
+                    : adminPaymentBlocksActions
+                      ? 'Waiting for the customer to pay the admin-required remaining balance.'
                     : !canMarkJobComplete
                     ? job.paymentModeSnapshot === 'SINGLE_PAYMENT_ON_COMPLETION'
                       ? 'You can mark complete; the customer pays after completion.'
@@ -1742,11 +1781,13 @@ export default function ProviderJobDetail() {
                 variant="destructive"
                 className={showMarkComplete ? 'flex-1 h-12' : 'flex-1 h-12'}
                 onClick={() => setCancelOpen(true)}
-                disabled={job.status === 'DISPUTED'}
+                disabled={job.status === 'DISPUTED' || adminPaymentBlocksActions}
                 title={
                   job.status === 'DISPUTED'
                     ? 'This job is under review. Actions are disabled until the case is resolved.'
-                    : undefined
+                    : adminPaymentBlocksActions
+                      ? 'Waiting for the customer to pay the admin-required remaining balance.'
+                      : undefined
                 }
               >
                 <XCircle className="mr-2 h-5 w-5" /> Cancel Job
@@ -1756,6 +1797,9 @@ export default function ProviderJobDetail() {
         )}
 
         {job.status === 'AWAITING_CONFIRMATION' && (
+          adminPaymentBlocksActions ? (
+            <ProviderAdminPaymentWaitingCard job={job} />
+          ) : (
           <div className="card-elevated p-6 space-y-4">
             <ConfirmationCountdown deadlineAt={job.confirmationDeadlineAt} />
             <div className="text-center">
@@ -1784,6 +1828,7 @@ export default function ProviderJobDetail() {
             )}
             </div>
           </div>
+          )
         )}
 
         {job.status === 'COMPLETED' && jobHasSubmittedReview(job) ? (

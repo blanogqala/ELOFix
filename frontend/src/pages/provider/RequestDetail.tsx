@@ -1,5 +1,5 @@
-import { useCallback, useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useCallback, useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -47,6 +47,8 @@ export default function ProviderRequestDetail() {
   const { dialogProps, guardAction, openIfBlockedMessage } = useBlockedActionGuard();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const messagesSectionRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const { markJobSectionRead } = useJobActivityIndicators();
   const [job, setJob] = useState<Job | null>(null);
@@ -90,7 +92,13 @@ export default function ProviderRequestDetail() {
   useEffect(() => {
     if (!id || !job) return;
     void markJobSectionRead(id, 'general');
+    void markJobSectionRead(id, 'messages');
   }, [id, job?.id, markJobSectionRead]);
+
+  useEffect(() => {
+    if (location.hash !== '#messages' || !job) return;
+    messagesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [location.hash, job?.id]);
 
   const performAccept = async () => {
     if (!job || isMutating) return;
@@ -373,7 +381,11 @@ export default function ProviderRequestDetail() {
         )}
 
         {/* Chat Section */}
-        <div className="card-elevated space-y-4 p-4 sm:p-6">
+        <div
+          id="request-messages"
+          ref={messagesSectionRef}
+          className="card-elevated space-y-4 p-4 sm:p-6"
+        >
           <h2 className="flex items-center gap-2 text-lg font-semibold">
             <MessageSquare className="h-4 w-4 sm:h-5 sm:w-5" /> Messages
           </h2>

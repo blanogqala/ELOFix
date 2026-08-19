@@ -362,11 +362,8 @@ async function createPaymentIntent({
 
   const customerBlockKinds = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
   if (customerBlockKinds.has(kindNorm)) {
-    const customerRow = await prisma.user.findUnique({
-      where: { id: String(userId) },
-      select: { blocked: true },
-    });
-    assertCustomerNotBlocked(customerRow);
+    const obligationService = require("../customerPaymentObligation.service");
+    await obligationService.assertCustomerCanStartPaidTransaction(userId);
   }
 
   const gw = getGateway(providerKey);

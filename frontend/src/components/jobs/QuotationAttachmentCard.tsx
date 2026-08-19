@@ -11,6 +11,8 @@ export interface QuotationAttachmentCardProps {
   uploadedAt?: string | null;
   serviceNote?: string | null;
   className?: string;
+  /** When false, amount is omitted (e.g. payment progress card already shows service price). */
+  showServiceAmount?: boolean;
 }
 
 export function QuotationAttachmentCard({
@@ -20,6 +22,7 @@ export function QuotationAttachmentCard({
   uploadedAt,
   serviceNote,
   className,
+  showServiceAmount = true,
 }: QuotationAttachmentCardProps) {
   const hasFile = Boolean(fileName);
   const Icon = quotationFileIcon(fileName);
@@ -32,6 +35,10 @@ export function QuotationAttachmentCard({
       })
     : null;
 
+  if (!showServiceAmount && !hasFile) {
+    return null;
+  }
+
   return (
     <div
       className={cn(
@@ -39,22 +46,24 @@ export function QuotationAttachmentCard({
         className
       )}
     >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Service amount</p>
-          <p className="text-2xl font-bold text-primary tabular-nums">{formatCurrency(serviceAmount, { decimals: 2 })}</p>
-          {serviceNote ? <p className="text-sm text-muted-foreground">{serviceNote}</p> : null}
-        </div>
-        {hasFile ? (
-          <div className="flex shrink-0 items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-xs text-primary">
-            <FileCheck2 className="h-4 w-4" />
-            <span>Quotation on file</span>
+      {showServiceAmount ? (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Service amount</p>
+            <p className="text-2xl font-bold text-primary tabular-nums">{formatCurrency(serviceAmount, { decimals: 2 })}</p>
+            {serviceNote ? <p className="text-sm text-muted-foreground">{serviceNote}</p> : null}
           </div>
-        ) : null}
-      </div>
+          {hasFile ? (
+            <div className="flex shrink-0 items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-xs text-primary">
+              <FileCheck2 className="h-4 w-4" />
+              <span>Quotation on file</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {hasFile ? (
-        <div className="mt-4 rounded-lg border border-dashed border-border bg-card/60 p-4">
+        <div className={cn('rounded-lg border border-dashed border-border bg-card/60 p-4', showServiceAmount && 'mt-4')}>
           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Quotation document
           </p>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -45,6 +45,7 @@ import { RejectedJobProviderSelectorDialog } from '@/components/jobs/RejectedJob
 import { JobWorkflowTimeline } from '@/components/jobs/JobWorkflowTimeline';
 import { QuotationAttachmentCard } from '@/components/jobs/QuotationAttachmentCard';
 import { JobPaymentProgressCard } from '@/components/jobs/JobPaymentProgressCard';
+import { AdminRequiredCompletionPaymentBlock } from '@/components/jobs/AdminRequiredCompletionPaymentBlock';
 import { JobReviewFormCard } from '@/components/jobs/JobReviewFormCard';
 import { ServicePaymentInvoiceDialog } from '@/components/jobs/ServicePaymentInvoiceDialog';
 import { ProviderDetailModal } from '@/components/providers/ProviderDetailModal';
@@ -91,6 +92,11 @@ import {
   laborPaymentTypeHint,
   paymentModeLabel,
 } from '@/lib/paymentSchedule';
+import {
+  hasOutstandingCompletionPayment,
+  isAdminRequiredCompletionPayment,
+} from '@/lib/completionPaymentDue';
+import { isJobRefundUnsettled, getRefundBlocksDeleteMessage } from '@/lib/refundStatusDisplay';
 import {
   getCustomerCancelPreview,
   getCustomerCancelForfeitToastMessage,
@@ -343,6 +349,7 @@ export default function JobDetail() {
 
   const handleCancelJob = async (reason: string, details: string) => {
     if (!job || isActionPending) return;
+    if (isAdminRequiredCompletionPayment(job)) return;
     setIsActionPending(true);
     try {
       const { refundAmount, disputeOpened, disputeId } = await cancelJob(job.id, reason, details);
@@ -629,6 +636,7 @@ export default function JobDetail() {
 
   const handleDeleteJob = async () => {
     if (!job || isActionPending) return;
+    if (isJobRefundUnsettled(job)) return;
     setIsActionPending(true);
     try {
       await deleteJob(job.id);
@@ -758,6 +766,9 @@ export default function JobDetail() {
     false;
   const cancelPreview = getCustomerCancelPreview(job, deliveryRequest ?? null, hasMaterialsPaid);
   const courierCancelBlocked = isCourierJobCancellationBlocked(job, deliveryRequest ?? null, 'customer');
+  const adminPaymentBlocksCancel = isAdminRequiredCompletionPayment(job);
+  const refundBlocksDelete = isJobRefundUnsettled(job);
+  const customerRefundUi = resolveCustomerRefundDisplay(job);
   const showDeliveryRequirements = isDeliveryOrMovingJob(job);
   const providerReqText = job.providerAdjustedRequirements?.requirementText?.trim();
   const skipStep3Specs = categorySkipsStep3Specs(getJobCategoryStep3Type(job));
@@ -882,6 +893,8 @@ export default function JobDetail() {
                 size="sm"
                 className="h-9 flex-1 whitespace-nowrap text-muted-foreground border-muted-foreground hover:bg-accent/70 sm:flex-initial"
                 onClick={() => setDeleteJobOpen(true)}
+                disabled={refundBlocksDelete}
+                title={refundBlocksDelete ? getRefundBlocksDeleteMessage() : undefined}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete Job
@@ -893,11 +906,13 @@ export default function JobDetail() {
                 size="sm"
                 className="h-9 flex-1 whitespace-nowrap text-muted-foreground border-muted-foreground hover:bg-accent/70 sm:flex-initial"
                 onClick={() => setCancelDialogOpen(true)}
-                disabled={job.status === 'DISPUTED'}
+                disabled={job.status === 'DISPUTED' || adminPaymentBlocksCancel}
                 title={
                   job.status === 'DISPUTED'
                     ? 'This job is under review. Actions are disabled until the case is resolved.'
-                    : undefined
+                    : adminPaymentBlocksCancel
+                      ? 'Pay the outstanding balance before cancelling this job.'
+                      : undefined
                 }
               >
                 <Ban className="mr-2 h-4 w-4" />
@@ -924,59 +939,6 @@ export default function JobDetail() {
           hoveredTimelineStep={hoveredTimelineStep}
           setHoveredTimelineStep={setHoveredTimelineStep}
         />
-
-        {job.completionPaymentDue &&
-        Number(job.completionPaymentDue.amountDue) > 0 &&
-        !completionPaid ? (
-          <Card className="border-warning/50 bg-warning/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Clock className="h-5 w-5 text-warning" />
-                Remaining balance due
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <p>
-                Amount due:{' '}
-                <span className="font-semibold tabular-nums">
-                  {formatCurrency(job.completionPaymentDue.amountDue, { decimals: 2 })}
-                </span>
-              </p>
-              {job.completionPaymentDue.dueAt ? (
-                <p className="text-muted-foreground">
-                  Pay by{' '}
-                  {new Date(job.completionPaymentDue.dueAt).toLocaleString('en-ZA', {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })}
-                  . You have 30 days from the admin decision to settle. Failure to settle within
-                  the stated period may result in further action in accordance with EloFix&apos;s
-                  Terms and applicable law.
-                </p>
-              ) : (
-                <p className="text-muted-foreground">
-                  Please settle the outstanding completion amount. You have 30 days from the admin
-                  decision to pay.
-                </p>
-              )}
-              {showLaborPayCta ? (
-                <div className="pt-1">
-                  <Button
-                    className="btn-accent"
-                    disabled={jobPaymentBlocked}
-                    onClick={() => {
-                      if (jobPaymentBlocked) return;
-                      if (!guardLoadedPaymentCards(savedCards, toast)) return;
-                      setPayLaborModalOpen(true);
-                    }}
-                  >
-                    Pay remaining balance
-                  </Button>
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
-        ) : null}
 
         {isCourierJob && deliveryRequest ? (
           <JobDeliverySection
@@ -1118,6 +1080,7 @@ export default function JobDetail() {
                 fileName={job.quotationFileName}
                 uploadedAt={job.quotationUploadedAt}
                 serviceNote={job.servicePrice?.note}
+                showServiceAmount={!job.paymentSummary}
               />
               {job.paymentSummary ? (
                 <JobPaymentProgressCard
@@ -1216,6 +1179,7 @@ export default function JobDetail() {
                 fileName={job.quotationFileName}
                 uploadedAt={job.quotationUploadedAt}
                 serviceNote={job.servicePrice?.note}
+                showServiceAmount={!job.paymentSummary}
               />
               {job.paymentSummary ? (
                 <JobPaymentProgressCard job={job} variant="customer" />
@@ -1259,7 +1223,7 @@ export default function JobDetail() {
                 </div>
               ) : null}
               {(() => {
-                const refundUi = resolveCustomerRefundDisplay(job);
+                const refundUi = customerRefundUi;
                 if (refundUi.mode === 'none' || refundUi.amount <= 0) return null;
                 const completedLabel =
                   refundUi.completedAt
@@ -1293,11 +1257,14 @@ export default function JobDetail() {
                     >
                       {refundUi.mode === 'completed'
                         ? `✓ Refund completed${completedLabel ? ` · ${completedLabel}` : ''}`
-                        : refundUi.label}
+                        : refundUi.mode === 'processing'
+                          ? 'Provider repayment is verified. EloFix is processing your refund.'
+                          : refundUi.label}
                     </p>
                     <StagedRefundBreakdown
                       immediateRefund={job.refundDetails?.immediateRefund ?? undefined}
                       pendingRefund={job.refundDetails?.pendingRefund ?? undefined}
+                      customerRefundStatus={job.customerRefundStatus}
                     />
                   </div>
                 );
@@ -1306,11 +1273,13 @@ export default function JobDetail() {
                 <Button variant="outline" size="sm" onClick={() => setServiceInvoiceOpen(true)}>
                   View invoice
                 </Button>
-                {resolveCustomerRefundDisplay(job).mode === 'completed' ? (
+                {customerRefundUi.mode === 'completed' ? (
                   <Badge variant="destructive">Refunded</Badge>
-                ) : resolveCustomerRefundDisplay(job).mode === 'pending' ? (
+                ) : customerRefundUi.mode === 'pending' ||
+                  customerRefundUi.mode === 'processing' ||
+                  customerRefundUi.mode === 'failed' ? (
                   <Badge variant="outline" className="border-amber-500/50 text-amber-800 dark:text-amber-100">
-                    Refund pending
+                    {customerRefundUi.label}
                   </Badge>
                 ) : job.paymentSummary ? null : paymentProgress === 'FIRST_PAID' ? (
                   <Badge className="bg-success text-success-foreground">50% Deposit Paid</Badge>
@@ -1590,6 +1559,20 @@ export default function JobDetail() {
                               </Button>
                             </div>
                           </div>
+                        ) : isAdminRequiredCompletionPayment(job) ? (
+                          <AdminRequiredCompletionPaymentBlock
+                            job={job}
+                            providerName={job.providerName || provider?.name || 'your provider'}
+                            paymentProgress={paymentProgress}
+                            showPayCta={showLaborPayCta}
+                            paymentBlocked={jobPaymentBlocked}
+                            disabled={isActionPending}
+                            onPay={() => {
+                              if (jobPaymentBlocked) return;
+                              if (!guardLoadedPaymentCards(savedCards, toast)) return;
+                              setPayLaborModalOpen(true);
+                            }}
+                          />
                         ) : (
                           <>
                             <div className="space-y-1">
@@ -1640,6 +1623,17 @@ export default function JobDetail() {
                                 </div>
                               );
                             })()}
+                            {hasOutstandingCompletionPayment(job) &&
+                            !isAdminRequiredCompletionPayment(job) &&
+                            job.completionPaymentDue?.dueAt ? (
+                              <p className="text-xs text-muted-foreground">
+                                Remaining balance due by{' '}
+                                {new Date(job.completionPaymentDue.dueAt).toLocaleDateString('en-ZA', {
+                                  dateStyle: 'medium',
+                                })}
+                                .
+                              </p>
+                            ) : null}
                             <div className="flex flex-col gap-2">
                               {laborPayDueBeforeConfirm && showLaborPayCta ? (
                                 <Button

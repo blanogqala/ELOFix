@@ -74,6 +74,7 @@ const { startCompletionDeadlineJob } = require("./src/jobs/completionDeadline.jo
 const { startNotificationOutboxJob } = require("./src/jobs/notificationOutbox.job");
 const { startTrustScoreMonthlyBonusJob } = require("./src/jobs/trustScoreMonthlyBonus.job");
 const { startRefundDebtEnforcementJob } = require("./src/jobs/refundDebtEnforcement.job");
+const { startCustomerPaymentObligationJob } = require("./src/jobs/customerPaymentObligation.job");
 const trackingService = require("./src/services/tracking.service");
 const materialOrderService = require("./src/services/materialOrder.service");
 const { ensureProviderTotalReviewsColumn } = require("./src/utils/ensureDbSchemaPatches");
@@ -144,6 +145,10 @@ io.on("connection", (socket) => {
     if (String(socket.userRole || "") === "BRANCH_STAFF" && socket.branchId) {
       socket.join(`branch:${String(socket.branchId)}`);
     }
+    // Admin room: only sockets authenticated as ADMIN (role from JWT, not client-supplied)
+    if (String(socket.userRole || "").toUpperCase() === "ADMIN") {
+      socket.join("admin");
+    }
   });
 
   async function handleOrderJoin(orderId) {
@@ -210,6 +215,7 @@ function startIntervalsAfterListen() {
   startNotificationOutboxJob();
   startTrustScoreMonthlyBonusJob();
   startRefundDebtEnforcementJob();
+  startCustomerPaymentObligationJob();
   void trackingService.expireOldSessions();
   setInterval(() => {
     void trackingService.expireOldSessions();

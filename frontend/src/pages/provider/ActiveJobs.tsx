@@ -18,6 +18,7 @@ import { DeleteJobDialog } from '@/components/jobs/DeleteJobDialog';
 import { getJobDisplayStatusLabel, getProviderJobBadgeVariantForJob } from '@/lib/jobProgressDisplay';
 import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { ACTIVE_WORKFLOW_JOB_STATUSES, isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
+import { isJobRefundUnsettled, getRefundBlocksDeleteMessage } from '@/lib/refundStatusDisplay';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
@@ -53,9 +54,13 @@ export default function ProviderActiveJobs() {
   const [disputes, setDisputes] = useState<JobDispute[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
-  const { jobHasActivity, notifications } = useJobActivityIndicators();
-  const activeFilterHasDot = activeTabHasActivity(notifications, jobs, (s) =>
-    s ? isActiveWorkflowStatus(s as JobStatus) : false
+  const { jobHasActivity, notifications, pendingRequestIds, requestHasActivity } =
+    useJobActivityIndicators();
+  const activeFilterHasDot = activeTabHasActivity(
+    notifications,
+    jobs,
+    (s) => (s ? isActiveWorkflowStatus(s as JobStatus) : false),
+    pendingRequestIds
   );
 
   useEffect(() => {
@@ -96,6 +101,7 @@ export default function ProviderActiveJobs() {
 
   const handleDeleteCancelled = async () => {
     if (!jobToDelete) return;
+    if (isJobRefundUnsettled(jobToDelete)) return;
     try {
       await deleteJob(jobToDelete.id);
       queryClient.removeQueries({ queryKey: queryKeys.jobs.detail(jobToDelete.id) });
@@ -173,8 +179,11 @@ export default function ProviderActiveJobs() {
             variant="outline"
             size="sm"
             className="mt-2 h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:mt-0 sm:w-auto"
+            disabled={isJobRefundUnsettled(job)}
+            title={isJobRefundUnsettled(job) ? getRefundBlocksDeleteMessage() : undefined}
             onClick={(e) => {
               e.stopPropagation();
+              if (isJobRefundUnsettled(job)) return;
               setJobToDelete(job);
               setDeleteDialogOpen(true);
             }}
@@ -351,6 +360,7 @@ export default function ProviderActiveJobs() {
                   key={job.id}
                   job={job}
                   variant="pending"
+                  showActivityDot={requestHasActivity(job.id)}
                   onClick={() => navigate(`/provider/requests/${job.id}`)}
                 />
               ))}

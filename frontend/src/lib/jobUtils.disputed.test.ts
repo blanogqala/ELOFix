@@ -36,4 +36,29 @@ describe('getJobPriceDisplay disputed jobs', () => {
     expect(display.refundStatus).toBe('processed');
     expect(display.underAdminReview).toBeFalsy();
   });
+
+  it('does not show Price pending inspection for a rejected courier with no quote', () => {
+    const job = {
+      id: 'job-courier-rej',
+      status: 'REJECTED',
+      courierFlow: true,
+      totalPrice: 0,
+    } as Job;
+
+    const display = getJobPriceDisplay(job);
+    expect(display.text).toBe('Rejected');
+    expect(display.text).not.toBe('Price pending inspection');
+  });
+
+  it('does not show Price pending inspection for a cancelled job with no amount', () => {
+    const job = {
+      id: 'job-cancel-empty',
+      status: 'CANCELLED',
+      courierFlow: true,
+      totalPrice: 0,
+    } as Job;
+
+    const display = getJobPriceDisplay(job);
+    expect(display.text).toBe('Cancelled');
+  });
 });

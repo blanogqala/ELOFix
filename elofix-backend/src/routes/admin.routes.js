@@ -30,6 +30,7 @@ router.post("/payments/force-settle", asyncHandler(paymentController.adminForceS
 router.post("/maintenance/repair-stale-courier-jobs", asyncHandler(adminController.repairStaleCourierJobs));
 
 router.get("/financial-summary", asyncHandler(adminController.getFinancialSummaryEndpoint));
+router.get("/payment-obligations", asyncHandler(adminController.listPaymentObligations));
 router.get("/commissions", asyncHandler(adminController.getCommissions));
 router.get("/reconcile/:providerId", asyncHandler(adminController.getReconcileProvider));
 router.get("/customers", asyncHandler(adminController.listCustomers));
@@ -77,6 +78,7 @@ router.post(
 );
 router.get("/jobs/:jobId/completion-evidence", asyncHandler(adminController.getAdminJobCompletionEvidence));
 router.get("/jobs/:jobId/completion-evidence/export", asyncHandler(adminController.exportJobCompletionEvidence));
+router.get("/jobs/:jobId/case-summary", asyncHandler(adminController.getAdminJobCaseSummary));
 
 router.get("/suppliers", asyncHandler(adminController.listSuppliers));
 router.post("/suppliers", asyncHandler(adminController.createSupplier));

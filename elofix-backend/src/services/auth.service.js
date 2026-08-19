@@ -5,7 +5,7 @@ const AppError = require("../utils/AppError");
 const providerService = require("./provider.service");
 const supplierService = require("./supplier.service");
 const branchUserService = require("./branchUser.service");
-const { validateLegalAcceptance } = require("./legalAcceptance.service");
+const { validateLegalAcceptance, recordLegalAcceptanceEvent } = require("./legalAcceptance.service");
 const {
   assertAccountNotDeleted,
   resolveAccountStatus,
@@ -42,6 +42,8 @@ const userPublicSelect = {
   blockedAt: true,
   deletedAt: true,
   createdAt: true,
+  marketplaceRestricted: true,
+  marketplaceRestrictedReason: true,
 };
 
 function assertCustomerAccountActive(user) {
@@ -140,6 +142,8 @@ async function register(body) {
       },
       select: { ...userPublicSelect, password: true },
     });
+
+    await recordLegalAcceptanceEvent(user.id, roleToUse, "REGISTER", legalData);
 
     const { password: _p, ...safe } = user;
     const token = signToken(user);
@@ -318,10 +322,13 @@ async function getMe(ctx) {
 
   if (user.role === "PROVIDER") {
     const profile = await providerService.getProviderByUserId(ctx.userId);
+    const { getLegalStatusForUser } = require("./legalAcceptance.service");
+    const legalStatus = await getLegalStatusForUser(ctx.userId, "PROVIDER");
     return {
       user: {
         ...profile,
         role: "PROVIDER",
+        legalStatus,
       },
     };
   }
@@ -329,11 +336,14 @@ async function getMe(ctx) {
   if (user.role === "SUPPLIER") {
     const supplier = await supplierService.getSupplierProfileByUserId(ctx.userId);
     const { password: _p2, ...base } = user;
+    const { getLegalStatusForUser } = require("./legalAcceptance.service");
+    const legalStatus = await getLegalStatusForUser(ctx.userId, "SUPPLIER");
     return {
       user: {
         ...base,
         role: "SUPPLIER",
         supplierProfile: supplier,
+        legalStatus,
       },
     };
   }
@@ -342,10 +352,13 @@ async function getMe(ctx) {
 
   const { password: _p, ...safe } = user;
   const blockInfo = getBlockInfo(user);
+  const { getLegalStatusForUser } = require("./legalAcceptance.service");
+  const legalStatus = await getLegalStatusForUser(ctx.userId, "CUSTOMER");
   return {
     user: {
       ...safe,
       accountStatus: blockInfo.accountStatus,
+      legalStatus,
     },
   };
 }

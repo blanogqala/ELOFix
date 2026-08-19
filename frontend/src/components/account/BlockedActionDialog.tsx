@@ -36,7 +36,7 @@ export function BlockedActionDialog({
           <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
             <AlertCircle className="h-6 w-6 text-destructive" aria-hidden />
           </div>
-          <DialogTitle className="text-center">Profile blocked</DialogTitle>
+          <DialogTitle className="text-center">Action restricted</DialogTitle>
           <DialogDescription className="text-center">
             {blockedReason?.trim() ||
               'Your account has been restricted. You can still browse the app, but this action is not available.'}

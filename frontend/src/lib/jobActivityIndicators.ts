@@ -50,6 +50,31 @@ export function hasPaymentsNavActivity(notifications: AppNotification[]): boolea
   );
 }
 
+export function isPendingRequestJob(
+  jobId: string,
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  return pendingRequestIds.has(jobId);
+}
+
+export function isRequestNavNotification(
+  n: AppNotification,
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  if (!n.jobId || n.read) return false;
+  if (REQUEST_TYPES.includes(n.type)) return true;
+  if (MESSAGE_TYPES.includes(n.type) && pendingRequestIds.has(n.jobId)) return true;
+  return false;
+}
+
+export function isJobsNavNotification(
+  n: AppNotification,
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  if (isRequestNavNotification(n, pendingRequestIds)) return false;
+  return isJobScopedUnread(n);
+}
+
 export function notificationSection(n: AppNotification): JobActivitySection | null {
   if (!n.jobId || n.read) return null;
   if (MESSAGE_TYPES.includes(n.type)) return 'messages';
@@ -79,33 +104,56 @@ export function countSection(
   return unreadForJob(notifications, jobId).filter((n) => notificationSection(n) === section).length;
 }
 
-export function jobIdsWithActivity(notifications: AppNotification[]): Set<string> {
+export function jobIdsWithActivity(
+  notifications: AppNotification[],
+  pendingRequestIds: Set<string> = new Set()
+): Set<string> {
   const ids = new Set<string>();
   for (const n of notifications) {
-    if (n.jobId && isJobScopedUnread(n)) ids.add(n.jobId);
+    if (n.jobId && isJobsNavNotification(n, pendingRequestIds)) ids.add(n.jobId);
   }
   return ids;
 }
 
-export function hasJobsNavActivity(notifications: AppNotification[]): boolean {
-  return jobIdsWithActivity(notifications).size > 0;
+export function hasJobsNavActivity(
+  notifications: AppNotification[],
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  return notifications.some((n) => isJobsNavNotification(n, pendingRequestIds));
 }
 
-export function isUnreadRequest(n: AppNotification): boolean {
-  return Boolean(n.jobId && !n.read && REQUEST_TYPES.includes(n.type));
+export function isUnreadRequest(
+  n: AppNotification,
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  return isRequestNavNotification(n, pendingRequestIds);
 }
 
-export function hasRequestsNavActivity(notifications: AppNotification[]): boolean {
-  return notifications.some(isUnreadRequest);
+export function hasRequestsNavActivity(
+  notifications: AppNotification[],
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  return notifications.some((n) => isRequestNavNotification(n, pendingRequestIds));
+}
+
+export function requestHasActivity(
+  notifications: AppNotification[],
+  jobId: string,
+  pendingRequestIds: Set<string> = new Set()
+): boolean {
+  return notifications.some(
+    (n) => n.jobId === jobId && isRequestNavNotification(n, pendingRequestIds)
+  );
 }
 
 export function activeTabHasActivity(
   notifications: AppNotification[],
   jobs: { id: string; status?: string }[],
-  isActive: (status?: string) => boolean
+  isActive: (status?: string) => boolean,
+  pendingRequestIds: Set<string> = new Set()
 ): boolean {
   const activeIds = new Set(jobs.filter((j) => isActive(j.status)).map((j) => j.id));
-  for (const id of jobIdsWithActivity(notifications)) {
+  for (const id of jobIdsWithActivity(notifications, pendingRequestIds)) {
     if (activeIds.has(id)) return true;
   }
   return false;

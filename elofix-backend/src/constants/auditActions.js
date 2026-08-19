@@ -84,6 +84,15 @@ const AUDIT_ACTIONS = {
   JOB_AUTO_ACCEPTED: "job.auto_accepted",
   REVIEW_UPSERT: "review.upsert",
 
+  PAYMENT_OBLIGATION_CREATED: "payment.obligation.created",
+  PAYMENT_OBLIGATION_OVERDUE: "payment.obligation.overdue",
+  CUSTOMER_PAYMENT_RESTRICTION_APPLIED: "customer.payment_restriction.applied",
+  CUSTOMER_PAYMENT_RESTRICTION_CLEARED: "customer.payment_restriction.cleared",
+  PROVIDER_REPAYMENT_OVERDUE: "provider.repayment.overdue",
+  PROVIDER_RESTRICTION_APPLIED: "provider.restriction.applied",
+  PROVIDER_RESTRICTION_CLEARED: "provider.restriction.cleared",
+  LEGAL_REACCEPTED: "legal.reaccepted",
+
   // Notifications
   NOTIFICATION_CREATED: "notification.created",
   NOTIFICATION_DEDUPED: "notification.deduped",
@@ -101,7 +110,7 @@ const ACTION_CATEGORIES = {
   fraud: ["fraud.", "admin.fraud."],
   uploads: ["upload."],
   trust_score: ["trust_score."],
-  admin: ["admin.", "withdrawal.", "reconcile.", "material_order.", "job.", "review."],
+  admin: ["admin.", "withdrawal.", "reconcile.", "material_order.", "job.", "review.", "customer.", "provider.", "legal."],
   notifications: ["notification."],
 };
 

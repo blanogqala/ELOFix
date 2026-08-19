@@ -450,6 +450,11 @@ async function getAdminJobCompletionEvidence(req, res) {
   res.json({ success: true, evidence });
 }
 
+async function getAdminJobCaseSummary(req, res) {
+  const summary = await disputeAdminService.getAdminJobCaseSummary(req.params.jobId);
+  res.json({ success: true, summary });
+}
+
 async function getProviderTrustScore(req, res) {
   const providerTrustScore = require("../services/providerTrustScore.service");
   const providerService = require("../services/provider.service");
@@ -588,8 +593,8 @@ async function listRefundRepayments(req, res) {
 
 async function confirmRefundRepayment(req, res) {
   const refundRecovery = require("../services/refundRecovery.service");
-  const row = await refundRecovery.confirmAdminRefundRepayment(req.user.userId, req.params.id, req.body || {});
-  res.json({ success: true, repayment: row });
+  const data = await refundRecovery.confirmAdminRefundRepayment(req.user.userId, req.params.id, req.body || {});
+  res.json({ success: true, ...data });
 }
 
 async function rejectRefundRepayment(req, res) {
@@ -646,6 +651,57 @@ async function getBranchPayoutProfile(req, res) {
   });
 }
 
+async function listPaymentObligations(req, res) {
+  const obligationService = require("../services/customerPaymentObligation.service");
+  const prisma = require("../config/prisma");
+  const overdueOnly = String(req.query?.overdueOnly || "") === "true";
+  const customerObligations = await obligationService.listOpenObligationsForAdmin({
+    overdueOnly,
+    status: req.query?.status,
+  });
+  let providerRefundDebts = [];
+  try {
+    const recoveries = await prisma.refundRecovery.findMany({
+      where: overdueOnly
+        ? { status: "OVERDUE" }
+        : { status: { in: ["PENDING", "PARTIALLY_RECOVERED", "OVERDUE"] } },
+      orderBy: { dueAt: "asc" },
+      take: 200,
+      include: {
+        provider: {
+          select: {
+            id: true,
+            userId: true,
+            blocked: true,
+            refundDebtBlockedAt: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+        job: { select: { id: true, title: true } },
+      },
+    });
+    providerRefundDebts = recoveries.map((row) => {
+      const amountDue = Number(row.totalPending) - Number(row.recoveredAmount);
+      return {
+        id: row.id,
+        providerId: row.providerId,
+        providerUserId: row.provider?.userId || null,
+        providerName: row.provider?.user?.name || null,
+        providerEmail: row.provider?.user?.email || null,
+        jobId: row.jobId,
+        jobTitle: row.job?.title || null,
+        amountDue,
+        dueAt: row.dueAt,
+        status: row.status,
+        restrictionActive: Boolean(row.provider?.refundDebtBlockedAt),
+      };
+    });
+  } catch (_e) {
+    providerRefundDebts = [];
+  }
+  res.json({ success: true, customerObligations, providerRefundDebts });
+}
+
 async function listPendingPayoutProfiles(req, res) {
   const payoutDestinationService = require("../services/payoutDestination.service");
   const data = await payoutDestinationService.listPendingVerificationProfiles();
@@ -698,6 +754,7 @@ module.exports = {
   resolveAdminDispute,
   exportJobCompletionEvidence,
   getAdminJobCompletionEvidence,
+  getAdminJobCaseSummary,
   getProviderTrustScore,
   getFraudCenterSummary,
   listFraudAlerts,
@@ -723,4 +780,5 @@ module.exports = {
   getProviderPayoutProfile,
   getBranchPayoutProfile,
   listPendingPayoutProfiles,
+  listPaymentObligations,
 };

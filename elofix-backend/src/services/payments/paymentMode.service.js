@@ -231,14 +231,33 @@ function paidTrancheFromMeta(rec, scheduledAmount) {
   };
 }
 
+function hasSubmittedServicePriceForSummary(job, meta = {}) {
+  if (!job) return false;
+  if (job.legacyEscrowV2) return true;
+  const safeMeta = meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+  if (safeMeta.servicePrice != null && safeMeta.servicePrice.amount != null) return true;
+  if (Boolean(job.laborPaid) || Boolean(safeMeta.laborPaid)) return true;
+  if (String(safeMeta.servicePayment?.status || "").toLowerCase() === "paid") return true;
+  const progress = String(job.paymentProgress || "NONE");
+  if (progress === "FIRST_PAID" || progress === "FULLY_PAID") return true;
+  return false;
+}
+
 /**
  * Authoritative payment summary for job API / UI (no client recalculation).
  */
 function buildPaymentSummary(job, meta = {}) {
   if (!job) return null;
+  if (!hasSubmittedServicePriceForSummary(job, meta)) return null;
   const mode = job.paymentModeSnapshot || null;
   const progress = String(job.paymentProgress || "NONE");
-  const totalAmount = Number(job.quotedAmount != null ? job.quotedAmount : job.totalPrice || job.price || 0);
+  const totalAmount = Number(
+    job.quotedAmount != null
+      ? job.quotedAmount
+      : meta?.servicePrice?.amount != null
+        ? meta.servicePrice.amount
+        : job.totalPrice || job.price || 0
+  );
   const nextLaborPaymentType = job.legacyEscrowV2 ? null : resolveNextLaborPaymentType(job, meta);
 
   let deposit = null;
@@ -330,6 +349,7 @@ module.exports = {
   paymentTypeForKind,
   serializePaymentSchedule,
   buildPaymentSummary,
+  hasSubmittedServicePriceForSummary,
   assertAmountMatchesExpected,
   assertPaymentModeReady,
   splitCommission,

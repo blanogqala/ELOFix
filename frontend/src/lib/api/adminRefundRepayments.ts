@@ -65,7 +65,10 @@ export async function listAdminRefundRepayments(params?: {
 export async function confirmAdminRefundRepayment(
   id: string,
   body?: { adminNote?: string; acknowledgePartial?: boolean }
-): Promise<{ success: boolean }> {
+): Promise<{
+  success: boolean;
+  customerRefund?: { status?: string; results?: Array<{ jobId: string; status: string }> };
+}> {
   const { data } = await apiClient.post(`/admin/refund-repayments/${id}/confirm`, body ?? {});
   return data;
 }

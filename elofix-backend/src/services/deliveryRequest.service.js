@@ -2,6 +2,7 @@ const { randomUUID } = require("crypto");
 const { MaterialFulfillmentStatus, Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
+const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const trackingService = require("./tracking.service");
 const { createDefaultJobMeta } = require("./jobMeta.service");
 const notificationEvents = require("./notificationEvents.service");
@@ -202,11 +203,8 @@ function isDeliveryRequestPaidForFulfillment(row) {
 }
 
 async function createDeliveryRequest(customerId, body = {}) {
-  const customer = await prisma.user.findUnique({
-    where: { id: String(customerId) },
-    select: { blocked: true },
-  });
-  assertCustomerNotBlocked(customer);
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerCanStartPaidTransaction(customerId);
 
   const collectionPoint = buildGeoPoint(body.collectionPoint || {});
   const destinationPoint = buildGeoPoint(body.destinationPoint || {});
@@ -666,6 +664,29 @@ async function syncCourierDeliveryCustomerCompletion(materialOrderId) {
     },
     { maxWait: 5000, timeout: 20000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );
+
+  // Emit payment domain update for the provider (escrow second tranche released after delivery confirmation)
+  try {
+    if (dr.jobId) {
+      const delivJobRow = await prisma.job.findUnique({ where: { id: dr.jobId }, select: { customerId: true, providerId: true } });
+      if (delivJobRow) {
+        emitDomainUpdate({
+          domain: "payment",
+          action: "paid",
+          jobId: dr.jobId,
+          userIds: [delivJobRow.customerId, delivJobRow.providerId].filter(Boolean),
+        });
+        emitDomainUpdate({
+          domain: "earnings",
+          action: "updated",
+          jobId: dr.jobId,
+          userIds: [delivJobRow.providerId].filter(Boolean),
+        });
+      }
+    }
+  } catch (e) {
+    console.error("syncCourierDeliveryCustomerCompletion emitDomainUpdate", e);
+  }
 
   try {
     const notificationService = require("./notification.service");

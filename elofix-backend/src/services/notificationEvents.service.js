@@ -418,7 +418,7 @@ async function notifyPaymentReleased(providerId, jobId, jobTitle) {
   await notifyUser(providerId, {
     type: "payment_released",
     title: "Payment released",
-    message: `Remaining payment for "${jobTitle || "your job"}" has been released to your account.`,
+    message: `Remaining payment for "${jobTitle || "your job"}" has been recorded as payable according to the job payment schedule. Bank settlement depends on EloFix settlement configuration.`,
     jobId,
     dedupeKey: jobDedupe(jobId, "payment_released"),
   });
@@ -654,7 +654,7 @@ async function notifyCaseClosed({ customerId, providerId, jobId, disputeId, acti
   let providerMsg = customerMsg;
   if (act === "RELEASE_FUNDS") {
     customerMsg =
-      "Your dispute has been reviewed by EloFix. The remaining completion balance is now due. You have 30 days to settle the outstanding amount. Failure to settle within the stated period may result in further action in accordance with EloFix's Terms and applicable law.";
+      "Your dispute has been reviewed by EloFix. The remaining completion balance is now due. You have 30 calendar days to settle the outstanding amount. Failure to settle an outstanding amount within 30 calendar days may result in restrictions on new marketplace transactions, account suspension or blocking, referral for lawful debt recovery, and further legal action where appropriate.";
     providerMsg =
       "EloFix resolved the dispute in favor of releasing the remaining balance. The customer must pay the outstanding completion amount before settlement is recorded.";
   } else if (act === "FULL_REFUND") {
@@ -699,10 +699,12 @@ async function notifyStagedRefundApproved({
   if (pending > 0) {
     message =
       `Your refund of R ${net.toFixed(2)} (net of platform fee) was approved. ` +
-      `R ${immediate.toFixed(2)} was refunded to your card now. ` +
-      `The remaining R ${pending.toFixed(2)} will be paid as we recover it from the provider (within about 30 days).`;
+      (immediate > 0
+        ? `R ${immediate.toFixed(2)} is ready for processing to your original payment method where supported. `
+        : "") +
+      `The remaining R ${pending.toFixed(2)} depends on provider repayment (within about 30 calendar days). A refund is returned to the original payment method only after the payment service provider confirms it.`;
   } else {
-    message = `Your refund of R ${net.toFixed(2)} (net of platform fee) was approved and refunded to your card.`;
+    message = `Your refund of R ${net.toFixed(2)} (net of platform fee) was approved and will be processed to your original payment method where supported. Status will update when the payment service provider confirms the refund.`;
   }
   await notifyUser(customerId, {
     type: "refund_approved",
@@ -821,7 +823,7 @@ async function notifyAccountBlocked(userId, reason) {
     type: "account_blocked",
     title: "Profile blocked",
     message,
-    dedupeKey: userDedupe(userId, `account_blocked:${Date.now()}`),
+    dedupeKey: userDedupe(userId, "account_blocked"),
   });
 }
 
@@ -837,11 +839,85 @@ async function notifyAccountUnblocked(userId) {
 async function notifyProviderRefundDebtOverdue(providerUserId, amountOwed) {
   await notifyUser(providerUserId, {
     type: "refund_debt_overdue",
-    title: "Account blocked — refund debt overdue",
+    title: "Refund repayment overdue",
     message:
-      `Your account is blocked. R ${Number(amountOwed || 0).toFixed(2)} refund debt was not paid within 30 days. ` +
-      `Settle via Earnings or contact support. Legal action may follow.`,
+      `Your refund repayment of R ${Number(amountOwed || 0).toFixed(2)} is overdue. New work is restricted until the outstanding amount is settled. ` +
+      `Failure to settle an approved refund repayment within 30 calendar days may result in restrictions on new work, settlement restrictions, account blocking, referral for lawful debt recovery, and further legal action where appropriate.`,
     dedupeKey: `refund_debt_overdue:${providerUserId}`,
+  });
+}
+
+function formatDueDate(dueAt) {
+  try {
+    return new Date(dueAt).toLocaleDateString("en-ZA", { dateStyle: "medium" });
+  } catch {
+    return "the due date";
+  }
+}
+
+async function notifyCustomerPaymentObligationCreated({ customerId, jobId, amount, dueAt, jobTitle }) {
+  const amt = Number(amount || 0).toFixed(2);
+  const due = formatDueDate(dueAt);
+  await notifyUser(customerId, {
+    type: "customer_payment_due",
+    title: "Payment due",
+    message: `An outstanding payment of R ${amt} is due by ${due} for ${jobTitle || "your job"}.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `customer_payment_due:${amt}`),
+  });
+}
+
+async function notifyCustomerPaymentObligationReminder({ customerId, jobId, amount, dueAt, daysLeft }) {
+  const amt = Number(amount || 0).toFixed(2);
+  await notifyUser(customerId, {
+    type: "customer_payment_reminder",
+    title: daysLeft <= 1 ? "Payment due today" : "Payment reminder",
+    message: `An outstanding payment of R ${amt} is due by ${formatDueDate(dueAt)} for this job.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, `customer_payment_reminder:${daysLeft}`),
+  });
+}
+
+async function notifyCustomerPaymentOverdue({ customerId, jobId, amount }) {
+  const amt = Number(amount || 0).toFixed(2);
+  await notifyUser(customerId, {
+    type: "customer_payment_overdue",
+    title: "Payment overdue",
+    message: `Your payment of R ${amt} is overdue. New marketplace transactions are restricted until the balance is settled.`,
+    jobId,
+    dedupeKey: jobDedupe(jobId, "customer_payment_overdue"),
+  });
+}
+
+async function notifyCustomerPaymentRestrictionCleared(customerId) {
+  await notifyUser(customerId, {
+    type: "customer_payment_restriction_cleared",
+    title: "Marketplace access restored",
+    message: "Your outstanding payment was received. New marketplace transactions are available again.",
+    dedupeKey: userDedupe(customerId, "customer_payment_restriction_cleared"),
+  });
+}
+
+async function notifyAdminCustomerPaymentOverdue({ customerId, jobId, amount }) {
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  const amt = Number(amount || 0).toFixed(2);
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "admin_customer_payment_overdue",
+      title: "Customer payment overdue",
+      message: `Customer ${customerId} has an overdue service payment of R ${amt} on job ${jobId}. Marketplace restriction applied.`,
+      jobId,
+      dedupeKey: `admin_customer_overdue:${jobId}`,
+    });
+  }
+}
+
+async function notifyProviderRestrictionCleared(providerUserId) {
+  await notifyUser(providerUserId, {
+    type: "provider_restriction_cleared",
+    title: "New-work restriction lifted",
+    message: "Your refund repayment was confirmed. You can accept new work again if your account is otherwise in good standing.",
+    dedupeKey: userDedupe(providerUserId, "provider_restriction_cleared"),
   });
 }
 
@@ -874,8 +950,8 @@ async function notifyAdminRefundDebtOverdue(providerUserId, amountOwed) {
   for (const admin of admins) {
     await notifyUser(admin.id, {
       type: "admin_refund_debt_overdue",
-      title: "Provider blocked — overdue refund debt",
-      message: `Provider ${providerUserId} blocked with R ${Number(amountOwed || 0).toFixed(2)} overdue refund debt. Legal action flagged.`,
+      title: "Provider refund debt overdue",
+      message: `Provider ${providerUserId} has R ${Number(amountOwed || 0).toFixed(2)} overdue refund debt. New-work restriction applied.`,
       dedupeKey: `admin_overdue:${providerUserId}`,
     });
   }
@@ -1012,6 +1088,12 @@ module.exports = {
   notifyAccountUnblocked,
   notifyProviderRefundDebtOverdue,
   notifyCustomerRefundDebtOverdue,
+  notifyCustomerPaymentObligationCreated,
+  notifyCustomerPaymentObligationReminder,
+  notifyCustomerPaymentOverdue,
+  notifyCustomerPaymentRestrictionCleared,
+  notifyAdminCustomerPaymentOverdue,
+  notifyProviderRestrictionCleared,
   notifyAdminRefundRepaymentSubmitted,
   notifyAdminRefundDebtOverdue,
   notifyAdminCustomerRefundReady,

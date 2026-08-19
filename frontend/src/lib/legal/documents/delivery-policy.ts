@@ -148,7 +148,7 @@ export const deliveryPolicy: LegalDocument = {
         'Material-order cancellation by the Customer is generally available while the order is still pending, accepted, being prepared, or ready for collection, and is not available after the order has been dispatched / is out for delivery.',
         'A supplier may cancel an order in accordance with Platform rules except where the order is already cancelled, completed, or failed, subject to refund treatment in the Refund, Returns & Cancellation Policy.',
         'Standalone courier or moving jobs generally cannot be cancelled by the Customer after items have been collected, or while the job is awaiting completion confirmation, as implemented on the Platform.',
-        'Customer cancellation of an active courier job that is already in progress may result in no labor refund where the Refund, Returns & Cancellation Policy provides for en-route forfeiture.',
+        'While a courier Provider is collecting items and labor has been paid, Customer cancellation may result in no labor refund where the Refund, Returns & Cancellation Policy provides for that courier en-route forfeiture. Ordinary service Jobs do not use that automatic R0 rule; they may open an administrator review instead.',
         'Specific eligibility is determined by Platform status at the time of cancellation and the Refund, Returns & Cancellation Policy. This policy does not create additional refund rights.',
       ],
     },

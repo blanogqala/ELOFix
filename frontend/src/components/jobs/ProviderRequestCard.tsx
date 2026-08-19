@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { getProviderJobPriceDisplay } from '@/lib/jobUtils';
 import type { Job } from '@/types';
+import { ActivityDot } from '@/components/ui/ActivityDot';
 import { Calendar, ClipboardList, Package, User } from 'lucide-react';
 
 export type ProviderRequestCardVariant = 'pending' | 'rejected' | 'cancelled';
@@ -23,12 +24,14 @@ export function ProviderRequestCard({
   onClick,
   actions,
   className,
+  showActivityDot = false,
 }: {
   job: Job;
   variant?: ProviderRequestCardVariant;
   onClick?: () => void;
   actions?: ReactNode;
   className?: string;
+  showActivityDot?: boolean;
 }) {
   const navigate = useNavigate();
 
@@ -74,6 +77,9 @@ export function ProviderRequestCard({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">{job.categoryName}</h3>
+            {showActivityDot && (
+              <ActivityDot aria-label="This request needs your attention" />
+            )}
             {job.courierFlow ? (
               <Badge variant="outline" className="text-xs">
                 Delivery

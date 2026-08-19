@@ -29,6 +29,9 @@ export interface ProviderEarningJobRow {
   customerName?: string;
   /** Frontend workflow status from job meta (e.g. DISPUTED, IN_PROGRESS) */
   workflowStatus?: string;
+  courierFlow?: boolean;
+  fulfillmentStatus?: string | null;
+  deliveryPaid?: boolean;
   paymentProgress?: string;
   paymentLabel?: string;
   legacyEscrowV2?: boolean;
@@ -53,6 +56,20 @@ export interface ProviderEarningJobRow {
   clawbackFromReleased?: number;
   escrowReversed?: number;
   netReleasedAfterRefund?: number;
+  completionPayment?: {
+    status?: string;
+    amount?: number;
+  } | null;
+  completionPaymentDue?: {
+    amountDue: number;
+    dueAt?: string | null;
+    status?: string;
+    obligationId?: string | null;
+    source?: string | null;
+    resolutionLogId?: string | null;
+    createdAt?: string | null;
+    notifiedAt?: string | null;
+  } | null;
 }
 
 export interface ProviderSettlementRecord {

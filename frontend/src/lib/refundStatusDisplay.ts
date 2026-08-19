@@ -129,7 +129,15 @@ export function resolveProviderRefundDisplay(
 }
 
 /** Customer-facing refund display from job DTO fields. */
-export type CustomerRefundDisplayMode = 'none' | 'pending' | 'completed' | 'failed';
+export type CustomerRefundDisplayMode = 'none' | 'pending' | 'processing' | 'completed' | 'failed';
+
+const CUSTOMER_REFUND_PROCESSING_STATUSES = new Set([
+  'READY',
+  'REFUND_READY',
+  'REFUND_REQUESTED',
+  'REFUND_PROCESSING',
+  'REFUND_MANUAL_ACTION_REQUIRED',
+]);
 
 export function resolveCustomerRefundDisplay(job: {
   refundAmount?: number | null;
@@ -160,24 +168,25 @@ export function resolveCustomerRefundDisplay(job: {
       completedAt,
     };
   }
-  if (
-    crs === 'READY' ||
-    crs === 'REFUND_READY' ||
-    crs === 'REFUND_REQUESTED' ||
-    crs === 'REFUND_PROCESSING' ||
-    crs === 'REFUND_MANUAL_ACTION_REQUIRED' ||
-    pending > 0 ||
-    isLegacyPending(job.refundStatus)
-  ) {
+  if (crs === 'REFUND_FAILED') {
+    return { mode: 'failed', label: 'Refund delayed', amount: total, completedAt: null };
+  }
+  // Provider repayment is verified; EloFix still needs to pay the customer.
+  if (CUSTOMER_REFUND_PROCESSING_STATUSES.has(crs)) {
+    return {
+      mode: 'processing',
+      label: 'Refund processing',
+      amount: pending > 0 ? pending : total,
+      completedAt: null,
+    };
+  }
+  if (pending > 0 || isLegacyPending(job.refundStatus)) {
     return {
       mode: 'pending',
       label: 'Refund pending',
       amount: pending > 0 ? pending : total,
       completedAt: null,
     };
-  }
-  if (crs === 'REFUND_FAILED') {
-    return { mode: 'failed', label: 'Refund delayed', amount: total, completedAt: null };
   }
   if (total > 0 && isLegacyProcessed(job.refundStatus)) {
     return { mode: 'completed', label: 'Refunded', amount: total, completedAt };
@@ -201,6 +210,26 @@ function isLegacyPending(status?: string | null): boolean {
 }
 
 /** Notification types that light the customer Payments orange dot (completion only). */
+export const REFUND_BLOCKS_DELETE_MSG =
+  'This job cannot be removed until the pending refund is fully settled.';
+
+export function getRefundBlocksDeleteMessage(): string {
+  return REFUND_BLOCKS_DELETE_MSG;
+}
+
+export function isJobRefundUnsettled(job: {
+  refundAmount?: number | null;
+  refundStatus?: string | null;
+  customerRefundStatus?: string | null;
+  refundDetails?: { pendingRefund?: number; immediateRefund?: number } | null;
+  refundCompletedAt?: string | null;
+  providerRefundDebt?: number | null;
+}): boolean {
+  const mode = resolveCustomerRefundDisplay(job).mode;
+  if (mode === 'pending' || mode === 'processing' || mode === 'failed') return true;
+  return Number(job.providerRefundDebt) > 0;
+}
+
 export const PAYMENTS_NAV_TYPES = [
   'refund_processed',
   'refund_completed',

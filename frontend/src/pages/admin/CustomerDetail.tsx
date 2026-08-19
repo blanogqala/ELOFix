@@ -195,6 +195,11 @@ export default function AdminCustomerDetail() {
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-xl font-semibold">{customer.name}</h2>
                     <span className={cn('status-badge', statusClass)}>{accountStatus}</span>
+                    {customer.marketplaceRestricted ? (
+                      <span className="status-badge bg-destructive/10 text-destructive">
+                        Marketplace restricted
+                      </span>
+                    ) : null}
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Registered {new Date(customer.registeredAt).toLocaleDateString()}
@@ -223,6 +228,30 @@ export default function AdminCustomerDetail() {
                 </div>
               </div>
             </div>
+
+            {customer.paymentObligations && customer.paymentObligations.length > 0 ? (
+              <div className="card-elevated p-6">
+                <h3 className="mb-3 font-semibold">Payment obligations</h3>
+                <div className="space-y-2 text-sm">
+                  {customer.paymentObligations.map((row) => (
+                    <div key={row.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {formatCurrency(row.amountDue)} due{' '}
+                        {new Date(row.dueAt).toLocaleDateString('en-ZA')} ·{' '}
+                        {row.displayStatus || row.status}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/admin/jobs/${row.jobId}`)}
+                      >
+                        View job
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
               {[

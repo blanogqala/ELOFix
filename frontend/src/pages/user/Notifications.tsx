@@ -39,6 +39,7 @@ import {
 } from '@/lib/displayPersonName';
 import { formatDistanceToNow, format, isToday, isYesterday, parseISO } from 'date-fns';
 import { useNavigate, useLocation, type NavigateFunction } from 'react-router-dom';
+import { getJobById } from '@/lib/api/jobs';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -360,8 +361,25 @@ export default function NotificationsPage() {
     invalidateUnread();
   };
 
-  const handleNotificationClick = (notification: AppNotification) => {
+  const handleNotificationClick = async (notification: AppNotification) => {
     void handleMarkAsRead(notification.id);
+    if (role === 'provider' && notification.jobId) {
+      if (notification.type === 'job_request') {
+        navigate(`/provider/requests/${notification.jobId}`);
+        return;
+      }
+      if (notification.type === 'job_chat') {
+        try {
+          const job = await getJobById(notification.jobId);
+          if (job.status === 'PENDING') {
+            navigate(`/provider/requests/${notification.jobId}#messages`);
+            return;
+          }
+        } catch {
+          // Fall through to default job-detail routing.
+        }
+      }
+    }
     navigateForNotification(notification, role, navigate);
   };
 
