@@ -2192,6 +2192,8 @@ async function acceptProposedPrice(jobId, actorUserId) {
   assertCustomerOwnsJob(job, actorUserId);
   const metaBefore = await getJobMeta(jobId);
   const hadProposal = Boolean(metaBefore.proposedLaborPrice);
+  const proposedAmount =
+    metaBefore.proposedLaborPrice != null ? coerceNumber(metaBefore.proposedLaborPrice.amount) : null;
   const meta = await mutateJobMeta(jobId, (m) => {
     if (!m.proposedLaborPrice) return m;
     return {
@@ -2205,7 +2207,19 @@ async function acceptProposedPrice(jobId, actorUserId) {
       statusOverride: "SERVICE_PRICE_SUBMITTED",
     };
   });
-  const enriched = await finalizeJob(job, meta);
+  if (hadProposal && proposedAmount != null && proposedAmount > 0 && !job.legacyEscrowV2) {
+    const paymentModeService = require("./payments/paymentMode.service");
+    const force = !job.paymentModeSnapshot || String(job.paymentProgress || "") === "NONE";
+    await prisma.$transaction(async (tx) => {
+      await paymentModeService.snapshotPaymentModeOnJob(tx, jobId, {
+        quotedAmount: proposedAmount,
+        categoryKey: job.category,
+        force,
+      });
+    });
+  }
+  const jobFresh = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  const enriched = await finalizeJob(jobFresh || job, meta);
   if (hadProposal && job.providerId) {
     await notificationEvents.notifyProposedPriceAccepted(job.providerId, jobId, job.title);
     emitDomainUpdate({ domain: "job", action: "updated", jobId, userIds: [job.providerId] });
@@ -2514,7 +2528,7 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
     jobCompletionEvidence.assertMinimumMedia(images, videos);
   }
 
-  const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  let job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   if (String(job.customerId) !== String(customerUserId) && !autoCompleted) {
     throw new AppError("Only the customer can confirm job completion", 403);
@@ -2538,15 +2552,43 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
 
   // Immediate-settlement modes that still owe a customer payment cannot complete via confirm alone.
   // Missing snapshot on non-legacy jobs is also a configuration error (fail closed).
+  // Courier delivery jobs hold funds via meta.courierFlow and never receive a labor paymentModeSnapshot.
   if (!job.legacyEscrowV2) {
     const paymentModeService = require("./payments/paymentMode.service");
-    paymentModeService.assertPaymentModeReady(job);
-    const due = paymentModeService.resolveNextLaborPaymentType(job, metaBefore);
-    if (due === paymentModeService.PAYMENT_TYPES.COMPLETION || due === paymentModeService.PAYMENT_TYPES.FULL_COMPLETION) {
-      throw new AppError(
-        "Please pay the remaining service balance to complete this job. Completion is confirmed after successful payment.",
-        400
-      );
+    const isCourier = Boolean(metaBefore?.courierFlow);
+    if (!isCourier) {
+      if (!job.paymentModeSnapshot) {
+        const quoted =
+          (metaBefore?.servicePrice && Number(metaBefore.servicePrice.amount)) ||
+          Number(job.quotedAmount || job.totalPrice || job.price || 0);
+        if (quoted > 0) {
+          try {
+            await prisma.$transaction(async (tx) => {
+              await paymentModeService.snapshotPaymentModeOnJob(tx, jobId, {
+                quotedAmount: quoted,
+                categoryKey: job.category,
+              });
+            });
+            const refreshed = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+            if (refreshed) {
+              job = refreshed;
+            }
+          } catch (e) {
+            console.error("[confirmJobCompletion] lazy paymentMode snapshot failed", jobId, e?.message || e);
+          }
+        }
+      }
+      paymentModeService.assertPaymentModeReady(job);
+      const due = paymentModeService.resolveNextLaborPaymentType(job, metaBefore);
+      if (
+        due === paymentModeService.PAYMENT_TYPES.COMPLETION ||
+        due === paymentModeService.PAYMENT_TYPES.FULL_COMPLETION
+      ) {
+        throw new AppError(
+          "Please pay the remaining service balance to complete this job. Completion is confirmed after successful payment.",
+          400
+        );
+      }
     }
   }
 

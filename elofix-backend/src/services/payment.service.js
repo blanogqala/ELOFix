@@ -688,9 +688,13 @@ async function assertEscrowNotFrozen(tx, jobId) {
  */
 async function runSecondTrancheInTransaction(tx, { job, providerProfileId, jobId }) {
   await assertEscrowNotFrozen(tx, jobId);
-  // Second-tranche release is exclusive to legacyEscrowV2 jobs.
-  // Courier delivery escrow uses a separate meta.courierFlow path (not gated here).
-  if (job && job.legacyEscrowV2 !== true) {
+  // Held-funds release for:
+  // - legacyEscrowV2 labor jobs, OR
+  // - courier delivery jobs (meta.courierFlow) which hold 100% until customer confirms.
+  // Immediate-settlement payment modes never enter this path.
+  const jobMetaEarly = normalizeMeta(job?.meta);
+  const isCourierHold = Boolean(jobMetaEarly?.courierFlow);
+  if (job && job.legacyEscrowV2 !== true && !isCourierHold) {
     return { skipped: true, jobRow: null, reason: "immediate_settlement" };
   }
   if (!job.laborPaid) {

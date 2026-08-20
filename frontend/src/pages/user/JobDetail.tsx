@@ -417,7 +417,7 @@ export default function JobDetail() {
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to complete job.',
+        description: error instanceof Error ? error.message : 'Failed to complete job.',
         variant: 'destructive',
       });
     } finally {
