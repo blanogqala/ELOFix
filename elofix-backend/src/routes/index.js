@@ -26,11 +26,13 @@ const deliveryRequestRoutes = require("./deliveryRequest.routes");
 const legalRoutes = require("./legal.routes");
 const disputeRoutes = require("./dispute.routes");
 const fraudRoutes = require("./fraud.routes");
+const contactRoutes = require("./contact.routes");
 
 const router = express.Router();
 
 router.use("/auth", authRoutes);
 router.use("/legal", legalRoutes);
+router.use("/contact", contactRoutes);
 router.use("/geocode", geocodeRoutes);
 router.use("/routing", routingRoutes);
 router.use("/jobs", jobRoutes);

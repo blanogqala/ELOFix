@@ -97,9 +97,9 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
 
 /**
  * Generic transactional email (dispute alerts, support notifications).
- * @param {{ to: string, subject: string, body: string, html?: string }} params
+ * @param {{ to: string, subject: string, body: string, html?: string, replyTo?: string }} params
  */
-async function sendTransactionalEmail({ to, subject, body, html }) {
+async function sendTransactionalEmail({ to, subject, body, html, replyTo }) {
   const recipient = String(to || "").trim();
   if (!recipient) {
     return { error: true, errorMessage: "Missing recipient" };
@@ -125,6 +125,7 @@ async function sendTransactionalEmail({ to, subject, body, html }) {
     const result = await resend.emails.send({
       from: getFromAddress(),
       to: [recipient],
+      ...(replyTo ? { replyTo } : {}),
       subject: safeSubject,
       html: htmlBody,
       text,

@@ -8,6 +8,7 @@ export const COMPANY = {
   websiteDisplay: 'www.elofix.co.za',
   email: 'elofix@litiholdings.co.za',
   partnershipsEmail: 'partnerships@elofix.co.za',
+  supportEmail: 'support@elofix.co.za',
   phone: '+27 67 428 3917',
   phoneHref: 'tel:+27674283917',
   registrationNumber: '2025/260206/07',
@@ -17,6 +18,12 @@ export const COMPANY = {
 } as const;
 
 export type CompanyInfo = typeof COMPANY;
+
+export const CONTACT_EMAILS = [
+  { label: 'Legal Contact', email: COMPANY.email },
+  { label: 'Partnership Contact', email: COMPANY.partnershipsEmail },
+  { label: 'General Contact', email: COMPANY.supportEmail },
+] as const;
 
 export function unpublishedOr(value: string | null | undefined, fallback = 'To be published'): string {
   const trimmed = value?.trim();
