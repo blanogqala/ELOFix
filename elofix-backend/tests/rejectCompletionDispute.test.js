@@ -9,6 +9,7 @@ const { randomUUID } = require("crypto");
 const prisma = require("../src/config/prisma");
 const paymentModeService = require("../src/services/payments/paymentMode.service");
 const paymentIntentService = require("../src/services/payments/paymentIntent.service");
+const { checkoutLegalAcceptance } = require("./helpers/checkoutLegalAcceptance");
 const webhookService = require("../src/services/payments/webhook.service");
 const jobDisputeService = require("../src/services/jobDispute.service");
 const { getJobMeta, mutateJobMeta, toFrontendStatus } = require("../src/services/jobMeta.service");
@@ -197,9 +198,8 @@ async function testOpenDisputeDepositOnly() {
         userId: bundle.customer.id,
         role: "CUSTOMER",
         provider: "PAYFAST",
-        cardId: bundle.savedCard.id,
-        cvv: "123",
         kind: "LABOR",
+        legalAcceptance: checkoutLegalAcceptance("LABOR"),
         jobId: bundle.job.id,
         amount: 500,
         idempotencyKey: payKey,

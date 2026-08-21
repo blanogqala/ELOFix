@@ -11,7 +11,6 @@ import { useToast } from '@/hooks/use-toast';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
 import { PaymentModal } from '@/components/payments/PaymentModal';
-import { guardPaymentCardsForUser } from '@/lib/paymentCardGuard';
 import { LoadingOverlay } from '@/components/common/loading';
 import { Supplier, Product, DeliveryProvider } from '@/types';
 import {
@@ -312,8 +311,6 @@ export default function OrderMaterials() {
     if (!user || !selectedSupplier) return;
     if (!deliveryAddress.trim()) { setError('Delivery address is required.'); return; }
     if (!deliveryCity.trim()) { setError('City is required.'); return; }
-    const canPay = await guardPaymentCardsForUser(user.id, toast);
-    if (!canPay) return;
 
     setIsProcessing(true);
     setError(null);

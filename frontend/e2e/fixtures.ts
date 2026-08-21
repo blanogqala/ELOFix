@@ -302,19 +302,14 @@ export async function setupApprovedProviderForE2E(
 }
 
 export async function ensureCustomerHasSavedCard(page: Page) {
+  // Block 5: EloFix no longer collects raw card data. Tokenisation is not active yet.
   await gotoApp(page, '/user/payments');
-  const addNewCard = page.getByRole('button', { name: 'Add New Card' });
-  await addNewCard.click();
-  // Labels in this dialog are not guaranteed to be programmatically associated with inputs,
-  // so prefer placeholders which are stable in the current UI.
-  await page.getByPlaceholder('1234 5678 9012 3456').fill('4242 4242 4242 4242');
-  await page.getByPlaceholder('MM').fill('12');
-  await page.getByPlaceholder('YYYY').fill('2035');
-  await page.locator('input[type="password"][placeholder="123"]').fill('123');
-  const addCardIntent = page.waitForResponse((r) => r.url().includes('/payments/cards') && r.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Add Card' }).click();
-  await addCardIntent;
-  await expect(page.getByText('Card Added', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Payments/i })).toBeVisible();
+  await expect(
+    page.getByText(/Saved payment methods will be managed securely through our payment service provider/i)
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /Add New Card/i })).toHaveCount(0);
+  await expect(page.getByPlaceholder('1234 5678 9012 3456')).toHaveCount(0);
 }
 
 export async function completePaymentInTest(page: Page, opts: { clickPayButton: () => Promise<void> }) {
@@ -354,6 +349,22 @@ export async function completePaymentInTest(page: Page, opts: { clickPayButton: 
         r.request().method() === 'POST' &&
         !r.url().includes('/confirm')
     );
+
+    // Block 5: EloFix must not collect PAN/CVC before hosted redirect.
+    await expect(page.locator('#payment-modal-cvc')).toHaveCount(0);
+    await expect(page.getByPlaceholder('1234 5678 9012 3456')).toHaveCount(0);
+    await expect(page.getByLabel(/CVC|CVV|Security Code/i)).toHaveCount(0);
+
+    // Block 4: legal checkbox starts unchecked and must be accepted.
+    const legalCheckbox = page.getByRole('checkbox').first();
+    await expect(legalCheckbox).toBeVisible({ timeout: 15_000 });
+    await expect(legalCheckbox).toHaveAttribute('aria-checked', 'false');
+    const payBefore = page.getByRole('button', { name: /Pay .+ securely|^Pay /i }).last();
+    await expect(payBefore).toBeDisabled();
+    await legalCheckbox.click();
+    await expect(legalCheckbox).toHaveAttribute('aria-checked', 'true');
+    await expect(payBefore).toBeEnabled();
+
     await opts.clickPayButton();
     const resp = await intentResponsePromise;
     if (!intentId) {

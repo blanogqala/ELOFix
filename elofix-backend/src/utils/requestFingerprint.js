@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { redactSensitivePaymentFields } = require("./paymentRedaction.util");
 
 function stableStringify(value) {
   if (value === null || typeof value !== "object") {
@@ -13,6 +14,7 @@ function stableStringify(value) {
 
 /**
  * SHA-256 hex of canonical body + method + path (no query string).
+ * Sensitive card credentials are redacted before hashing so they never land in idempotency storage.
  * @param {string} method
  * @param {string} pathNoQuery e.g. /api/jobs/uuid/pay-labor
  * @param {object|undefined} body
@@ -20,7 +22,9 @@ function stableStringify(value) {
 function financialRequestFingerprint(method, pathNoQuery, body) {
   const m = String(method || "GET").toUpperCase();
   const p = String(pathNoQuery || "").split("?")[0];
-  const payload = body === undefined || body === null ? stableStringify({}) : stableStringify(body);
+  const safeBody =
+    body === undefined || body === null ? {} : redactSensitivePaymentFields(body);
+  const payload = stableStringify(safeBody);
   return crypto.createHash("sha256").update(payload).update("\n").update(m).update("\n").update(p).digest("hex");
 }
 

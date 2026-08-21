@@ -14,11 +14,10 @@ test.describe('Customer critical workflows (UI-only)', () => {
     await expect(page).toHaveURL(/\/user\/dashboard/);
   });
 
-  test('payments: add saved card from /user/payments', async ({ page }) => {
+  test('payments: payment methods page does not collect raw card data', async ({ page }) => {
     const customer = await registerCustomer(page);
     await login(page, customer.email, customer.password);
     await ensureCustomerHasSavedCard(page);
-    await expect(page.getByText(/visa|mastercard|amex/i)).toBeVisible();
   });
 
   test('request service wizard loads and enforces required steps', async ({ page }) => {

@@ -1,9 +1,13 @@
 const AppError = require("../utils/AppError");
-const { sendTransactionalEmail } = require("../services/email.service");
+const emailService = require("../services/email.service");
 
-const SUPPORT_EMAIL = "support@elofix.co.za";
+const DEFAULT_CONTACT_FORM_TO_EMAIL = "info@litiholdings.co.za";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CELLPHONE_RE = /^[0-9+\-\s()]{7,20}$/;
+
+function getContactFormToEmail() {
+  return String(process.env.CONTACT_FORM_TO_EMAIL || "").trim() || DEFAULT_CONTACT_FORM_TO_EMAIL;
+}
 
 function readTrimmed(value) {
   return String(value || "").trim();
@@ -66,8 +70,9 @@ async function submitContactForm(req, res) {
   </body>
 </html>`.trim();
 
-  const result = await sendTransactionalEmail({
-    to: SUPPORT_EMAIL,
+  const to = getContactFormToEmail();
+  const result = await emailService.sendTransactionalEmail({
+    to,
     replyTo: email,
     subject,
     body,
@@ -80,6 +85,7 @@ async function submitContactForm(req, res) {
 
   if (result?.skipped && process.env.NODE_ENV !== "production") {
     console.warn("[contact] RESEND_API_KEY not set; contact email skipped");
+    console.warn("[contact] Destination:", to);
     console.warn("[contact] Payload:", { firstName, lastName, email, cellphone, message });
   }
 
@@ -91,4 +97,6 @@ async function submitContactForm(req, res) {
 
 module.exports = {
   submitContactForm,
+  getContactFormToEmail,
+  DEFAULT_CONTACT_FORM_TO_EMAIL,
 };

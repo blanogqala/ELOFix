@@ -41,6 +41,21 @@ export function Footer() {
             <p className="mt-4 max-w-xs text-sm font-medium text-primary-foreground/80">
               {COMPANY.operatorStatement}
             </p>
+            <div className="mt-4 max-w-xs space-y-1.5 text-sm text-primary-foreground/70">
+              <p>
+                General enquiries:{' '}
+                <a href={`mailto:${COMPANY.generalEmail}`} className="underline-offset-2 hover:underline hover:text-primary-foreground">
+                  {COMPANY.generalEmail}
+                </a>
+              </p>
+              <p>
+                Telephone:{' '}
+                <a href={COMPANY.phoneHref} className="underline-offset-2 hover:underline hover:text-primary-foreground">
+                  {COMPANY.phone}
+                </a>
+              </p>
+              <p>{COMPANY.country}</p>
+            </div>
           </div>
 
           <div>

@@ -30,7 +30,7 @@ import { getMaterialRequestsForJob } from '@/lib/api/materialRequests';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { ReviewMediaGrid } from '@/components/providers/MediaLightbox';
 import { getStores } from '@/lib/api/stores';
-import { Job, SavedCard, MaterialLine, Supplier, DeliveryProvider } from '@/types';
+import { Job, MaterialLine, Supplier, DeliveryProvider } from '@/types';
 import { JobCancellationDialog } from '@/components/jobs/JobCancellationDialog';
 import { JobCompletionEvidenceDialog } from '@/components/jobs/JobCompletionEvidenceDialog';
 import { JobDisputeDialog } from '@/components/jobs/JobDisputeDialog';
@@ -124,9 +124,6 @@ import { useMaterialOrderFulfillmentSocket } from '@/hooks/useMaterialOrderFulfi
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
 import { ActivityDot } from '@/components/ui/ActivityDot';
-import { getSavedCards } from '@/lib/api/payments';
-import { guardLoadedPaymentCards } from '@/lib/paymentCardGuard';
-
 function addDaysIso(iso: string | null | undefined, days: number): string | null {
   if (!iso) return null;
   const date = new Date(iso);
@@ -191,7 +188,6 @@ export default function JobDetail() {
   );
   const [payLaborModalOpen, setPayLaborModalOpen] = useState(false);
   const [payCourierDeliveryModalOpen, setPayCourierDeliveryModalOpen] = useState(false);
-  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [deliveryProviders, setDeliveryProviders] = useState<DeliveryProvider[]>([]);
   const [deliveryProvidersError, setDeliveryProvidersError] = useState<string | null>(null);
@@ -247,20 +243,6 @@ export default function JobDetail() {
     }
   }, [job?.location?.city]);
 
-  const loadCards = useCallback(async () => {
-    if (!user) return;
-    try {
-      const cards = await getSavedCards(user.id);
-      setSavedCards(cards);
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to load saved cards.',
-        variant: 'destructive',
-      });
-    }
-  }, [toast, user]);
-
   useEffect(() => {
     if (!isError || !jobError) return;
     console.error('Failed to load job:', jobError);
@@ -294,12 +276,6 @@ export default function JobDetail() {
       cancelled = true;
     };
   }, [job?.providerId, toast]);
-
-  useEffect(() => {
-    if (jobId) {
-      void loadCards();
-    }
-  }, [jobId, loadCards]);
 
   useEffect(() => {
     if (!job) return;
@@ -1051,7 +1027,6 @@ export default function JobDetail() {
                     disabled={jobPaymentBlocked}
                     onClick={() => {
                       if (jobPaymentBlocked) return;
-                      if (!guardLoadedPaymentCards(savedCards, toast)) return;
                       setPayCourierDeliveryModalOpen(true);
                     }}
                   >
@@ -1094,7 +1069,6 @@ export default function JobDetail() {
                           disabled={jobPaymentBlocked}
                           onClick={() => {
                             if (jobPaymentBlocked) return;
-                            if (!guardLoadedPaymentCards(savedCards, toast)) return;
                             setPayLaborModalOpen(true);
                           }}
                         >
@@ -1155,7 +1129,6 @@ export default function JobDetail() {
                     disabled={jobPaymentBlocked}
                     onClick={() => {
                       if (jobPaymentBlocked) return;
-                      if (!guardLoadedPaymentCards(savedCards, toast)) return;
                       setPayLaborModalOpen(true);
                     }}
                   >
@@ -1317,7 +1290,6 @@ export default function JobDetail() {
                   disabled={jobPaymentBlocked}
                   onClick={() => {
                     if (jobPaymentBlocked) return;
-                    if (!guardLoadedPaymentCards(savedCards, toast)) return;
                     setPayLaborModalOpen(true);
                   }}
                 >
@@ -1342,10 +1314,8 @@ export default function JobDetail() {
             job={job}
             materialRequests={materialRequests}
             userSuggestions={job.userMaterialSuggestions || []}
-            savedCards={savedCards}
             deliveryProviders={deliveryProviders}
             deliveryProvidersError={deliveryProvidersError}
-            onPayForStore={handlePayForStore}
             onSuggestAlternatives={() => navigate(`/user/jobs/${job.id}/suggest-materials`)}
             suppliers={suppliers}
             onSelectDeliveryOption={handleSelectDeliveryOption}
@@ -1569,7 +1539,6 @@ export default function JobDetail() {
                             disabled={isActionPending}
                             onPay={() => {
                               if (jobPaymentBlocked) return;
-                              if (!guardLoadedPaymentCards(savedCards, toast)) return;
                               setPayLaborModalOpen(true);
                             }}
                           />
@@ -1642,7 +1611,6 @@ export default function JobDetail() {
                                   disabled={jobPaymentBlocked || isActionPending}
                                   onClick={() => {
                                     if (jobPaymentBlocked) return;
-                                    if (!guardLoadedPaymentCards(savedCards, toast)) return;
                                     setPayLaborModalOpen(true);
                                   }}
                                 >

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import {
   Dialog,
   DialogContent,
@@ -10,24 +9,22 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import {
   PaymentIntentKind,
   PaymentProvider,
   createPaymentIntent,
   getPaymentProviders,
-  getSavedCards,
 } from '@/lib/api/payments';
 import { PaymentMethodSelector } from '@/components/payments/PaymentMethodSelector';
+import { CheckoutLegalAcceptanceCheckbox } from '@/components/payments/CheckoutLegalAcceptanceCheckbox';
+import { buildCheckoutLegalAcceptance } from '@/lib/legal/checkoutAcceptance';
 import { submitCheckout } from '@/lib/paymentCheckout';
 import { LoadingOverlay } from '@/components/common/loading';
-import { useAuth } from '@/contexts/AuthContext';
-import { SavedCard } from '@/types';
-import { Lock, AlertCircle, Loader2, CreditCard } from 'lucide-react';
+import { Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import type { CategoryPaymentMode, LaborPaymentType } from '@/types';
+import { ApiHttpError } from '@/api/client';
 
 interface PaymentBreakdownItem {
   label: string;
@@ -49,8 +46,6 @@ interface PaymentModalProps {
   /** Labor tranche / schedule context for schedule-aware copy */
   paymentType?: LaborPaymentType | null;
   paymentMode?: CategoryPaymentMode | string | null;
-  initialCardId?: string;
-  initialCvv?: string;
   onCancel?: () => void;
 }
 
@@ -65,13 +60,21 @@ function laborSecurePaymentHint(
     type === 'COMPLETION' ||
     mode === 'TWO_PAYMENT_50_50';
   if (isDepositFlow) {
-    return 'You will be redirected to complete payment securely. This service uses two separate transactions: a deposit and a completion payment.';
+    return 'Secure payment is completed with our payment service provider. This service uses two separate transactions: a deposit and a completion payment.';
   }
-  return 'You will be redirected to complete payment securely.';
+  return 'Secure payment is completed with our payment service provider.';
 }
 
-function isValidCvc(value: string): boolean {
-  return /^\d{3,4}$/.test(value);
+function checkoutLegalErrorMessage(err: unknown): string | null {
+  if (!(err instanceof ApiHttpError)) return null;
+  const code = String((err.data as { code?: string } | undefined)?.code || '');
+  if (code === 'LEGAL_POLICY_VERSION_STALE') {
+    return 'Our Refund, Returns & Cancellation Policy has been updated. Please review the latest version and accept it before continuing.';
+  }
+  if (code === 'CHECKOUT_LEGAL_ACCEPTANCE_REQUIRED') {
+    return err.message || 'You must accept the Refund, Returns & Cancellation Policy before payment.';
+  }
+  return null;
 }
 
 export function PaymentModal({
@@ -87,25 +90,23 @@ export function PaymentModal({
   metadata,
   paymentType,
   paymentMode,
-  initialCardId,
-  initialCvv,
   onCancel,
 }: PaymentModalProps) {
-  const { user } = useAuth();
   const [providers, setProviders] = useState<PaymentProvider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<PaymentProvider | ''>('');
-  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
-  const [cardsLoading, setCardsLoading] = useState(false);
-  const [selectedCard, setSelectedCard] = useState<SavedCard | null>(null);
-  const [cvc, setCvc] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Transaction-specific acceptance — reset every open; never carry across deposits/completions. */
+  const [checkoutLegalAccepted, setCheckoutLegalAccepted] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setCheckoutLegalAccepted(false);
+      return;
+    }
     setError(null);
     setIsProcessing(false);
-    setCvc(initialCvv || '');
+    setCheckoutLegalAccepted(false);
 
     getPaymentProviders()
       .then((list) => {
@@ -113,48 +114,19 @@ export function PaymentModal({
         setSelectedProvider(list[0] || '');
       })
       .catch(() => setProviders([]));
+  }, [open]);
 
-    if (!user) {
-      setSavedCards([]);
-      setSelectedCard(null);
-      return;
-    }
-
-    setCardsLoading(true);
-    getSavedCards(user.id)
-      .then((cards) => {
-        setSavedCards(cards);
-        const preferred =
-          cards.find((c) => c.id === initialCardId) ||
-          cards.find((c) => c.isDefault) ||
-          cards[0] ||
-          null;
-        setSelectedCard(preferred);
-      })
-      .catch(() => {
-        setSavedCards([]);
-        setSelectedCard(null);
-      })
-      .finally(() => setCardsLoading(false));
-  }, [open, user, initialCardId, initialCvv]);
-
-  const hasSavedCard = savedCards.length > 0 && selectedCard != null;
-  const cvcValid = isValidCvc(cvc);
   const canPay =
-    hasSavedCard && cvcValid && Boolean(selectedProvider) && !isProcessing && !cardsLoading;
+    Boolean(selectedProvider) && !isProcessing && checkoutLegalAccepted;
 
   const handlePayment = async () => {
     setError(null);
+    if (!checkoutLegalAccepted) {
+      setError('You must accept the Refund, Returns & Cancellation Policy before payment.');
+      return;
+    }
     if (!selectedProvider) {
       setError('Please select a payment method');
-      return;
-    }
-    if (!selectedCard) {
-      setError('You need to add a payment card before paying.');
-      return;
-    }
-    if (!cvcValid) {
-      setError('Enter the 3 or 4 digit CVC code on your card.');
       return;
     }
     setIsProcessing(true);
@@ -166,13 +138,18 @@ export function PaymentModal({
         jobId,
         materialOrderId,
         metadata,
-        cardId: selectedCard.id,
-        cvv: cvc,
+        legalAcceptance: buildCheckoutLegalAcceptance(kind),
       });
       submitCheckout(checkout);
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start payment. Please try again.');
+      const legalMsg = checkoutLegalErrorMessage(err);
+      if (legalMsg) {
+        setCheckoutLegalAccepted(false);
+        setError(legalMsg);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to start payment. Please try again.');
+      }
       setIsProcessing(false);
     }
   };
@@ -208,57 +185,11 @@ export function PaymentModal({
                   <span className="tabular-nums">{formatCurrency(item.amount, { decimals: 2 })}</span>
                 </div>
               ))}
-            </div>
-
-            {cardsLoading ? (
-              <p className="text-sm text-muted-foreground">Loading saved cards…</p>
-            ) : !hasSavedCard ? (
-              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg space-y-3 text-sm text-destructive">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <p>You need to add a payment card before paying.</p>
-                </div>
-                <Button variant="outline" size="sm" asChild className="border-destructive/30">
-                  <Link to="/user/payments">Go to Payments</Link>
-                </Button>
+              <div className="flex justify-between text-xs text-muted-foreground pt-1">
+                <span>Currency</span>
+                <span>ZAR</span>
               </div>
-            ) : (
-              <>
-                <div>
-                  <Label className="mb-2 block">Saved card</Label>
-                  <div className="flex items-center gap-2 p-3 border border-border rounded-lg bg-muted/30">
-                    <CreditCard className="h-4 w-4 text-muted-foreground" />
-                    <span className="capitalize text-sm">{selectedCard.brand}</span>
-                    <span className="text-sm">•••• {selectedCard.last4}</span>
-                    {selectedCard.isDefault && (
-                      <Badge variant="secondary" className="text-xs ml-auto">
-                        Default
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <Label htmlFor="payment-modal-cvc" className="mb-2 block">
-                    CVC / Security Code
-                  </Label>
-                  <Input
-                    id="payment-modal-cvc"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={4}
-                    placeholder="123"
-                    value={cvc}
-                    onChange={(e) => setCvc(e.target.value.replace(/\D/g, ''))}
-                    className="max-w-[120px]"
-                    disabled={isProcessing}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Enter the 3 or 4 digit code on your card
-                  </p>
-                </div>
-              </>
-            )}
+            </div>
 
             <div>
               <Label className="mb-2 block">Payment provider</Label>
@@ -266,9 +197,16 @@ export function PaymentModal({
                 value={selectedProvider}
                 onChange={setSelectedProvider}
                 availableProviders={providers}
-                disabled={isProcessing || !hasSavedCard}
+                disabled={isProcessing}
               />
             </div>
+
+            <CheckoutLegalAcceptanceCheckbox
+              kind={kind}
+              checked={checkoutLegalAccepted}
+              onCheckedChange={setCheckoutLegalAccepted}
+              disabled={isProcessing}
+            />
 
             <p className="text-xs text-muted-foreground">
               {kind === 'LABOR'
@@ -282,7 +220,7 @@ export function PaymentModal({
                         ? (metadata.paymentMode as CategoryPaymentMode)
                         : null)
                   )
-                : 'You will be redirected to complete payment securely.'}
+                : 'Secure payment is completed with our payment service provider. Card details are entered only on the provider checkout page.'}
             </p>
 
             {error && (
@@ -299,7 +237,9 @@ export function PaymentModal({
             </Button>
             <Button onClick={handlePayment} disabled={!canPay} className="btn-accent">
               {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {isProcessing ? 'Redirecting…' : `Pay ${formatCurrency(amount, { decimals: 2 })}`}
+              {isProcessing
+                ? 'Redirecting…'
+                : `Pay ${formatCurrency(amount, { decimals: 2 })} securely`}
             </Button>
           </DialogFooter>
         </DialogContent>

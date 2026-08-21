@@ -44,11 +44,6 @@ interface CardsResponse {
   cards: SavedCard[];
 }
 
-interface CardResponse {
-  success: boolean;
-  card: SavedCard;
-}
-
 interface InvoicesResponse {
   success: boolean;
   invoices: Invoice[];
@@ -59,20 +54,13 @@ interface InvoiceResponse {
   invoice: Invoice | null;
 }
 
+/**
+ * Legacy metadata-only card rows (last4/brand/expiry). Not PSP-vaulted tokens.
+ * Raw PAN/CVV must never be submitted to EloFix — use PSP hosted checkout / future tokenisation.
+ */
 export async function getSavedCards(userId: string): Promise<SavedCard[]> {
   const { data } = await apiClient.get<CardsResponse>('/payments/cards', { params: { userId } });
   return Array.isArray(data?.cards) ? data.cards : [];
-}
-
-export async function addCard(userId: string, cardData: {
-  number: string;
-  expiryMonth: number;
-  expiryYear: number;
-  cvv: string;
-}): Promise<SavedCard> {
-  const { data } = await apiClient.post<CardResponse>('/payments/cards', { userId, ...cardData });
-  if (!data?.card) throw new Error('Failed to add card');
-  return data.card;
 }
 
 export async function deleteCard(userId: string, cardId: string): Promise<void> {
@@ -115,8 +103,13 @@ export async function createPaymentIntent(input: {
   returnUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, unknown>;
-  cardId: string;
-  cvv: string;
+  /** Transaction-specific Refund / Delivery policy acceptance (FNB checkout) */
+  legalAcceptance: {
+    refundPolicyAccepted: boolean;
+    refundPolicyVersion: string;
+    deliveryPolicyAcknowledged: boolean;
+    deliveryPolicyVersion: string | null;
+  };
 }): Promise<{ intentId: string; merchantReference: string; intent: PaymentIntent; checkout: CheckoutPayload }> {
   const { data } = await apiClient.post<{
     success: boolean;

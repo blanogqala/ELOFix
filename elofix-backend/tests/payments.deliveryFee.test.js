@@ -21,6 +21,7 @@ const { randomUUID } = require("crypto");
 const paymentIntentService = require("../src/services/payments/paymentIntent.service");
 const materialOrderService = require("../src/services/materialOrder.service");
 const { listEnabledGateways } = require("../src/services/payments/gatewayRegistry");
+const { checkoutLegalAcceptance } = require("./helpers/checkoutLegalAcceptance");
 
 function testServiceExports() {
   assert.strictEqual(typeof paymentIntentService.createPaymentIntent, "function");
@@ -113,9 +114,8 @@ async function testServiceFlow(prisma, fixtures, provider, recordKeys) {
       userId: user.id,
       role: "CUSTOMER",
       provider,
-      cardId: savedCard.id,
-      cvv: "123",
       route: "POST /api/payments/intents",
+      legalAcceptance: checkoutLegalAcceptance(overrides.kind),
       ...overrides,
     });
 
@@ -233,10 +233,9 @@ async function testRepayAfterDeliveryClear(prisma, fixtures, provider, recordKey
     role: "CUSTOMER",
     provider,
     kind: "DELIVERY_FEE",
+    legalAcceptance: checkoutLegalAcceptance("DELIVERY_FEE"),
     materialOrderId: orderRepay.id,
     amount: 100,
-    cardId: savedCard.id,
-    cvv: "123",
     idempotencyKey: kRepay,
     requestHash: "hash-repay",
     route: "POST /api/payments/intents",
@@ -357,11 +356,10 @@ async function testRepayRefreshesJobIdToNewCourier(prisma, fixtures, provider, r
     role: "CUSTOMER",
     provider,
     kind: "DELIVERY_FEE",
+    legalAcceptance: checkoutLegalAcceptance("DELIVERY_FEE"),
     materialOrderId: orderJobIdRefresh.id,
     jobId: jobBId,
     amount: 100,
-    cardId: savedCard.id,
-    cvv: "123",
     metadata: { deliveryRequestId: drId },
     idempotencyKey: kRepay,
     requestHash: "hash-repay-jobid",

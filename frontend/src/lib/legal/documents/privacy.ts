@@ -46,7 +46,7 @@ export const privacyPolicy: LegalDocument = {
         'Provider verification data: South African ID number, business registration, proof of address, certifications, banking information, and uploaded document files.',
         'Supplier data: business details, branch information, inventory, pricing, staff accounts, and order fulfilment records.',
         'Transaction data: Jobs, quotations, material orders, payment intents, invoices, payment schedule and payment status, refunds, commissions, recipient shares, and delivery tracking.',
-        'Payment-related data processed by EloFix may include transaction identifiers, amounts, payment status, refund status, and ledger/accounting records. Card numbers, CVV, and full payment-instrument details are processed by the applicable third-party payment service provider according to that provider\'s systems; EloFix does not store CVV and does not claim to store full card numbers.',
+        'Payment-related data processed by EloFix may include transaction identifiers, amounts, payment status, refund status, and ledger/accounting records. Sensitive card information is entered and processed through the applicable payment service provider. EloFix does not store CVV/CVC or full card numbers.',
         'Banking details provided for provider or supplier settlement destinations (which may remain pending verification until settlement is supported).',
         'Dispute and evidence data: comments, images, videos, messages, and admin resolution records.',
         'Device and security data: device fingerprints, browser fingerprints, IP addresses, user agents, session activity, and login records (see Device Security Policy).',

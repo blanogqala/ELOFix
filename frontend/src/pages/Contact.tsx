@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Mail, MapPin } from 'lucide-react';
+import { Mail, MapPin, Phone } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { LandingSection } from '@/components/landing/LandingSection';
 import { useToast } from '@/hooks/use-toast';
 import { postContactForm } from '@/lib/api/contact';
-import { COMPANY, CONTACT_EMAILS, formatRegisteredAddress } from '@/lib/company';
+import {
+  COMPANY,
+  CONTACT_EMAILS,
+  formatRegisteredAddress,
+  formatRegistrationNumber,
+} from '@/lib/company';
 
 const INITIAL_FORM = {
   firstName: '',
@@ -94,7 +99,7 @@ export default function ContactPage() {
       setFormData(INITIAL_FORM);
       toast({
         title: 'Message sent',
-        description: `Your enquiry has been sent to ${COMPANY.supportEmail}. We will get back to you soon.`,
+        description: `Your enquiry has been sent to ${COMPANY.generalEmail}. We will get back to you soon.`,
       });
     } catch (error) {
       toast({
@@ -129,7 +134,7 @@ export default function ContactPage() {
               </h1>
               <p className="landing-fade-in landing-delay-3 mx-auto max-w-2xl text-base leading-relaxed text-white/80 md:text-lg">
                 {COMPANY.operatorStatement} Send us a message for general enquiries, or use the direct contact details
-                below for legal and partnership support.
+                below for partnership and legal support.
               </p>
             </div>
           </div>
@@ -139,10 +144,11 @@ export default function ContactPage() {
           <div className="grid gap-6 lg:grid-cols-5 lg:gap-8">
             <div className="lg:col-span-3">
               <ContactCard icon={Mail} title="General Contact Form" accent="primary">
+                <p className="mb-2 text-sm font-medium text-foreground">{COMPANY.customerSupportLabel}</p>
                 <p className="mb-6 text-sm leading-relaxed text-muted-foreground">
                   Complete the form below and your enquiry will be sent to our general contact team at{' '}
-                  <a href={`mailto:${COMPANY.supportEmail}`} className="font-medium text-primary hover:underline">
-                    {COMPANY.supportEmail}
+                  <a href={`mailto:${COMPANY.generalEmail}`} className="font-medium text-primary hover:underline">
+                    {COMPANY.generalEmail}
                   </a>
                   .
                 </p>
@@ -220,6 +226,18 @@ export default function ContactPage() {
             </div>
 
             <div className="space-y-6 lg:col-span-2">
+              <ContactCard icon={Phone} title="Telephone" accent="accent">
+                <a href={COMPANY.phoneHref} className="text-lg font-semibold text-primary hover:underline">
+                  {COMPANY.phone}
+                </a>
+                <Button variant="outline" className="mt-4 border-primary/30 hover:bg-primary/5" asChild>
+                  <a href={COMPANY.phoneHref}>
+                    <Phone className="mr-2 h-4 w-4" />
+                    Call us
+                  </a>
+                </Button>
+              </ContactCard>
+
               <ContactCard icon={Mail} title="Email Contacts" accent="primary">
                 <div className="space-y-4">
                   {CONTACT_EMAILS.map((contact) => (
@@ -238,13 +256,19 @@ export default function ContactPage() {
                 </div>
               </ContactCard>
 
-              <ContactCard icon={MapPin} title="Registered / physical business address" accent="accent">
+              <ContactCard icon={MapPin} title="Physical business address" accent="accent">
                 <p className="text-base leading-relaxed text-muted-foreground">{formatRegisteredAddress()}</p>
                 <div className="mt-4 border-t border-border/60 pt-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Country of domicile
                   </p>
                   <p className="mt-1 text-lg font-semibold text-foreground">{COMPANY.country}</p>
+                </div>
+                <div className="mt-4 border-t border-border/60 pt-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Company registration
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-foreground">{formatRegistrationNumber()}</p>
                 </div>
               </ContactCard>
             </div>

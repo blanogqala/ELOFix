@@ -12,9 +12,14 @@ async function getSavedCards(req, res) {
 }
 
 async function addCard(req, res) {
-  const userId = resolveScopedUserId(req, req.body?.userId);
-  const card = await paymentService.addCard(String(userId), req.body || {});
-  res.status(201).json({ success: true, card });
+  // Option A / hard reject: never accept or process raw PAN/CVV on EloFix.
+  // Reject before reading credential fields from the body.
+  return res.status(410).json({
+    success: false,
+    code: "CARD_ENTRY_MOVED_TO_PAYMENT_PROVIDER",
+    message:
+      "Card entry has moved to the payment service provider. EloFix no longer accepts card numbers or CVV/CVC.",
+  });
 }
 
 async function deleteCard(req, res) {
@@ -86,6 +91,22 @@ async function createPaymentIntent(req, res) {
     throw new AppError("Only customers can create payment intents", 403);
   }
   const body = req.body || {};
+  const { findRejectedCardCredentialKey } = require("../utils/paymentRedaction.util");
+  const rejectedKey = findRejectedCardCredentialKey(body);
+  if (rejectedKey) {
+    throw new AppError(
+      `Sensitive card field '${rejectedKey}' is not accepted. Complete payment on the payment service provider checkout.`,
+      400,
+      "CARD_DATA_NOT_ACCEPTED"
+    );
+  }
+  if (body.cardId != null && body.cardId !== "") {
+    throw new AppError(
+      "Saved-card charging via EloFix is disabled. Continue to the payment service provider checkout.",
+      400,
+      "CARD_ENTRY_MOVED_TO_PAYMENT_PROVIDER"
+    );
+  }
   const out = await paymentIntentService.createPaymentIntent({
     userId: req.user.userId,
     role: req.user.role,
@@ -97,8 +118,7 @@ async function createPaymentIntent(req, res) {
     returnUrl: body.returnUrl,
     cancelUrl: body.cancelUrl,
     metadata: body.metadata,
-    cardId: body.cardId,
-    cvv: body.cvv,
+    legalAcceptance: body.legalAcceptance,
     idempotencyKey: req.financialIdempotencyKey,
     requestHash: req.financialRequestHash,
     route: req.financialIdempotencyRoute,

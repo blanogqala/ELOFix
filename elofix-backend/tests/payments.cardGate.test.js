@@ -1,5 +1,5 @@
 /**
- * Payment card gate helpers (no DB required).
+ * CVV format helper (used by rejection/redaction tests — EloFix no longer accepts CVV in production APIs).
  * Run: node tests/payments.cardGate.test.js
  */
 const assert = require("assert");

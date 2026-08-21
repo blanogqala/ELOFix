@@ -3,32 +3,27 @@ import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { getSavedCards, addCard, deleteCard, setDefaultCard, getInvoices } from '@/lib/api/payments';
+import { getSavedCards, deleteCard, getInvoices } from '@/lib/api/payments';
 import { getJobsByUser } from '@/lib/api/jobs';
 import { SavedCard, Invoice } from '@/types';
 import { 
   CreditCard, 
-  Plus, 
   Trash2, 
-  Star,
   FileText,
   Download,
   ChevronRight,
-  Calendar,
-  DollarSign,
   CheckCircle,
   AlertCircle,
-  RotateCcw
+  RotateCcw,
+  Shield
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { format, parseISO } from 'date-fns';
 
-type TabType = 'cards' | 'invoices';
+type TabType = 'methods' | 'invoices';
 
 function isRefundInvoice(invoice: Invoice): boolean {
   const type = String(invoice.type || '').toLowerCase();
@@ -39,20 +34,12 @@ function isRefundInvoice(invoice: Invoice): boolean {
 export default function UserPayments() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<TabType>('cards');
+  const [activeTab, setActiveTab] = useState<TabType>('methods');
   const [cards, setCards] = useState<SavedCard[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [jobs, setJobs] = useState<{ id: string; categoryName: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [showAddCard, setShowAddCard] = useState(false);
-  
-  // Card form state
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiryMonth, setExpiryMonth] = useState('');
-  const [expiryYear, setExpiryYear] = useState('');
-  const [cvv, setCvv] = useState('');
-  const [isAddingCard, setIsAddingCard] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!user) return;
@@ -80,78 +67,14 @@ export default function UserPayments() {
     }
   }, [user, loadData]);
 
-  const formatCardNumber = (value: string) => {
-    const cleaned = value.replace(/\D/g, '');
-    const groups = cleaned.match(/.{1,4}/g);
-    return groups ? groups.join(' ').substring(0, 19) : cleaned;
-  };
-
-  const handleAddCard = async () => {
+  const handleDeleteLegacyCard = async (cardId: string) => {
     if (!user) return;
-    
-    const cleanedNumber = cardNumber.replace(/\s/g, '');
-    if (cleanedNumber.length < 13 || cleanedNumber.length > 19) {
-      toast({ title: 'Invalid card number', variant: 'destructive' });
-      return;
-    }
-    
-    const month = parseInt(expiryMonth);
-    const year = parseInt(expiryYear);
-    if (month < 1 || month > 12) {
-      toast({ title: 'Invalid expiry month', variant: 'destructive' });
-      return;
-    }
-    
-    if (cvv.length < 3 || cvv.length > 4) {
-      toast({ title: 'Invalid CVV', variant: 'destructive' });
-      return;
-    }
-
-    setIsAddingCard(true);
-    try {
-      await addCard(user.id, {
-        number: cleanedNumber,
-        expiryMonth: month,
-        expiryYear: year,
-        cvv,
-      });
-      
-      await loadData();
-      setShowAddCard(false);
-      setCardNumber('');
-      setExpiryMonth('');
-      setExpiryYear('');
-      setCvv('');
-      
-      toast({ title: 'Card Added', description: 'Your card has been saved securely.' });
-    } catch (error) {
-      toast({ title: 'Failed to add card', variant: 'destructive' });
-    } finally {
-      setIsAddingCard(false);
-    }
-  };
-
-  const handleDeleteCard = async (cardId: string) => {
-    if (!user) return;
-    
     try {
       await deleteCard(user.id, cardId);
       await loadData();
-      toast({ title: 'Card Removed', description: 'Your card has been deleted.' });
-    } catch (error) {
-      toast({ title: 'Failed to delete card', variant: 'destructive' });
-    }
-  };
-
-  const handleSetDefault = async (cardId: string) => {
-    if (!user) return;
-    
-    try {
-      await setDefaultCard(user.id, cardId);
-      await loadData();
-      toast({ title: 'Default Card Updated' });
-    } catch (error) {
-      toast({ title: 'Failed to update default card', variant: 'destructive' });
+      toast({ title: 'Removed', description: 'Legacy card metadata was deleted.' });
+    } catch {
+      toast({ title: 'Failed to remove', variant: 'destructive' });
     }
   };
 
@@ -171,25 +94,6 @@ export default function UserPayments() {
       const bLatest = Math.max(...b.invoices.map(i => new Date(i.paidAt).getTime()));
       return bLatest - aLatest;
     });
-  };
-
-  const getInvoiceTypeLabel = (invoice: Invoice) => {
-    switch (invoice.type) {
-      case 'labor': return 'Labor Invoice';
-      case 'materials': return `Material Invoice${invoice.hardwareStores?.[0] ? ` — ${invoice.hardwareStores[0]}` : ''}`;
-      case 'delivery': return `Delivery Invoice${invoice.driverName ? ` — ${invoice.driverName}` : ''}`;
-      case 'refund': return 'Refund';
-      default: return 'Invoice';
-    }
-  };
-
-  const getCardIcon = (brand: SavedCard['brand']) => {
-    switch (brand) {
-      case 'visa': return '💳';
-      case 'mastercard': return '💳';
-      case 'amex': return '💳';
-      default: return '💳';
-    }
   };
 
   const getStatusIcon = (status: Invoice['status']) => {
@@ -315,22 +219,21 @@ export default function UserPayments() {
       <div className="space-y-6 md:space-y-8 animate-fade-in">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Payments</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">Manage your payment methods and view invoices</p>
+          <p className="text-sm text-muted-foreground sm:text-base">View invoices and payment method information</p>
         </div>
 
-        {/* Tabs */}
         <div className="flex flex-wrap gap-2 border-b border-border">
           <button
-            onClick={() => setActiveTab('cards')}
+            onClick={() => setActiveTab('methods')}
             className={cn(
               "px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px",
-              activeTab === 'cards' 
+              activeTab === 'methods' 
                 ? "border-primary text-primary" 
                 : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <CreditCard className="inline-block h-4 w-4 mr-2" />
-            Saved Cards
+            Payment methods
           </button>
           <button
             onClick={() => setActiveTab('invoices')}
@@ -344,89 +247,39 @@ export default function UserPayments() {
             <FileText className="inline-block h-4 w-4 mr-2" />
             Refunded Invoices
           </button>
-         
         </div>
 
-        {/* Cards Tab */}
-        {activeTab === 'cards' && (
+        {activeTab === 'methods' && (
           <div className="space-y-4">
-            <Dialog open={showAddCard} onOpenChange={setShowAddCard}>
-              <DialogTrigger asChild>
-                <Button className="btn-accent h-10 w-full whitespace-nowrap sm:w-auto">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add New Card
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Add Payment Card</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 pt-4">
-                  <div>
-                    <Label>Card Number</Label>
-                    <Input
-                      placeholder="1234 5678 9012 3456"
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(formatCardNumber(e.target.value))}
-                      maxLength={19}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <Label>Month</Label>
-                      <Input
-                        placeholder="MM"
-                        value={expiryMonth}
-                        onChange={(e) => setExpiryMonth(e.target.value.replace(/\D/g, '').substring(0, 2))}
-                        className="mt-1"
-                      />
-                    </div>
-                    <div>
-                      <Label>Year</Label>
-                      <Input
-                        placeholder="YYYY"
-                        value={expiryYear}
-                        onChange={(e) => setExpiryYear(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                        className="mt-1"
-                      />
-                    </div>
-                    <div>
-                      <Label>CVV</Label>
-                      <Input
-                        placeholder="123"
-                        type="password"
-                        value={cvv}
-                        onChange={(e) => setCvv(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                        className="mt-1"
-                      />
-                    </div>
-                  </div>
-                  <Button 
-                    className="w-full btn-accent" 
-                    onClick={handleAddCard}
-                    disabled={isAddingCard}
-                  >
-                    {isAddingCard ? 'Adding...' : 'Add Card'}
-                  </Button>
+            <div className="card-elevated p-6 space-y-3">
+              <div className="flex items-start gap-3">
+                <Shield className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Payment methods</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Saved payment methods will be managed securely through our payment service provider
+                    once card tokenisation is enabled.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Sensitive card information is entered and processed through the applicable payment
+                    service provider. EloFix does not store CVV/CVC or full card numbers.
+                  </p>
                 </div>
-              </DialogContent>
-            </Dialog>
-
-            {cards.length === 0 ? (
-              <div className="card-elevated p-12 text-center">
-                <CreditCard className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">No cards saved</h3>
-                <p className="text-muted-foreground text-sm">Add a payment card to make purchases</p>
               </div>
-            ) : (
+            </div>
+
+            {cards.length > 0 && (
               <div className="space-y-3">
-                {cards.map(card => (
+                <p className="text-xs text-muted-foreground">
+                  Legacy display metadata only — not a vaulted payment method. These rows cannot be used
+                  to charge a card.
+                </p>
+                {cards.map((card) => (
                   <div key={card.id} className="card-elevated p-4">
                     <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                        <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center text-2xl">
-                          {getCardIcon(card.brand)}
+                        <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center">
+                          <CreditCard className="h-5 w-5 text-muted-foreground" />
                         </div>
                         <div>
                           <p className="font-medium capitalize">
@@ -435,34 +288,20 @@ export default function UserPayments() {
                           <p className="text-sm text-muted-foreground">
                             Expires {String(card.expiryMonth).padStart(2, '0')}/{card.expiryYear}
                           </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Status: LEGACY_METADATA_ONLY
+                          </p>
                         </div>
-                        {card.isDefault && (
-                          <span className="px-2 py-1 bg-success/10 text-success text-xs rounded-full font-medium">
-                            Default
-                          </span>
-                        )}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                        {!card.isDefault && (
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            className="h-9 flex-1 whitespace-nowrap sm:flex-initial"
-                            onClick={() => handleSetDefault(card.id)}
-                          >
-                            <Star className="mr-1 h-4 w-4" />
-                            Set Default
-                          </Button>
-                        )}
-                        <Button 
-                          variant="outline" 
-                          size="icon"
-                          className="h-9 shrink-0 text-destructive hover:bg-destructive/10"
-                          onClick={() => handleDeleteCard(card.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 shrink-0 text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDeleteLegacyCard(card.id)}
+                        aria-label="Remove legacy card metadata"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
                 ))}
@@ -471,7 +310,6 @@ export default function UserPayments() {
           </div>
         )}
 
-        {/* Refunded Invoices Tab — refund history only */}
         {activeTab === 'invoices' && (
           <div className="space-y-6">
             {(() => {
@@ -538,7 +376,6 @@ export default function UserPayments() {
           </div>
         )}
 
-        {/* Invoice Detail Dialog */}
         <Dialog open={!!selectedInvoice} onOpenChange={() => setSelectedInvoice(null)}>
           <DialogContent className="max-w-lg">
             <DialogHeader>
@@ -578,7 +415,6 @@ export default function UserPayments() {
                   )}
                 </div>
 
-                {/* Cost Breakdown */}
                 <div>
                   <h4 className="font-medium mb-2">Cost Breakdown</h4>
                   <div className="space-y-2 border border-border rounded-lg p-3">

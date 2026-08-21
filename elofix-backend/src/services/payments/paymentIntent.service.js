@@ -17,6 +17,10 @@ const { assertCustomerNotBlocked } = require("../accountStatus.service");
 const webhookService = require("./webhook.service");
 const { logAudit } = require("../auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
+const {
+  validateCheckoutLegalAcceptance,
+  recordCheckoutLegalAcceptance,
+} = require("../legalAcceptance.service");
 
 function serializeIntent(row) {
   if (!row) return null;
@@ -323,8 +327,7 @@ async function createPaymentIntent({
   returnUrl,
   cancelUrl,
   metadata,
-  cardId,
-  cvv,
+  legalAcceptance,
   idempotencyKey,
   requestHash,
   route,
@@ -339,26 +342,14 @@ async function createPaymentIntent({
     throw new AppError("Invalid payment kind", 400);
   }
 
-  let paymentCardMeta = null;
-  if (String(role) === "CUSTOMER") {
-    const cardCount = await prisma.savedCard.count({ where: { userId: String(userId) } });
-    if (cardCount === 0) {
-      throw new AppError("Add a payment card on the Payments page before paying.", 402);
-    }
-    if (!cardId) {
-      throw new AppError("A saved payment card is required", 400);
-    }
-    if (!paymentService.isValidCvv(cvv)) {
-      throw new AppError("Valid CVC is required", 400);
-    }
-    const card = await paymentService.assertCardExists(userId, cardId);
-    paymentCardMeta = { cardId: card.id, cardLast4: card.last4, cardBrand: card.brand };
-  }
+  // Transaction-specific FNB checkout acceptance — required for all customer eCommerce intents.
+  // Validated before intent create/reuse so missing acceptance never creates orphan records.
+  const checkoutLegal = validateCheckoutLegalAcceptance(legalAcceptance, kindNorm);
 
+  // Hosted/redirect checkout: EloFix does not require saved cards or CVC.
+  // Sensitive credentials are collected only by the payment service provider.
   const intentMetadata =
-    metadata && typeof metadata === "object" && !Array.isArray(metadata)
-      ? { ...metadata, ...(paymentCardMeta || {}) }
-      : paymentCardMeta || metadata;
+    metadata && typeof metadata === "object" && !Array.isArray(metadata) ? { ...metadata } : metadata;
 
   const customerBlockKinds = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
   if (customerBlockKinds.has(kindNorm)) {
@@ -367,6 +358,21 @@ async function createPaymentIntent({
   }
 
   const gw = getGateway(providerKey);
+
+  async function attachCheckoutLegal(tx, intentRow) {
+    if (!checkoutLegal || !intentRow) return;
+    await recordCheckoutLegalAcceptance(tx, {
+      userId,
+      paymentIntentId: intentRow.id,
+      merchantReference: intentRow.merchantReference,
+      jobId: intentRow.jobId,
+      materialOrderId: intentRow.materialOrderId,
+      paymentIntentKind: intentRow.kind,
+      paymentType: intentRow.paymentType,
+      refundPolicyVersion: checkoutLegal.refundPolicyVersion,
+      deliveryPolicyVersion: checkoutLegal.deliveryPolicyVersion,
+    });
+  }
 
   const txResult = await prisma.$transaction(
     async (tx) => {
@@ -380,6 +386,7 @@ async function createPaymentIntent({
             where: { id: String(userId) },
             select: { email: true, name: true, phone: true },
           });
+          await attachCheckoutLegal(tx, existing);
           const checkout = await gw.createCheckout(
             {
               ...existing,
@@ -564,6 +571,7 @@ async function createPaymentIntent({
             customer
           );
 
+          await attachCheckoutLegal(tx, refreshed);
           await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
 
           return {
@@ -635,6 +643,7 @@ async function createPaymentIntent({
             },
             customer
           );
+          await attachCheckoutLegal(tx, refreshed);
           await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
           return {
             replay: false,
@@ -682,6 +691,8 @@ async function createPaymentIntent({
         },
         customer
       );
+
+      await attachCheckoutLegal(tx, intent);
 
       const response = {
         intentId: intent.id,

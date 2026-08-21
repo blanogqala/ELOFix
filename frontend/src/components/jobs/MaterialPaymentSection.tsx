@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { 
   Dialog,
@@ -14,7 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Job, MaterialLine, SavedCard, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
+import { Job, MaterialLine, Supplier, JobStoreOrder, UserMaterialSuggestion, DeliveryProvider } from '@/types';
 import type { MaterialRequestDto } from '@/lib/api/materialRequests';
 import { MaterialCard } from '@/components/materials/MaterialCard';
 import {
@@ -37,7 +36,6 @@ import {
   MapPin,
   XCircle,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
 import { buildOrderFinanceFromParts } from '@/lib/orderFinance';
@@ -57,19 +55,8 @@ interface MaterialPaymentSectionProps {
   userSuggestions?: UserMaterialSuggestion[];
   /** Submitted drafts from API — merged into visibility when job.materials is stale/empty after provider submit */
   materialRequests?: MaterialRequestDto[];
-  savedCards: SavedCard[];
   deliveryProviders: DeliveryProvider[];
   deliveryProvidersError?: string | null;
-  onPayForStore: (
-    supplierId: string,
-    paymentIntentId: string,
-    options?: {
-      deliveryType: 'SELF' | 'STORE' | 'PROVIDER';
-      deliveryFee: number;
-      deliveryProviderId?: string;
-      orderId?: string;
-    }
-  ) => Promise<void>;
   onAddMaterials?: () => void;
   onDeleteMaterial?: (material: MaterialLine) => void;
   onSuggestAlternatives?: () => void;
@@ -131,10 +118,8 @@ export function MaterialPaymentSection({
   job,
   userSuggestions = [],
   materialRequests = [],
-  savedCards,
   deliveryProviders,
   deliveryProvidersError,
-  onPayForStore,
   onAddMaterials,
   onDeleteMaterial,
   onSuggestAlternatives,
@@ -147,19 +132,6 @@ export function MaterialPaymentSection({
   onWithdrawAcceptedSuggestion,
   onPurgeWithdrawnSuggestion,
 }: MaterialPaymentSectionProps) {
-  const defaultCard = savedCards.find(c => c.isDefault) || savedCards[0];
-  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [selectedStore, setSelectedStore] = useState<{
-    orderId?: string;
-    id: string;
-    name: string;
-    hasDelivery: boolean;
-    deliveryFee?: number;
-    materials: MaterialLine[];
-  } | null>(null);
-  const [selectedCardId, setSelectedCardId] = useState(defaultCard?.id || '');
-  const [selectedDeliveryId, setSelectedDeliveryId] = useState('');
-  const [cvc, setCvc] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
@@ -299,9 +271,6 @@ export function MaterialPaymentSection({
     return suppliers.find(s => s.id === storeId);
   };
 
-  const getStoreOrder = (orderId: string): JobStoreOrder | undefined => {
-    return job.storeOrders?.find(so => so.orderId === orderId);
-  };
   const suggestionTabSuggestions = userSuggestions.filter((s) => {
     const st = String(s.status || '').toLowerCase();
     if (st === 'rejected') return Boolean(s.withdrawnAfterAccept);
@@ -312,73 +281,6 @@ export function MaterialPaymentSection({
       displayStoreOrders.find((o) => o.sourceUserSuggestionId === s.id);
     return !!linkedOrder && !isJobStoreOrderMaterialsPaid(linkedOrder);
   });
-
-  const handleOpenPaymentDialog = (storeId: string, storeName: string, hasDelivery: boolean, deliveryFee?: number, orderId?: string) => {
-    const store = materialsByStore[storeId];
-    setSelectedStore({
-      orderId,
-      id: storeId,
-      name: storeName,
-      hasDelivery,
-      deliveryFee,
-      materials: store.materials,
-    });
-    setSelectedCardId(defaultCard?.id || '');
-    setCvc('');
-    setError(null);
-    setPaymentDialogOpen(true);
-  };
-
-  const validateCvc = (value: string): boolean => {
-    return /^\d{3,4}$/.test(value);
-  };
-
-  const handleConfirmPayment = async () => {
-    if (!selectedStore) {
-      setError('Please select a store');
-      return;
-    }
-
-    setIsProcessing(true);
-    setError(null);
-    try {
-      const supplier = getSupplierMeta(selectedStore.id);
-      const storeOrder = selectedStore.orderId ? getStoreOrder(selectedStore.orderId) : undefined;
-
-      const deliveryType = storeOrder?.deliveryType || (supplier?.hasDelivery ? 'STORE' : 'SELF');
-      const deliveryFee =
-        deliveryType === 'STORE' ? 0 : storeOrder?.deliveryFee || supplier?.deliveryFee || 0;
-      const deliveryProviderId = storeOrder?.deliveryProviderId;
-
-      await onPayForStore(
-        selectedStore.id,
-        '', // paymentIntentId will be supplied by the redirect flow; legacy card path is disabled
-        {
-          deliveryType,
-          deliveryFee,
-          deliveryProviderId,
-          orderId: storeOrder?.orderId,
-        }
-      );
-      setPaymentDialogOpen(false);
-      setSelectedStore(null);
-      setCvc('');
-    } catch (err) {
-      setError('Payment failed. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const calculateStoreTotal = (storeId: string) => {
-    const store = materialsByStore[storeId];
-    return store.total;
-  };
-
-  const calculateMaterialsTotal = (storeId: string) => {
-    const store = materialsByStore[storeId];
-    return store.total;
-  };
 
   const openDeliveryDialog = (storeId: string) => {
     setDeliveryStoreId(storeId);
@@ -414,8 +316,6 @@ export function MaterialPaymentSection({
     });
     setSelectedDeliveryType('SELF');
     setSelectedProviderId('');
-    setSelectedCardId(defaultCard?.id || '');
-    setCvc('');
     setError(null);
     setPurchaseFlowStep(1);
     setPurchaseFlowOpen(true);
@@ -1265,145 +1165,6 @@ export function MaterialPaymentSection({
                 : selectedDeliveryType === 'PROVIDER'
                   ? 'Request provider'
                   : 'Save Delivery Option'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Payment Dialog */}
-      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Lock className="h-5 w-5 text-muted-foreground" />
-              Pay for Materials
-            </DialogTitle>
-            <DialogDescription>
-              Complete payment for materials from {selectedStore?.name}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            {/* Order Summary */}
-            <div className="p-4 bg-muted/50 rounded-lg">
-              <p className="font-medium mb-2">Order Summary</p>
-              <div className="space-y-1 text-sm">
-                {selectedStore?.materials.map(m => (
-                  <div key={m.productId} className="flex justify-between">
-                    <span className="text-muted-foreground">{m.name} × {m.qty}</span>
-                    <span>{formatCurrency(m.qty * m.unitPrice, { decimals: 2 })}</span>
-                  </div>
-                ))}
-                <div className="border-t border-border pt-1 mt-2">
-                  <div className="flex justify-between font-medium">
-                    <span>Subtotal</span>
-                    <span>{formatCurrency(selectedStore ? calculateStoreTotal(selectedStore.id) : 0, { decimals: 2 })}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Delivery Selection (if no store delivery and couriers exist) */}
-            {selectedStore && !selectedStore.hasDelivery && hasCourierOption && (
-              <div>
-                <Label className="mb-2 block">Select Delivery Provider</Label>
-                <RadioGroup value={selectedDeliveryId} onValueChange={setSelectedDeliveryId}>
-                  {deliveryProviders.map(provider => (
-                    <div 
-                      key={provider.id} 
-                      className="flex items-center space-x-3 p-3 border border-border rounded-lg"
-                    >
-                      <RadioGroupItem value={provider.id} id={provider.id} />
-                      <Label htmlFor={provider.id} className="flex-1 cursor-pointer">
-                        <div className="flex justify-between">
-                          <div>
-                            <p className="font-medium">{provider.name}</p>
-                            <p className="text-xs text-muted-foreground">{provider.estimatedTime}</p>
-                          </div>
-                          <p className="font-medium">{formatCurrency(provider.baseRate)}</p>
-                        </div>
-                      </Label>
-                    </div>
-                  ))}
-                  {deliveryProvidersError && (
-                    <p className="text-xs text-destructive">{deliveryProvidersError}</p>
-                  )}
-                  {!deliveryProvidersError && deliveryProviders.length === 0 && (
-                    <p className="text-xs text-muted-foreground">No delivery providers available.</p>
-                  )}
-                </RadioGroup>
-              </div>
-            )}
-
-            {/* Store delivery fee is quoted by the branch after request — not shown at checkout */}
-
-            {/* Card Selection */}
-            <div>
-              <Label className="mb-2 block">Payment Method</Label>
-              <RadioGroup value={selectedCardId} onValueChange={setSelectedCardId}>
-                {savedCards.map(card => (
-                  <div 
-                    key={card.id} 
-                    className={cn(
-                      "flex items-center space-x-3 p-3 border rounded-lg transition-colors",
-                      selectedCardId === card.id 
-                        ? "border-primary bg-primary/5" 
-                        : "border-border"
-                    )}
-                  >
-                    <RadioGroupItem value={card.id} id={`pay-${card.id}`} />
-                    <Label htmlFor={`pay-${card.id}`} className="flex-1 cursor-pointer">
-                      <div className="flex items-center gap-2">
-                        <CreditCard className="h-4 w-4" />
-                        <span className="capitalize">{card.brand}</span>
-                        <span>•••• {card.last4}</span>
-                        {card.isDefault && (
-                          <Badge variant="secondary" className="text-xs">Default</Badge>
-                        )}
-                      </div>
-                    </Label>
-                  </div>
-                ))}
-              </RadioGroup>
-            </div>
-
-            {/* CVC Input */}
-            <div>
-              <Label htmlFor="material-cvc" className="mb-2 block">CVC / Security Code</Label>
-              <Input
-                id="material-cvc"
-                type="text"
-                inputMode="numeric"
-                maxLength={4}
-                placeholder="123"
-                value={cvc}
-                onChange={(e) => setCvc(e.target.value.replace(/\D/g, ''))}
-                className="max-w-[120px]"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Enter the 3 or 4 digit code on your card
-              </p>
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {error}
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleConfirmPayment}
-              disabled={!selectedCardId || isProcessing}
-              className="btn-accent"
-            >
-              {isProcessing ? 'Processing...' : `Pay materials ${formatCurrency(selectedStore ? calculateMaterialsTotal(selectedStore.id) : 0, { decimals: 2 })}`}
             </Button>
           </DialogFooter>
         </DialogContent>

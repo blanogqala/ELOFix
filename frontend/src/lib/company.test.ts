@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   COMPANY,
+  CONTACT_EMAILS,
   LEGAL_OPERATOR_INTRO,
   formatCopyright,
   formatRegisteredAddress,
@@ -18,10 +19,28 @@ describe('company identity', () => {
 
   it('exposes the published business contact details', () => {
     expect(COMPANY.email).toBe('elofix@litiholdings.co.za');
+    expect(COMPANY.generalEmail).toBe('info@litiholdings.co.za');
     expect(COMPANY.phone).toBe('+27 67 428 3917');
+    expect(COMPANY.phoneHref).toBe('tel:+27674283917');
     expect(COMPANY.website).toBe('https://www.elofix.co.za');
     expect(COMPANY.country).toBe('South Africa');
     expect(COMPANY.partnershipsEmail).toBe('partnerships@elofix.co.za');
+    expect(COMPANY.customerSupportLabel).toBe('EloFix Customer Support');
+  });
+
+  it('maps public CONTACT_EMAILS to general, partnership, and legal channels', () => {
+    expect(CONTACT_EMAILS).toEqual([
+      { label: 'General enquiries', email: 'info@litiholdings.co.za' },
+      { label: 'Partnership enquiries', email: 'partnerships@elofix.co.za' },
+      { label: 'Legal & compliance', email: 'elofix@litiholdings.co.za' },
+    ]);
+  });
+
+  it('does not expose private finance or legacy support mailboxes on COMPANY', () => {
+    const serialized = JSON.stringify(COMPANY);
+    expect(serialized).not.toContain('support@elofix.co.za');
+    expect(serialized).not.toContain('finance@litiholdings.co.za');
+    expect(COMPANY).not.toHaveProperty('supportEmail');
   });
 
   it('formats registration and address from shared config', () => {

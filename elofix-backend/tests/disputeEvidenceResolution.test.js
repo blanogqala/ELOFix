@@ -10,6 +10,7 @@ const prisma = require("../src/config/prisma");
 const paymentModeService = require("../src/services/payments/paymentMode.service");
 const webhookService = require("../src/services/payments/webhook.service");
 const paymentIntentService = require("../src/services/payments/paymentIntent.service");
+const { checkoutLegalAcceptance } = require("./helpers/checkoutLegalAcceptance");
 const jobDisputeService = require("../src/services/jobDispute.service");
 const disputeAdminService = require("../src/services/disputeAdmin.service");
 const jobService = require("../src/services/job.service");
@@ -259,9 +260,8 @@ async function testReleaseFundsCompletionDue() {
       userId: bundle.customer.id,
       role: "CUSTOMER",
       provider: "PAYFAST",
-      cardId: bundle.savedCard.id,
-      cvv: "123",
       kind: "LABOR",
+      legalAcceptance: checkoutLegalAcceptance("LABOR"),
       jobId: bundle.job.id,
       amount: 500,
       idempotencyKey: payKey,

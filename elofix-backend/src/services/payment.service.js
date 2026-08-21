@@ -10,18 +10,13 @@ const {
   detectBrand,
   parseMaskedLast4,
   isValidCardLast4,
-  isValidCvv,
   parsePaymentCardFromGatewayPayload,
 } = require("../utils/paymentCard.util");
 const { paidLaborGrossFromJob } = require("../utils/refundMath.util");
 
-function maskLast4(number) {
-  const digits = String(number || "").replace(/\D/g, "");
-  return digits.slice(-4) || "0000";
-}
-
 /**
- * Persist a card used for a successful payment when it is not already on file.
+ * Persist masked card metadata returned by a PSP after successful payment.
+ * Never accepts or stores PAN/CVV — last4/brand/expiry only (LEGACY_METADATA_ONLY).
  * @param {import("@prisma/client").Prisma.TransactionClient|typeof prisma} tx
  */
 async function ensureSavedCardFromPayment(userId, cardDetails, tx = prisma) {
@@ -109,6 +104,7 @@ async function getSavedCards(userId) {
     where: { userId: uid },
     orderBy: { id: "asc" },
   });
+  // Honest vault state: historical rows are metadata-only (never PSP-tokenised).
   return rows.map((c) => ({
     id: c.id,
     last4: c.last4,
@@ -116,41 +112,20 @@ async function getSavedCards(userId) {
     expiryMonth: c.expiryMonth,
     expiryYear: c.expiryYear,
     isDefault: c.isDefault,
+    vaultStatus: "LEGACY_METADATA_ONLY",
   }));
 }
 
-async function addCard(userId, cardData) {
-  const uid = String(userId);
-  if (!isValidCvv(cardData?.cvv)) {
-    throw new AppError("Valid CVC is required", 400);
-  }
-  const card = {
-    id: randomUUID(),
-    last4: maskLast4(cardData?.number),
-    brand: detectBrand(cardData?.number),
-    expiryMonth: Number(cardData?.expiryMonth || 1),
-    expiryYear: Number(cardData?.expiryYear || new Date().getFullYear()),
-    isDefault: false,
-  };
-
-  await prisma.$transaction(async (tx) => {
-    const count = await tx.savedCard.count({ where: { userId: uid } });
-    const isDefault = count === 0;
-    await tx.savedCard.create({
-      data: {
-        id: card.id,
-        userId: uid,
-        last4: card.last4,
-        brand: card.brand,
-        expiryMonth: card.expiryMonth,
-        expiryYear: card.expiryYear,
-        isDefault,
-      },
-    });
-  });
-
-  const cards = await getSavedCards(uid);
-  return cards.find((c) => c.id === card.id);
+/**
+ * @deprecated Raw card entry removed (PCI). Prefer 410 from controller; do not call.
+ * Kept only so accidental imports fail closed instead of silently vaulting PAN.
+ */
+async function addCard(_userId, _cardData) {
+  throw new AppError(
+    "Card entry has moved to the payment service provider. EloFix no longer accepts card numbers or CVV/CVC.",
+    410,
+    "CARD_ENTRY_MOVED_TO_PAYMENT_PROVIDER"
+  );
 }
 
 async function deleteCard(userId, cardId) {
@@ -1212,7 +1187,6 @@ module.exports = {
   createRefundInvoice,
   createRefundInvoiceInTransaction,
   assertCardExists,
-  isValidCvv,
   // escrow / Paystack
   toPrismaDecimal,
   splitLaborTotalGross,

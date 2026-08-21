@@ -915,6 +915,10 @@ export interface ServiceRequest {
 }
 
 // Payment & Invoice Types
+/**
+ * Non-sensitive display metadata only. Not a PSP vault token.
+ * Future Peach registrationId/token belongs in a separate field when tokenisation ships.
+ */
 export interface SavedCard {
   id: string;
   last4: string;
@@ -922,6 +926,8 @@ export interface SavedCard {
   expiryMonth: number;
   expiryYear: number;
   isDefault: boolean;
+  /** Honest vault state — legacy rows never held a real PSP token. */
+  vaultStatus?: 'LEGACY_METADATA_ONLY' | 'PSP_TOKENISED';
 }
 
 export interface InvoiceLineItem {

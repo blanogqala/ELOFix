@@ -27,7 +27,6 @@ import { ensureSocketAuthAndConnect, socket } from '@/lib/socket';
 import { resolveLinkedMaterialOrderId } from '@/lib/resolveLinkedMaterialOrderId';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { guardPaymentCardsForUser } from '@/lib/paymentCardGuard';
 import { isCourierCancellationUnderReview } from '@/lib/jobUtils';
 
 function resolveCollectionPoint(job: Job, dr: DeliveryRequestRecord): DeliveryGeoPoint {
@@ -370,10 +369,8 @@ export function JobDeliverySection({
         <Button
           type="button"
           className="btn-accent w-full sm:w-auto"
-          onClick={async () => {
+          onClick={() => {
             if (!user) return;
-            const canPay = await guardPaymentCardsForUser(user.id, toast);
-            if (!canPay) return;
             setPayModalOpen(true);
           }}
         >

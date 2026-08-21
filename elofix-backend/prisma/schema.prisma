@@ -590,6 +590,8 @@ model PaymentIntent {
   webhookEvents        PaymentWebhookEvent[]
   commissionLedger     CommissionLedger?
   providerRefundRepayment ProviderRefundRepayment?
+  /// Checkout legal acceptance evidence (FNB transaction-specific disclosures)
+  legalAcceptanceEvents LegalAcceptanceEvent[]
   /// Denormalized branch for material-order reconciliation
   branchId               String?
   branchSettlementStatus BranchSettlementStatus @default(NOT_APPLICABLE)
@@ -1059,6 +1061,8 @@ model IdempotencyRecord {
 }
 
 model SavedCard {
+  /// Legacy non-sensitive display metadata only (last4/brand/expiry).
+  /// Not a PSP vault. No registrationId/token until Peach tokenisation ships.
   id          String  @id @default(uuid())
   userId      String
   user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1520,7 +1524,19 @@ model LegalAcceptanceEvent {
   refundPolicyVersion                     String?
   supplierAgreementVersion                String?
   supplierParticipationPolicyVersion      String?
+  /// Delivery & Collection Policy version (checkout / materials / delivery fee)
+  deliveryPolicyVersion                   String?
+  /// Transaction-specific checkout evidence (null for account-level REGISTER/REACCEPT)
+  paymentIntentId                         String?
+  paymentIntent                           PaymentIntent? @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  merchantReference                       String?
+  jobId                                   String?
+  materialOrderId                         String?
+  paymentIntentKind                       String?
+  paymentType                             String?
   acceptedAt                              DateTime @default(now())
 
   @@index([userId, acceptedAt])
+  @@index([paymentIntentId])
+  @@index([merchantReference])
 }

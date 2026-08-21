@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { acceptDeliveryRequestQuote, getDeliveryRequestById } from '@/lib/api/deliveryRequests';
 import { PaymentModal } from '@/components/payments/PaymentModal';
-import { guardPaymentCardsForUser } from '@/lib/paymentCardGuard';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { ArrowLeft, MapPin, Package, Truck } from 'lucide-react';
@@ -144,10 +143,8 @@ export default function DeliveryRequestDetailPage() {
             <p className="font-medium">Pay {formatCurrency(request.quotedFee || 0)} to start delivery</p>
             <Button
               className="btn-accent"
-              onClick={async () => {
+              onClick={() => {
                 if (!user) return;
-                const canPay = await guardPaymentCardsForUser(user.id, toast);
-                if (!canPay) return;
                 setPayModalOpen(true);
               }}
             >

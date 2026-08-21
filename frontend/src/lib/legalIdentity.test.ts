@@ -3,7 +3,13 @@ import { COMPANY } from './company';
 import { getAllLegalDocuments, getLegalDocument } from './legal/content';
 import { LEGAL_LABELS, LEGAL_ROUTES, LEGAL_VERSIONS, getRequiredDocuments } from './legal/versions';
 
-const BANNED_EMAILS = ['support@elofix.com', 'privacy@elofix.com', 'legal@elofix.com'];
+const BANNED_EMAILS = [
+  'support@elofix.com',
+  'privacy@elofix.com',
+  'legal@elofix.com',
+  'support@elofix.co.za',
+  'finance@litiholdings.co.za',
+];
 
 function documentText(doc: ReturnType<typeof getLegalDocument>): string {
   return [doc.title, doc.subtitle, ...doc.sections.flatMap((section) => [section.title, ...section.content])].join(

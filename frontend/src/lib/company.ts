@@ -6,23 +6,27 @@ export const COMPANY = {
   operatorStatement: 'EloFix is operated by LITI Holdings (Pty) Ltd.',
   website: 'https://www.elofix.co.za',
   websiteDisplay: 'www.elofix.co.za',
+  /** Legal & compliance (Information Officer / policy contact). */
   email: 'elofix@litiholdings.co.za',
+  /** General customer enquiries and Contact form destination. */
+  generalEmail: 'info@litiholdings.co.za',
   partnershipsEmail: 'partnerships@elofix.co.za',
-  supportEmail: 'support@elofix.co.za',
   phone: '+27 67 428 3917',
   phoneHref: 'tel:+27674283917',
   registrationNumber: '2025/260206/07',
   registeredAddress: '9 Albany Street, Cape Town, 7530',
   country: 'South Africa',
   copyrightYear: 2026,
+  /** Public contact function label for FNB-style website vetting. */
+  customerSupportLabel: 'EloFix Customer Support',
 } as const;
 
 export type CompanyInfo = typeof COMPANY;
 
 export const CONTACT_EMAILS = [
-  { label: 'Legal Contact', email: COMPANY.email },
-  { label: 'Partnership Contact', email: COMPANY.partnershipsEmail },
-  { label: 'General Contact', email: COMPANY.supportEmail },
+  { label: 'General enquiries', email: COMPANY.generalEmail },
+  { label: 'Partnership enquiries', email: COMPANY.partnershipsEmail },
+  { label: 'Legal & compliance', email: COMPANY.email },
 ] as const;
 
 export function unpublishedOr(value: string | null | undefined, fallback = 'To be published'): string {

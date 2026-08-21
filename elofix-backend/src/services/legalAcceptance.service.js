@@ -264,12 +264,191 @@ async function recordLegalAcceptanceEvent(userId, role, source, data) {
         refundPolicyVersion: data.refundPolicyVersion || null,
         supplierAgreementVersion: data.supplierAgreementVersion || null,
         supplierParticipationPolicyVersion: data.supplierParticipationPolicyVersion || null,
+        deliveryPolicyVersion: data.deliveryPolicyVersion || null,
+        paymentIntentId: data.paymentIntentId || null,
+        merchantReference: data.merchantReference || null,
+        jobId: data.jobId || null,
+        materialOrderId: data.materialOrderId || null,
+        paymentIntentKind: data.paymentIntentKind || null,
+        paymentType: data.paymentType || null,
         acceptedAt: data.acceptedAt || new Date(),
       },
     });
   } catch (e) {
     console.error("[legalAcceptance] history write failed", e?.message || e);
   }
+}
+
+/** Customer eCommerce payment kinds that require transaction-level checkout acceptance. */
+const CUSTOMER_CHECKOUT_KINDS = new Set([
+  "LABOR",
+  "MATERIAL_ORDER",
+  "JOB_STORE_ORDER",
+  "DELIVERY_FEE",
+]);
+
+/**
+ * Materials / delivery-fee intents relate to physical goods movement and must
+ * acknowledge Delivery & Collection Policy in addition to Refund Policy.
+ * All current DELIVERY_FEE customer checkouts are materials courier / store delivery.
+ */
+function checkoutRequiresDeliveryPolicy(kind) {
+  const k = String(kind || "").toUpperCase();
+  return k === "MATERIAL_ORDER" || k === "JOB_STORE_ORDER" || k === "DELIVERY_FEE";
+}
+
+function isCustomerCheckoutPaymentKind(kind) {
+  return CUSTOMER_CHECKOUT_KINDS.has(String(kind || "").toUpperCase());
+}
+
+/**
+ * Validate transaction-specific checkout legal acceptance.
+ * Backend is authoritative for current policy versions — client versions must match.
+ * @returns {{ refundPolicyVersion: string, deliveryPolicyVersion: string|null, requiresDelivery: boolean }}
+ */
+function validateCheckoutLegalAcceptance(legalAcceptance, kind) {
+  const kindNorm = String(kind || "").toUpperCase();
+  if (!isCustomerCheckoutPaymentKind(kindNorm)) {
+    return null;
+  }
+
+  const la = legalAcceptance && typeof legalAcceptance === "object" ? legalAcceptance : null;
+  if (!la || !truthy(la.refundPolicyAccepted)) {
+    throw new AppError(
+      "You must accept the Refund, Returns & Cancellation Policy before payment.",
+      400,
+      "CHECKOUT_LEGAL_ACCEPTANCE_REQUIRED"
+    );
+  }
+
+  if (
+    !la.refundPolicyVersion ||
+    String(la.refundPolicyVersion).trim() !== String(LEGAL_VERSIONS.refundPolicy)
+  ) {
+    throw new AppError(
+      "Our Refund, Returns & Cancellation Policy has been updated. Please review the latest version and accept it before continuing.",
+      409,
+      "LEGAL_POLICY_VERSION_STALE"
+    );
+  }
+
+  const requiresDelivery = checkoutRequiresDeliveryPolicy(kindNorm);
+  if (requiresDelivery) {
+    if (!truthy(la.deliveryPolicyAcknowledged)) {
+      throw new AppError(
+        "You must acknowledge the Delivery & Collection Policy before payment.",
+        400,
+        "CHECKOUT_LEGAL_ACCEPTANCE_REQUIRED"
+      );
+    }
+    if (
+      !la.deliveryPolicyVersion ||
+      String(la.deliveryPolicyVersion).trim() !== String(LEGAL_VERSIONS.deliveryPolicy)
+    ) {
+      throw new AppError(
+        "Our Delivery & Collection Policy has been updated. Please review the latest version and acknowledge it before continuing.",
+        409,
+        "LEGAL_POLICY_VERSION_STALE"
+      );
+    }
+  }
+
+  return {
+    refundPolicyVersion: LEGAL_VERSIONS.refundPolicy,
+    deliveryPolicyVersion: requiresDelivery ? LEGAL_VERSIONS.deliveryPolicy : null,
+    requiresDelivery,
+  };
+}
+
+/**
+ * Persist checkout legal acceptance linked to a PaymentIntent.
+ * Idempotent for the same intent + policy versions (safe on intent reuse / double-submit).
+ * @param {object} [db] prisma client or transaction client
+ */
+async function recordCheckoutLegalAcceptance(db, {
+  userId,
+  paymentIntentId,
+  merchantReference,
+  jobId,
+  materialOrderId,
+  paymentIntentKind,
+  paymentType,
+  refundPolicyVersion,
+  deliveryPolicyVersion,
+}) {
+  const client = db || prisma;
+  const where = {
+    paymentIntentId: String(paymentIntentId),
+    source: "PAYMENT_CHECKOUT",
+    refundPolicyVersion: String(refundPolicyVersion),
+  };
+  if (deliveryPolicyVersion) {
+    where.deliveryPolicyVersion = String(deliveryPolicyVersion);
+  } else {
+    where.deliveryPolicyVersion = null;
+  }
+
+  const existing = await client.legalAcceptanceEvent.findFirst({ where });
+  if (existing) {
+    const nextRef = merchantReference ? String(merchantReference) : null;
+    if (nextRef && existing.merchantReference !== nextRef) {
+      return client.legalAcceptanceEvent.update({
+        where: { id: existing.id },
+        data: {
+          merchantReference: nextRef,
+          jobId: jobId ? String(jobId) : existing.jobId,
+          materialOrderId: materialOrderId ? String(materialOrderId) : existing.materialOrderId,
+          paymentType: paymentType ? String(paymentType) : existing.paymentType,
+          acceptedAt: new Date(),
+        },
+      });
+    }
+    return existing;
+  }
+
+  return client.legalAcceptanceEvent.create({
+    data: {
+      userId: String(userId),
+      role: "CUSTOMER",
+      source: "PAYMENT_CHECKOUT",
+      refundPolicyVersion: String(refundPolicyVersion),
+      deliveryPolicyVersion: deliveryPolicyVersion ? String(deliveryPolicyVersion) : null,
+      paymentIntentId: String(paymentIntentId),
+      merchantReference: merchantReference ? String(merchantReference) : null,
+      jobId: jobId ? String(jobId) : null,
+      materialOrderId: materialOrderId ? String(materialOrderId) : null,
+      paymentIntentKind: paymentIntentKind ? String(paymentIntentKind) : null,
+      paymentType: paymentType ? String(paymentType) : null,
+      acceptedAt: new Date(),
+    },
+  });
+}
+
+/** Admin-safe lookup: latest checkout acceptance for a PaymentIntent. */
+async function getCheckoutLegalAcceptanceForPaymentIntent(paymentIntentId) {
+  if (!paymentIntentId) return null;
+  return prisma.legalAcceptanceEvent.findFirst({
+    where: {
+      paymentIntentId: String(paymentIntentId),
+      source: "PAYMENT_CHECKOUT",
+    },
+    orderBy: { acceptedAt: "desc" },
+    select: {
+      id: true,
+      userId: true,
+      role: true,
+      source: true,
+      refundPolicyVersion: true,
+      deliveryPolicyVersion: true,
+      paymentIntentId: true,
+      merchantReference: true,
+      jobId: true,
+      materialOrderId: true,
+      paymentIntentKind: true,
+      paymentType: true,
+      acceptedAt: true,
+    },
+  });
 }
 
 async function assertLegalCurrent(userId, role) {
@@ -294,4 +473,10 @@ module.exports = {
   getLegalStatusForUser,
   recordLegalAcceptanceEvent,
   assertLegalCurrent,
+  validateCheckoutLegalAcceptance,
+  recordCheckoutLegalAcceptance,
+  getCheckoutLegalAcceptanceForPaymentIntent,
+  checkoutRequiresDeliveryPolicy,
+  isCustomerCheckoutPaymentKind,
+  CUSTOMER_CHECKOUT_KINDS,
 };

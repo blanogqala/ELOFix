@@ -52,7 +52,7 @@ export const dataProcessing: LegalDocument = {
         'Audit logging of sensitive operations.',
         'Hashing of identity and bank account numbers for duplicate detection.',
         'Regular security reviews of Platform infrastructure.',
-        'EloFix does not store CVV. Full payment-card details, where collected at all, are handled according to the applicable payment service provider\'s systems and tokenization practices.',
+        'EloFix does not store CVV/CVC or full card numbers. Sensitive card information is entered and processed through the applicable payment service provider.',
       ],
     },
     {
