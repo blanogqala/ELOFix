@@ -13,7 +13,6 @@ import {
   COMPANY,
   CONTACT_EMAILS,
   formatRegisteredAddress,
-  formatRegistrationNumber,
 } from '@/lib/company';
 
 const INITIAL_FORM = {
@@ -99,7 +98,7 @@ export default function ContactPage() {
       setFormData(INITIAL_FORM);
       toast({
         title: 'Message sent',
-        description: `Your enquiry has been sent to ${COMPANY.generalEmail}. We will get back to you soon.`,
+        description: `Your enquiry has been sent to ${COMPANY.supportEmail}. We will get back to you soon.`,
       });
     } catch (error) {
       toast({
@@ -146,9 +145,9 @@ export default function ContactPage() {
               <ContactCard icon={Mail} title="General Contact Form" accent="primary">
                 <p className="mb-2 text-sm font-medium text-foreground">{COMPANY.customerSupportLabel}</p>
                 <p className="mb-6 text-sm leading-relaxed text-muted-foreground">
-                  Complete the form below and your enquiry will be sent to our general contact team at{' '}
-                  <a href={`mailto:${COMPANY.generalEmail}`} className="font-medium text-primary hover:underline">
-                    {COMPANY.generalEmail}
+                  Complete the form below and your enquiry will be sent to our customer support team at{' '}
+                  <a href={`mailto:${COMPANY.supportEmail}`} className="font-medium text-primary hover:underline">
+                    {COMPANY.supportEmail}
                   </a>
                   .
                 </p>
@@ -263,12 +262,6 @@ export default function ContactPage() {
                     Country of domicile
                   </p>
                   <p className="mt-1 text-lg font-semibold text-foreground">{COMPANY.country}</p>
-                </div>
-                <div className="mt-4 border-t border-border/60 pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Company registration
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-foreground">{formatRegistrationNumber()}</p>
                 </div>
               </ContactCard>
             </div>

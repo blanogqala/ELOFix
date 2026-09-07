@@ -25,22 +25,24 @@ describe('company identity', () => {
     expect(COMPANY.website).toBe('https://www.elofix.co.za');
     expect(COMPANY.country).toBe('South Africa');
     expect(COMPANY.partnershipsEmail).toBe('partnerships@elofix.co.za');
+    expect(COMPANY.supportEmail).toBe('support@elofix.co.za');
+    expect(COMPANY.disputesEmail).toBe('disputes@elofix.co.za');
     expect(COMPANY.customerSupportLabel).toBe('EloFix Customer Support');
   });
 
-  it('maps public CONTACT_EMAILS to general, partnership, and legal channels', () => {
+  it('maps public CONTACT_EMAILS to support, disputes, general, partnership, and legal channels', () => {
     expect(CONTACT_EMAILS).toEqual([
+      { label: 'Customer support', email: 'support@elofix.co.za' },
+      { label: 'Payment disputes / chargebacks', email: 'disputes@elofix.co.za' },
       { label: 'General enquiries', email: 'info@litiholdings.co.za' },
       { label: 'Partnership enquiries', email: 'partnerships@elofix.co.za' },
       { label: 'Legal & compliance', email: 'elofix@litiholdings.co.za' },
     ]);
   });
 
-  it('does not expose private finance or legacy support mailboxes on COMPANY', () => {
+  it('does not expose private finance mailboxes on COMPANY', () => {
     const serialized = JSON.stringify(COMPANY);
-    expect(serialized).not.toContain('support@elofix.co.za');
     expect(serialized).not.toContain('finance@litiholdings.co.za');
-    expect(COMPANY).not.toHaveProperty('supportEmail');
   });
 
   it('formats registration and address from shared config', () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ContactPage from './Contact';
-import { COMPANY, CONTACT_EMAILS, formatRegisteredAddress, formatRegistrationNumber } from '@/lib/company';
+import { COMPANY, CONTACT_EMAILS, formatRegisteredAddress } from '@/lib/company';
 
 vi.mock('@/components/layout/Header', () => ({
   Header: () => <header data-testid="header" />,
@@ -25,7 +25,7 @@ describe('Contact page public identity', () => {
     vi.clearAllMocks();
   });
 
-  it('shows operator, support function, phone, address, registration, and public emails', () => {
+  it('shows operator, support function, phone, address, and public emails', () => {
     render(
       <MemoryRouter>
         <ContactPage />
@@ -40,15 +40,24 @@ describe('Contact page public identity', () => {
     expect(page).toContain(COMPANY.phone);
     expect(page).toContain(formatRegisteredAddress());
     expect(page).toContain(COMPANY.country);
-    expect(page).toContain(formatRegistrationNumber());
+    expect(page).not.toContain('Company registration');
+    expect(page).not.toContain(COMPANY.registrationNumber);
     expect(page).toContain('Physical business address');
     expect(page).not.toContain('Registered / physical business address');
+    expect(page).toContain('Customer support');
+    expect(page).toContain('Payment disputes / chargebacks');
+    expect(page).toContain(COMPANY.supportEmail);
+    expect(page).toContain(COMPANY.disputesEmail);
 
     for (const contact of CONTACT_EMAILS) {
       expect(page).toContain(contact.label);
       expect(page).toContain(contact.email);
     }
 
+    expect(screen.getAllByRole('link', { name: COMPANY.supportEmail }).length).toBeGreaterThan(0);
+    for (const link of screen.getAllByRole('link', { name: COMPANY.supportEmail })) {
+      expect(link).toHaveAttribute('href', `mailto:${COMPANY.supportEmail}`);
+    }
     expect(screen.getAllByRole('link', { name: COMPANY.generalEmail }).length).toBeGreaterThan(0);
     for (const link of screen.getAllByRole('link', { name: COMPANY.generalEmail })) {
       expect(link).toHaveAttribute('href', `mailto:${COMPANY.generalEmail}`);
@@ -56,7 +65,7 @@ describe('Contact page public identity', () => {
     expect(screen.getAllByRole('link', { name: COMPANY.phone })[0]).toHaveAttribute('href', COMPANY.phoneHref);
   });
 
-  it('does not expose private finance or legacy support emails', () => {
+  it('does not expose private finance emails', () => {
     render(
       <MemoryRouter>
         <ContactPage />
@@ -64,6 +73,5 @@ describe('Contact page public identity', () => {
     );
     const page = document.body.textContent || '';
     expect(page).not.toContain('finance@litiholdings.co.za');
-    expect(page).not.toContain('support@elofix.co.za');
   });
 });

@@ -10,6 +10,10 @@ export const COMPANY = {
   email: 'elofix@litiholdings.co.za',
   /** General customer enquiries and Contact form destination. */
   generalEmail: 'info@litiholdings.co.za',
+  /** Public customer support mailbox shown on Contact Us. */
+  supportEmail: 'support@elofix.co.za',
+  /** Payment disputes and chargebacks mailbox shown on Contact Us. */
+  disputesEmail: 'disputes@elofix.co.za',
   partnershipsEmail: 'partnerships@elofix.co.za',
   phone: '+27 67 428 3917',
   phoneHref: 'tel:+27674283917',
@@ -24,6 +28,8 @@ export const COMPANY = {
 export type CompanyInfo = typeof COMPANY;
 
 export const CONTACT_EMAILS = [
+  { label: 'Customer support', email: COMPANY.supportEmail },
+  { label: 'Payment disputes / chargebacks', email: COMPANY.disputesEmail },
   { label: 'General enquiries', email: COMPANY.generalEmail },
   { label: 'Partnership enquiries', email: COMPANY.partnershipsEmail },
   { label: 'Legal & compliance', email: COMPANY.email },

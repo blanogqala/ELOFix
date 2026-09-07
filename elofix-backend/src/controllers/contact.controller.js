@@ -1,7 +1,7 @@
 const AppError = require("../utils/AppError");
 const emailService = require("../services/email.service");
 
-const DEFAULT_CONTACT_FORM_TO_EMAIL = "info@litiholdings.co.za";
+const DEFAULT_CONTACT_FORM_TO_EMAIL = "support@elofix.co.za";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CELLPHONE_RE = /^[0-9+\-\s()]{7,20}$/;
 

@@ -14,8 +14,8 @@ function testDefaultDestination() {
   const previous = process.env.CONTACT_FORM_TO_EMAIL;
   delete process.env.CONTACT_FORM_TO_EMAIL;
   try {
-    assert.strictEqual(getContactFormToEmail(), "info@litiholdings.co.za");
-    assert.strictEqual(DEFAULT_CONTACT_FORM_TO_EMAIL, "info@litiholdings.co.za");
+    assert.strictEqual(getContactFormToEmail(), "support@elofix.co.za");
+    assert.strictEqual(DEFAULT_CONTACT_FORM_TO_EMAIL, "support@elofix.co.za");
   } finally {
     if (previous === undefined) delete process.env.CONTACT_FORM_TO_EMAIL;
     else process.env.CONTACT_FORM_TO_EMAIL = previous;
@@ -71,9 +71,9 @@ async function testSubmitUsesConfiguredDestination() {
     await submitContactForm(req, res);
     assert.strictEqual(statusCode, 200);
     assert.strictEqual(jsonBody?.success, true);
-    assert.strictEqual(captured?.to, "info@litiholdings.co.za");
+    assert.strictEqual(captured?.to, "support@elofix.co.za");
     assert.strictEqual(captured?.replyTo, "jane@example.com");
-    assert.ok(!String(captured?.to || "").includes("support@elofix.co.za"));
+    assert.ok(!String(captured?.to || "").includes("info@litiholdings.co.za"));
     assert.ok(!String(captured?.to || "").includes("finance@litiholdings.co.za"));
   } finally {
     emailService.sendTransactionalEmail = originalSend;
