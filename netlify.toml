@@ -6,6 +6,11 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Smart detection flags Firebase's documented example key (AIza…) in node_modules
+  # and public client map keys in the frontend bundle. Keep regular secret scanning on.
+  SECRETS_SCAN_OMIT_PATHS = "node_modules"
+  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyDOCAbC123dEf456GhI789jKl012-MnO"
+  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
 
 # SPA fallback for react-router
 [[redirects]]

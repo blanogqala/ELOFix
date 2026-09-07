@@ -27,23 +27,18 @@ const MAPTILER_PRESETS: Record<MapStylePreset, { light: string; dark: string }> 
   bright: { light: 'bright-v2', dark: 'streets-v2-dark' },
 };
 
-function readEnv(key: string): string {
-  const raw = typeof import.meta !== 'undefined' ? import.meta.env?.[key] : '';
-  return String(raw || '').trim();
-}
-
 function readMapTilerKey(): string {
-  return readEnv('VITE_MAPTILER_API_KEY');
+  return String(import.meta.env.VITE_MAPTILER_API_KEY || '').trim();
 }
 
 function readStylePreset(): MapStylePreset {
-  const raw = readEnv('VITE_MAP_STYLE').toLowerCase();
+  const raw = String(import.meta.env.VITE_MAP_STYLE || '').trim().toLowerCase();
   if (raw === 'basic' || raw === 'bright' || raw === 'streets') return raw;
   return 'streets';
 }
 
 function readTileProvider(): 'maptiler' | 'openfreemap' {
-  const provider = readEnv('VITE_TILE_PROVIDER').toLowerCase();
+  const provider = String(import.meta.env.VITE_TILE_PROVIDER || '').trim().toLowerCase();
   if (provider === 'openfreemap') return 'openfreemap';
   if (readMapTilerKey()) return 'maptiler';
   return 'openfreemap';
