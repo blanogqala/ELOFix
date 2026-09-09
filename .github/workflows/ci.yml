@@ -138,7 +138,7 @@ jobs:
           npm run prisma:seed
       - name: Seed CI E2E users and jobs
         working-directory: elofix-backend
-        run: node scripts/seed-e2e-ci.js >> "$GITHUB_ENV"
+        run: node scripts/seed-e2e-ci.js
       - name: Start API in background
         working-directory: elofix-backend
         run: npm start > /tmp/elofix-api.log 2>&1 &

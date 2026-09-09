@@ -7,7 +7,8 @@
  *
  * Run: node scripts/seed-e2e-ci.js
  */
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
+const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const { LEGAL_VERSIONS } = require("../src/config/legalVersions");
 const paymentModeService = require("../src/services/payments/paymentMode.service");
@@ -35,9 +36,13 @@ function emitEnv() {
     `E2E_REALTIME_JOB_ID=${REALTIME_JOB_ID}`,
     `E2E_DISPUTE_JOB_ID=${DISPUTE_JOB_ID}`,
   ];
-  for (const line of lines) {
-    console.log(line);
+  const body = `${lines.join("\n")}\n`;
+  if (process.env.GITHUB_ENV) {
+    fs.appendFileSync(process.env.GITHUB_ENV, body);
+  } else {
+    process.stdout.write(body);
   }
+  process.stderr.write("seed-e2e-ci: E2E users and jobs are ready\n");
 }
 
 async function legalFields(role) {
