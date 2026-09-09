@@ -168,6 +168,30 @@ async function runDbIntegrationTests() {
   }
 }
 
+async function testForgotPasswordHttpGeneric() {
+  const { GENERIC_FORGOT_MESSAGE } = require("../src/services/passwordReset.service");
+  const prevKey = process.env.RESEND_API_KEY;
+  delete process.env.RESEND_API_KEY;
+  const app = require("../src/app");
+  const { listenApp, httpRequest } = require("./helpers/httpServer");
+  const h = await listenApp(app);
+  try {
+    const known = await httpRequest(h.baseUrl, "POST", "/api/auth/forgot-password", {
+      json: { email: "admin@elofix.com" },
+    });
+    const unknown = await httpRequest(h.baseUrl, "POST", "/api/auth/forgot-password", {
+      json: { email: "no-such-user-xyz@example.com" },
+    });
+    assert.strictEqual(known.status, unknown.status);
+    assert.strictEqual(known.body.message, GENERIC_FORGOT_MESSAGE);
+    assert.strictEqual(unknown.body.message, GENERIC_FORGOT_MESSAGE);
+    assert.ok(!JSON.stringify(known.body).toLowerCase().includes("does not exist"));
+  } finally {
+    if (prevKey !== undefined) process.env.RESEND_API_KEY = prevKey;
+    await h.close();
+  }
+}
+
 async function main() {
   testEmailHelpers();
   testTokenHelpers();
@@ -180,14 +204,15 @@ async function main() {
 
   try {
     await testForgotPasswordGenericResponse();
+    await testForgotPasswordHttpGeneric();
     await runDbIntegrationTests();
     console.log("passwordReset.test.js: OK");
   } catch (err) {
     console.error("passwordReset.test.js failed:", err);
     process.exit(1);
   } finally {
-    const prisma = require("../src/config/prisma");
-    await prisma.$disconnect().catch(() => {});
+    const { disconnectPrismaAndPool } = require("../src/config/prismaLifecycle");
+    await disconnectPrismaAndPool();
   }
 }
 

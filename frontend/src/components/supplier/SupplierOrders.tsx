@@ -294,7 +294,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
     enabled: Boolean(userId),
   });
 
-  const branches = profile?.branches ?? [];
+  const branches = useMemo(() => profile?.branches ?? [], [profile?.branches]);
 
   const [ordCityFilter, setOrdCityFilter] = useState('');
   const [ordSearchQ, setOrdSearchQ] = useState('');
@@ -308,7 +308,10 @@ export function SupplierOrders({ userId }: { userId: string }) {
       }),
     enabled: Boolean(userId) && isSupplierReadOnly,
   });
-  const orderBranchCards = orderBranchCardsData?.branches ?? [];
+  const orderBranchCards = useMemo(
+    () => orderBranchCardsData?.branches ?? [],
+    [orderBranchCardsData?.branches],
+  );
 
   const { data: portalOverview } = useQuery({
     queryKey: ['supplier', 'analytics-overview', userId],
@@ -1390,7 +1393,7 @@ function DetailPanel({
             <p className="mt-2 text-sm">
               Quoted delivery fee:{' '}
               <span className="font-semibold tabular-nums">{formatCurrency(finance.deliveryFee, { decimals: 2 })}</span>
-              {!Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid) ? (
+              {!(order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid ? (
                 <span className="text-muted-foreground"> — awaiting customer payment</span>
               ) : (
                 <span className="text-success"> — paid</span>

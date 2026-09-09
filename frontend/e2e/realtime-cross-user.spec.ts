@@ -30,12 +30,47 @@ const PROVIDER_PASSWORD = process.env.E2E_PROVIDER_PASSWORD ?? '';
 const CUSTOMER_EMAIL = process.env.E2E_CUSTOMER_EMAIL ?? '';
 const CUSTOMER_PASSWORD = process.env.E2E_CUSTOMER_PASSWORD ?? '';
 const JOB_ID = process.env.E2E_REALTIME_JOB_ID ?? '';
+const DISPUTE_JOB_ID = process.env.E2E_DISPUTE_JOB_ID ?? JOB_ID;
 
 /**
  * Maximum time to wait for a realtime UI change to appear WITHOUT page.reload().
  * Socket.IO event + React Query refetch should complete well within 8 seconds.
  */
 const REALTIME_TIMEOUT = 8_000;
+
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+async function uploadTinyPng(page: Page) {
+  const fileInput = page.locator('input[type="file"][accept*="image"]').first();
+  await fileInput.setInputFiles({
+    name: 'e2e-complete.png',
+    mimeType: 'image/png',
+    buffer: TINY_PNG,
+  });
+}
+
+async function completeCustomerEvidenceDialog(page: Page) {
+  await expect(page.getByRole('heading', { name: /share your results/i })).toBeVisible({
+    timeout: 10_000,
+  });
+  await uploadTinyPng(page);
+  await page.locator('svg.h-8.w-8').nth(4).click();
+  await expect(page.getByRole('button', { name: /submit & complete/i })).toBeEnabled({ timeout: 20_000 });
+  await page.getByRole('button', { name: /submit & complete/i }).click();
+}
+
+async function completeCustomerDisputeDialog(page: Page) {
+  await expect(page.getByRole('heading', { name: /reject completion|open dispute/i })).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByLabel(/reason for rejection/i).fill(
+    'Dispute opened by E2E test — work was not completed satisfactorily.'
+  );
+  await page.getByRole('button', { name: /open dispute/i }).click();
+}
 
 // Helper: assert that a page did NOT navigate (reload detection)
 async function assertNoReload(page: Page, label: string) {
@@ -55,6 +90,8 @@ async function assertNoReload(page: Page, label: string) {
 // ─── Shared setup ─────────────────────────────────────────────────────────────
 
 test.describe('Realtime cross-user synchronisation', () => {
+  test.describe.configure({ mode: 'serial' });
+  test.setTimeout(60_000);
   test.skip(
     !PROVIDER_EMAIL || !PROVIDER_PASSWORD || !CUSTOMER_EMAIL || !CUSTOMER_PASSWORD || !JOB_ID,
     'Skipped: set E2E_PROVIDER_EMAIL, E2E_PROVIDER_PASSWORD, E2E_CUSTOMER_EMAIL, E2E_CUSTOMER_PASSWORD, and E2E_REALTIME_JOB_ID to run realtime E2E tests'
@@ -96,22 +133,14 @@ test.describe('Realtime cross-user synchronisation', () => {
     const assertProviderNoReload = await assertNoReload(providerPage, 'Provider');
     const assertCustomerNoReload = await assertNoReload(customerPage, 'Customer');
 
-    // Provider clicks "Mark Complete"
-    const markCompleteBtn = providerPage.getByRole('button', { name: /mark complete|mark job complete/i }).first();
-
-    // If the button is not present, the job may not be in IN_PROGRESS state — skip gracefully
-    if (!(await markCompleteBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
-      return;
-    }
-
+    const markCompleteBtn = providerPage.getByRole('button', {
+      name: /mark as complete|mark complete|mark job complete/i,
+    }).first();
+    await expect(markCompleteBtn).toBeVisible({ timeout: 15_000 });
     await markCompleteBtn.click();
 
-    // Provider might need to confirm in a dialog
-    const confirmBtn = providerPage.getByRole('button', { name: /confirm|yes|submit/i }).last();
-    if (await confirmBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await confirmBtn.click();
-    }
+    // Mark complete has no confirmation dialog. Do not click a generic
+    // Submit/Confirm control (that matches "Submit materials to user").
 
     // Wait for provider's own mutation to complete (provider-side update)
     await expect(
@@ -139,28 +168,12 @@ test.describe('Realtime cross-user synchronisation', () => {
     const assertProviderNoReload = await assertNoReload(providerPage, 'Provider');
     const assertCustomerNoReload = await assertNoReload(customerPage, 'Customer');
 
-    // Customer clicks "Confirm Completion"
-    const confirmBtn = customerPage.getByRole('button', { name: /confirm completion|confirm job complete/i }).first();
-    if (!(await confirmBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
-      return;
-    }
-
+    const confirmBtn = customerPage.getByRole('button', {
+      name: /yes, completed|confirm completion|confirm job complete/i,
+    }).first();
+    await expect(confirmBtn).toBeVisible({ timeout: 15_000 });
     await confirmBtn.click();
-
-    // May need a rating dialog or secondary confirm
-    const ratingInput = customerPage.locator('input[type="range"], [data-rating], [aria-label*="rating" i]').first();
-    if (await ratingInput.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await ratingInput.fill('5').catch(async () => {
-        // Try clicking star ratings as fallback
-        const stars = customerPage.locator('[data-rating="5"], [aria-label="5 stars"]');
-        if (await stars.isVisible({ timeout: 2_000 }).catch(() => false)) await stars.click();
-      });
-    }
-    const submitBtn = customerPage.getByRole('button', { name: /submit|confirm|rate/i }).last();
-    if (await submitBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await submitBtn.click();
-    }
+    await completeCustomerEvidenceDialog(customerPage);
 
     // Customer side should show COMPLETED
     await expect(
@@ -180,7 +193,7 @@ test.describe('Realtime cross-user synchronisation', () => {
   test('Test C — customer opens dispute: provider sees disputed state without reload', async () => {
     // This test requires a job in AWAITING_CONFIRMATION state
     // Navigate to a separate disputed-ready job if E2E_DISPUTE_JOB_ID is set, else skip
-    const disputeJobId = process.env.E2E_DISPUTE_JOB_ID ?? JOB_ID;
+    const disputeJobId = DISPUTE_JOB_ID;
 
     await providerPage.goto(`/provider/jobs/${disputeJobId}`, { waitUntil: 'domcontentloaded' });
     await customerPage.goto(`/user/jobs/${disputeJobId}`, { waitUntil: 'domcontentloaded' });
@@ -190,24 +203,12 @@ test.describe('Realtime cross-user synchronisation', () => {
     const assertProviderNoReload = await assertNoReload(providerPage, 'Provider');
     const assertCustomerNoReload = await assertNoReload(customerPage, 'Customer');
 
-    // Customer opens a dispute / rejects completion
-    const rejectBtn = customerPage.getByRole('button', { name: /reject|dispute|open dispute/i }).first();
-    if (!(await rejectBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
-      return;
-    }
-
+    const rejectBtn = customerPage.getByRole('button', {
+      name: /reject completion|open dispute|reject/i,
+    }).first();
+    await expect(rejectBtn).toBeVisible({ timeout: 15_000 });
     await rejectBtn.click();
-
-    // Fill in dispute reason if a dialog appears
-    const reasonInput = customerPage.locator('textarea, input[name*="reason"], input[name*="comment"]').first();
-    if (await reasonInput.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await reasonInput.fill('Dispute opened by E2E test — work was not completed satisfactorily.');
-    }
-    const submitBtn = customerPage.getByRole('button', { name: /submit|open dispute|continue/i }).last();
-    if (await submitBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await submitBtn.click();
-    }
+    await completeCustomerDisputeDialog(customerPage);
 
     // Customer should see disputed state
     await expect(

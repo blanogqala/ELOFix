@@ -2,6 +2,17 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { assertProductionFrontendConfig } from "./scripts/productionFrontendConfig.mjs";
+
+function elofixProductionConfigPlugin() {
+  return {
+    name: "elofix-production-frontend-config",
+    configResolved(config) {
+      if (config.command !== "build") return;
+      assertProductionFrontendConfig(process.env, { mode: config.mode });
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -12,7 +23,7 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [react(), mode === "development" && componentTagger(), elofixProductionConfigPlugin()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

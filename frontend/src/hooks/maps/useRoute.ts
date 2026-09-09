@@ -44,15 +44,27 @@ export function useRoute(origin: LatLng | null, destination: LatLng | null) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const originLat = origin?.lat;
+  const originLng = origin?.lng;
+  const destLat = destination?.lat;
+  const destLng = destination?.lng;
 
   useEffect(() => {
-    if (!origin || !destination) {
+    if (
+      originLat == null ||
+      originLng == null ||
+      destLat == null ||
+      destLng == null
+    ) {
       setRoute(null);
       setError(null);
       return;
     }
 
-    const cacheKey = routeCacheKey(origin, destination);
+    const originPoint = { lat: originLat, lng: originLng };
+    const destPoint = { lat: destLat, lng: destLng };
+
+    const cacheKey = routeCacheKey(originPoint, destPoint);
     const cached = readRouteCache(cacheKey);
     if (cached) {
       setRoute(cached);
@@ -68,7 +80,7 @@ export function useRoute(origin: LatLng | null, destination: LatLng | null) {
     setLoading(true);
     setError(null);
 
-    void fetchDirections(origin, destination)
+    void fetchDirections(originPoint, destPoint)
       .then((result) => {
         if (cancelled || controller.signal.aborted) return;
         writeRouteCache(cacheKey, result);
@@ -96,7 +108,7 @@ export function useRoute(origin: LatLng | null, destination: LatLng | null) {
       cancelled = true;
       controller.abort();
     };
-  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng]);
+  }, [originLat, originLng, destLat, destLng]);
 
   return {
     route,

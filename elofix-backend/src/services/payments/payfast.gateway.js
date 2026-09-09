@@ -177,7 +177,8 @@ function verifySignature(data, passphrase) {
 }
 
 function isPayfastIp(ip) {
-  if (process.env.PAYFAST_SKIP_IP_CHECK === "true") return true;
+  const { payfastSkipIpCheckAllowed } = require("./paymentConfig");
+  if (payfastSkipIpCheckAllowed()) return true;
   const clean = String(ip || "").replace("::ffff:", "");
   return PAYFAST_IPS.includes(clean);
 }

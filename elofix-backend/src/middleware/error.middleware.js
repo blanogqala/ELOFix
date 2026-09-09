@@ -1,4 +1,5 @@
 const AppError = require("../utils/AppError");
+const { redactRequestUrl } = require("../utils/logRedaction.util");
 
 function isPrismaKnownRequestError(err) {
   return Boolean(
@@ -29,7 +30,7 @@ function mapPrismaKnownError(err) {
 
 function errorMiddleware(err, req, res, next) {
   if (res.headersSent) {
-    console.error("[ERROR] headers already sent", req.method, req.originalUrl, err);
+    console.error("[ERROR] headers already sent", req.method, redactRequestUrl(req.originalUrl), err);
     return;
   }
 
@@ -51,13 +52,13 @@ function errorMiddleware(err, req, res, next) {
         console.error(
           "[Prisma dev]",
           req.method,
-          req.originalUrl,
+          redactRequestUrl(req.originalUrl),
           err.code,
           err.message,
           err.meta != null ? JSON.stringify(err.meta) : ""
         );
       } catch (_) {
-        console.error("[Prisma dev]", req.method, req.originalUrl, err.code, err.message);
+        console.error("[Prisma dev]", req.method, redactRequestUrl(req.originalUrl), err.code, err.message);
       }
     }
     const mapped = mapPrismaKnownError(err);
@@ -65,14 +66,14 @@ function errorMiddleware(err, req, res, next) {
     message = mapped.message;
     code = err.code && String(err.code).startsWith("P") ? `E_${err.code}` : "E_DB";
     if (process.env.NODE_ENV !== "development") {
-      console.error("[Prisma]", req.method, req.originalUrl, err.code, err.meta || "", err.message);
+      console.error("[Prisma]", req.method, redactRequestUrl(req.originalUrl), err.code, err.meta || "", err.message);
     }
   } else if (err.name === "PrismaClientValidationError") {
     statusCode = 400;
     code = "E_PRISMA_VALIDATION";
     message =
       process.env.NODE_ENV === "production" ? "Invalid request for database operation" : err.message;
-    console.error("[Prisma validation]", req.method, req.originalUrl, err.message);
+    console.error("[Prisma validation]", req.method, redactRequestUrl(req.originalUrl), err.message);
   } else if (err.name === "PrismaClientUnknownRequestError") {
     statusCode = 503;
     code = "E_DB_UNAVAILABLE";
@@ -80,7 +81,7 @@ function errorMiddleware(err, req, res, next) {
       process.env.NODE_ENV === "production"
         ? "Database error — check service logs and DATABASE_URL / migrations."
         : err.message;
-    console.error("[Prisma unknown]", req.method, req.originalUrl, err.message);
+    console.error("[Prisma unknown]", req.method, redactRequestUrl(req.originalUrl), err.message);
   } else if (err.name === "PrismaClientInitializationError") {
     statusCode = 503;
     code = "E_DB_INIT";
@@ -88,7 +89,7 @@ function errorMiddleware(err, req, res, next) {
       process.env.NODE_ENV === "production"
         ? "Database unavailable — verify DATABASE_URL, SSL settings, and that the DB is reachable."
         : err.message;
-    console.error("[Prisma init]", req.method, req.originalUrl, err.message);
+    console.error("[Prisma init]", req.method, redactRequestUrl(req.originalUrl), err.message);
   } else if (err && (err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT") && err.syscall) {
     statusCode = 503;
     code = "E_NETWORK";
@@ -96,13 +97,13 @@ function errorMiddleware(err, req, res, next) {
       process.env.NODE_ENV === "production"
         ? "Could not reach a required service (often the database)."
         : err.message;
-    console.error("[Network]", req.method, req.originalUrl, err.code, err.message);
+    console.error("[Network]", req.method, redactRequestUrl(req.originalUrl), err.code, err.message);
   } else {
     code = "E_UNHANDLED";
     if (process.env.NODE_ENV === "development") {
-      console.error("[ERROR]", req.method, req.originalUrl, err && err.stack ? err.stack : err);
+      console.error("[ERROR]", req.method, redactRequestUrl(req.originalUrl), err && err.stack ? err.stack : err);
     } else {
-      console.error("[ERROR]", req.method, req.originalUrl, err && err.message ? err.message : err);
+      console.error("[ERROR]", req.method, redactRequestUrl(req.originalUrl), err && err.message ? err.message : err);
     }
   }
 

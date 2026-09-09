@@ -16,14 +16,26 @@ function testPathPolicy() {
     true
   );
   assert.strictEqual(isBlockedUploadRelPath("jobs/job-1/quotations/q.pdf"), true);
+  assert.strictEqual(
+    isBlockedUploadRelPath("jobs/job-1/completion/images/photo.jpg"),
+    true
+  );
+  assert.strictEqual(
+    isBlockedUploadRelPath("jobs/job-1/completion/videos/clip.mp4"),
+    true
+  );
   assert.strictEqual(isBlockedUploadRelPath("providers/abc/avatar/avatar-1.jpg"), false);
-  assert.strictEqual(isBlockedUploadRelPath("jobs/user-1/job-123.jpg"), false);
+  assert.strictEqual(isBlockedUploadRelPath("jobs/user-1/job-123.jpg"), true);
+  assert.strictEqual(isProtectedFileType("jobRequestImage"), true);
   assert.strictEqual(normalizeUploadRelPath("../providers/x/documents/a.pdf"), null);
 }
 
 function testProtectedTypes() {
   assert.strictEqual(isProtectedFileType("idDoc"), true);
   assert.strictEqual(isProtectedFileType("jobQuotation"), true);
+  assert.strictEqual(isProtectedFileType("jobCompletionImage"), true);
+  assert.strictEqual(isProtectedFileType("jobCompletionVideo"), true);
+  assert.strictEqual(isProtectedFileType("jobRequestImage"), true);
   assert.strictEqual(isProtectedFileType("avatar"), false);
   assert.strictEqual(isProtectedFileType("workImage"), false);
 }

@@ -62,6 +62,14 @@ const { isTestingDeployment } = require("./src/utils/secretKey.util");
       );
     }
   }
+
+  try {
+    const { assertProductionPaymentSafety } = require("./src/services/payments/paymentConfig");
+    assertProductionPaymentSafety();
+  } catch (payfastCfgErr) {
+    console.error(`[FATAL] ${payfastCfgErr.message}`);
+    process.exit(1);
+  }
 })();
 
 const http = require("http");

@@ -1,6 +1,13 @@
 const crypto = require("crypto");
 const AppError = require("../utils/AppError");
-const { isProtectedFileType } = require("../utils/fileAccessPolicy.util");
+const {
+  isProtectedFileType,
+  isCompletionFileType,
+  isJobRequestFileType,
+  parseCompletionJobId,
+  parseJobRequestOwnerUserId,
+  isJobRequestUploadRelPath,
+} = require("../utils/fileAccessPolicy.util");
 
 const FILES_URL_PREFIX = "/api/files/";
 const DEFAULT_TTL_SECONDS = Number(process.env.FILE_ACCESS_TTL_SECONDS || 3600);
@@ -65,15 +72,76 @@ function canActorAccessProtectedFile(actor, file) {
   return false;
 }
 
-function assertProtectedFileAccess(req, file) {
-  if (!isProtectedFileType(file.type)) return;
+async function canActorAccessCompletionFile(actor, file) {
+  if (canActorAccessProtectedFile(actor, file)) return true;
+  const jobId = parseCompletionJobId(file?.relPath);
+  if (!jobId) return false;
+  const actorId = String(actor?.userId || actor?.id || "").trim();
+  if (!actorId) return false;
+  const prisma = require("../config/prisma");
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { customerId: true, providerId: true },
+  });
+  if (!job) return false;
+  if (actorId === String(job.customerId || "")) return true;
+  if (job.providerId && actorId === String(job.providerId)) return true;
+  return false;
+}
+
+function urlReferencesFile(url, file) {
+  const s = String(url || "");
+  if (!s) return false;
+  const fileId = String(file?.fileId || "").trim();
+  const rel = String(file?.relPath || "").replace(/\\/g, "/");
+  if (fileId && s.includes(fileId)) return true;
+  if (rel && s.includes(rel)) return true;
+  return false;
+}
+
+async function canActorAccessJobRequestFile(actor, file) {
+  if (canActorAccessProtectedFile(actor, file)) return true;
+  const actorId = String(actor?.userId || actor?.id || "").trim();
+  if (!actorId) return false;
+  const role = String(actor?.role || "").toUpperCase();
+  if (role === "ADMIN") return true;
+  const ownerFromPath = parseJobRequestOwnerUserId(file?.relPath);
+  const ownerId = String(file?.ownerUserId || ownerFromPath || "").trim();
+  if (ownerId && actorId === ownerId) return true;
+
+  const prisma = require("../config/prisma");
+  const jobs = await prisma.job.findMany({
+    where: {
+      OR: [{ customerId: actorId }, { providerId: actorId }],
+    },
+    select: { customerId: true, providerId: true, images: true },
+    take: 500,
+  });
+  for (const job of jobs) {
+    const images = Array.isArray(job.images) ? job.images : [];
+    if (!images.some((u) => urlReferencesFile(u, file))) continue;
+    if (actorId === String(job.customerId || "")) return true;
+    if (job.providerId && actorId === String(job.providerId)) return true;
+  }
+  return false;
+}
+
+async function assertProtectedFileAccess(req, file) {
+  if (!isProtectedFileType(file.type) && !isJobRequestUploadRelPath(file.relPath)) return;
 
   const fileId = String(file.fileId || "").trim();
-  if (
-    verifyFileAccessToken(fileId, req.query?.access, req.query?.exp) ||
-    (req.user && canActorAccessProtectedFile(req.user, file))
-  ) {
+  if (verifyFileAccessToken(fileId, req.query?.access, req.query?.exp)) {
     return;
+  }
+
+  if (req.user) {
+    if (isCompletionFileType(file.type) || parseCompletionJobId(file.relPath)) {
+      if (await canActorAccessCompletionFile(req.user, file)) return;
+    } else if (isJobRequestFileType(file.type) || isJobRequestUploadRelPath(file.relPath)) {
+      if (await canActorAccessJobRequestFile(req.user, file)) return;
+    } else if (canActorAccessProtectedFile(req.user, file)) {
+      return;
+    }
   }
 
   throw new AppError("Forbidden", 403);
@@ -108,6 +176,8 @@ module.exports = {
   verifyFileAccessToken,
   appendAccessToFileUrl,
   canActorAccessProtectedFile,
+  canActorAccessCompletionFile,
+  canActorAccessJobRequestFile,
   assertProtectedFileAccess,
   signDocumentFields,
 };

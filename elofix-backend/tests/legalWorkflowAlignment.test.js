@@ -193,8 +193,10 @@ async function runDbTestsIfPossible() {
   testLegalVersionsBumped();
   await runDbTestsIfPossible();
   console.log("legalWorkflowAlignment.test.js passed");
-  process.exit(0);
 })().catch((err) => {
   console.error(err);
-  process.exit(1);
+  process.exitCode = 1;
+}).finally(async () => {
+  const { shutdownTestResources } = require("./helpers/shutdown");
+  await shutdownTestResources();
 });

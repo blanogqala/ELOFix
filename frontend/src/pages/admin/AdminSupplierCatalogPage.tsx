@@ -25,7 +25,7 @@ export default function AdminSupplierCatalogPage() {
   const supplier = detailQuery.data?.supplier;
   const displayBusiness = supplier?.businessName || supplier?.name || 'Supplier';
 
-  const branches = supplier?.branches ?? [];
+  const branches = useMemo(() => supplier?.branches ?? [], [supplier?.branches]);
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return branches;

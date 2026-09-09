@@ -2,6 +2,9 @@ const { randomUUID } = require("crypto");
 const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { getJobMeta, toFrontendStatus } = require("./jobMeta.service");
+const { getOrRegisterRelPath } = require("./fileStorage.service");
+const { signFileAccessUrl, FILES_URL_PREFIX } = require("./fileAccess.service");
+const { normalizeUploadRelPath } = require("../utils/fileAccessPolicy.util");
 
 const MAX_IMAGES = 10;
 const MAX_VIDEOS = 3;
@@ -26,6 +29,72 @@ function toEvidenceDto(row) {
   };
 }
 
+function toPublicEvidenceDto(row) {
+  const dto = toEvidenceDto(row);
+  if (!dto) return null;
+  return {
+    ...dto,
+    images: [],
+    videos: [],
+  };
+}
+
+function uploadsRelFromUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  try {
+    if (raw.startsWith("http://") || raw.startsWith("https://")) {
+      const parsed = new URL(raw);
+      if (parsed.pathname.startsWith("/uploads/")) {
+        return normalizeUploadRelPath(parsed.pathname.replace(/^\/uploads\//, ""));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (raw.startsWith("/uploads/")) {
+    return normalizeUploadRelPath(raw.replace(/^\/uploads\//, ""));
+  }
+  return null;
+}
+
+function fileIdFromApiUrl(url) {
+  const raw = String(url || "").trim();
+  const pathOnly = raw.split("?")[0];
+  if (!pathOnly.startsWith(FILES_URL_PREFIX)) return null;
+  const id = pathOnly.slice(FILES_URL_PREFIX.length).replace(/\/+$/, "");
+  return id || null;
+}
+
+async function signCompletionMediaUrl(url, jobId, type) {
+  const raw = String(url || "").trim();
+  if (!raw) return raw;
+  const existingId = fileIdFromApiUrl(raw);
+  if (existingId) {
+    return signFileAccessUrl(existingId);
+  }
+  const rel = uploadsRelFromUrl(raw);
+  if (!rel) return raw;
+  const stored = await getOrRegisterRelPath(rel, {
+    type,
+    originalName: rel.split("/").pop(),
+  });
+  if (!stored?.fileId) return raw;
+  return signFileAccessUrl(stored.fileId);
+}
+
+async function withSignedMedia(dto) {
+  if (!dto) return null;
+  const jobId = dto.jobId;
+  const images = Array.isArray(dto.images) ? dto.images : [];
+  const videos = Array.isArray(dto.videos) ? dto.videos : [];
+  return {
+    ...dto,
+    images: await Promise.all(images.map((u) => signCompletionMediaUrl(u, jobId, "jobCompletionImage"))),
+    videos: await Promise.all(videos.map((u) => signCompletionMediaUrl(u, jobId, "jobCompletionVideo"))),
+  };
+}
+
 function assertMediaLimits(images, videos) {
   const imgCount = Array.isArray(images) ? images.length : 0;
   const vidCount = Array.isArray(videos) ? videos.length : 0;
@@ -43,7 +112,7 @@ function assertMinimumMedia(images, videos) {
 
 async function getEvidenceByJobId(jobId) {
   const row = await prisma.jobCompletionEvidence.findUnique({ where: { jobId: String(jobId) } });
-  return toEvidenceDto(row);
+  return withSignedMedia(toEvidenceDto(row));
 }
 
 async function getEvidenceByJobIdForActor(jobId, actorUserId, actorRole) {
@@ -72,7 +141,7 @@ async function listVerifiedByProviderUserId(providerUserId, limit = 50) {
     orderBy: { confirmedAt: "desc" },
     take: Math.min(100, Math.max(1, Number(limit) || 50)),
   });
-  return rows.map(toEvidenceDto);
+  return rows.map(toPublicEvidenceDto);
 }
 
 async function createEvidenceInTransaction(tx, {

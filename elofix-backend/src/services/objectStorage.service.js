@@ -5,16 +5,57 @@ const { Readable } = require("stream");
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } = require("@aws-sdk/client-s3");
 
 let cachedClient = null;
+/** @type {Map<string, { body: Buffer, contentType: string }> | null} */
+let testMemoryStore = null;
 
 function env(name) {
   return String(process.env[name] || "").trim();
 }
 
-function isEnabled() {
-  return Boolean(env("S3_BUCKET") && env("S3_ACCESS_KEY_ID") && env("S3_SECRET_ACCESS_KEY"));
+function setTestMemoryStore(store) {
+  testMemoryStore = store || null;
+  cachedClient = null;
+}
+
+function credentialsPresent(envObj = process.env) {
+  return Boolean(
+    String(envObj.S3_BUCKET || "").trim() &&
+      String(envObj.S3_ACCESS_KEY_ID || "").trim() &&
+      String(envObj.S3_SECRET_ACCESS_KEY || "").trim()
+  );
+}
+
+function isEnabled(envObj = process.env) {
+  if (testMemoryStore) return true;
+  return credentialsPresent(envObj);
+}
+
+function allowLocalOnlyUploads(envObj = process.env) {
+  return String(envObj.ELOFIX_ALLOW_LOCAL_UPLOADS || "").toLowerCase() === "true";
+}
+
+/**
+ * Production/staging with ephemeral disk must use object storage unless an operator
+ * explicitly opts into local-only uploads (persistent disk).
+ */
+function isDurableStorageRequired(envObj = process.env) {
+  if (String(envObj.NODE_ENV || "").toLowerCase() !== "production") return false;
+  if (allowLocalOnlyUploads(envObj)) return false;
+  return true;
+}
+
+function getDurableStorageReadiness(envObj = process.env) {
+  if (!isDurableStorageRequired(envObj)) {
+    return { ok: true, storage: "ok" };
+  }
+  if (!isEnabled(envObj)) {
+    return { ok: false, storage: "invalid" };
+  }
+  return { ok: true, storage: "ok" };
 }
 
 function getClient() {
+  if (testMemoryStore) return null;
   if (!isEnabled()) return null;
   if (cachedClient) return cachedClient;
 
@@ -37,11 +78,17 @@ function normalizeObjectKey(relPath) {
 }
 
 async function putLocalFile(relPath, absolutePath, contentType) {
-  const client = getClient();
-  if (!client) return false;
-
   const key = normalizeObjectKey(relPath);
   if (!key) return false;
+
+  if (testMemoryStore) {
+    const body = await fs.readFile(absolutePath);
+    testMemoryStore.set(key, { body, contentType: contentType || "application/octet-stream" });
+    return true;
+  }
+
+  const client = getClient();
+  if (!client) return false;
 
   const body = await fs.readFile(absolutePath);
   await client.send(
@@ -56,11 +103,15 @@ async function putLocalFile(relPath, absolutePath, contentType) {
 }
 
 async function existsObject(relPath) {
-  const client = getClient();
-  if (!client) return false;
-
   const key = normalizeObjectKey(relPath);
   if (!key) return false;
+
+  if (testMemoryStore) {
+    return testMemoryStore.has(key);
+  }
+
+  const client = getClient();
+  if (!client) return false;
 
   try {
     await client.send(
@@ -76,11 +127,17 @@ async function existsObject(relPath) {
 }
 
 async function getObjectStream(relPath) {
-  const client = getClient();
-  if (!client) return null;
-
   const key = normalizeObjectKey(relPath);
   if (!key) return null;
+
+  if (testMemoryStore) {
+    const rec = testMemoryStore.get(key);
+    if (!rec) return null;
+    return Readable.from(rec.body);
+  }
+
+  const client = getClient();
+  if (!client) return null;
 
   const response = await client.send(
     new GetObjectCommand({
@@ -147,6 +204,9 @@ async function fileExists(absolutePath) {
 
 module.exports = {
   isEnabled,
+  isDurableStorageRequired,
+  getDurableStorageReadiness,
+  setTestMemoryStore,
   putLocalFile,
   existsObject,
   getObjectStream,

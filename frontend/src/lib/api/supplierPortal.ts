@@ -664,7 +664,7 @@ export interface BranchSettlementEventRow {
 }
 
 /** @deprecated use BranchSettlementSummary */
-export interface BranchBalanceSnapshot extends BranchSettlementSummary {}
+export type BranchBalanceSnapshot = BranchSettlementSummary;
 
 export async function getBranchBalance(branchId: string): Promise<BranchSettlementSummary> {
   const { data } = await apiClient.get<{ success: boolean } & BranchSettlementSummary>(

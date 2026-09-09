@@ -46,7 +46,7 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
       }),
     enabled: Boolean(userId),
   });
-  const branchRows = branchRowsData?.branches ?? [];
+  const branchRows = useMemo(() => branchRowsData?.branches ?? [], [branchRowsData?.branches]);
 
   const distinctCities = useMemo(() => {
     const s = new Set<string>();

@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: elofix-backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: elofix
+          POSTGRES_PASSWORD: elofix
+          POSTGRES_DB: elofix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U elofix -d elofix_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://elofix:elofix@localhost:5432/elofix_ci?schema=public&sslmode=disable
+      JWT_SECRET: ci-jwt-secret-must-be-long
+      SECRET_KEY: ci-secret-key-must-be-long
+      BANK_KDF_SALT: ci-bank-salt-must-be-long
+      PAYFAST_MODE: sandbox
+      PAYFAST_MERCHANT_ID: ci-sandbox-merchant-id
+      PAYFAST_MERCHANT_KEY: ci-sandbox-merchant-key
+      ENABLED_PAYMENT_PROVIDERS: payfast
+      PAYMENT_CURRENCY: ZAR
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: elofix-backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npm test
+
+  frontend:
+    name: Frontend lint, test, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      VITE_API_BASE_URL: https://ci-api.elofix.test/api
+      VITE_API_ORIGIN: https://ci-api.elofix.test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install including devDependencies
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: test
+      - run: npm run lint
+      - run: npm test
+      - name: Production build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          VITE_API_ORIGIN: https://ci-api.elofix.test
+          VITE_API_BASE_URL: https://ci-api.elofix.test/api
+
+  e2e:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: elofix
+          POSTGRES_PASSWORD: elofix
+          POSTGRES_DB: elofix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U elofix -d elofix_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://elofix:elofix@localhost:5432/elofix_ci?schema=public&sslmode=disable
+      JWT_SECRET: ci-jwt-secret-must-be-long
+      SECRET_KEY: ci-secret-key-must-be-long
+      BANK_KDF_SALT: ci-bank-salt-must-be-long
+      PAYFAST_MODE: sandbox
+      PAYFAST_MERCHANT_ID: ci-sandbox-merchant-id
+      PAYFAST_MERCHANT_KEY: ci-sandbox-merchant-key
+      PAYFAST_SETTLE_ON_RETURN: "true"
+      PAYFAST_SKIP_IP_CHECK: "true"
+      ENABLED_PAYMENT_PROVIDERS: payfast
+      PAYMENT_CURRENCY: ZAR
+      PAYMENT_BASE_URL: http://localhost:5000
+      FRONTEND_BASE_URL: http://localhost:8081
+      FRONTEND_URL: http://localhost:8081
+      PORT: "5000"
+      ADMIN_EMAIL: admin@elofix.com
+      ADMIN_PASSWORD: Admin@123
+      ADMIN_NAME: ELOFix Admin
+      CI: "true"
+      ELOFIX_E2E_FULL_STACK: "1"
+      ELOFIX_API_BASE_URL: http://localhost:5000/api
+      PLAYWRIGHT_BASE_URL: http://localhost:8081
+      VITE_API_BASE_URL: http://localhost:5000/api
+      VITE_API_ORIGIN: http://localhost:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and migrate backend
+        working-directory: elofix-backend
+        run: |
+          npm ci
+          npx prisma generate
+          npx prisma migrate deploy
+          npm run prisma:seed
+      - name: Seed CI E2E users and jobs
+        working-directory: elofix-backend
+        run: node scripts/seed-e2e-ci.js
+      - name: Start API in background
+        working-directory: elofix-backend
+        run: npm start > /tmp/elofix-api.log 2>&1 &
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:5000/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "API did not become healthy"
+          cat /tmp/elofix-api.log || true
+          exit 1
+      - name: Install frontend and Playwright
+        working-directory: frontend
+        run: |
+          npm ci --include=dev
+          npx playwright install --with-deps chromium
+      - name: Run Playwright
+        working-directory: frontend
+        run: npm run e2e
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore

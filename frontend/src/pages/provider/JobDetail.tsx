@@ -333,7 +333,7 @@ export default function ProviderJobDetail() {
   }, [jobId, queryClient]);
 
   useEffect(() => {
-    if (!jobId || !job) return;
+    if (!jobId || !job?.id) return;
     void markJobSectionRead(jobId, 'materials');
     void markJobSectionRead(jobId, 'general');
   }, [jobId, job?.id, markJobSectionRead]);

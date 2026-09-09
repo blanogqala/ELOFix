@@ -7,8 +7,13 @@ const asyncHandler = require("./middleware/asyncHandler");
 const paymentController = require("./controllers/payment.controller");
 const uploadsStaticMiddleware = require("./middleware/uploadsStatic.middleware");
 const { getAllowedOrigins, createCorsOriginChecker } = require("./utils/corsOrigins.util");
+const { redactRequestUrl } = require("./utils/logRedaction.util");
+const { getReadiness } = require("./services/readiness.service");
+const { applyTrustProxy } = require("./middleware/ipRateLimit.middleware");
 
 const app = express();
+
+applyTrustProxy(app);
 
 const allowedOrigins = getAllowedOrigins();
 
@@ -72,7 +77,7 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
     const ms = Date.now() - start;
-    console.log(`[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
+    console.log(`[HTTP] ${req.method} ${redactRequestUrl(req.originalUrl)} ${res.statusCode} ${ms}ms`);
   });
   next();
 });
@@ -80,6 +85,11 @@ app.use((req, res, next) => {
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
+
+app.get("/ready", asyncHandler(async (req, res) => {
+  const result = await getReadiness();
+  res.status(result.httpStatus).json(result.body);
+}));
 
 app.use("/api", routes);
 

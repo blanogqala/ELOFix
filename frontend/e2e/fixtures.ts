@@ -198,7 +198,7 @@ export async function setupApprovedProviderForE2E(
     (r) => r.url().includes('/withdrawal-profile') && r.request().method() === 'PUT',
     { timeout: 30_000 }
   );
-  await providerPage.getByRole('button', { name: /Save & Continue/i }).click();
+  await providerPage.getByRole('button', { name: /^Save$/ }).click();
   const payoutResp = await payoutSave;
   expect(
     payoutResp.ok(),

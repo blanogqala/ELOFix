@@ -16,7 +16,7 @@ the frontend is correct — the **file no longer exists on the API server**. Ren
 
 ## Fix option A — Cloudflare R2 (recommended, works on Render Free)
 
-R2 is S3-compatible object storage. New uploads are mirrored there automatically when env vars are set.
+R2 is S3-compatible object storage. In `NODE_ENV=production`, EloFix **requires** these variables (or `ELOFIX_ALLOW_LOCAL_UPLOADS=true` with a persistent disk). Critical/private uploads (KYC, quotations, job-request photos, completion evidence) are **not** reported as saved if the remote put fails.
 
 ### 1. Create R2 bucket
 

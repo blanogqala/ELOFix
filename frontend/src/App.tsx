@@ -9,6 +9,7 @@ import { LoadingProvider } from "@/components/common/loading";
 import { OverlayLockGuard } from "@/components/common/OverlayLockGuard";
 import { ScrollToTop } from "@/components/common/ScrollToTop";
 import { RouteSuspense } from "@/components/routing/RouteSuspense";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import * as Pages from "@/routes/lazyPages";
 
 const queryClient = new QueryClient({
@@ -28,6 +29,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <ErrorBoundary>
           <ScrollToTop />
           <OverlayLockGuard />
           <Routes>
@@ -176,6 +178,7 @@ const App = () => (
             {/* Catch-all */}
             <Route path="*" element={<RouteSuspense><Pages.NotFound /></RouteSuspense>} />
           </Routes>
+          </ErrorBoundary>
         </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>

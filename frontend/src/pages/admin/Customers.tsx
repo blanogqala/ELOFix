@@ -23,7 +23,7 @@ export default function AdminCustomers() {
     queryFn: () => getAdminCustomers(),
   });
 
-  const customers = data?.customers ?? [];
+  const customers = useMemo(() => data?.customers ?? [], [data?.customers]);
   // Summary is useful server-side for initial render, but card totals must reflect active filters.
 
   const cities = useMemo(() => {

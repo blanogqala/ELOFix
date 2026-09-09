@@ -87,7 +87,10 @@ export function SupplierOrgWithdrawalHistoryPanel({
       }),
   });
 
-  const rows: OrgWithdrawalHistoryRow[] = data?.withdrawals ?? [];
+  const rows: OrgWithdrawalHistoryRow[] = useMemo(
+    () => data?.withdrawals ?? [],
+    [data?.withdrawals],
+  );
 
   const exportRows = useMemo(
     () =>

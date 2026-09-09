@@ -223,7 +223,6 @@ test.describe.serial('Customer ↔ Provider critical lifecycle', () => {
     });
     await expect(laborPayCta.first()).toBeVisible({ timeout: 30_000 });
     await laborPayCta.first().click();
-    await page.getByLabel(/CVC/i).fill('123');
     await completePaymentInTest(page, {
       clickPayButton: async () => {
         await page.getByRole('button', { name: /^Pay / }).click();
@@ -271,7 +270,6 @@ test.describe.serial('Customer ↔ Provider critical lifecycle', () => {
     });
     await expect(remainingPayCta.first()).toBeVisible({ timeout: 60_000 });
     await remainingPayCta.first().click();
-    await page.getByLabel(/CVC/i).fill('123');
     await completePaymentInTest(page, {
       clickPayButton: async () => {
         await page.getByRole('button', { name: /^Pay / }).click();
