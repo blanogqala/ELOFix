@@ -1,6 +1,6 @@
 const assert = require("assert");
 const { canJoinUserRoom } = require("../src/utils/socketAuth.util");
-const { getAllowedOrigins, isOriginAllowed } = require("../src/utils/corsOrigins.util");
+const { getAllowedOrigins, isOriginAllowed, createCorsOriginChecker } = require("../src/utils/corsOrigins.util");
 
 function testCanJoinUserRoom() {
   assert.strictEqual(canJoinUserRoom("user-1", "user-1"), true);
@@ -10,7 +10,7 @@ function testCanJoinUserRoom() {
   assert.strictEqual(canJoinUserRoom(undefined, "user-1"), false);
 }
 
-function testCorsOrigins() {
+async function testCorsOrigins() {
   const prevEnv = { ...process.env };
   try {
     process.env.NODE_ENV = "development";
@@ -21,15 +21,42 @@ function testCorsOrigins() {
     assert.strictEqual(isOriginAllowed(undefined, allowed), true);
     assert.strictEqual(isOriginAllowed("https://app.example.com", allowed), true);
     assert.strictEqual(isOriginAllowed("https://evil.example.com", allowed), false);
+
+    const checker = createCorsOriginChecker(allowed);
+    await new Promise((resolve, reject) => {
+      checker("https://app.example.com", (err, ok) => {
+        try {
+          assert.strictEqual(err, null);
+          assert.strictEqual(ok, true);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    await new Promise((resolve, reject) => {
+      checker("https://evil.example.com", (err, ok) => {
+        try {
+          assert.strictEqual(err, null);
+          assert.strictEqual(ok, false);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
   } finally {
     process.env = prevEnv;
   }
 }
 
-function run() {
+async function run() {
   testCanJoinUserRoom();
-  testCorsOrigins();
+  await testCorsOrigins();
   console.log("socketAuth.test.js: all passed");
 }
 
-run();
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

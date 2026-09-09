@@ -58,7 +58,9 @@ Providers, suppliers, and customers must **upload photos again**. New uploads wi
 3. Environment:
    ```
    UPLOAD_ROOT=/opt/render/project/src/uploads
+   ELOFIX_ALLOW_LOCAL_UPLOADS=true
    ```
+   `ELOFIX_ALLOW_LOCAL_UPLOADS=true` is required so production `/ready` does not demand S3. Only set this with a persistent disk — never on the ephemeral Free filesystem.
 4. Redeploy, then re-upload all images
 
 ---
