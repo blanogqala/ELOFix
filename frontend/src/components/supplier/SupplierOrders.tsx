@@ -294,7 +294,7 @@ export function SupplierOrders({ userId }: { userId: string }) {
     enabled: Boolean(userId),
   });
 
-  const branches = profile?.branches ?? [];
+  const branches = useMemo(() => profile?.branches ?? [], [profile?.branches]);
 
   const [ordCityFilter, setOrdCityFilter] = useState('');
   const [ordSearchQ, setOrdSearchQ] = useState('');
@@ -308,7 +308,10 @@ export function SupplierOrders({ userId }: { userId: string }) {
       }),
     enabled: Boolean(userId) && isSupplierReadOnly,
   });
-  const orderBranchCards = orderBranchCardsData?.branches ?? [];
+  const orderBranchCards = useMemo(
+    () => orderBranchCardsData?.branches ?? [],
+    [orderBranchCardsData?.branches],
+  );
 
   const { data: portalOverview } = useQuery({
     queryKey: ['supplier', 'analytics-overview', userId],

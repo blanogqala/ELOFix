@@ -90,13 +90,13 @@ export default function ProviderRequestDetail() {
   }, [id, loadJob]);
 
   useEffect(() => {
-    if (!id || !job) return;
+    if (!id || !job?.id) return;
     void markJobSectionRead(id, 'general');
     void markJobSectionRead(id, 'messages');
   }, [id, job?.id, markJobSectionRead]);
 
   useEffect(() => {
-    if (location.hash !== '#messages' || !job) return;
+    if (location.hash !== '#messages' || !job?.id) return;
     messagesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [location.hash, job?.id]);
 

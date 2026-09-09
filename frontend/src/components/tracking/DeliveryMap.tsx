@@ -86,16 +86,22 @@ function MapBody({
   const { mapRef, fitBounds, fitPoints, setCenter } = useMap();
   const mapReady = mapInstance != null;
 
-  const rawDriverPos =
-    lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
-      ? { lat: Number(lat), lng: Number(lng) }
-      : null;
+  const rawDriverPos = useMemo(
+    () =>
+      lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+        ? { lat: Number(lat), lng: Number(lng) }
+        : null,
+    [lat, lng],
+  );
 
   const smoothed = useSmoothedLatLng(rawDriverPos?.lat, rawDriverPos?.lng);
-  const driverPos =
-    smoothed.lat != null && smoothed.lng != null
-      ? { lat: smoothed.lat, lng: smoothed.lng }
-      : null;
+  const driverPos = useMemo(
+    () =>
+      smoothed.lat != null && smoothed.lng != null
+        ? { lat: smoothed.lat, lng: smoothed.lng }
+        : null,
+    [smoothed.lat, smoothed.lng],
+  );
 
   const hasExplicitDest =
     destinationCoords &&
@@ -153,7 +159,7 @@ function MapBody({
       setHeadingDeg(bearingBetween(rawDriverPos.lat, rawDriverPos.lng, destForRoute.lat, destForRoute.lng));
     }
     prevDriverRef.current = rawDriverPos;
-  }, [rawDriverPos?.lat, rawDriverPos?.lng, destForRoute?.lat, destForRoute?.lng]);
+  }, [rawDriverPos, destForRoute]);
 
   const center = useMemo(() => {
     if (driverPos) return driverPos;

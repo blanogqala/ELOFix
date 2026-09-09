@@ -94,7 +94,7 @@ export default function SupplierDashboard() {
     enabled: Boolean(userId),
   });
 
-  const branches = profile?.branches ?? [];
+  const branches = useMemo(() => profile?.branches ?? [], [profile?.branches]);
 
   const { data: overview } = useQuery({
     queryKey: ['supplier', 'analytics', 'overview', userId],
@@ -111,7 +111,10 @@ export default function SupplierDashboard() {
       }),
     enabled: Boolean(userId) && !isBranchStaff,
   });
-  const branchAnalytics = branchAnalyticsData?.branches ?? [];
+  const branchAnalytics = useMemo(
+    () => branchAnalyticsData?.branches ?? [],
+    [branchAnalyticsData?.branches],
+  );
 
   const distinctCities = useMemo(() => {
     const s = new Set<string>();

@@ -105,7 +105,8 @@ function computeBrowseCore(
 
 export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const { variant, jobLocation, jobCategory, onBack } = props;
-  const existingMaterials = variant === 'provider_cart' ? props.existingMaterials ?? [] : [];
+  const incomingMaterials = variant === 'provider_cart' ? props.existingMaterials : undefined;
+  const existingMaterials = useMemo(() => incomingMaterials ?? [], [incomingMaterials]);
   const saveCartFn = variant === 'provider_cart' ? props.onSaveCart : undefined;
   const suggestFn = variant === 'user_suggestion' ? props.onSendSuggestion : undefined;
   const [view, setView] = useState<'stores' | 'products'>('stores');

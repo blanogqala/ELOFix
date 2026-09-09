@@ -76,7 +76,7 @@ export function SupplierSettlementHistoryPanel({
       }),
   });
 
-  const rows = data?.events ?? [];
+  const rows = useMemo(() => data?.events ?? [], [data?.events]);
 
   const exportRows = useMemo(
     () =>

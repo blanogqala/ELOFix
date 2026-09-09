@@ -124,20 +124,18 @@ export function JobDeliverySection({
   const showCustomerMap = !deliveryCancelled && (activeFulfillment || mapCompletedMode);
   const headingToCustomer = courierMapShowsDestination(fs, mapCompletedMode);
 
+  const collectionLat = collection.coordinates?.lat;
+  const collectionLng = collection.coordinates?.lng;
+  const destinationLat = destination.coordinates?.lat;
+  const destinationLng = destination.coordinates?.lng;
   const mapDestCoords = useMemo(() => {
-    const point = headingToCustomer ? destination : collection;
-    if (point.coordinates?.lat != null && point.coordinates?.lng != null) {
-      return { lat: point.coordinates.lat, lng: point.coordinates.lng };
+    const lat = headingToCustomer ? destinationLat : collectionLat;
+    const lng = headingToCustomer ? destinationLng : collectionLng;
+    if (lat != null && lng != null) {
+      return { lat, lng };
     }
     return null;
-  }, [
-    mapCompletedMode,
-    headingToCustomer,
-    collection.coordinates?.lat,
-    collection.coordinates?.lng,
-    destination.coordinates?.lat,
-    destination.coordinates?.lng,
-  ]);
+  }, [headingToCustomer, collectionLat, collectionLng, destinationLat, destinationLng]);
 
   const mapDestinationLabel = headingToCustomer
     ? formatDeliveryPointLabel(destination)

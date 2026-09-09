@@ -11,6 +11,10 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { Truck, MapPin, Package, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+type InboxEntry =
+  | { kind: 'material'; order: MaterialOrder }
+  | { kind: 'direct'; request: DeliveryRequestRecord };
+
 function deliveryState(order: MaterialOrder): string {
   return String(order.delivery?.status || 'PendingApproval');
 }
@@ -155,7 +159,7 @@ export default function ProviderDeliveryInbox() {
   const list = grouped[tab];
 
   const openEntry = useCallback(
-    (entry: (typeof grouped.pending)[number]) => {
+    (entry: InboxEntry) => {
       if (entry.kind === 'material') navigate(`/provider/deliveries/${entry.order.id}`);
       else navigate(`/provider/direct-deliveries/${entry.request.id}`);
     },

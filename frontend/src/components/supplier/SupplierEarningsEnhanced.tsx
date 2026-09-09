@@ -114,8 +114,11 @@ export function SupplierEarningsOrdersPanel({
     enabled: Boolean(userId),
   });
 
-  const rows = data?.rows || [];
-  const summary = data?.summary || { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
+  const rows = useMemo(() => data?.rows || [], [data?.rows]);
+  const summary = useMemo(
+    () => data?.summary || { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
+    [data?.summary],
+  );
   const activeSummary = useMemo(() => resolveActiveSummary(summary, rows), [summary, rows]);
 
   const filteredRows = useMemo(
@@ -508,8 +511,11 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
   const totalPendingSettlement = branchAnalyticsData?.totalPendingSettlement ?? 0;
   const totalSettled = branchAnalyticsData?.totalSettled ?? 0;
 
-  const hubSummary = hubExport?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
-  const hubRows = hubExport?.rows ?? [];
+  const hubSummary = useMemo(
+    () => hubExport?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
+    [hubExport?.summary],
+  );
+  const hubRows = useMemo(() => hubExport?.rows ?? [], [hubExport?.rows]);
   const hubActiveSummary = useMemo(
     () => resolveActiveSummary(hubSummary, hubRows),
     [hubSummary, hubRows]

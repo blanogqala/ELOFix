@@ -447,9 +447,10 @@ export default function NotificationsPage() {
     navigate(`${location.pathname}${qs ? `?${qs}` : ''}`, { replace: true, state: {} });
   }, [location.pathname, location.search, location.state, supportKey, navigate, isMobile, user?.id]);
 
-  const selectedThreadMessages = selectedThreadKey
-    ? threadMap.get(selectedThreadKey) ?? (selectedThreadKey === supportKey ? [] : [])
-    : [];
+  const selectedThreadMessages = useMemo(() => {
+    if (!selectedThreadKey) return [];
+    return threadMap.get(selectedThreadKey) ?? (selectedThreadKey === supportKey ? [] : []);
+  }, [selectedThreadKey, threadMap, supportKey]);
 
   const adminReplyTarget = useMemo(
     () =>

@@ -45,8 +45,11 @@ export function AdminSupplierMaterialOrdersSection({
     enabled: Boolean(supplierId),
   });
 
-  const summary = exportData?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
-  const rows = exportData?.rows ?? [];
+  const summary = useMemo(
+    () => exportData?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
+    [exportData?.summary],
+  );
+  const rows = useMemo(() => exportData?.rows ?? [], [exportData?.rows]);
   const activeSummary = useMemo(() => resolveActiveSummary(summary, rows), [summary, rows]);
   const totalPendingSettlement = settlementData?.totalPendingSettlement ?? 0;
   const totalSettled = settlementData?.totalSettled ?? 0;

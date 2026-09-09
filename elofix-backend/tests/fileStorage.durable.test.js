@@ -102,32 +102,98 @@ async function testProductionS3SuccessAndRemoteRetrieve() {
   objectStorage.setTestMemoryStore(null);
 }
 
-async function testProductionS3FailureRollsBack() {
+async function withInjectedS3Failure(fn) {
   const store = new Map();
   objectStorage.setTestMemoryStore(store);
   const orig = objectStorage.putLocalFile;
   objectStorage.putLocalFile = async () => {
     throw new Error("injected s3 failure");
   };
-  const rel = `jobs/${randomUUID()}/fail.jpg`;
-  const abs = await writeUpload(rel);
-  let threw = null;
   try {
-    await fileStorage.registerFilePath(abs, {
-      type: "jobRequestImage",
-      originalName: "fail.jpg",
-      mimeType: "image/jpeg",
-    });
-  } catch (e) {
-    threw = e;
+    return await fn();
   } finally {
     objectStorage.putLocalFile = orig;
     objectStorage.setTestMemoryStore(null);
   }
-  assert.ok(threw, "3. S3 failure returns controlled failure");
+}
+
+async function testFreshUploadS3FailureDeletesDisposableFile() {
+  const rel = `jobs/${randomUUID()}/fresh-fail.jpg`;
+  const abs = await writeUpload(rel, "disposable-upload");
+  let threw = null;
+  await withInjectedS3Failure(async () => {
+    try {
+      await fileStorage.registerUploadedFile(
+        { path: abs, originalname: "fresh-fail.jpg", mimetype: "image/jpeg" },
+        { type: "jobRequestImage" }
+      );
+    } catch (e) {
+      threw = e;
+    }
+  });
+  assert.ok(threw, "1. fresh upload S3 failure returns controlled failure");
   assert.strictEqual(threw.statusCode, 503);
   const leftover = await prisma.storedFile.findFirst({ where: { relPath: rel.replace(/\\/g, "/") } });
-  assert.ok(!leftover, "4. no misleading StoredFile after failed critical upload");
+  assert.ok(!leftover, "1. StoredFile row removed after failed fresh upload");
+  const stillThere = await fs
+    .stat(abs)
+    .then(() => true)
+    .catch(() => false);
+  assert.strictEqual(stillThere, false, "1. disposable multer/temp file is cleaned on failure");
+}
+
+async function testLegacyFileS3FailurePreservesOriginal() {
+  const rel = `jobs/${randomUUID()}/legacy-keep.jpg`;
+  const abs = await writeUpload(rel, "pre-existing-legacy");
+  let threw = null;
+  await withInjectedS3Failure(async () => {
+    try {
+      await fileStorage.registerFilePath(abs, {
+        type: "jobRequestImage",
+        originalName: "legacy-keep.jpg",
+        mimeType: "image/jpeg",
+        deleteLocalOnFailure: false,
+      });
+    } catch (e) {
+      threw = e;
+    }
+  });
+  assert.ok(threw, "2. legacy registration S3 failure returns controlled failure");
+  assert.strictEqual(threw.statusCode, 503);
+  const leftover = await prisma.storedFile.findFirst({ where: { relPath: rel.replace(/\\/g, "/") } });
+  assert.ok(!leftover, "2. StoredFile row created by the attempt is removed");
+  const stillThere = await fs
+    .stat(abs)
+    .then((s) => s.isFile())
+    .catch(() => false);
+  assert.strictEqual(stillThere, true, "2. ORIGINAL pre-existing file still exists after S3 failure");
+  await fs.unlink(abs).catch(() => {});
+}
+
+async function testGetOrRegisterRelPathDoesNotDeleteLegacyOnS3Failure() {
+  const rel = `jobs/${randomUUID()}/legacy-rel.jpg`;
+  const abs = await writeUpload(rel, "legacy-rel-bytes");
+  let threw = null;
+  await withInjectedS3Failure(async () => {
+    try {
+      await fileStorage.getOrRegisterRelPath(rel, {
+        type: "jobRequestImage",
+        originalName: "legacy-rel.jpg",
+      });
+    } catch (e) {
+      threw = e;
+    }
+  });
+  assert.ok(threw, "2b. getOrRegisterRelPath S3 failure is controlled");
+  assert.strictEqual(threw.statusCode, 503);
+  const leftover = await prisma.storedFile.findFirst({ where: { relPath: rel.replace(/\\/g, "/") } });
+  assert.ok(!leftover, "2b. no leftover StoredFile");
+  const stillThere = await fs
+    .stat(abs)
+    .then((s) => s.isFile())
+    .catch(() => false);
+  assert.strictEqual(stillThere, true, "2b. original file preserved via getOrRegisterRelPath");
+  await fs.unlink(abs).catch(() => {});
 }
 
 async function testReadinessRequiresStorageInProduction() {
@@ -183,7 +249,9 @@ async function testReadinessRequiresStorageInProduction() {
 async function run() {
   await testLocalDevWithoutS3();
   await testProductionS3SuccessAndRemoteRetrieve();
-  await testProductionS3FailureRollsBack();
+  await testFreshUploadS3FailureDeletesDisposableFile();
+  await testLegacyFileS3FailurePreservesOriginal();
+  await testGetOrRegisterRelPathDoesNotDeleteLegacyOnS3Failure();
   await testReadinessRequiresStorageInProduction();
   console.log("fileStorage.durable.test.js: all passed");
 }

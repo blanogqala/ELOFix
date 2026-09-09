@@ -44,7 +44,7 @@ export function BranchSettlementHistoryTab({
     enabled: Boolean(branchId && userId),
   });
 
-  const rows: BranchSettlementEventRow[] = data?.events ?? [];
+  const rows: BranchSettlementEventRow[] = useMemo(() => data?.events ?? [], [data?.events]);
 
   const exportRows = useMemo(
     () =>

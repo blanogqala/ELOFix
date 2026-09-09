@@ -180,6 +180,7 @@ function MeasurementsStepContent({
   useEffect(() => {
     if (!cameraOpen) return;
     let stream: MediaStream | null = null;
+    let attachedEl: HTMLVideoElement | null = null;
     void (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -187,6 +188,7 @@ function MeasurementsStepContent({
         });
         const el = videoRef.current;
         if (el) {
+          attachedEl = el;
           el.srcObject = stream;
           await el.play();
         }
@@ -201,8 +203,7 @@ function MeasurementsStepContent({
     })();
     return () => {
       stream?.getTracks().forEach((t) => t.stop());
-      const el = videoRef.current;
-      if (el) el.srcObject = null;
+      if (attachedEl) attachedEl.srcObject = null;
     };
   }, [cameraOpen, toast]);
 

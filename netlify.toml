@@ -5,7 +5,7 @@
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
   # Omit node_modules (Firebase's documented example AIza… key). Keep smart detection on.
   # Narrow false-positive omit: Firebase docs sample key, not a real secret.
   SECRETS_SCAN_OMIT_PATHS = "node_modules"

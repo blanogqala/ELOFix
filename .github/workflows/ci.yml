@@ -34,13 +34,15 @@ jobs:
       SECRET_KEY: ci-secret-key-must-be-long
       BANK_KDF_SALT: ci-bank-salt-must-be-long
       PAYFAST_MODE: sandbox
+      PAYFAST_MERCHANT_ID: ci-sandbox-merchant-id
+      PAYFAST_MERCHANT_KEY: ci-sandbox-merchant-key
       ENABLED_PAYMENT_PROVIDERS: payfast
       PAYMENT_CURRENCY: ZAR
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: elofix-backend/package-lock.json
       - run: npm ci
@@ -56,20 +58,27 @@ jobs:
       run:
         working-directory: frontend
     env:
-      NODE_ENV: production
       VITE_API_BASE_URL: https://ci-api.elofix.test/api
       VITE_API_ORIGIN: https://ci-api.elofix.test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      - name: Install including devDependencies
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: test
       - run: npm run lint
       - run: npm test
-      - run: npm run build
+      - name: Production build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          VITE_API_ORIGIN: https://ci-api.elofix.test
+          VITE_API_BASE_URL: https://ci-api.elofix.test/api
 
   e2e:
     name: Playwright e2e
@@ -96,6 +105,8 @@ jobs:
       SECRET_KEY: ci-secret-key-must-be-long
       BANK_KDF_SALT: ci-bank-salt-must-be-long
       PAYFAST_MODE: sandbox
+      PAYFAST_MERCHANT_ID: ci-sandbox-merchant-id
+      PAYFAST_MERCHANT_KEY: ci-sandbox-merchant-key
       PAYFAST_SETTLE_ON_RETURN: "true"
       PAYFAST_SKIP_IP_CHECK: "true"
       ENABLED_PAYMENT_PROVIDERS: payfast
@@ -117,7 +128,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install and migrate backend
         working-directory: elofix-backend
         run: |
@@ -125,6 +136,9 @@ jobs:
           npx prisma generate
           npx prisma migrate deploy
           npm run prisma:seed
+      - name: Seed CI E2E users and jobs
+        working-directory: elofix-backend
+        run: node scripts/seed-e2e-ci.js >> "$GITHUB_ENV"
       - name: Start API in background
         working-directory: elofix-backend
         run: npm start > /tmp/elofix-api.log 2>&1 &
@@ -140,7 +154,7 @@ jobs:
       - name: Install frontend and Playwright
         working-directory: frontend
         run: |
-          npm ci
+          npm ci --include=dev
           npx playwright install --with-deps chromium
       - name: Run Playwright
         working-directory: frontend

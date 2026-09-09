@@ -57,20 +57,27 @@ function inferMimeType(mimeType, absolutePath) {
   return IMAGE_EXT_TO_MIME[ext] || "application/octet-stream";
 }
 
-async function rollbackStoredFile(fileId, absolutePath) {
+async function rollbackStoredFile(fileId, absolutePath, { deleteLocalOnFailure = false } = {}) {
   await prisma.storedFile.delete({ where: { id: fileId } }).catch(() => {});
-  if (absolutePath) {
+  if (deleteLocalOnFailure && absolutePath) {
     await fs.unlink(absolutePath).catch(() => {});
   }
 }
 
-async function persistRemoteOrFail({ fileId, relPath, absolutePath, mimeType, type }) {
+async function persistRemoteOrFail({
+  fileId,
+  relPath,
+  absolutePath,
+  mimeType,
+  type,
+  deleteLocalOnFailure,
+}) {
   const required = objectStorage.isDurableStorageRequired();
   const enabled = objectStorage.isEnabled();
   const critical = isProtectedFileType(type) || Boolean(required);
 
   if (required && !enabled) {
-    await rollbackStoredFile(fileId, absolutePath);
+    await rollbackStoredFile(fileId, absolutePath, { deleteLocalOnFailure });
     throw new AppError("Persistent object storage is not configured", 503);
   }
 
@@ -87,7 +94,7 @@ async function persistRemoteOrFail({ fileId, relPath, absolutePath, mimeType, ty
   } catch (err) {
     console.error("[fileStorage] object storage upload failed:", err instanceof Error ? err.message : err);
     if (critical) {
-      await rollbackStoredFile(fileId, absolutePath);
+      await rollbackStoredFile(fileId, absolutePath, { deleteLocalOnFailure });
       throw new AppError("Failed to persist upload to durable storage", 503);
     }
     return { remote: false };
@@ -102,6 +109,10 @@ async function registerFilePath(absolutePath, metadata = {}) {
   if (!(await existsFile(absolutePath))) {
     throw new AppError("Uploaded file not found on disk", 404);
   }
+
+  // Ownership of the local bytes must be explicit. Default is false so a
+  // pre-existing/legacy file is never unlinked if remote persistence fails.
+  const deleteLocalOnFailure = metadata.deleteLocalOnFailure === true;
 
   const fileId = randomUUID();
   const record = {
@@ -129,6 +140,7 @@ async function registerFilePath(absolutePath, metadata = {}) {
     absolutePath,
     mimeType: record.mimeType,
     type: record.type,
+    deleteLocalOnFailure,
   });
 
   return {
@@ -148,6 +160,7 @@ async function registerUploadedFile(file, metadata = {}) {
     ...metadata,
     originalName: metadata.originalName || file.originalname,
     mimeType: metadata.mimeType || file.mimetype,
+    deleteLocalOnFailure: true,
   });
 }
 
@@ -272,6 +285,7 @@ async function registerLegacyResolvedFile(token, context = {}) {
       ownerUserId,
       type: kind === "document" ? docType : kind,
       originalName: match.name,
+      deleteLocalOnFailure: false,
     });
   }
 
@@ -302,6 +316,7 @@ async function resolveExistingFileReference(reference, context = {}) {
       return registerFilePath(absolutePath, {
         ownerUserId: context.ownerUserId,
         type: context.type || context.docType,
+        deleteLocalOnFailure: false,
       });
     }
     if (await objectStorage.existsObject(rel)) {
@@ -331,7 +346,10 @@ async function getOrRegisterRelPath(relPath, metadata = {}) {
 
   const absolutePath = path.resolve(UPLOAD_ROOT, normalized.split("/").join(path.sep));
   if (await existsFile(absolutePath)) {
-    return registerFilePath(absolutePath, metadata);
+    return registerFilePath(absolutePath, {
+      ...metadata,
+      deleteLocalOnFailure: false,
+    });
   }
 
   if (await objectStorage.existsObject(normalized)) {

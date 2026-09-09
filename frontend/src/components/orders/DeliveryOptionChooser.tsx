@@ -46,29 +46,29 @@ export function DeliveryOptionChooser({
   hideSelfOption = false,
 }: DeliveryOptionChooserProps) {
   const hasCourierOption = deliveryProviders.length > 0;
-  const defaultType = (): 'SELF' | 'STORE' | 'PROVIDER' => {
-    if (hideSelfOption) {
-      if (storeHasDelivery) return 'STORE';
-      if (hasCourierOption) return 'PROVIDER';
-    }
-    return 'SELF';
-  };
+  const resolvedDefaultType: 'SELF' | 'STORE' | 'PROVIDER' = hideSelfOption
+    ? storeHasDelivery
+      ? 'STORE'
+      : hasCourierOption
+        ? 'PROVIDER'
+        : 'SELF'
+    : 'SELF';
 
-  const [selectedType, setSelectedType] = useState<'SELF' | 'STORE' | 'PROVIDER'>(defaultType);
+  const [selectedType, setSelectedType] = useState<'SELF' | 'STORE' | 'PROVIDER'>(resolvedDefaultType);
   const [selectedProviderId, setSelectedProviderId] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    setSelectedType(defaultType());
+    setSelectedType(resolvedDefaultType);
     setSelectedProviderId('');
-  }, [open, hideSelfOption, storeHasDelivery, hasCourierOption]);
+  }, [open, resolvedDefaultType]);
 
   useEffect(() => {
     if (!hasCourierOption) {
-      setSelectedType(prev => (prev === 'PROVIDER' ? defaultType() : prev));
+      setSelectedType((prev) => (prev === 'PROVIDER' ? resolvedDefaultType : prev));
       setSelectedProviderId('');
     }
-  }, [hasCourierOption]);
+  }, [hasCourierOption, resolvedDefaultType]);
 
   const handleConfirm = () => {
     if (hasCourierOption && selectedType === 'PROVIDER' && !selectedProviderId) return;
@@ -89,7 +89,7 @@ export function DeliveryOptionChooser({
       }
     }
     onOpenChange(false);
-    setSelectedType(defaultType());
+    setSelectedType(resolvedDefaultType);
     setSelectedProviderId('');
   };
 

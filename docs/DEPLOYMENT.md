@@ -12,6 +12,7 @@ See also: [elofix-backend/docs/PAYMENTS_DEPLOYMENT.md](../elofix-backend/docs/PA
 
 Typical setup:
 
+- Runtime: **Node.js 22.x LTS** (backend, frontend, CI, Render `NODE_VERSION`, Netlify `NODE_VERSION`)
 - Frontend: `http://localhost:8080` (or Vite default)
 - Backend: `http://localhost:5000`
 - Database: local PostgreSQL

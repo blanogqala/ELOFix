@@ -41,7 +41,7 @@ export function BranchWithdrawalHistoryTab({
     enabled: Boolean(branchId && userId),
   });
 
-  const rows: BranchWithdrawalRow[] = data?.withdrawals ?? [];
+  const rows: BranchWithdrawalRow[] = useMemo(() => data?.withdrawals ?? [], [data?.withdrawals]);
 
   const exportRows = useMemo(
     () =>

@@ -105,8 +105,11 @@ export function AdminSupplierOrdersPanel({
     enabled: Boolean(supplierId),
   });
 
-  const rows = data?.rows || [];
-  const summary = data?.summary || { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY };
+  const rows = useMemo(() => data?.rows || [], [data?.rows]);
+  const summary = useMemo(
+    () => data?.summary || { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
+    [data?.summary],
+  );
   const activeSummary = useMemo(() => resolveActiveSummary(summary, rows), [summary, rows]);
 
   const filteredRows = useMemo(
