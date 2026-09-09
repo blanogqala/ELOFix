@@ -12,10 +12,10 @@ Branch:
 `phase-b-hosted-staging-validation`
 
 Commit SHA:
-(filled at push)
+`e06c3d1681e5e7fd17e32f3c3470c192a4d07858`
 
 PR:
-(filled at PR open)
+https://github.com/blanogqala/ELOFix/compare/main...phase-b-hosted-staging-validation?expand=1
 
 The live Render service is still a **pre-Phase-A** build (`GET /ready` returns 404). The live Netlify bundle still contains `http://localhost:5000`. This branch must be deployed and Netlify `VITE_*` HTTPS variables must be set, then rebuilt.
 
@@ -254,9 +254,9 @@ skipped: 1 (private file id unset)
 failed: 8 (Chromium not installed in agent sandbox). After `npx playwright install`, re-run against HTTPS `PLAYWRIGHT_BASE_URL`.
 
 GitHub Actions:
-Backend: pending PR
-Frontend: pending PR
-Playwright: pending PR
+Backend: pending on PR against `main`
+Frontend: pending on PR against `main`
+Playwright: pending on PR against `main`
 
 ---
 
