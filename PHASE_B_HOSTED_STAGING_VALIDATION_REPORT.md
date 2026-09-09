@@ -12,12 +12,12 @@ Branch:
 `phase-b-hosted-staging-validation`
 
 Commit SHA:
-`e06c3d1681e5e7fd17e32f3c3470c192a4d07858`
+`d4753590` (plus uncommitted hosted-smoke + hosted API validator in this pass; SHA of the follow-up commit is recorded after push)
 
 PR:
 https://github.com/blanogqala/ELOFix/compare/main...phase-b-hosted-staging-validation?expand=1
 
-The live Render service is still a **pre-Phase-A** build (`GET /ready` returns 404). The live Netlify bundle still contains `http://localhost:5000`. This branch must be deployed and Netlify `VITE_*` HTTPS variables must be set, then rebuilt.
+Hosted Render and Netlify are on this branch. Production JS `index-sbf8g7p6.js` inlines `elofix-6136.onrender.com` (5 occurrences). `localhost:5000` still appears as a Vite fallback string (3 occurrences); Playwright recorded **zero** localhost network requests from the live landing page.
 
 ---
 
@@ -25,311 +25,304 @@ The live Render service is still a **pre-Phase-A** build (`GET /ready` returns 4
 
 Names only. Values not printed.
 
-Render:
-`NODE_ENV`, `NODE_VERSION`, `PORT`, `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `SECRET_KEY`, `BANK_KDF_SALT`, `ENCRYPTION_VERSION`, `FRONTEND_URL`, `FRONTEND_BASE_URL`, `CORS_ALLOWED_ORIGINS`, `PAYMENT_BASE_URL`, `PAYMENT_CURRENCY`, `ENABLED_PAYMENT_PROVIDERS`, `PAYFAST_MODE`, `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE`, `UPLOAD_ROOT`, `ELOFIX_ALLOW_LOCAL_UPLOADS`, `RESEND_API_KEY`, `EMAIL_FROM`, `CONTACT_FORM_TO_EMAIL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `OPENROUTESERVICE_API_KEY`, `OPENCAGE_API_KEY`, `TRUST_PROXY`
+Render (inferred from `/ready` `config=ok` + `storage=ok`, CORS headers, and operator confirmation):
+`NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`, `FRONTEND_URL` / `FRONTEND_BASE_URL`, `CORS_ALLOWED_ORIGINS`, PayFast sandbox names, `UPLOAD_ROOT`, `ELOFIX_ALLOW_LOCAL_UPLOADS`
 
 Netlify:
-`NODE_VERSION`, `VITE_API_BASE_URL`, `VITE_API_ORIGIN`, `VITE_SOCKET_URL`, `VITE_FRONTEND_URL`
+`VITE_API_BASE_URL`, `VITE_API_ORIGIN`, `VITE_SOCKET_URL`, `VITE_FRONTEND_URL` (HTTPS Render)
 
 database:
-`DATABASE_URL`
+hosted PostgreSQL (staging accounts present in admin lists)
 
 storage:
-`UPLOAD_ROOT`, `ELOFIX_ALLOW_LOCAL_UPLOADS` (S3 names exist in code but are unused for this staging choice)
+existing Render Disk via `ELOFIX_ALLOW_LOCAL_UPLOADS` + `UPLOAD_ROOT`
 
 sandbox payment:
-`ENABLED_PAYMENT_PROVIDERS`, `PAYFAST_MODE`, `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE`, `PAYMENT_BASE_URL`, `PAYMENT_CURRENCY`
+PayFast (`ENABLED_PAYMENT_PROVIDERS` includes payfast). `/ready` `config=ok` means `PAYFAST_SETTLE_ON_RETURN` and `PAYFAST_SKIP_IP_CHECK` are **not** set.
 
 Must **not** be set on staging Render: `PAYFAST_SETTLE_ON_RETURN`, `PAYFAST_SKIP_IP_CHECK`, `ELOFIX_TESTING_MODE`, `ELOFIX_AUTH_RATE_LIMIT_DISABLED`
+
+This operator session has `ADMIN_*` in local dotenv and does **not** have `STAGING_SEED_PASSWORD` (process / User / Machine / `elofix-backend/.env`). Role journeys that need Customer A/B, Provider A/B, or Supplier login were not executed from here.
 
 ---
 
 ## 3. Health & Readiness
 
 `/health`:
-HTTP status: 200 on current live API (`{"ok":true}`)
+HTTP status: 200
+`{"ok":true}`
 
 `/ready`:
-HTTP status: 404 on current live API (Phase A probe not deployed yet)
-
-Checks:
-Not available until this branch is deployed. After deploy, expect `status=ready` with `app`, `database`, `config`, `storage`. Staging disk path requires `ELOFIX_ALLOW_LOCAL_UPLOADS=true` or `/ready` returns 503 `storage=invalid`.
+HTTP status: 200
+`{"status":"ready","checks":{"app":"ok","database":"ok","config":"ok","storage":"ok"}}`
 
 ---
 
 ## 4. Database
 
 Migration count:
-Not recorded on live (deploy uses `npx prisma migrate deploy` in Render build). Live `GET /api/categories` returns five active categories including Plumbing with `paymentMode: TWO_PAYMENT_50_50`.
+Not read from Render logs this pass. Live `GET /api/categories` returns 5 categories, all `TWO_PAYMENT_50_50`.
 
 Migration status:
-Unknown until Render build logs for this branch are inspected. Do not use `prisma db push`.
+Hosted API is serving Phase A/B schema (admin customers/providers/suppliers/jobs/material-orders all 200).
 
 Restart persistence:
-PASS for existing category rows (created 2026-08-21, still present). FAIL pending for post-redeploy file+job persistence until Phase B is actually running on Render.
+PASS for existing seeded users (Customer A/B, Provider A/B, Supplier found via admin APIs). FAIL pending for **post-redeploy file persistence** — this session did not restart the Render service (no Render API credential in operator env).
+
+Seeded accounts confirmed present (emails only):
+Customer A/B, Provider A (`approved=true`), Provider B (`approved=false`), Supplier.
 
 ---
 
 ## 5. Object Storage
 
-Provider KYC upload: FAIL (blocked on redeploy + disk opt-out)
-Job photo: FAIL (blocked on redeploy)
-Completion evidence: FAIL (blocked on redeploy)
-Supplier image: FAIL (blocked on redeploy)
-Restart persistence: FAIL (blocked on redeploy)
-Private ACL: PARTIAL — unknown file id returns 404; anonymous `/api/auth/me` and `/api/admin/analytics` return 401. Live private KYC 403/200 matrix not executed against real objects.
+Provider KYC upload: FAIL (not run — staging provider password not in operator env)
+Job photo: FAIL (not run — same)
+Completion evidence: FAIL (not run)
+Supplier image: FAIL (not run)
+Restart persistence: FAIL (Render restart not performed this pass)
+Private ACL: PARTIAL — anonymous `/api/auth/me` 401; anonymous `/api/admin/analytics` 401; invalid JWT 401. Real KYC / quotation / job-photo / completion object matrix not executed (no hosted upload IDs created this pass). Public marketplace listing does not include Provider B.
 
 ---
 
 ## 6. Customer Journey
 
-registration: FAIL (hosted app calls localhost)
-login: FAIL (hosted app calls localhost)
-request: FAIL
-provider: FAIL
-quotation: FAIL
-materials: FAIL
-payment deposit: FAIL
-job progression: FAIL
-completion payment: FAIL
-completion: FAIL
-review: FAIL
+registration: N/A (seeded accounts; do not register extra users against production auth rate limit)
+login: FAIL (not run — `STAGING_SEED_PASSWORD` absent in this operator env)
+profile: FAIL (not run)
+categories: PASS (public `GET /api/categories` 200, count=5)
+location: FAIL (not run)
+service request: FAIL (not run)
+job photo: FAIL (not run)
+provider discovery: PARTIAL — public `GET /api/providers` 200, n=2, Provider B excluded
+provider selection: FAIL (not run)
+job creation: FAIL (not run)
+notifications: FAIL (not run)
+quotation: FAIL (not run)
+materials: FAIL (not run)
+delivery: FAIL (not run)
+sandbox DEPOSIT: FAIL (not run)
+job progression: FAIL (not run)
+sandbox COMPLETION: FAIL (not run)
+completion confirmation: FAIL (not run)
+review/rating: FAIL (not run)
+refresh / logout-login / duplicate submit / Customer B isolation / cancel-dispute: FAIL (not run)
 
-Cause: production JS bundle still inlines `http://localhost:5000`. Local production build of this branch with HTTPS `VITE_*` does **not** use localhost:5000 as the API origin.
+These are **not** the previously fixed localhost-bundle / missing-`/ready` failures. The hosted SPA talks to Render. Remaining gap is operator credentials for seeded role accounts.
 
 ---
 
 ## 7. Provider Journey
 
-onboarding: FAIL
-KYC: FAIL
-approval: FAIL
-matching: FAIL
-inspection: FAIL
-quotation: FAIL
-materials: FAIL
-job: FAIL
-completion: FAIL
-earnings: FAIL
+Provider A login/dashboard/profile/skills/location/KYC/work post/match/inspection/quotation/materials/progression/completion evidence/notifications/earnings/banking: FAIL (not run — staging password absent)
 
-Same hosted localhost bundle blocker.
+Provider B unapproved restrictions:
+PASS at marketplace list (`staging.provider.b@elofix.test` not in public providers).
+FAIL pending for authenticated match/quote privileges (Provider B login not run).
+Admin: Provider B exists and `approved=false`. Provider A exists and `approved=true`.
 
 ---
 
 ## 8. Supplier Journey
 
-inventory: FAIL
-products: FAIL
-orders: FAIL
-fulfillment: FAIL
-delivery/pickup: FAIL
-notifications: FAIL
-accounting: FAIL
+login / branch / inventory / product / product image / stock-price / material order / fulfillment / pickup-delivery / notifications / accounting / isolation: FAIL (not run — staging password absent)
+
+Admin: supplier record present (`GET /api/admin/suppliers` 200, includes seeded supplier).
 
 ---
 
 ## 9. Admin Journey
 
-provider approval: FAIL
-users: FAIL
-suppliers: FAIL
-jobs: FAIL
-orders: FAIL
-payments: FAIL
-disputes: FAIL
-refunds: FAIL
-restrictions: FAIL
-audit: FAIL (UI). Anonymous `GET /api/admin/analytics` on live API: 401 PASS.
+login: PASS (API + hosted Playwright UI → `/admin/dashboard`)
+provider approval review data: PASS (Provider A approved, Provider B unapproved in admin list). Approve-action not executed (would remove the unapproved control).
+users: PASS (`GET /api/admin/customers` 200, includes Customer A and Customer B; Playwright `/admin/customers`)
+suppliers: PASS (`GET /api/admin/suppliers` 200; Playwright did not open `/admin/suppliers` this pass)
+jobs: PASS (`GET /api/jobs` as admin 200; Playwright `/admin/jobs`)
+material orders: PASS (`GET /api/admin/material-orders` 200)
+payments: PASS (Playwright `/admin/payments`; `GET /api/admin/financial-summary` 200; `GET /api/admin/payment-obligations` 200)
+disputes: PASS (`GET /api/admin/disputes` 200). UI `/admin/disputes` redirects to `/admin/jobs` (existing app mapping; Playwright confirmed)
+refunds: PASS (`GET /api/admin/refund-repayments` 200)
+restrictions: PASS (`GET /api/admin/payment-obligations` 200)
+audit logs: PASS (`GET /api/admin/audit-logs` 200)
+fraud: PASS (`GET /api/admin/fraud-alerts` 200)
+withdrawals: PASS (`GET /api/admin/withdrawals` 200)
+platform health: PASS (`GET /api/admin/platform-health` 200)
+analytics: PASS (`GET /api/admin/analytics` 200)
+
+Admin credentials were read from environment configuration only and are not printed here.
 
 ---
 
 ## 10. Authorization Tests
 
 Anonymous:
-`GET /api/auth/me` → 401
-`GET /api/admin/analytics` → 401
-`POST /api/payments/intents/:id/confirm-return` → 401
-`GET /api/files/{unknown}` → 404
+`GET /api/auth/me` → 401 PASS
+`GET /api/admin/analytics` → 401 PASS
+`POST /api/payments/intents/:id/confirm-return` → 401 PASS
+invalid JWT `/api/auth/me` → 401 PASS
 
 Customer:
-not executed (no staging seed run against hosted DB from this session; UI login blocked by localhost bundle)
+not executed (no staging seed password in operator env)
 
 Provider:
-not executed
+not executed (authenticated). Public list excludes unapproved Provider B: PASS
 
 Supplier:
-not executed
+not executed (authenticated)
 
 Admin:
-not executed (UI). API deny-by-default for missing token: 401.
+executed (API + UI). Customer token vs admin API: skipped (needs Customer A login)
 
-Invalid token `Authorization: Bearer not-a-jwt` on `/api/auth/me` → 401
-
-CORS (live, pre-fix):
-`Origin: https://elofix.co.za` → 200 + `Access-Control-Allow-Origin`
-`Origin: https://www.elofix.co.za` → 500 (P1)
-`Origin: https://elofix.netlify.app` OPTIONS → 500 (P1)
-`Origin: https://evil.example` → 500 (P1)
-
-Code on this branch rejects unknown origins with `callback(null, false)` so they no longer 500. Operators must still add `www` and Netlify hosts to `CORS_ALLOWED_ORIGINS`.
+CORS (live, this pass):
+`Origin: https://elofix.co.za` GET → 200 + ACAO; OPTIONS → 204 + ACAO
+`Origin: https://www.elofix.co.za` GET → 200 + ACAO; OPTIONS → 204 + ACAO
+`Origin: https://elofix.netlify.app` GET → 200 + ACAO; OPTIONS → 204 + ACAO
+`Origin: https://evil.example` GET → 200 **without** ACAO (not 500); OPTIONS → 200 without ACAO
 
 ---
 
 ## 11. Payment Tests
 
-Deposit: FAIL (not run hosted)
-Completion: FAIL
-Materials: FAIL
-Delivery: FAIL
-Amount tampering: not run hosted (covered by local `paymentAmountSecurity.test.js` PASS)
-Duplicate webhook: not run hosted (covered by local webhook tests PASS)
-Return without webhook: live confirm-return requires auth (401). Full “return URL does not mark paid” needs Phase A deploy plus ITN. Do not set `PAYFAST_SETTLE_ON_RETURN` on Render.
-Refund/cancellation where tested: not run hosted
+Deposit: FAIL (hosted two-tranche not run — needs Customer A job)
+Completion: FAIL (not run)
+Materials: FAIL (not run)
+Delivery: FAIL (not run)
+Amount tampering: PARTIAL — invalid PayFast ITN POST `/api/payments/webhooks/payfast` → HTTP 400 PASS (rejected; no PAID state created). Full amount-tamper against a real intent not run.
+Duplicate webhook: not run hosted (no real ITN)
+Return without webhook: anonymous confirm-return 401 PASS. Authenticated return-without-ITN on a live intent not run.
+Refund/cancellation: list endpoints PASS; live refund action not run.
 
-Paystack: NOT IMPLEMENTED
+`PAYFAST_SETTLE_ON_RETURN` / `PAYFAST_SKIP_IP_CHECK`: not enabled (`/ready` config=ok).
+
+Paystack: NOT IMPLEMENTED in this phase (no Paystack work done).
 
 ---
 
 ## 12. Realtime Tests
 
-Customer ↔ Provider: FAIL (not run hosted)
-Supplier order: FAIL
-Notifications: FAIL
-Reconnect: FAIL
-Cross-user isolation: FAIL
+Customer ↔ Provider: FAIL (not run — needs two authenticated browser contexts)
+Supplier order: FAIL (not run)
+Notifications: FAIL (not run)
+Reconnect: FAIL (not run)
+Cross-user isolation: FAIL (not run)
 
 ---
 
 ## 13. Failure Tests
 
-API unavailable: not run hosted UI
-Expired JWT: FAIL (not run)
+API unavailable: not injected
+Expired JWT: invalid JWT 401 PASS
 Invalid upload: FAIL (not run)
 Oversized upload: FAIL (not run)
-S3 failure: N/A (disk opt-out). Disk failure not injected.
+S3 failure: N/A (disk opt-out)
 Duplicate action: FAIL (not run)
 Socket disconnect: FAIL (not run)
-
-Anonymous invalid file: 404 PASS
+Unknown origin CORS: PASS (no HTTP 500)
 
 ---
 
 ## 14. Responsive Hosted Tests
 
-390×844: FAIL (Playwright browsers missing in this agent environment; live landing HTML loads EloFix title)
-430×932: FAIL (not run)
-768: FAIL (not run)
-1440: FAIL (not run)
+390×844: PASS (hosted Playwright — Open menu then Sign In reachable)
+430×932: PASS
+768: PASS
+1440: PASS
 
-Functional defect (not cosmetic): hosted SPA currently cannot talk to the API from any viewport because the bundle targets localhost.
+No Phase B functional blocker found on landing (buttons/navigation reachable). Checkout / job dialogs at those viewports were not exercised without customer login.
 
 ---
 
 ## 15. Automated Tests
 
 Backend:
-files passed: 77
+files passed: 77 (previous local `npm test` on this branch; not re-run this pass — no application source change)
 failed: 0
 
-Frontend lint:
-errors: 0
-warnings: existing React Router future-flag stderr in tests only (not ESLint failures)
+Frontend lint / Vitest / production build:
+previous pass on this branch (lint 0 errors; Vitest 51 files / 288 tests; HTTPS production build PASS). Not re-run this pass — Playwright spec + report + validator script only.
 
-Vitest:
-files: 51
-tests: 288
+Playwright hosted (`PLAYWRIGHT_BASE_URL=https://elofix.co.za`, `ELOFIX_API_BASE_URL=https://elofix-6136.onrender.com/api`, `ELOFIX_HOSTED_SMOKE=1`):
+passed: 6
+skipped: 6 (Customer A / Provider A / Supplier / payments PAN / customer-vs-admin / private file id — staging password or file id not set)
 failed: 0
 
-Build:
-PASS (local production build with HTTPS `VITE_API_ORIGIN` / `VITE_API_BASE_URL`)
-
-Playwright local:
-passed: hosted-smoke skipped 10/10 when `ELOFIX_HOSTED_SMOKE` unset
-skipped: 10 (hosted-smoke)
-failed: 0 for that subset. Full `npm run e2e` not re-run in this session (CI job remains the gate).
-
-Playwright hosted:
-passed: 1 (`anonymous admin API is denied`)
-skipped: 1 (private file id unset)
-failed: 8 (Chromium not installed in agent sandbox). After `npx playwright install`, re-run against HTTPS `PLAYWRIGHT_BASE_URL`.
+Passed:
+- landing HTTPS, no localhost API calls
+- 390×844 Sign In reachable
+- 430 / 768 / 1440 Sign In reachable
+- admin UI login
+- admin providers / customers / jobs / payments + disputes redirect
+- anonymous admin API denied
 
 GitHub Actions:
-Backend: pending on PR against `main`
-Frontend: pending on PR against `main`
-Playwright: pending on PR against `main`
+Backend: pending until PR against `main` is opened
+Frontend: pending
+Playwright: pending
 
 ---
 
 ## 16. Bugs Found
 
-Severity: P0
-Problem: Hosted frontend production bundle calls `http://localhost:5000` for API/socket/uploads.
-Root cause: Netlify build environment missing HTTPS `VITE_API_BASE_URL` / `VITE_API_ORIGIN` / `VITE_SOCKET_URL` (or an old build from before fail-closed config).
-Fix: Set those Netlify variables to the Render HTTPS origin and rebuild this branch. Production `npm run build` already rejects localhost.
-Regression test: `frontend/scripts/productionFrontendConfig.test.mjs`; hosted-smoke landing test.
+No new application P0/P1 reproduced on the live host this pass.
 
-Severity: P0
-Problem: Live API has no `/ready` (404). Phase A readiness is not deployed.
-Root cause: Render is serving a pre-Phase-A revision.
-Fix: Deploy `phase-b-hosted-staging-validation`, set `ELOFIX_ALLOW_LOCAL_UPLOADS=true` with persistent `UPLOAD_ROOT`, confirm `/ready` 200. Do not disable the probe.
-Regression test: `elofix-backend/tests/ready.endpoint.test.js`, `objectStorage.readiness.test.js`.
+Previously reported P0 (localhost frontend, missing `/ready`, undeployed branch, unseeded accounts) were **not** reproduced:
+- `/health` 200, `/ready` 200 with all checks ok
+- frontend Network/Playwright uses Render HTTPS
+- staging users visible to admin
+- CORS allowlist includes apex, www, and Netlify; unknown origin does not 500
 
-Severity: P1
-Problem: Unknown or extra frontend origins (`www`, Netlify, random) return HTTP 500 on CORS.
-Root cause: `createCorsOriginChecker` passed `callback(new Error(...))`.
-Fix: `callback(null, false)` in `corsOrigins.util.js`. Still no `*`. Add `www` + Netlify to `CORS_ALLOWED_ORIGINS`.
-Regression test: `tests/cors.origin.http.test.js`.
-
-Severity: P2
-Problem: Staging seed accounts and hosted Playwright smoke were missing.
-Root cause: CI only seeded admin + one e2e pair.
-Fix: `scripts/seed-staging.js` + `e2e/hosted-smoke.spec.ts` + remote `PLAYWRIGHT_BASE_URL` skips `webServer`.
-Regression test: `tests/stagingSeed.config.test.js`; hosted-smoke skips unless `ELOFIX_HOSTED_SMOKE=1`.
+Open validation gaps (not proven application defects):
+- Operator env missing `STAGING_SEED_PASSWORD`, so customer/provider/supplier/PayFast/realtime/ACL-on-real-files cannot be completed from this session
+- Render service restart not performed, so disk persistence after redeploy is unproven
+- GitHub CI not yet green on a `main` PR
 
 ---
 
 ## 17. Known Remaining Issues
 
-P0:
-- Live Netlify/apex bundle still uses localhost API.
-- Live Render not yet on this branch (`/ready` missing).
-- Hosted customer/provider/supplier/admin journeys not executed against a correct build.
+P0 (Phase B acceptance — evidence missing, not a reproduced product regression):
+- Hosted Customer A full marketplace journey not executed
+- Hosted Provider A journey + Provider B authenticated restriction not executed
+- Hosted Supplier journey not executed
+- Render Disk survive-restart not executed
+- Private ACL on real KYC / quotation / job photo / completion objects not executed
+- PayFast sandbox DEPOSIT/COMPLETION/MATERIALS hosted flow not executed
+- Realtime (two contexts, disconnect/reconnect) not executed
 
 P1:
-- CORS 500 on live until this branch is deployed.
-- `www.elofix.co.za` not on live CORS allowlist (apex is).
-- PayFast hosted ITN + two-tranche sandbox not validated on public webhook.
-- Staging seed not applied on hosted DB from this session.
+- GitHub Backend / Frontend / Playwright jobs not yet run against `main` via an open PR
 
 P2:
-- MapLibre major-version security upgrade remains Phase C unless hosted maps break after the correct deploy.
-- Hosted Playwright Chromium must be installed in the operator environment (`npx playwright install`).
-- Resend local tests hit rate/daily quota; staging email delivery not proven this session.
+- MapLibre major-version upgrade remains Phase C
+- Hosted JS still contains `localhost:5000` as a compile-time fallback string (not used at runtime on landing)
 
 P3:
-- README still contains legacy Firebase starter text (out of Phase B scope).
+- README legacy Firebase starter text remains out of Phase B scope
+- UI `/admin/disputes` is a redirect to jobs (existing behaviour; not a Phase B redesign item)
+
+To finish Phase B from this operator: add `STAGING_SEED_PASSWORD` to local `elofix-backend/.env` (do not commit), re-run `node scripts/hosted-phase-b-validate.js` and `npm run e2e:hosted`, then restart the Render web service once and re-check uploads.
 
 ---
 
 ## 18. Business Logic Confirmation
 
 TWO_PAYMENT_50_50:
-UNCHANGED
+UNCHANGED (all 5 live categories)
 
 Deposit 50%:
-UNCHANGED
+UNCHANGED (not altered)
 
 Completion 50%:
-UNCHANGED
+UNCHANGED (not altered)
 
 EloFix 7%:
-UNCHANGED
+UNCHANGED (not altered)
 
 Provider 93%:
-UNCHANGED
+UNCHANGED (not altered)
 
 Supplier 7%:
-UNCHANGED
+UNCHANGED (not altered)
 
 PaymentIntent:
 PRESERVED

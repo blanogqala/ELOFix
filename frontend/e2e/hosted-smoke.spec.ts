@@ -18,17 +18,40 @@ import { login, gotoApp } from './fixtures';
 const hosted = process.env.ELOFIX_HOSTED_SMOKE === '1';
 const apiBase = (process.env.ELOFIX_API_BASE_URL || '').replace(/\/$/, '');
 
-function cred(emailKey: string, passwordKey: string) {
-  const email = String(process.env[emailKey] || '').trim();
-  const password = String(process.env[passwordKey] || '').trim();
+function cred(emailKey: string, passwordKey: string, fallbackEmail?: string) {
+  const email = String(process.env[emailKey] || fallbackEmail || '').trim();
+  const password = String(process.env[passwordKey] || process.env.STAGING_SEED_PASSWORD || '').trim();
   return email && password ? { email, password } : null;
 }
 
-const customerA = cred('STAGING_CUSTOMER_A_EMAIL', 'STAGING_CUSTOMER_A_PASSWORD');
-const providerA = cred('STAGING_PROVIDER_A_EMAIL', 'STAGING_PROVIDER_A_PASSWORD');
-const supplier = cred('STAGING_SUPPLIER_EMAIL', 'STAGING_SUPPLIER_PASSWORD');
+const customerA = cred(
+  'STAGING_CUSTOMER_A_EMAIL',
+  'STAGING_CUSTOMER_A_PASSWORD',
+  'staging.customer.a@elofix.test',
+);
+const providerA = cred(
+  'STAGING_PROVIDER_A_EMAIL',
+  'STAGING_PROVIDER_A_PASSWORD',
+  'staging.provider.a@elofix.test',
+);
+const supplier = cred('STAGING_SUPPLIER_EMAIL', 'STAGING_SUPPLIER_PASSWORD', 'staging.supplier@elofix.test');
 const admin = cred('ADMIN_EMAIL', 'ADMIN_PASSWORD');
 const privateFileId = String(process.env.STAGING_PRIVATE_FILE_ID || '').trim();
+
+async function waitForLandingReady(page: Page) {
+  await gotoApp(page, '/');
+  await expect(page.locator('#root')).toBeVisible();
+  const signIn = page.getByRole('button', { name: 'Sign In' });
+  const openMenu = page.getByRole('button', { name: /open menu/i });
+  await expect(signIn.or(openMenu).first()).toBeVisible({ timeout: 60_000 });
+}
+
+async function expectSignInReachable(page: Page, width: number) {
+  if (width < 768) {
+    await page.getByRole('button', { name: /open menu/i }).click();
+  }
+  await expect(page.getByRole('button', { name: 'Sign In' }).first()).toBeVisible();
+}
 
 async function sessionToken(page: Page): Promise<string | null> {
   return page.evaluate(() => {
@@ -58,8 +81,7 @@ test.describe('Hosted staging smoke', () => {
     const pageErrors: string[] = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
 
-    await gotoApp(page, '/');
-    await expect(page.locator('#root')).toBeVisible();
+    await waitForLandingReady(page);
     await expect(page).toHaveTitle(/EloFix/);
     expect(localhostHits, `localhost requests: ${localhostHits.join(', ')}`).toEqual([]);
     expect(pageErrors.filter((m) => !/ResizeObserver|favicon/i.test(m))).toEqual([]);
@@ -67,13 +89,20 @@ test.describe('Hosted staging smoke', () => {
 
   test('390x844 landing remains usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await gotoApp(page, '/');
-    await expect(page.locator('#root')).toBeVisible();
-    const loginLink = page.getByRole('link', { name: /log in|sign in|login/i }).first();
-    const loginBtn = page.getByRole('button', { name: /log in|sign in|login/i }).first();
-    const hasLogin =
-      (await loginLink.isVisible().catch(() => false)) || (await loginBtn.isVisible().catch(() => false));
-    expect(hasLogin, 'login control should be reachable at 390px').toBeTruthy();
+    await waitForLandingReady(page);
+    await expectSignInReachable(page, 390);
+  });
+
+  test('430x932 768 and 1440 landings remain usable', async ({ page }) => {
+    for (const size of [
+      { width: 430, height: 932 },
+      { width: 768, height: 1024 },
+      { width: 1440, height: 900 },
+    ]) {
+      await page.setViewportSize(size);
+      await waitForLandingReady(page);
+      await expectSignInReachable(page, size.width);
+    }
   });
 
   test('customer A can login to dashboard', async ({ page }) => {
@@ -98,6 +127,19 @@ test.describe('Hosted staging smoke', () => {
     test.skip(!admin, 'ADMIN_EMAIL/PASSWORD not set');
     await login(page, admin!.email, admin!.password);
     await expect(page).toHaveURL(/\/admin\/dashboard/);
+  });
+
+  test('admin can open providers customers jobs disputes', async ({ page }) => {
+    test.skip(!admin, 'ADMIN_EMAIL/PASSWORD not set');
+    await login(page, admin!.email, admin!.password);
+    for (const path of ['/admin/providers', '/admin/customers', '/admin/jobs', '/admin/payments']) {
+      await page.goto(path);
+      await expect(page).toHaveURL(new RegExp(path.replaceAll('/', '\\/')));
+      await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 60_000 });
+      await expect(page.locator('#root')).toBeVisible();
+    }
+    await page.goto('/admin/disputes');
+    await expect(page).toHaveURL(/\/admin\/jobs/);
   });
 
   test('payments page does not collect PAN/CVC', async ({ page }) => {
