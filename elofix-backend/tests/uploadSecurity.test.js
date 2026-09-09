@@ -3,6 +3,7 @@ const {
   isBlockedUploadRelPath,
   isProtectedFileType,
   normalizeUploadRelPath,
+  parseQuotationJobId,
 } = require("../src/utils/fileAccessPolicy.util");
 const {
   signFileAccessUrl,
@@ -26,6 +27,9 @@ function testPathPolicy() {
   );
   assert.strictEqual(isBlockedUploadRelPath("providers/abc/avatar/avatar-1.jpg"), false);
   assert.strictEqual(isBlockedUploadRelPath("jobs/user-1/job-123.jpg"), true);
+  assert.strictEqual(parseQuotationJobId("jobs/job-1/quotations/q.pdf"), "job-1");
+  assert.strictEqual(parseQuotationJobId("jobs/job-1/completion/images/x.jpg"), null);
+  assert.strictEqual(parseQuotationJobId("providers/abc/documents/idDoc.pdf"), null);
   assert.strictEqual(isProtectedFileType("jobRequestImage"), true);
   assert.strictEqual(normalizeUploadRelPath("../providers/x/documents/a.pdf"), null);
 }

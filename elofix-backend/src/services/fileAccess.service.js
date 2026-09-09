@@ -5,6 +5,7 @@ const {
   isCompletionFileType,
   isJobRequestFileType,
   parseCompletionJobId,
+  parseQuotationJobId,
   parseJobRequestOwnerUserId,
   isJobRequestUploadRelPath,
 } = require("../utils/fileAccessPolicy.util");
@@ -126,6 +127,44 @@ async function canActorAccessJobRequestFile(actor, file) {
   return false;
 }
 
+async function findJobForQuotationFile(file) {
+  const prisma = require("../config/prisma");
+  const fromPath = parseQuotationJobId(file?.relPath);
+  if (fromPath) {
+    const byPath = await prisma.job.findUnique({
+      where: { id: fromPath },
+      select: { customerId: true, providerId: true, quotationFileUrl: true },
+    });
+    if (byPath) return byPath;
+  }
+
+  const fileId = String(file?.fileId || "").trim();
+  const rel = String(file?.relPath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const or = [];
+  if (fileId) or.push({ quotationFileUrl: { contains: fileId } });
+  if (rel) or.push({ quotationFileUrl: { contains: rel } });
+  if (or.length === 0) return null;
+
+  return prisma.job.findFirst({
+    where: { OR: or },
+    select: { customerId: true, providerId: true, quotationFileUrl: true },
+  });
+}
+
+async function canActorAccessQuotationFile(actor, file) {
+  if (canActorAccessProtectedFile(actor, file)) return true;
+  if (String(file?.type || "").trim() !== "jobQuotation" && !parseQuotationJobId(file?.relPath)) {
+    return false;
+  }
+  const actorId = String(actor?.userId || actor?.id || "").trim();
+  if (!actorId) return false;
+  const job = await findJobForQuotationFile(file);
+  if (!job) return false;
+  if (actorId === String(job.customerId || "")) return true;
+  if (job.providerId && actorId === String(job.providerId)) return true;
+  return false;
+}
+
 async function assertProtectedFileAccess(req, file) {
   if (!isProtectedFileType(file.type) && !isJobRequestUploadRelPath(file.relPath)) return;
 
@@ -137,6 +176,8 @@ async function assertProtectedFileAccess(req, file) {
   if (req.user) {
     if (isCompletionFileType(file.type) || parseCompletionJobId(file.relPath)) {
       if (await canActorAccessCompletionFile(req.user, file)) return;
+    } else if (String(file.type || "") === "jobQuotation" || parseQuotationJobId(file.relPath)) {
+      if (await canActorAccessQuotationFile(req.user, file)) return;
     } else if (isJobRequestFileType(file.type) || isJobRequestUploadRelPath(file.relPath)) {
       if (await canActorAccessJobRequestFile(req.user, file)) return;
     } else if (canActorAccessProtectedFile(req.user, file)) {
@@ -178,6 +219,7 @@ module.exports = {
   canActorAccessProtectedFile,
   canActorAccessCompletionFile,
   canActorAccessJobRequestFile,
+  canActorAccessQuotationFile,
   assertProtectedFileAccess,
   signDocumentFields,
 };

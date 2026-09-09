@@ -64,6 +64,13 @@ function parseCompletionJobId(relPath) {
   return match ? match[1] : null;
 }
 
+function parseQuotationJobId(relPath) {
+  const normalized = normalizeUploadRelPath(relPath);
+  if (!normalized) return null;
+  const match = normalized.match(/^jobs\/([^/]+)\/quotations\//);
+  return match ? match[1] : null;
+}
+
 function isCompletionFileType(type) {
   return COMPLETION_FILE_TYPES.has(String(type || "").trim());
 }
@@ -98,6 +105,7 @@ module.exports = {
   isJobRequestUploadRelPath,
   parseJobRequestOwnerUserId,
   parseCompletionJobId,
+  parseQuotationJobId,
   isCompletionFileType,
   isJobRequestFileType,
   isPublicFileType,
