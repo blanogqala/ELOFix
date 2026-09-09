@@ -1,6 +1,7 @@
 /**
- * Courier/delivery/moving earnings remaining must show held provider share (93%)
- * until release — not forced to 0 while pre-confirmation.
+ * Courier remaining math stays 93% of gross until release.
+ * Job DTO remainingAmount is only surfaced for legacyEscrowV2 rows
+ * (current escrow uses providerAmount / releasedAmount instead).
  *
  * Run: node tests/jobMeta.courierRemaining.test.js
  */
@@ -39,7 +40,10 @@ function testPaidCourierShowsFullRemaining() {
   );
 
   const enriched = enrichJob(job, meta);
-  assert.strictEqual(enriched.remainingAmount, providerAmount);
+  assert.strictEqual(enriched.remainingAmount, 0, "non-legacy DTO remainingAmount stays 0");
+
+  const legacyEnriched = enrichJob({ ...job, legacyEscrowV2: true }, meta);
+  assert.strictEqual(legacyEnriched.remainingAmount, providerAmount);
 }
 
 function testCourierRemainingZeroAfterRelease() {

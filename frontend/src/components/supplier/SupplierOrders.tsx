@@ -1390,7 +1390,7 @@ function DetailPanel({
             <p className="mt-2 text-sm">
               Quoted delivery fee:{' '}
               <span className="font-semibold tabular-nums">{formatCurrency(finance.deliveryFee, { decimals: 2 })}</span>
-              {!Boolean((order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid) ? (
+              {!(order as { payment?: { deliveryPaid?: boolean } }).payment?.deliveryPaid ? (
                 <span className="text-muted-foreground"> — awaiting customer payment</span>
               ) : (
                 <span className="text-success"> — paid</span>

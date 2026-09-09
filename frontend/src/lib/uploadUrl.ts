@@ -17,6 +17,11 @@ function resolveApiOrigin(): string {
     }
   }
 
+  if (typeof import.meta !== 'undefined' && import.meta.env?.PROD) {
+    throw new Error(
+      'Production frontend is missing VITE_API_ORIGIN / VITE_API_BASE_URL. This build should have been rejected at compile time.'
+    );
+  }
   return 'http://localhost:5000';
 }
 

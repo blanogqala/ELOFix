@@ -151,7 +151,7 @@ export function AdminSupplierOrdersPanel({
     [filteredRows]
   );
 
-  const safeSlug = (businessLabel || 'supplier').replace(/[^\w\-]+/g, '_').slice(0, 48);
+  const safeSlug = (businessLabel || 'supplier').replace(/[^\w-]+/g, '_').slice(0, 48);
 
   const exportExcel = () => {
     const ws = utils.json_to_sheet(exportRows);

@@ -65,11 +65,8 @@ const categories = [
 ];
 
 function getAdminConfig() {
-  return {
-    email: (process.env.ADMIN_EMAIL || "admin@elofix.com").toLowerCase().trim(),
-    password: process.env.ADMIN_PASSWORD || "Admin@123",
-    name: (process.env.ADMIN_NAME || "ELOFix Admin").trim(),
-  };
+  const { resolveAdminSeedConfig } = require("../src/utils/adminSeedConfig");
+  return resolveAdminSeedConfig({ nodeEnv: process.env.NODE_ENV, env: process.env });
 }
 
 async function main() {

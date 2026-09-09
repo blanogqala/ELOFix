@@ -5,6 +5,10 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  originFromUrl,
+  assertProductionFrontendConfig,
+} from './productionFrontendConfig.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = join(__dirname, '..');
@@ -38,14 +42,6 @@ function loadEnvFiles() {
   return merged;
 }
 
-function originFromUrl(url) {
-  try {
-    return new URL(String(url).trim()).origin;
-  } catch {
-    return null;
-  }
-}
-
 function wssOriginFromHttpOrigin(origin) {
   if (!origin) return null;
   if (origin.startsWith('https://')) return origin.replace(/^https:/, 'wss:');
@@ -58,10 +54,10 @@ function uniq(values) {
 }
 
 function buildCsp(env) {
-  const apiOrigin =
-    originFromUrl(env.VITE_API_ORIGIN) ||
-    originFromUrl(env.VITE_API_BASE_URL?.replace(/\/api\/?$/, '')) ||
-    'http://localhost:5000';
+  const validated = assertProductionFrontendConfig(env, {
+    mode: env.ELOFIX_HEADERS_MODE || env.MODE,
+  });
+  const apiOrigin = validated.apiOrigin;
 
   const socketOrigin = originFromUrl(env.VITE_SOCKET_URL) || apiOrigin;
   const wssOrigin = wssOriginFromHttpOrigin(socketOrigin);
@@ -161,6 +157,7 @@ function buildHeadersFile(env) {
 }
 
 const env = loadEnvFiles();
+env.ELOFIX_HEADERS_MODE = process.argv.includes('--dev') ? 'development' : 'production';
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, buildHeadersFile(env), 'utf8');
-console.log(`[security-headers] Wrote ${outPath}`);
+console.log(`[security-headers] Wrote ${outPath} (mode=${env.ELOFIX_HEADERS_MODE}, apiOrigin=${assertProductionFrontendConfig(env, { mode: env.ELOFIX_HEADERS_MODE }).apiOrigin})`);

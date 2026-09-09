@@ -1,0 +1,26 @@
+# Environment — production values come from Netlify, not a committed .env
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+build/
+
+playwright-report/
+test-results/
+coverage/
+blob-report/
+playwright/.cache/
+
+*.log
+logs/
+
+.DS_Store
+Thumbs.db
+
+tmp/
+temp/
+
+# Generated at build by scripts/generate-security-headers.mjs
+public/_headers

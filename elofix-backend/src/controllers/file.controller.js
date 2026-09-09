@@ -17,16 +17,12 @@ async function getFileById(req, res) {
     throw new AppError("File not found", 404);
   }
 
-  assertProtectedFileAccess(req, file);
+  await assertProtectedFileAccess(req, file);
 
   const filename = contentDispositionFilename(file.originalName);
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
   res.setHeader("X-Content-Type-Options", "nosniff");
-
-  if (file.absolutePath) {
-    return res.sendFile(file.absolutePath);
-  }
 
   const streamed = await objectStorage.streamLocalOrRemote(file.relPath, file.absolutePath);
   if (!streamed) {

@@ -1,7 +1,16 @@
 node_modules/
 .env
+.env.*
+!.env.example
 .DS_Store
+Thumbs.db
 dist/
+build/
 *.log
+logs/
 .prisma/
 uploads/
+coverage/
+tmp/
+temp/
+data/app-state.json

@@ -53,6 +53,7 @@ function createPrismaClient() {
   pool.on("error", (err) => {
     console.error("[pg Pool error]", err);
   });
+  globalForPrisma.__elofixPgPool = pool;
 
   const adapter = new PrismaPg(pool);
 

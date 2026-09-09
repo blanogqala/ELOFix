@@ -28,6 +28,7 @@ const jobDeletePolicy = require("../utils/jobDeletePolicy.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
 const { expandLaborPricingFromPaidJob, isProviderAvailable } = require("./provider.service");
 const { assertCustomerNotBlocked } = require("./accountStatus.service");
+const { signJobRequestImageList } = require("./jobRequestMedia.service");
 const {
   registerUploadedFile,
   resolveFileForDownload,
@@ -1194,6 +1195,12 @@ async function finalizeJob(job, meta) {
     step3Type: categoryStep3Type,
     categoryDisplayName,
   } = await resolveCategorySettings(slug);
+  let signedImages = base.images;
+  try {
+    signedImages = await signJobRequestImageList(base.images);
+  } catch (e) {
+    console.error("signJobRequestImageList", e);
+  }
   let jobMaterialOrders = [];
   if (workingJob?.id) {
     try {
@@ -1206,6 +1213,7 @@ async function finalizeJob(job, meta) {
 
   return {
     ...base,
+    images: signedImages,
     completionPaymentDue,
     requiresInspection,
     requiresMaterials,
@@ -1501,6 +1509,7 @@ async function getJobQuotationDownload(jobId, actorUserId, actorRole, dispositio
   const mode = String(disposition).toLowerCase() === "attachment" ? "attachment" : "inline";
   return {
     absolutePath: file.absolutePath,
+    relPath: file.relPath,
     mimeType: file.mimeType || "application/octet-stream",
     filename,
     contentDisposition: `${mode}; filename="${filename}"`,

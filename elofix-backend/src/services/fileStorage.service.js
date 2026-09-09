@@ -278,6 +278,40 @@ async function resolveExistingFileReference(reference, context = {}) {
   return registerLegacyResolvedFile(token, context);
 }
 
+async function getOrRegisterRelPath(relPath, metadata = {}) {
+  const normalized = String(relPath || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  if (!normalized) return null;
+
+  const existing = await prisma.storedFile.findFirst({ where: { relPath: normalized } });
+  if (existing) {
+    return getRegisteredFile(existing.id);
+  }
+
+  const absolutePath = path.resolve(UPLOAD_ROOT, normalized.split("/").join(path.sep));
+  if (await existsFile(absolutePath)) {
+    return registerFilePath(absolutePath, metadata);
+  }
+
+  if (await objectStorage.existsObject(normalized)) {
+    const fileId = randomUUID();
+    await prisma.storedFile.create({
+      data: {
+        id: fileId,
+        relPath: normalized,
+        originalName: metadata.originalName || path.basename(normalized),
+        mimeType: inferMimeType(metadata.mimeType, normalized),
+        ownerUserId: metadata.ownerUserId ? String(metadata.ownerUserId) : null,
+        type: metadata.type ? String(metadata.type) : null,
+      },
+    });
+    return getRegisteredFile(fileId);
+  }
+
+  return null;
+}
+
 async function resolveFileForDownload(fileIdParam) {
   const raw = String(fileIdParam || "").trim();
   if (!raw) return null;
@@ -308,6 +342,9 @@ module.exports = {
   FILES_URL_PREFIX,
   toApiFileUrl,
   registerUploadedFile,
+  registerFilePath,
+  getRegisteredFile,
+  getOrRegisterRelPath,
   mirrorMulterFile,
   resolveExistingFileReference,
   resolveFileForDownload,

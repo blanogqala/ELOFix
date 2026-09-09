@@ -150,12 +150,14 @@ async function adminForceSettle(req, res) {
 }
 
 async function payfastWebhook(req, res) {
-  res.status(200).send("OK");
   const data = req.body && typeof req.body === "object" ? req.body : {};
   const clientIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress;
-  webhookService.handlePayfastWebhook(data, clientIp).catch((e) => {
-    console.error("[webhook payfast]", e);
-  });
+  const out = await webhookService.handlePayfastWebhook(data, clientIp);
+  const status = out.httpStatus != null ? Number(out.httpStatus) : 200;
+  if (status >= 400) {
+    return res.status(status).send(out.message || "ERROR");
+  }
+  return res.status(200).send("OK");
 }
 
 async function payflexWebhook(req, res) {

@@ -6,11 +6,12 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  # Smart detection flags Firebase's documented example key (AIza…) in node_modules
-  # and public client map keys in the frontend bundle. Keep regular secret scanning on.
+  # Omit node_modules (Firebase's documented example AIza… key). Keep smart detection on.
+  # Narrow false-positive omit: Firebase docs sample key, not a real secret.
   SECRETS_SCAN_OMIT_PATHS = "node_modules"
   SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyDOCAbC123dEf456GhI789jKl012-MnO"
-  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
+  # Production CSP/API URLs must be supplied as Netlify env: VITE_API_BASE_URL, VITE_API_ORIGIN.
+  # Do not rely on the generate-security-headers localhost fallback.
 
 # SPA fallback for react-router
 [[redirects]]

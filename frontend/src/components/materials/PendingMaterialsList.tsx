@@ -115,13 +115,13 @@ export function PendingMaterialsList({
                 Boolean(onProviderCancelBatch) &&
                 canEditMaterials &&
                 !resolution &&
-                !Boolean(card.payment?.materialsPaid) &&
+                !card.payment?.materialsPaid &&
                 !isLegacy &&
                 !card.sourceUserSuggestionId;
               const canDismissResolved =
                 Boolean(onDismissMaterialBatch) &&
                 canEditMaterials &&
-                !Boolean(card.payment?.materialsPaid) &&
+                !card.payment?.materialsPaid &&
                 !isLegacy &&
                 (resolution === 'rejected_by_customer' || resolution === 'cancelled_by_provider');
 

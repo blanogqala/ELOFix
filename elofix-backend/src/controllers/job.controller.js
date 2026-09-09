@@ -1,6 +1,8 @@
+const { pipeline } = require("stream/promises");
 const AppError = require("../utils/AppError");
-const { filePathToPublicUrl } = require("../middleware/upload.middleware");
-const { mirrorMulterFile } = require("../services/fileStorage.service");
+const { registerUploadedFile, mirrorMulterFile } = require("../services/fileStorage.service");
+const { signFileAccessUrl } = require("../services/fileAccess.service");
+const objectStorage = require("../services/objectStorage.service");
 const { resolveUserDisplayName } = require("../utils/displayName.util");
 const { validateUploadedImageFile, validateUploadedCompletionMedia } = require("../utils/uploadSecurity.util");
 const jobService = require("../services/job.service");
@@ -22,8 +24,14 @@ async function uploadJobImage(req, res) {
     throw new AppError("File is required", 400);
   }
   await validateUploadedImageFile(req.file);
+  const stored = await registerUploadedFile(req.file, {
+    ownerUserId: req.user.userId,
+    type: "jobRequestImage",
+    originalName: req.file.originalname,
+    mimeType: req.file.mimetype,
+  });
   await mirrorMulterFile(req.file);
-  res.json({ success: true, url: filePathToPublicUrl(req.file.path) });
+  res.json({ success: true, url: signFileAccessUrl(stored.fileId) });
 }
 
 async function createJob(req, res) {
@@ -146,9 +154,16 @@ async function downloadJobQuotation(req, res) {
     req.user.role,
     disposition
   );
+  const streamed = await objectStorage.streamLocalOrRemote(file.relPath, file.absolutePath);
+  if (!streamed) {
+    throw new AppError("Quotation file not found", 404);
+  }
   res.setHeader("Content-Type", file.mimeType);
   res.setHeader("Content-Disposition", file.contentDisposition);
-  res.sendFile(file.absolutePath);
+  if (streamed.contentType) {
+    res.setHeader("Content-Type", streamed.contentType);
+  }
+  await pipeline(streamed.stream, res);
 }
 
 async function payLabor(req, res) {
@@ -351,9 +366,14 @@ async function uploadCompletionEvidence(req, res) {
   // Ensure only job parties can upload (works for AWAITING_CONFIRMATION and COMPLETED).
   await jobService.getJobByIdForActor(req.params.id, req.user.userId, req.user.role);
   await validateUploadedCompletionMedia(req.file);
-  await mirrorMulterFile(req.file);
-  const url = filePathToPublicUrl(req.file.path);
   const kind = req.file.mimetype && req.file.mimetype.startsWith("video/") ? "video" : "image";
+  const stored = await registerUploadedFile(req.file, {
+    ownerUserId: req.user.userId,
+    type: kind === "video" ? "jobCompletionVideo" : "jobCompletionImage",
+    originalName: req.file.originalname,
+    mimeType: req.file.mimetype,
+  });
+  const url = signFileAccessUrl(stored.fileId);
   res.json({ success: true, url, kind });
 }
 

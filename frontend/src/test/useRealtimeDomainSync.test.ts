@@ -12,14 +12,16 @@ import React from 'react';
 
 // ─── Mock socket module (use vi.hoisted to avoid TDZ with vi.mock hoisting) ──
 
+type SocketHandler = (...args: unknown[]) => void;
+
 const { mockSocket } = vi.hoisted(() => {
-  const listeners: Record<string, Set<Function>> = {};
+  const listeners: Record<string, Set<SocketHandler>> = {};
   const sock = {
-    on: vi.fn((event: string, handler: Function) => {
+    on: vi.fn((event: string, handler: SocketHandler) => {
       if (!listeners[event]) listeners[event] = new Set();
       listeners[event].add(handler);
     }),
-    off: vi.fn((event: string, handler: Function) => {
+    off: vi.fn((event: string, handler: SocketHandler) => {
       listeners[event]?.delete(handler);
     }),
     _listeners: listeners,

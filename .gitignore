@@ -1,0 +1,35 @@
+# Environment
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+
+# Playwright / test artifacts
+playwright-report/
+test-results/
+coverage/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+tmp/
+temp/
+
+# Local uploads / cache
+elofix-backend/uploads/
+elofix-backend/data/app-state.json
+
+# Editor / agent debug
+.cursor/debug-*.log
+**/~$*.docx

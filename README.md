@@ -1,3 +1,9 @@
+# EloFix
+
+Hosted deployment (development / staging / production): see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+---
+
 # LOFix (FixMate) - MVC Full-Stack Starter
 
 This folder keeps your original MVP **unchanged** under `legacy-mvp/` and adds a clean full-stack structure:
@@ -70,6 +76,32 @@ Next additions (already planned in the folder layout):
 - This is designed so you can start free and scale later.
 - If you want, we can add Stripe/PayFast later for payments.
 
+# EloFix
+
+Marketplace for home services, materials, and deliveries (React + Express + Prisma + PostgreSQL).
+
+- **Deploy (dev / staging / production):** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- **Payments:** [`elofix-backend/docs/PAYMENTS_DEPLOYMENT.md`](elofix-backend/docs/PAYMENTS_DEPLOYMENT.md)
+- **Image / object storage:** [`elofix-backend/docs/IMAGE_STORAGE_DEPLOY.md`](elofix-backend/docs/IMAGE_STORAGE_DEPLOY.md)
+- **Maps:** [`docs/maps/`](docs/maps/)
+
+## Quick start (local)
+
+```bash
+cd elofix-backend
+cp .env.example .env
+npx prisma generate
+npx prisma migrate deploy
+npm run dev
+
+cd ../frontend
+cp .env.example .env
+npm i
+npm run dev
+```
+
+Frontend env lives in `frontend/.env` (not committed). Use `frontend/.env.example` as the template.
+
 ## Maps (MapLibre + OpenStreetMap)
 
 Live delivery tracking uses **MapLibre GL JS** with OSM tiles. Google Maps has been fully removed.
@@ -77,4 +109,4 @@ Live delivery tracking uses **MapLibre GL JS** with OSM tiles. Google Maps has b
 - **Docs:** [`docs/maps/`](docs/maps/) — architecture, API contracts, deployment, env vars
 - **Frontend env:** `VITE_MAPTILER_API_KEY` (production tiles; OpenFreeMap used when unset)
 - **Backend env:** `OPENROUTESERVICE_API_KEY` (driving directions proxy)
-- **Tracking data:** PostgreSQL `TrackingSession` + Socket.IO (not Firestore)
+- **Tracking data:** PostgreSQL `TrackingSession` + Socket.IO
