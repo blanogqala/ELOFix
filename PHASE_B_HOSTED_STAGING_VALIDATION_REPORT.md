@@ -12,7 +12,7 @@ Branch:
 `phase-b-hosted-staging-validation`
 
 Commit SHA:
-`d4753590` (plus uncommitted hosted-smoke + hosted API validator in this pass; SHA of the follow-up commit is recorded after push)
+`05efb8b2740e74121051bb32ff4fd8ab44e5fd12`
 
 PR:
 https://github.com/blanogqala/ELOFix/compare/main...phase-b-hosted-staging-validation?expand=1
