@@ -123,7 +123,11 @@ Same variable **names** as staging. Additional production-only expectations:
 
 Liveness: `GET /health` (Render `healthCheckPath` may stay `/health`). Readiness: `GET /ready` (Postgres `SELECT 1` + production payment safety) — use this for staging probes.
 
-Auth/contact IP rate limits (login 5 / 15 min, register 10 / 15 min) are always enforced in production. Local and CI e2e may bypass them on loopback or when `ELOFIX_E2E_FULL_STACK=1`.
+Auth/contact IP rate limits (login 5 / 15 min, register 10 / 15 min) are always enforced in production. Local and CI e2e may bypass them on loopback or when `ELOFIX_E2E_FULL_STACK=1`. `ELOFIX_AUTH_RATE_LIMIT_DISABLED` is ignored when `NODE_ENV=production`.
+
+Client IP for rate limits is Express `req.ip`. Production sets `trust proxy` to **1** (Render’s reverse proxy) unless `TRUST_PROXY` overrides it. The API does **not** read raw `X-Forwarded-For` for rate limiting; spoofed headers are ignored unless they pass through the configured trusted proxy hop.
+
+Production `/ready` requires object storage (`S3_BUCKET` + access keys) unless `ELOFIX_ALLOW_LOCAL_UPLOADS=true` (persistent disk only). Critical private uploads fail closed if the remote put fails.
 
 ---
 

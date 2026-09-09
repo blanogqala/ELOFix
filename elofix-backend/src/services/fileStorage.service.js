@@ -5,6 +5,7 @@ const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const { UPLOAD_ROOT } = require("../middleware/upload.middleware");
 const objectStorage = require("./objectStorage.service");
+const { isProtectedFileType } = require("../utils/fileAccessPolicy.util");
 
 const FILES_URL_PREFIX = "/api/files/";
 const DOC_TYPES = new Set([
@@ -56,6 +57,43 @@ function inferMimeType(mimeType, absolutePath) {
   return IMAGE_EXT_TO_MIME[ext] || "application/octet-stream";
 }
 
+async function rollbackStoredFile(fileId, absolutePath) {
+  await prisma.storedFile.delete({ where: { id: fileId } }).catch(() => {});
+  if (absolutePath) {
+    await fs.unlink(absolutePath).catch(() => {});
+  }
+}
+
+async function persistRemoteOrFail({ fileId, relPath, absolutePath, mimeType, type }) {
+  const required = objectStorage.isDurableStorageRequired();
+  const enabled = objectStorage.isEnabled();
+  const critical = isProtectedFileType(type) || Boolean(required);
+
+  if (required && !enabled) {
+    await rollbackStoredFile(fileId, absolutePath);
+    throw new AppError("Persistent object storage is not configured", 503);
+  }
+
+  if (!enabled) {
+    return { remote: false };
+  }
+
+  try {
+    const ok = await objectStorage.putLocalFile(relPath, absolutePath, mimeType);
+    if (!ok) {
+      throw new Error("object storage put returned false");
+    }
+    return { remote: true };
+  } catch (err) {
+    console.error("[fileStorage] object storage upload failed:", err instanceof Error ? err.message : err);
+    if (critical) {
+      await rollbackStoredFile(fileId, absolutePath);
+      throw new AppError("Failed to persist upload to durable storage", 503);
+    }
+    return { remote: false };
+  }
+}
+
 async function registerFilePath(absolutePath, metadata = {}) {
   const relPath = safeRelativeToUploads(absolutePath);
   if (!relPath) {
@@ -85,11 +123,13 @@ async function registerFilePath(absolutePath, metadata = {}) {
     },
   });
 
-  try {
-    await objectStorage.putLocalFile(record.relPath, absolutePath, record.mimeType);
-  } catch (err) {
-    console.error("[fileStorage] object storage upload failed:", err instanceof Error ? err.message : err);
-  }
+  await persistRemoteOrFail({
+    fileId,
+    relPath: record.relPath,
+    absolutePath,
+    mimeType: record.mimeType,
+    type: record.type,
+  });
 
   return {
     fileId,
@@ -331,11 +371,8 @@ async function mirrorMulterFile(file) {
   if (!file?.path) return;
   const rel = safeRelativeToUploads(file.path);
   if (!rel) return;
-  try {
-    await objectStorage.putLocalFile(rel, file.path, file.mimetype);
-  } catch (err) {
-    console.error("[fileStorage] mirror upload failed:", err instanceof Error ? err.message : err);
-  }
+  if (!objectStorage.isEnabled()) return;
+  await objectStorage.putLocalFile(rel, file.path, file.mimetype);
 }
 
 module.exports = {

@@ -9,8 +9,11 @@ const uploadsStaticMiddleware = require("./middleware/uploadsStatic.middleware")
 const { getAllowedOrigins, createCorsOriginChecker } = require("./utils/corsOrigins.util");
 const { redactRequestUrl } = require("./utils/logRedaction.util");
 const { getReadiness } = require("./services/readiness.service");
+const { applyTrustProxy } = require("./middleware/ipRateLimit.middleware");
 
 const app = express();
+
+applyTrustProxy(app);
 
 const allowedOrigins = getAllowedOrigins();
 

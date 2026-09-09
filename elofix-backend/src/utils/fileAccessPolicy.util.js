@@ -72,11 +72,20 @@ function isJobRequestFileType(type) {
   return JOB_REQUEST_FILE_TYPES.has(String(type || "").trim());
 }
 
+function isPublicFileType(type) {
+  return PUBLIC_FILE_TYPES.has(String(type || "").trim());
+}
+
 function isProtectedFileType(type) {
   const t = String(type || "").trim();
   if (!t) return false;
-  if (PUBLIC_FILE_TYPES.has(t)) return false;
+  if (isPublicFileType(t)) return false;
   return PROTECTED_FILE_TYPES.has(t);
+}
+
+/** KYC, quotations, job-request photos, completion evidence — must be durably stored. */
+function isCriticalUploadType(type) {
+  return isProtectedFileType(type);
 }
 
 module.exports = {
@@ -91,5 +100,7 @@ module.exports = {
   parseCompletionJobId,
   isCompletionFileType,
   isJobRequestFileType,
+  isPublicFileType,
   isProtectedFileType,
+  isCriticalUploadType,
 };

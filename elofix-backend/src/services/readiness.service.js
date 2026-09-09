@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const { assertProductionPaymentSafety } = require("./payments/paymentConfig");
+const objectStorage = require("./objectStorage.service");
 
 let appInitialized = true;
 
@@ -12,12 +13,18 @@ async function getReadiness() {
     app: appInitialized ? "ok" : "not_ready",
     database: "unknown",
     config: "ok",
+    storage: "ok",
   };
 
   try {
     assertProductionPaymentSafety();
   } catch {
     checks.config = "invalid";
+  }
+
+  const storage = objectStorage.getDurableStorageReadiness();
+  if (!storage.ok) {
+    checks.storage = "invalid";
   }
 
   try {
@@ -27,7 +34,11 @@ async function getReadiness() {
     checks.database = "unavailable";
   }
 
-  const ok = checks.app === "ok" && checks.database === "ok" && checks.config === "ok";
+  const ok =
+    checks.app === "ok" &&
+    checks.database === "ok" &&
+    checks.config === "ok" &&
+    checks.storage === "ok";
   return {
     ok,
     httpStatus: ok ? 200 : 503,

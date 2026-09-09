@@ -22,6 +22,7 @@ async function run() {
     assert.ok(!text.toLowerCase().includes("jwt"));
     assert.ok(!/password|secret|access_key/i.test(text));
     assert.ok(ready.body.checks);
+    assert.ok(ready.body.checks.storage === "ok" || ready.body.checks.storage === "invalid");
     assert.ok(ready.body.status === "ready" || ready.body.status === "unavailable");
     if (process.env.DATABASE_URL) {
       assert.strictEqual(ready.status, 200);

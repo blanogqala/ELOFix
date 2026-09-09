@@ -1,6 +1,6 @@
 const { pipeline } = require("stream/promises");
 const AppError = require("../utils/AppError");
-const { registerUploadedFile, mirrorMulterFile } = require("../services/fileStorage.service");
+const { registerUploadedFile } = require("../services/fileStorage.service");
 const { signFileAccessUrl } = require("../services/fileAccess.service");
 const objectStorage = require("../services/objectStorage.service");
 const { resolveUserDisplayName } = require("../utils/displayName.util");
@@ -30,7 +30,6 @@ async function uploadJobImage(req, res) {
     originalName: req.file.originalname,
     mimeType: req.file.mimetype,
   });
-  await mirrorMulterFile(req.file);
   res.json({ success: true, url: signFileAccessUrl(stored.fileId) });
 }
 

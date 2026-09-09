@@ -17,9 +17,41 @@ function setTestMemoryStore(store) {
   cachedClient = null;
 }
 
-function isEnabled() {
+function credentialsPresent(envObj = process.env) {
+  return Boolean(
+    String(envObj.S3_BUCKET || "").trim() &&
+      String(envObj.S3_ACCESS_KEY_ID || "").trim() &&
+      String(envObj.S3_SECRET_ACCESS_KEY || "").trim()
+  );
+}
+
+function isEnabled(envObj = process.env) {
   if (testMemoryStore) return true;
-  return Boolean(env("S3_BUCKET") && env("S3_ACCESS_KEY_ID") && env("S3_SECRET_ACCESS_KEY"));
+  return credentialsPresent(envObj);
+}
+
+function allowLocalOnlyUploads(envObj = process.env) {
+  return String(envObj.ELOFIX_ALLOW_LOCAL_UPLOADS || "").toLowerCase() === "true";
+}
+
+/**
+ * Production/staging with ephemeral disk must use object storage unless an operator
+ * explicitly opts into local-only uploads (persistent disk).
+ */
+function isDurableStorageRequired(envObj = process.env) {
+  if (String(envObj.NODE_ENV || "").toLowerCase() !== "production") return false;
+  if (allowLocalOnlyUploads(envObj)) return false;
+  return true;
+}
+
+function getDurableStorageReadiness(envObj = process.env) {
+  if (!isDurableStorageRequired(envObj)) {
+    return { ok: true, storage: "ok" };
+  }
+  if (!isEnabled(envObj)) {
+    return { ok: false, storage: "invalid" };
+  }
+  return { ok: true, storage: "ok" };
 }
 
 function getClient() {
@@ -172,6 +204,8 @@ async function fileExists(absolutePath) {
 
 module.exports = {
   isEnabled,
+  isDurableStorageRequired,
+  getDurableStorageReadiness,
   setTestMemoryStore,
   putLocalFile,
   existsObject,

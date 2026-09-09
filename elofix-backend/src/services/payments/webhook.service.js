@@ -2,22 +2,83 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../../config/prisma");
 const escrowSettlement = require("./escrowSettlement.service");
-const paymentService = require("../payment.service");
 const { getGateway } = require("./gatewayRegistry");
+
+const POST_SETTLEMENT_PENDING = "post_settlement_pending";
 
 function toPrismaDecimal(v) {
   return new Prisma.Decimal(String(Number(v).toFixed(2)));
 }
 
+function isEventFullyProcessed(ev) {
+  if (!ev?.processedAt) return false;
+  return String(ev.processingError || "") !== POST_SETTLEMENT_PENDING;
+}
+
+function postSettlementFlags(intent) {
+  const kind = String(intent?.kind || "");
+  const postSettleJobStore = kind === "JOB_STORE_ORDER" && !intent.materialOrderId;
+  const postSettleDeliveryFee = kind === "DELIVERY_FEE";
+  const postSettleProviderRepayment = kind === "PROVIDER_REFUND_REPAYMENT";
+  return {
+    postSettleJobStore,
+    postSettleDeliveryFee,
+    postSettleProviderRepayment,
+    needsPostSettlement: postSettleJobStore || postSettleDeliveryFee || postSettleProviderRepayment,
+  };
+}
+
+async function markEventFullyProcessed(db, providerKey, externalEventId, paymentIntentId) {
+  await db.paymentWebhookEvent.updateMany({
+    where: { provider: providerKey, externalEventId },
+    data: {
+      processedAt: new Date(),
+      processingError: null,
+      ...(paymentIntentId ? { paymentIntentId } : {}),
+    },
+  });
+}
+
+async function markEventPostSettlementPending(db, providerKey, externalEventId, paymentIntentId) {
+  await db.paymentWebhookEvent.updateMany({
+    where: { provider: providerKey, externalEventId },
+    data: {
+      processedAt: null,
+      processingError: POST_SETTLEMENT_PENDING,
+      paymentIntentId,
+    },
+  });
+}
+
+async function runCriticalPostSettlement(flags, intentId) {
+  const intent = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
+  if (!intent) {
+    throw new Error("Payment intent missing after webhook commit");
+  }
+  if (flags.postSettleJobStore) {
+    await escrowSettlement.settleJobStoreOrderFromIntent(intent);
+  }
+  if (flags.postSettleDeliveryFee) {
+    await escrowSettlement.settleDeliveryFeeFromIntent(intent);
+  }
+  if (flags.postSettleProviderRepayment) {
+    const refundRecovery = require("../refundRecovery.service");
+    await refundRecovery.markGatewayRepaymentPaidFromIntent(intent);
+  }
+}
+
 /**
  * Apply verified webhook result to PaymentIntent + business settlement.
+ * processedAt is set only after required financial post-settlement completes.
  */
 async function processWebhookResult(providerKey, verifyResult) {
   if (!verifyResult.valid || !verifyResult.merchantReference) {
     return { httpStatus: 400, message: "Invalid webhook" };
   }
 
-  const externalEventId = String(verifyResult.externalEventId || `${verifyResult.merchantReference}-${verifyResult.state}`);
+  const externalEventId = String(
+    verifyResult.externalEventId || `${verifyResult.merchantReference}-${verifyResult.state}`
+  );
 
   try {
     const result = await prisma.$transaction(
@@ -30,8 +91,8 @@ async function processWebhookResult(providerKey, verifyResult) {
             },
           },
         });
-        if (existingEv?.processedAt) {
-          return { duplicate: true, processed: true };
+        if (isEventFullyProcessed(existingEv)) {
+          return { duplicate: true, processed: true, fullyProcessed: true };
         }
 
         const intent = await tx.paymentIntent.findUnique({
@@ -50,7 +111,7 @@ async function processWebhookResult(providerKey, verifyResult) {
               },
             });
           }
-          return { processed: true, noIntent: true };
+          return { processed: true, noIntent: true, fullyProcessed: true };
         }
 
         if (!existingEv) {
@@ -79,14 +140,21 @@ async function processWebhookResult(providerKey, verifyResult) {
           : intent.gatewayTransactionId;
 
         if (verifyResult.state === "PAID") {
+          const flags = postSettlementFlags(intent);
+
           if (intent.state === "PAID") {
-            await tx.paymentWebhookEvent.updateMany({
-              where: { provider: providerKey, externalEventId },
-              data: { processedAt: new Date() },
-            });
-            const postSettleJobStore =
-              intent.kind === "JOB_STORE_ORDER" && !intent.materialOrderId;
-            return { duplicate: true, processed: true, intentId: intent.id, postSettleJobStore };
+            if (flags.needsPostSettlement) {
+              await markEventPostSettlementPending(tx, providerKey, externalEventId, intent.id);
+              return {
+                duplicate: true,
+                processed: false,
+                resumePostSettlement: true,
+                intentId: intent.id,
+                ...flags,
+              };
+            }
+            await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+            return { duplicate: true, processed: true, fullyProcessed: true, intentId: intent.id };
           }
 
           const prevPayload =
@@ -115,7 +183,6 @@ async function processWebhookResult(providerKey, verifyResult) {
 
           let settledAudit = null;
           let laborSettleExtra = null;
-          let postSettleProviderRepayment = false;
           if (fresh.kind === "LABOR") {
             const laborResult = await escrowSettlement.settleLaborFromIntent(tx, fresh, verifyResult.raw);
             settledAudit = laborResult.settledAudit || null;
@@ -124,24 +191,21 @@ async function processWebhookResult(providerKey, verifyResult) {
             await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
           } else if (fresh.kind === "JOB_STORE_ORDER" && fresh.materialOrderId) {
             await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
-          } else if (fresh.kind === "PROVIDER_REFUND_REPAYMENT") {
-            postSettleProviderRepayment = true;
           }
 
-          await tx.paymentWebhookEvent.updateMany({
-            where: { provider: providerKey, externalEventId },
-            data: { processedAt: new Date(), paymentIntentId: intent.id },
-          });
-          const postSettleJobStore =
-            fresh.kind === "JOB_STORE_ORDER" && !fresh.materialOrderId;
-          const postSettleDeliveryFee = fresh.kind === "DELIVERY_FEE";
+          const paidFlags = postSettlementFlags(fresh);
+          if (paidFlags.needsPostSettlement) {
+            await markEventPostSettlementPending(tx, providerKey, externalEventId, intent.id);
+          } else {
+            await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+          }
+
           return {
-            processed: true,
+            processed: !paidFlags.needsPostSettlement,
+            fullyProcessed: !paidFlags.needsPostSettlement,
             intentId: intent.id,
             state: "PAID",
-            postSettleJobStore,
-            postSettleDeliveryFee,
-            postSettleProviderRepayment,
+            ...paidFlags,
             settledAudit,
             notifyDepositPaid: Boolean(laborSettleExtra?.notifyDepositPaid),
             laborJobId: fresh.jobId || null,
@@ -159,11 +223,8 @@ async function processWebhookResult(providerKey, verifyResult) {
               gatewayPayload: verifyResult.raw || {},
             },
           });
-          await tx.paymentWebhookEvent.updateMany({
-            where: { provider: providerKey, externalEventId },
-            data: { processedAt: new Date() },
-          });
-          return { processed: true, intentId: intent.id, state: "FAILED" };
+          await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+          return { processed: true, fullyProcessed: true, intentId: intent.id, state: "FAILED" };
         }
 
         if (verifyResult.state === "CANCELLED") {
@@ -176,18 +237,12 @@ async function processWebhookResult(providerKey, verifyResult) {
               gatewayPayload: verifyResult.raw || {},
             },
           });
-          await tx.paymentWebhookEvent.updateMany({
-            where: { provider: providerKey, externalEventId },
-            data: { processedAt: new Date() },
-          });
-          return { processed: true, intentId: intent.id, state: "CANCELLED" };
+          await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+          return { processed: true, fullyProcessed: true, intentId: intent.id, state: "CANCELLED" };
         }
 
-        await tx.paymentWebhookEvent.updateMany({
-          where: { provider: providerKey, externalEventId },
-          data: { processedAt: new Date() },
-        });
-        return { processed: true, ignored: true };
+        await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+        return { processed: true, fullyProcessed: true, ignored: true };
       },
       {
         maxWait: 5000,
@@ -196,40 +251,23 @@ async function processWebhookResult(providerKey, verifyResult) {
       }
     );
 
-    if (result?.postSettleJobStore && result?.intentId) {
+    if (result?.needsPostSettlement && result?.intentId && !result?.fullyProcessed) {
       try {
-        const intent = await prisma.paymentIntent.findUnique({
-          where: { id: result.intentId },
-        });
-        if (intent) {
-          await escrowSettlement.settleJobStoreOrderFromIntent(intent);
-        }
+        await runCriticalPostSettlement(result, result.intentId);
+        await markEventFullyProcessed(prisma, providerKey, externalEventId, result.intentId);
+        result.processed = true;
+        result.fullyProcessed = true;
+        result.resumePostSettlement = Boolean(result.resumePostSettlement);
       } catch (postErr) {
-        console.error("[processWebhookResult] job store post-settle failed", postErr);
+        console.error("[processWebhookResult] critical post-settlement failed", postErr);
         return {
           httpStatus: 500,
-          message: postErr?.message || "Job store settlement failed",
+          message: postErr?.message || "Post-settlement failed",
           result,
         };
       }
     }
-    if (result?.postSettleDeliveryFee && result?.intentId) {
-      try {
-        const intent = await prisma.paymentIntent.findUnique({
-          where: { id: result.intentId },
-        });
-        if (intent) {
-          await escrowSettlement.settleDeliveryFeeFromIntent(intent);
-        }
-      } catch (postErr) {
-        console.error("[processWebhookResult] delivery fee post-settle failed", postErr);
-        return {
-          httpStatus: 500,
-          message: postErr?.message || "Delivery fee settlement failed",
-          result,
-        };
-      }
-    }
+
     if (result?.settledAudit) {
       const { logAudit } = require("../auditLog.service");
       const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../../constants/auditActions");
@@ -268,19 +306,6 @@ async function processWebhookResult(providerKey, verifyResult) {
         console.error("[processWebhookResult] obligation restriction clear failed", clearErr);
       }
     }
-    if (result?.postSettleProviderRepayment && result?.intentId) {
-      try {
-        const intent = await prisma.paymentIntent.findUnique({
-          where: { id: result.intentId },
-        });
-        if (intent) {
-          const refundRecovery = require("../refundRecovery.service");
-          await refundRecovery.markGatewayRepaymentPaidFromIntent(intent);
-        }
-      } catch (postErr) {
-        console.error("[processWebhookResult] provider refund repayment post-settle failed", postErr);
-      }
-    }
     return { httpStatus: 200, result };
   } catch (e) {
     const msg = e?.message || "Webhook processing failed";
@@ -314,6 +339,7 @@ async function handlePayjustnowWebhook(rawBuffer, signatureHeader) {
 }
 
 module.exports = {
+  POST_SETTLEMENT_PENDING,
   processWebhookResult,
   handlePayfastWebhook,
   handlePayflexWebhook,
