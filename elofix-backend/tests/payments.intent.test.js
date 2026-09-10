@@ -62,6 +62,14 @@ function testPayfastDocsSampleSignature() {
   assert.strictEqual(typeof sig, "string");
   assert.strictEqual(sig.length, 32);
   assert.strictEqual(sig, "1aa4b46a099e63fc9135c3dc602c8609");
+
+  const crypto = require("crypto");
+  const punctuationParam =
+    "merchant_id=10000100&merchant_key=46f0cd694581a&return_url=http%3A%2F%2Fwww.yourdomain.co.za%2Freturn.php&cancel_url=http%3A%2F%2Fwww.yourdomain.co.za%2Fcancel.php&notify_url=http%3A%2F%2Fwww.yourdomain.co.za%2Fnotify.php&name_first=First+Name&name_last=Last+Name&email_address=test%40test.com&m_payment_id=1234&amount=100.00&item_name=Order%23123&passphrase=Test%21Salt+%281%29";
+  assert.strictEqual(
+    payfast.buildSignature(data, "Test!Salt (1)"),
+    crypto.createHash("md5").update(punctuationParam, "utf8").digest("hex")
+  );
 }
 
 function testSandboxCheckoutIncludesSignatureForAnyMerchant() {
@@ -153,6 +161,83 @@ function testCheckoutAmountComesFromIntent() {
   );
 }
 
+function testPayfastPhpUrlEncodeVectors() {
+  const { payfastUrlEncode } = require("../src/utils/payfastEncode.util");
+  assert.strictEqual(payfastUrlEncode("a b"), "a+b");
+  assert.strictEqual(payfastUrlEncode("+"), "%2B");
+  assert.strictEqual(payfastUrlEncode("!"), "%21");
+  assert.strictEqual(payfastUrlEncode("~"), "%7E");
+  assert.strictEqual(payfastUrlEncode("*"), "%2A");
+  assert.strictEqual(payfastUrlEncode("'"), "%27");
+  assert.strictEqual(payfastUrlEncode("("), "%28");
+  assert.strictEqual(payfastUrlEncode(")"), "%29");
+  assert.strictEqual(payfastUrlEncode("&"), "%26");
+  assert.strictEqual(payfastUrlEncode("="), "%3D");
+  assert.strictEqual(payfastUrlEncode("%"), "%25");
+  assert.strictEqual(payfastUrlEncode("é"), "%C3%A9");
+  assert.strictEqual(payfastUrlEncode("Test!Salt (1)"), "Test%21Salt+%281%29");
+}
+
+function testItnSignatureFromDocumentedParamStrings() {
+  const crypto = require("crypto");
+  const md5 = (s) => crypto.createHash("md5").update(s, "utf8").digest("hex");
+  const ordered =
+    "amount_gross=50.00&m_payment_id=EF-1&passphrase=elofix-test-salt";
+  const punctuation =
+    "m_payment_id=EF-1&amount_gross=100.00&passphrase=Test%21Salt+%281%29";
+  assert.strictEqual(
+    payfast.buildItnSignatureFromRaw(
+      "amount_gross=50.00&m_payment_id=EF-1&signature=deadbeefdeadbeefdeadbeefdeadbeef",
+      "elofix-test-salt"
+    ),
+    md5(ordered)
+  );
+  assert.strictEqual(
+    payfast.buildItnSignatureFromRaw("m_payment_id=EF-1&amount_gross=100.00", "Test!Salt (1)"),
+    md5(punctuation)
+  );
+  assert.notStrictEqual(
+    payfast.buildItnSignatureFromRaw("amount_gross=50.00&m_payment_id=EF-1", "wrong-salt"),
+    md5(ordered)
+  );
+  assert.notStrictEqual(
+    payfast.buildItnSignatureFromRaw("amount_gross=99.00&m_payment_id=EF-1", "elofix-test-salt"),
+    md5(ordered)
+  );
+  assert.notStrictEqual(
+    payfast.buildItnSignatureFromRaw("amount_gross=50.00&m_payment_id=EF-2", "elofix-test-salt"),
+    md5(ordered)
+  );
+  const reversed = payfast.buildItnSignatureFromRaw(
+    "m_payment_id=EF-1&amount_gross=50.00",
+    "elofix-test-salt"
+  );
+  assert.notStrictEqual(reversed, md5(ordered), "ITN field order must be preserved");
+
+  const objectParam = "m_payment_id=EF-1&amount_gross=100.00&passphrase=elofix-test-salt";
+  assert.strictEqual(
+    payfast.buildItnSignature({ m_payment_id: "EF-1", amount_gross: "100.00" }, "elofix-test-salt"),
+    md5(objectParam)
+  );
+  assert.strictEqual(
+    payfast.buildItnSignature(
+      { m_payment_id: "EF-1", amount_gross: "100.00", signature: "deadbeefdeadbeefdeadbeefdeadbeef" },
+      "elofix-test-salt"
+    ),
+    md5(objectParam),
+    "incoming signature field must be excluded"
+  );
+  const afterSignature = payfast.buildItnSignatureFromRaw(
+    "m_payment_id=EF-1&signature=deadbeefdeadbeefdeadbeefdeadbeef&amount_gross=999.00",
+    "elofix-test-salt"
+  );
+  assert.strictEqual(
+    afterSignature,
+    md5("m_payment_id=EF-1&passphrase=elofix-test-salt"),
+    "reconstruction must stop at the signature field"
+  );
+}
+
 function testItnSignatureRequiresConfiguredPassphrase() {
   const payload = {
     m_payment_id: "EF-ITN-1",
@@ -233,6 +318,8 @@ testGatewayHasNoSharedSandboxWorkaround();
 testPayfastDocsSampleSignature();
 testSandboxCheckoutIncludesSignatureForAnyMerchant();
 testCheckoutAmountComesFromIntent();
+testPayfastPhpUrlEncodeVectors();
+testItnSignatureFromDocumentedParamStrings();
 testItnSignatureRequiresConfiguredPassphrase();
 testNormalizeProvider();
 testParsePaymentCardFromGatewayPayload();

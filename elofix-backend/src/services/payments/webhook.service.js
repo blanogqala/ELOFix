@@ -338,13 +338,13 @@ function logPayfastItn(fields) {
   });
 }
 
-async function handlePayfastWebhook(data, clientIp) {
+async function handlePayfastWebhook(data, clientIp, rawBody) {
   const sourceIp = String(clientIp || "").replace(/^::ffff:/i, "") || null;
   const merchantReference = data && data.m_payment_id ? String(data.m_payment_id) : null;
   console.log("[payfast-itn] webhook received", { merchantReference, sourceIp });
 
   const gw = getGateway("PAYFAST");
-  const verifyResult = await gw.verifyWebhook(data, clientIp);
+  const verifyResult = await gw.verifyWebhook(data, clientIp, rawBody);
   const out = await processWebhookResult("PAYFAST", verifyResult);
 
   let amountValid = null;

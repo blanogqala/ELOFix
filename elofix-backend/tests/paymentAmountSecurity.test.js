@@ -53,10 +53,17 @@ function testControllerDoesNotAcceptFinancialOverrides() {
   const fs = require("fs");
   const path = require("path");
   const webhookSrc = fs.readFileSync(path.join(__dirname, "../src/controllers/payment.controller.js"), "utf8");
-  assert.ok(webhookSrc.includes("clientKey(req)"), "PayFast webhook must use trusted req.ip via clientKey");
+  assert.ok(
+    webhookSrc.includes("resolvePayfastWebhookClientIp(req)"),
+    "PayFast webhook must use the dedicated original-client IP resolver"
+  );
   assert.ok(
     !/headers\["x-forwarded-for"\]/.test(webhookSrc),
     "PayFast webhook must not read X-Forwarded-For directly"
+  );
+  assert.ok(
+    !/headers\["cf-connecting-ip"\]/.test(webhookSrc),
+    "PayFast webhook must not read Cloudflare headers directly"
   );
 }
 

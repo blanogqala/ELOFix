@@ -197,7 +197,77 @@ async function captureWebhookClientIp(app, headers) {
   }
 }
 
+async function testRenderOriginalClientIpHttp() {
+  const payfast = require("../src/services/payments/payfast.gateway");
+  const prevRender = process.env.RENDER;
+  const prevSkip = process.env.PAYFAST_SKIP_IP_CHECK;
+  const prevNode = process.env.NODE_ENV;
+  process.env.RENDER = "true";
+  process.env.PAYFAST_SKIP_IP_CHECK = "false";
+  process.env.NODE_ENV = "production";
+  const app = require("../src/app");
+  const prevTrust = app.get("trust proxy");
+  app.set("trust proxy", 1);
+  try {
+    const resolved = await captureWebhookClientIp(app, {
+      "cf-connecting-ip": "197.97.145.150",
+      "x-forwarded-for": "197.97.145.150, 172.71.146.175",
+    });
+    assert.strictEqual(String(resolved), "197.97.145.150");
+    assert.strictEqual(payfast.isPayfastIp(resolved), true);
+
+    const malformedCf = await captureWebhookClientIp(app, {
+      "cf-connecting-ip": "not-an-ip",
+      "x-forwarded-for": "197.97.145.150, 172.71.146.175",
+    });
+    assert.strictEqual(String(malformedCf), "197.97.145.150");
+
+    const mapped = await captureWebhookClientIp(app, {
+      "cf-connecting-ip": "::ffff:197.97.145.150",
+    });
+    assert.strictEqual(String(mapped), "197.97.145.150");
+
+    const random = await captureWebhookClientIp(app, {
+      "cf-connecting-ip": "8.8.8.8",
+    });
+    assert.strictEqual(String(random), "8.8.8.8");
+    assert.strictEqual(payfast.isPayfastIp(random), false);
+  } finally {
+    app.set("trust proxy", prevTrust);
+    if (prevRender === undefined) delete process.env.RENDER;
+    else process.env.RENDER = prevRender;
+    if (prevSkip === undefined) delete process.env.PAYFAST_SKIP_IP_CHECK;
+    else process.env.PAYFAST_SKIP_IP_CHECK = prevSkip;
+    if (prevNode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNode;
+  }
+}
+
+async function testNonRenderForwardedHeadersCannotOverride() {
+  const prevRender = process.env.RENDER;
+  delete process.env.RENDER;
+  const app = require("../src/app");
+  const prevTrust = app.get("trust proxy");
+  try {
+    app.set("trust proxy", false);
+    const seen = await captureWebhookClientIp(app, {
+      "cf-connecting-ip": "197.97.145.150",
+      "x-forwarded-for": "197.97.145.150, 172.71.146.175",
+    });
+    assert.ok(
+      !String(seen).includes("197.97.145.150"),
+      `non-Render must not honor forwarded PayFast IP headers, got ${seen}`
+    );
+  } finally {
+    app.set("trust proxy", prevTrust);
+    if (prevRender === undefined) delete process.env.RENDER;
+    else process.env.RENDER = prevRender;
+  }
+}
+
 async function testTrustedProxyAndSpoofedForwardedFor() {
+  const prevRender = process.env.RENDER;
+  delete process.env.RENDER;
   const app = require("../src/app");
   const prevTrust = app.get("trust proxy");
   try {
@@ -216,6 +286,8 @@ async function testTrustedProxyAndSpoofedForwardedFor() {
     );
   } finally {
     app.set("trust proxy", prevTrust);
+    if (prevRender === undefined) delete process.env.RENDER;
+    else process.env.RENDER = prevRender;
   }
 }
 
@@ -226,6 +298,7 @@ async function testItnVerificationHttp() {
     {
       PAYFAST_PASSPHRASE: passphrase,
       PAYFAST_SKIP_IP_CHECK: "false",
+      RENDER: undefined,
       NODE_ENV: "test",
     },
     async () => {
@@ -333,6 +406,7 @@ async function testValidItnSettlesOnceAndWrongAmountFails() {
     {
       PAYFAST_PASSPHRASE: passphrase,
       PAYFAST_SKIP_IP_CHECK: "false",
+      RENDER: undefined,
       NODE_ENV: "test",
     },
     async () => {
@@ -479,6 +553,8 @@ async function run() {
   await testInvalidEventNoSuccessAck();
   await testTransientFailureNoAck();
   await testTrustedProxyAndSpoofedForwardedFor();
+  await testRenderOriginalClientIpHttp();
+  await testNonRenderForwardedHeadersCannotOverride();
   await testItnVerificationHttp();
   await testValidItnSettlesOnceAndWrongAmountFails();
   await testProcessWebhookIdempotency();
