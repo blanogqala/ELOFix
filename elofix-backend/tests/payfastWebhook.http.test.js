@@ -118,7 +118,7 @@ async function testHostedNotifyUrlGeneration() {
       PAYFAST_CANCEL_URL: undefined,
       PAYFAST_MERCHANT_ID: "10000100",
       PAYFAST_MERCHANT_KEY: "test-key",
-      PAYFAST_PASSPHRASE: "",
+      PAYFAST_PASSPHRASE: "elofix-test-salt",
       PAYFAST_MODE: "sandbox",
     },
     () => {
@@ -143,6 +143,8 @@ async function testHostedNotifyUrlGeneration() {
         checkout.formFields.cancel_url,
         "https://elofix.co.za/payments/cancel?intentId=intent-hosted-notify"
       );
+      assert.strictEqual(typeof checkout.formFields.signature, "string");
+      assert.strictEqual(checkout.formFields.signature.length, 32);
     }
   );
 
