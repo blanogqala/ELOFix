@@ -238,6 +238,94 @@ function testItnSignatureFromDocumentedParamStrings() {
   );
 }
 
+async function testItnServerValidationPostsPfParamStringWithoutSecrets() {
+  const crypto = require("crypto");
+  const { payfastUrlEncode } = require("../src/utils/payfastEncode.util");
+  const passphrase = "elofix-test-salt";
+  const rawBody =
+    "m_payment_id=EF-TEST-1&pf_payment_id=1234567&payment_status=COMPLETE&amount_gross=100.00&custom_str1=intent-1&name_last=&merchant_id=10000100&signature=deadbeefdeadbeefdeadbeefdeadbeef";
+  const expectedPfParamString =
+    "m_payment_id=EF-TEST-1&pf_payment_id=1234567&payment_status=COMPLETE&amount_gross=100.00&custom_str1=intent-1&name_last=&merchant_id=10000100";
+  const expectedSignatureInput = `${expectedPfParamString}&passphrase=${payfastUrlEncode(passphrase)}`;
+
+  assert.strictEqual(payfast.buildItnPfParamStringFromRaw(rawBody), expectedPfParamString);
+  assert.ok(expectedPfParamString.includes("m_payment_id="));
+  assert.ok(expectedPfParamString.includes("pf_payment_id="));
+  assert.ok(expectedPfParamString.includes("payment_status="));
+  assert.ok(expectedPfParamString.includes("amount_gross="));
+  assert.ok(expectedPfParamString.includes("custom_str1="));
+  assert.ok(expectedPfParamString.includes("name_last="));
+  assert.ok(expectedPfParamString.includes("merchant_id="));
+  assert.ok(!/(^|&)signature=/.test(expectedPfParamString));
+  assert.ok(!/(^|&)passphrase=/.test(expectedPfParamString));
+  assert.ok(
+    expectedPfParamString.indexOf("m_payment_id=") <
+      expectedPfParamString.indexOf("pf_payment_id=")
+  );
+  assert.ok(
+    expectedPfParamString.indexOf("pf_payment_id=") <
+      expectedPfParamString.indexOf("payment_status=")
+  );
+  assert.ok(
+    expectedPfParamString.indexOf("payment_status=") <
+      expectedPfParamString.indexOf("amount_gross=")
+  );
+  assert.ok(
+    expectedPfParamString.indexOf("amount_gross=") <
+      expectedPfParamString.indexOf("custom_str1=")
+  );
+  assert.ok(
+    expectedPfParamString.indexOf("custom_str1=") < expectedPfParamString.indexOf("name_last=")
+  );
+  assert.ok(
+    expectedPfParamString.indexOf("name_last=") < expectedPfParamString.indexOf("merchant_id=")
+  );
+
+  assert.strictEqual(
+    payfast.buildItnSignatureFromRaw(rawBody, passphrase),
+    crypto.createHash("md5").update(expectedSignatureInput, "utf8").digest("hex")
+  );
+  assert.ok(
+    expectedSignatureInput.includes(`passphrase=${payfastUrlEncode(passphrase)}`),
+    "local signature input must include the configured fake passphrase"
+  );
+  assert.notStrictEqual(
+    payfast.buildItnSignatureFromRaw(rawBody, passphrase),
+    crypto.createHash("md5").update(expectedPfParamString, "utf8").digest("hex"),
+    "local signature MD5 must include the passphrase"
+  );
+
+  let capturedUrl = null;
+  let capturedBody = null;
+  const originalFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    capturedUrl = String(url);
+    capturedBody = String(opts && opts.body != null ? opts.body : "");
+    return { ok: true, status: 200, text: async () => "VALID" };
+  };
+  try {
+    const parsed = {
+      m_payment_id: "EF-TEST-1",
+      pf_payment_id: "1234567",
+      payment_status: "COMPLETE",
+      amount_gross: "100.00",
+      custom_str1: "intent-1",
+      name_last: "",
+      merchant_id: "10000100",
+      signature: "deadbeefdeadbeefdeadbeefdeadbeef",
+    };
+    const valid = await payfast.validateItnServerSide(parsed, rawBody);
+    assert.strictEqual(valid, true);
+    assert.ok(String(capturedUrl).includes("/eng/query/validate"));
+    assert.strictEqual(capturedBody, expectedPfParamString);
+    assert.ok(!/(^|&)signature=/.test(capturedBody));
+    assert.ok(!/(^|&)passphrase=/.test(capturedBody));
+    assert.ok(capturedBody.includes("name_last="));
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
 function testItnSignatureRequiresConfiguredPassphrase() {
   const payload = {
     m_payment_id: "EF-ITN-1",
@@ -324,4 +412,12 @@ testItnSignatureRequiresConfiguredPassphrase();
 testNormalizeProvider();
 testParsePaymentCardFromGatewayPayload();
 testHostedNotifyUrlFromPaymentBaseUrl();
-console.log("payments.intent.test.js: OK");
+
+testItnServerValidationPostsPfParamStringWithoutSecrets()
+  .then(() => {
+    console.log("payments.intent.test.js: OK");
+  })
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });

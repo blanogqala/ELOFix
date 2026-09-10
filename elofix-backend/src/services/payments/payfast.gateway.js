@@ -100,6 +100,37 @@ function buildSignature(data, passphrase) {
   return md5Hex(paramString);
 }
 
+const ITN_PF_PARAM_OPTIONS = {
+  trimValues: true,
+  skipEmpty: false,
+  stopAtSignature: true,
+};
+
+/** Posted ITN fields in arrival order. No signature. No passphrase. */
+function buildItnPfParamString(entries) {
+  const withoutSecrets = (entries || []).filter(
+    (entry) => entry && entry.key && entry.key !== "passphrase"
+  );
+  return buildPayfastParamString(withoutSecrets, "", ITN_PF_PARAM_OPTIONS);
+}
+
+function buildItnPfParamStringFromRaw(rawBody) {
+  return buildItnPfParamString(parsePayfastFormPairs(rawBody));
+}
+
+function buildItnPfParamStringFromData(data) {
+  const orderedKeys = Object.keys(data || {}).filter(
+    (k) => k !== "signature" && k !== "passphrase"
+  );
+  return buildItnPfParamString(orderedKeys.map((key) => ({ key, value: data[key] })));
+}
+
+function appendItnPassphrase(pfParamString, passphrase) {
+  const pass = passphrase == null ? "" : String(passphrase).trim();
+  if (!pass) return pfParamString;
+  return `${pfParamString}&passphrase=${payfastUrlEncode(pass)}`;
+}
+
 /** ITN/webhook signature — object-key order fallback when raw POST bytes are unavailable. */
 function buildItnSignature(data, passphrase) {
   const orderedKeys = Object.keys(data || {}).filter((k) => k !== "signature");
@@ -108,13 +139,7 @@ function buildItnSignature(data, passphrase) {
 }
 
 function buildItnSignatureFromRaw(rawBody, passphrase) {
-  const pairs = parsePayfastFormPairs(rawBody);
-  const paramString = buildPayfastParamString(pairs, passphrase, {
-    trimValues: true,
-    skipEmpty: false,
-    stopAtSignature: true,
-  });
-  return md5Hex(paramString);
+  return md5Hex(appendItnPassphrase(buildItnPfParamStringFromRaw(rawBody), passphrase));
 }
 
 function isConfigured() {
@@ -192,17 +217,10 @@ function isPayfastIp(ip) {
 }
 
 async function validateItnServerSide(data, rawBody) {
-  let body;
-  if (rawBody != null && String(rawBody).length > 0) {
-    body = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : String(rawBody);
-  } else {
-    const parts = [];
-    Object.entries(data || {}).forEach(([k, v]) => {
-      if (v == null) return;
-      parts.push(`${k}=${payfastUrlEncode(v)}`);
-    });
-    body = parts.join("&");
-  }
+  const body =
+    rawBody != null && String(rawBody).length > 0
+      ? buildItnPfParamStringFromRaw(rawBody)
+      : buildItnPfParamStringFromData(data);
   const res = await fetch(validateUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -351,6 +369,8 @@ module.exports = {
   buildSignature,
   buildItnSignature,
   buildItnSignatureFromRaw,
+  buildItnPfParamStringFromRaw,
+  validateItnServerSide,
   payfastUrlEncode,
   supportsMarketplaceSettlement,
   createPayoutDestination,
