@@ -87,7 +87,41 @@ function testParsePaymentCardFromGatewayPayload() {
   assert.strictEqual(masked.last4, "3456");
 }
 
+function testHostedNotifyUrlFromPaymentBaseUrl() {
+  const prevBase = process.env.PAYMENT_BASE_URL;
+  const prevNotify = process.env.PAYFAST_NOTIFY_URL;
+  const prevFront = process.env.FRONTEND_BASE_URL;
+  process.env.PAYMENT_BASE_URL = "https://elofix-6136.onrender.com";
+  delete process.env.PAYFAST_NOTIFY_URL;
+  process.env.FRONTEND_BASE_URL = "https://elofix.co.za";
+  try {
+    const checkout = payfast.createCheckout(
+      {
+        id: "intent-hosted",
+        merchantReference: "EF-HOSTED",
+        amount: 100,
+        kind: "LABOR",
+      },
+      { name: "Customer", email: "customer@example.com" }
+    );
+    assert.strictEqual(
+      checkout.formFields.notify_url,
+      "https://elofix-6136.onrender.com/api/payments/webhooks/payfast"
+    );
+    assert.ok(checkout.formFields.return_url.startsWith("https://elofix.co.za/payments/return"));
+    assert.ok(checkout.formFields.cancel_url.startsWith("https://elofix.co.za/payments/cancel"));
+  } finally {
+    if (prevBase === undefined) delete process.env.PAYMENT_BASE_URL;
+    else process.env.PAYMENT_BASE_URL = prevBase;
+    if (prevNotify === undefined) delete process.env.PAYFAST_NOTIFY_URL;
+    else process.env.PAYFAST_NOTIFY_URL = prevNotify;
+    if (prevFront === undefined) delete process.env.FRONTEND_BASE_URL;
+    else process.env.FRONTEND_BASE_URL = prevFront;
+  }
+}
+
 testPayfastSignature();
 testNormalizeProvider();
 testParsePaymentCardFromGatewayPayload();
+testHostedNotifyUrlFromPaymentBaseUrl();
 console.log("payments.intent.test.js: OK");

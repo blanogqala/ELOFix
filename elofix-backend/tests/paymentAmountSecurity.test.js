@@ -49,6 +49,15 @@ function testControllerDoesNotAcceptFinancialOverrides() {
   assert.ok(!/body\.commissionAmount/.test(src), "controller must not read commissionAmount");
   assert.ok(!/body\.recipientUserId/.test(src), "controller must not read recipientUserId");
   assert.ok(!/body\.paymentType/.test(src), "controller must not read paymentType from body");
+
+  const fs = require("fs");
+  const path = require("path");
+  const webhookSrc = fs.readFileSync(path.join(__dirname, "../src/controllers/payment.controller.js"), "utf8");
+  assert.ok(webhookSrc.includes("clientKey(req)"), "PayFast webhook must use trusted req.ip via clientKey");
+  assert.ok(
+    !/headers\["x-forwarded-for"\]/.test(webhookSrc),
+    "PayFast webhook must not read X-Forwarded-For directly"
+  );
 }
 
 async function createFixtures(prisma, suffix) {
@@ -337,6 +346,52 @@ async function testLaborStageAndAmountSecurity(prisma, provider, recordKeys) {
   }
 }
 
+async function testWebhookRejectsWrongAmount(prisma) {
+  const webhookService = require("../src/services/payments/webhook.service");
+  const { Prisma } = require("@prisma/client");
+  const merchantReference = `EF-AMT-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+  const intentId = randomUUID();
+  const user =
+    (await prisma.user.findFirst({ where: { role: "CUSTOMER" }, select: { id: true } })) ||
+    (await prisma.user.create({
+      data: {
+        email: `amt.wh.${Date.now()}@example.com`,
+        password: "x",
+        name: "Amt Webhook",
+        role: "CUSTOMER",
+      },
+      select: { id: true },
+    }));
+  await prisma.paymentIntent.create({
+    data: {
+      id: intentId,
+      merchantReference,
+      provider: "PAYFAST",
+      kind: "PROVIDER_REFUND_REPAYMENT",
+      userId: user.id,
+      amount: new Prisma.Decimal("50.00"),
+      commissionAmount: new Prisma.Decimal("3.50"),
+      recipientAmount: new Prisma.Decimal("46.50"),
+      currency: "ZAR",
+      state: "PENDING",
+      escrowStatus: "NOT_APPLICABLE",
+    },
+  });
+  const mismatch = await webhookService.processWebhookResult("PAYFAST", {
+    valid: true,
+    merchantReference,
+    gatewayTransactionId: `gw-${intentId}`,
+    state: "PAID",
+    amount: 99,
+    externalEventId: `evt-mismatch-${intentId}`,
+    raw: { source: "amount_security_test" },
+  });
+  assert.ok(mismatch.httpStatus >= 400, "wrong ITN amount must fail");
+  assert.strictEqual(mismatch.failure, "AMOUNT_MISMATCH");
+  const still = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
+  assert.strictEqual(still.state, "PENDING", "amount mismatch must not mark PAID");
+}
+
 async function main() {
   testPaymentTypeDerivedFromKind();
   testControllerDoesNotAcceptFinancialOverrides();
@@ -361,6 +416,7 @@ async function main() {
     fixtures = await createFixtures(prisma, suffix);
     await testMaterialAmountServerAuthoritative(prisma, fixtures, providers[0], recordKeys);
     await testLaborStageAndAmountSecurity(prisma, providers[0], recordKeys);
+    await testWebhookRejectsWrongAmount(prisma);
     console.log("paymentAmountSecurity.test.js: OK");
   } finally {
     await cleanup(prisma, fixtures, recordKeys);

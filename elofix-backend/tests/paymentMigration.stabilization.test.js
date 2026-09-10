@@ -94,6 +94,7 @@ async function testDuplicateWebhookDoesNotDoubleSettle() {
 
   const intent = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
   assert.strictEqual(intent.state, "PAID");
+  assert.strictEqual(Number(intent.amount), 100, "duplicate ITN must not change amount");
 
   await prisma.paymentWebhookEvent.deleteMany({ where: { paymentIntentId: intentId } });
   await prisma.paymentIntent.delete({ where: { id: intentId } }).catch(() => {});

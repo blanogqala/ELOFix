@@ -309,21 +309,72 @@ async function processWebhookResult(providerKey, verifyResult) {
     return { httpStatus: 200, result };
   } catch (e) {
     const msg = e?.message || "Webhook processing failed";
-    return { httpStatus: 500, message: msg };
+    const amountMismatch = /amount mismatch/i.test(msg);
+    return {
+      httpStatus: 500,
+      message: msg,
+      amountValid: amountMismatch ? false : null,
+      failure: amountMismatch ? "AMOUNT_MISMATCH" : "INTERNAL_SETTLEMENT_FAILURE",
+    };
   }
 }
 
+function passFail(value) {
+  if (value == null) return "SKIPPED";
+  return value ? "PASS" : "FAIL";
+}
+
+function logPayfastItn(fields) {
+  console.log("[payfast-itn]", {
+    merchantReference: fields.merchantReference || null,
+    sourceIp: fields.sourceIp || null,
+    signature: passFail(fields.signatureValid),
+    payfastIp: passFail(fields.ipValid),
+    serverValidation: passFail(fields.serverValid),
+    amount: passFail(fields.amountValid),
+    outcome: fields.outcome,
+    state: fields.state || null,
+    httpStatus: fields.httpStatus,
+  });
+}
+
 async function handlePayfastWebhook(data, clientIp) {
+  const sourceIp = String(clientIp || "").replace(/^::ffff:/i, "") || null;
+  const merchantReference = data && data.m_payment_id ? String(data.m_payment_id) : null;
+  console.log("[payfast-itn] webhook received", { merchantReference, sourceIp });
+
   const gw = getGateway("PAYFAST");
   const verifyResult = await gw.verifyWebhook(data, clientIp);
-  if (!verifyResult.valid) {
-    console.warn("[webhook payfast] rejected ITN", {
-      clientIp,
-      merchantReference: data.m_payment_id,
-      paymentStatus: data.payment_status,
-    });
+  const out = await processWebhookResult("PAYFAST", verifyResult);
+
+  let amountValid = null;
+  if (verifyResult.valid) {
+    if (out.failure === "AMOUNT_MISMATCH" || out.amountValid === false) amountValid = false;
+    else if (out.httpStatus && out.httpStatus >= 400) amountValid = null;
+    else amountValid = true;
   }
-  return processWebhookResult("PAYFAST", verifyResult);
+
+  let outcome = "OK";
+  if (!verifyResult.valid) outcome = verifyResult.failure || "INVALID";
+  else if (out.failure) outcome = out.failure;
+  else if (out.httpStatus && out.httpStatus >= 400) outcome = "INTERNAL_SETTLEMENT_FAILURE";
+  else if (out.result?.duplicate) outcome = "DUPLICATE";
+  else if (out.result?.state) outcome = String(out.result.state);
+  else outcome = "OK";
+
+  logPayfastItn({
+    merchantReference: verifyResult.merchantReference || merchantReference,
+    sourceIp,
+    signatureValid: verifyResult.signatureValid,
+    ipValid: verifyResult.ipValid,
+    serverValid: verifyResult.serverValid,
+    amountValid,
+    outcome,
+    state: out.result?.state || (verifyResult.valid ? verifyResult.state : null),
+    httpStatus: out.httpStatus != null ? out.httpStatus : 200,
+  });
+
+  return out;
 }
 
 async function handlePayflexWebhook(rawBuffer, signatureHeader) {

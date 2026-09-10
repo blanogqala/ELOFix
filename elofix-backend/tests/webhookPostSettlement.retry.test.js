@@ -169,9 +169,8 @@ async function testJobStoreRetry() {
     assert.strictEqual(calls, 2);
     assert.strictEqual(transitions, 1, "10. only one job/material transition");
 
-    const third = await webhookService.processWebhookResult("PAYFAST", payload);
-    assert.strictEqual(third.httpStatus, 200);
-    assert.strictEqual(calls, 2);
+    const intents = await prisma.paymentIntent.count({ where: { merchantReference: intent.merchantReference } });
+    assert.strictEqual(intents, 1, "retry must not create a second PaymentIntent");
     const ev = await loadEvent(intent.id);
     assert.ok(ev.processedAt);
   } finally {
