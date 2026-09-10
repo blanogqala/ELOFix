@@ -40,7 +40,8 @@ function createCorsOriginChecker(allowedOrigins) {
       callback(null, true);
       return;
     }
-    callback(new Error('Not allowed by CORS'));
+    // Reject without throwing — cors Error callbacks become HTTP 500.
+    callback(null, false);
   };
 }
 

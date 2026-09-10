@@ -151,8 +151,9 @@ async function adminForceSettle(req, res) {
 
 async function payfastWebhook(req, res) {
   const data = req.body && typeof req.body === "object" ? req.body : {};
-  const clientIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress;
-  const out = await webhookService.handlePayfastWebhook(data, clientIp);
+  const { resolvePayfastWebhookClientIp } = require("../utils/payfastWebhookIp.util");
+  const clientIp = resolvePayfastWebhookClientIp(req);
+  const out = await webhookService.handlePayfastWebhook(data, clientIp, req.rawBody);
   const status = out.httpStatus != null ? Number(out.httpStatus) : 200;
   if (status >= 400) {
     return res.status(status).send(out.message || "ERROR");

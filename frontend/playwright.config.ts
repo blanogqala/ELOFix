@@ -4,6 +4,22 @@ import { defineConfig, devices } from '@playwright/test';
  * Playwright is intentionally scoped to ./e2e to avoid discovering Vitest unit tests
  * (for example: src/lib/foo.test.ts) which import from "vitest" and must only run under Vitest.
  */
+
+function isRemotePlaywrightBase(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host !== 'localhost' && host !== '127.0.0.1' && host !== '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+const playwrightBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:8081';
+const remoteHosted = isRemotePlaywrightBase(playwrightBaseUrl);
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: ['**/*.{spec,test}.{js,ts,jsx,tsx}'],
@@ -14,7 +30,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : [['html'], ['list']],
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:8081',
+    baseURL: playwrightBaseUrl,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -25,11 +41,14 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: process.env.PLAYWRIGHT_WEB_SERVER_COMMAND ?? 'npm run dev -- --port 8081',
-    url: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:8081',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  ...(remoteHosted
+    ? {}
+    : {
+        webServer: {
+          command: process.env.PLAYWRIGHT_WEB_SERVER_COMMAND ?? 'npm run dev -- --port 8081',
+          url: playwrightBaseUrl,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      }),
 });
-

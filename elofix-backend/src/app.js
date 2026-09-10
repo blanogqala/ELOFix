@@ -45,7 +45,12 @@ app.use(
 // Payment webhooks (before JSON parser where raw body is required)
 app.post(
   "/api/payments/webhooks/payfast",
-  express.urlencoded({ extended: false }),
+  express.urlencoded({
+    extended: false,
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
   asyncHandler(paymentController.payfastWebhook)
 );
 app.post(

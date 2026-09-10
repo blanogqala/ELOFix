@@ -1,26 +1,19 @@
 const crypto = require("crypto");
 const { paymentBaseUrl, frontendBaseUrl } = require("./paymentConfig");
+const { isIpv4InCidrs, normalizeIpv4 } = require("../../utils/ipv4Cidr.util");
+const {
+  payfastUrlEncode,
+  parsePayfastFormPairs,
+  buildPayfastParamString,
+} = require("../../utils/payfastEncode.util");
 
-const PAYFAST_IPS = [
-  "197.97.145.144",
-  "197.97.145.145",
-  "197.97.145.146",
-  "197.97.145.147",
-  "197.97.145.148",
-  "41.74.179.192",
-  "41.74.179.193",
-  "41.74.179.194",
-  "41.74.179.195",
-  "41.74.179.196",
-  "41.74.179.197",
-  "41.74.179.198",
-  "41.74.179.199",
-  "41.74.179.200",
-  "41.74.179.201",
-  "41.74.179.202",
-  "41.74.179.203",
-  "41.74.179.204",
-  "41.74.179.205",
+/** Official PayFast ITN source ranges (developer docs). Match whole CIDRs, not a partial host list. */
+const PAYFAST_IP_CIDRS = [
+  "197.97.145.144/28",
+  "41.74.179.192/27",
+  "102.216.36.0/28",
+  "102.216.36.128/28",
+  "144.126.193.139/32",
 ];
 
 function isSandbox() {
@@ -74,36 +67,79 @@ const CHECKOUT_FIELD_ORDER = [
   "cycles",
 ];
 
-function encodeValue(val) {
-  return encodeURIComponent(String(val).trim()).replace(/%20/g, "+");
+function buildParamString(data, passphrase, orderedKeys) {
+  const entries = [];
+  for (const key of orderedKeys) {
+    entries.push({ key, value: data[key] });
+  }
+  return buildPayfastParamString(entries, passphrase, {
+    trimValues: true,
+    skipEmpty: true,
+    stopAtSignature: false,
+  });
 }
 
-function buildParamString(data, passphrase, orderedKeys) {
-  const parts = [];
-  for (const key of orderedKeys) {
-    if (key === "signature") continue;
-    const val = data[key];
-    if (val === "" || val == null || String(val).trim() === "") continue;
-    parts.push(`${key}=${encodeValue(val)}`);
+function md5Hex(paramString) {
+  return crypto.createHash("md5").update(paramString, "utf8").digest("hex");
+}
+
+function signaturesMatch(received, expected) {
+  const left = String(received || "").toLowerCase();
+  const right = String(expected || "").toLowerCase();
+  if (!left || left.length !== right.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+  } catch {
+    return false;
   }
-  let paramString = parts.join("&");
-  if (passphrase) {
-    paramString += `&passphrase=${encodeValue(passphrase)}`;
-  }
-  return paramString;
 }
 
 /** Checkout form signature — field order per PayFast custom integration docs (not alphabetical). */
 function buildSignature(data, passphrase) {
   const paramString = buildParamString(data, passphrase, CHECKOUT_FIELD_ORDER);
-  return crypto.createHash("md5").update(paramString).digest("hex");
+  return md5Hex(paramString);
 }
 
-/** ITN/webhook signature — preserve posted field order (PayFast notification format). */
+const ITN_PF_PARAM_OPTIONS = {
+  trimValues: true,
+  skipEmpty: false,
+  stopAtSignature: true,
+};
+
+/** Posted ITN fields in arrival order. No signature. No passphrase. */
+function buildItnPfParamString(entries) {
+  const withoutSecrets = (entries || []).filter(
+    (entry) => entry && entry.key && entry.key !== "passphrase"
+  );
+  return buildPayfastParamString(withoutSecrets, "", ITN_PF_PARAM_OPTIONS);
+}
+
+function buildItnPfParamStringFromRaw(rawBody) {
+  return buildItnPfParamString(parsePayfastFormPairs(rawBody));
+}
+
+function buildItnPfParamStringFromData(data) {
+  const orderedKeys = Object.keys(data || {}).filter(
+    (k) => k !== "signature" && k !== "passphrase"
+  );
+  return buildItnPfParamString(orderedKeys.map((key) => ({ key, value: data[key] })));
+}
+
+function appendItnPassphrase(pfParamString, passphrase) {
+  const pass = passphrase == null ? "" : String(passphrase).trim();
+  if (!pass) return pfParamString;
+  return `${pfParamString}&passphrase=${payfastUrlEncode(pass)}`;
+}
+
+/** ITN/webhook signature — object-key order fallback when raw POST bytes are unavailable. */
 function buildItnSignature(data, passphrase) {
-  const orderedKeys = Object.keys(data).filter((k) => k !== "signature");
-  const paramString = buildParamString(data, passphrase, orderedKeys);
-  return crypto.createHash("md5").update(paramString).digest("hex");
+  const orderedKeys = Object.keys(data || {}).filter((k) => k !== "signature");
+  const paramString = buildParamString(data || {}, passphrase, orderedKeys);
+  return md5Hex(paramString);
+}
+
+function buildItnSignatureFromRaw(rawBody, passphrase) {
+  return md5Hex(appendItnPassphrase(buildItnPfParamStringFromRaw(rawBody), passphrase));
 }
 
 function isConfigured() {
@@ -153,14 +189,7 @@ function createCheckout(intent, customer) {
   if (intent.jobId) fields.custom_str3 = String(intent.jobId);
   if (intent.materialOrderId) fields.custom_str4 = String(intent.materialOrderId);
 
-  // Shared docs sandbox merchant (10000100): any signature is rejected (old
-  // passphrase jt7NOE43FZPn is obsolete). Omit signature → checkout works.
-  // Own merchant accounts: set PAYFAST_PASSPHRASE to dashboard Salt Passphrase.
-  const isSharedSandboxMerchant = String(merchantId) === "10000100";
-  const obsoleteDocsPassphrase = passphrase === "jt7NOE43FZPn";
-  if (passphrase && !isSharedSandboxMerchant && !obsoleteDocsPassphrase) {
-    fields.signature = buildSignature(fields, passphrase);
-  }
+  fields.signature = buildSignature(fields, passphrase);
 
   return {
     type: "redirect",
@@ -170,28 +199,32 @@ function createCheckout(intent, customer) {
   };
 }
 
-function verifySignature(data, passphrase) {
-  const received = String(data.signature || "");
-  const expected = buildItnSignature(data, passphrase || "");
-  return received === expected;
+function verifySignature(data, passphrase, rawBody) {
+  const received = String(data?.signature || "");
+  const expected =
+    rawBody != null && String(rawBody).length > 0
+      ? buildItnSignatureFromRaw(rawBody, passphrase || "")
+      : buildItnSignature(data, passphrase || "");
+  return signaturesMatch(received, expected);
 }
 
 function isPayfastIp(ip) {
   const { payfastSkipIpCheckAllowed } = require("./paymentConfig");
   if (payfastSkipIpCheckAllowed()) return true;
-  const clean = String(ip || "").replace("::ffff:", "");
-  return PAYFAST_IPS.includes(clean);
+  const clean = normalizeIpv4(ip);
+  if (!clean) return false;
+  return isIpv4InCidrs(clean, PAYFAST_IP_CIDRS);
 }
 
-async function validateItnServerSide(data) {
-  const body = new URLSearchParams();
-  Object.entries(data).forEach(([k, v]) => {
-    if (k !== "signature" && v != null) body.append(k, String(v));
-  });
+async function validateItnServerSide(data, rawBody) {
+  const body =
+    rawBody != null && String(rawBody).length > 0
+      ? buildItnPfParamStringFromRaw(rawBody)
+      : buildItnPfParamStringFromData(data);
   const res = await fetch(validateUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
+    body,
   });
   const text = await res.text();
   return text.trim() === "VALID";
@@ -201,25 +234,48 @@ async function validateItnServerSide(data) {
  * @param {Record<string, string>} data
  * @param {string} [clientIp]
  */
-async function verifyWebhook(data, clientIp) {
+function emptyVerifyDiagnostics(data, extra = {}) {
+  return {
+    valid: false,
+    merchantReference: data?.m_payment_id || null,
+    signatureValid: false,
+    ipValid: false,
+    serverValid: null,
+    ...extra,
+  };
+}
+
+async function verifyWebhook(data, clientIp, rawBody) {
   const passphrase = process.env.PAYFAST_PASSPHRASE || "";
-  if (!verifySignature(data, passphrase)) {
-    return { valid: false };
+  const payload = data && typeof data === "object" ? data : {};
+  const signatureValid = verifySignature(payload, passphrase, rawBody);
+  const ipValid = isPayfastIp(clientIp);
+
+  if (!signatureValid || !ipValid) {
+    return emptyVerifyDiagnostics(payload, {
+      failure: !signatureValid ? "BAD_SIGNATURE" : "BAD_SOURCE_IP",
+      signatureValid,
+      ipValid,
+      serverValid: null,
+    });
   }
-  if (!isPayfastIp(clientIp)) {
-    return { valid: false };
-  }
-  let serverValid = true;
+
+  let serverValid = false;
   try {
-    serverValid = await validateItnServerSide(data);
+    serverValid = await validateItnServerSide(payload, rawBody);
   } catch {
     serverValid = false;
   }
   if (!serverValid) {
-    return { valid: false };
+    return emptyVerifyDiagnostics(payload, {
+      failure: "PAYFAST_SERVER_VALIDATION_FAILURE",
+      signatureValid: true,
+      ipValid: true,
+      serverValid: false,
+    });
   }
 
-  const status = String(data.payment_status || "").toUpperCase();
+  const status = String(payload.payment_status || "").toUpperCase();
   let state = "PROCESSING";
   if (status === "COMPLETE") state = "PAID";
   else if (status === "FAILED") state = "FAILED";
@@ -227,12 +283,16 @@ async function verifyWebhook(data, clientIp) {
 
   return {
     valid: true,
-    merchantReference: data.m_payment_id,
-    gatewayTransactionId: data.pf_payment_id,
+    failure: null,
+    signatureValid: true,
+    ipValid: true,
+    serverValid: true,
+    merchantReference: payload.m_payment_id,
+    gatewayTransactionId: payload.pf_payment_id,
     state,
-    amount: Number(data.amount_gross || data.amount || 0),
-    externalEventId: `${data.pf_payment_id || data.m_payment_id}-${status}`,
-    raw: data,
+    amount: Number(payload.amount_gross || payload.amount || 0),
+    externalEventId: `${payload.pf_payment_id || payload.m_payment_id}-${status}`,
+    raw: payload,
   };
 }
 
@@ -300,12 +360,18 @@ async function verifySettlementWebhook() {
 
 module.exports = {
   name: "PAYFAST",
+  PAYFAST_IP_CIDRS,
   isConfigured,
   createCheckout,
   verifyWebhook,
+  isPayfastIp,
   refund,
   buildSignature,
   buildItnSignature,
+  buildItnSignatureFromRaw,
+  buildItnPfParamStringFromRaw,
+  validateItnServerSide,
+  payfastUrlEncode,
   supportsMarketplaceSettlement,
   createPayoutDestination,
   updatePayoutDestination,

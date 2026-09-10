@@ -246,6 +246,149 @@ async function testAuthorizedCompletionHttp(baseUrl) {
   assert.strictEqual(requestAdmin.status, 200, "admin must be allowed job-request image");
 }
 
+async function testAuthorizedQuotationHttp(baseUrl) {
+  if (!process.env.DATABASE_URL) {
+    console.log("fileAccess.http.test.js: skip quotation ACL cases (DATABASE_URL not set)");
+    return;
+  }
+  const prisma = require("../src/config/prisma");
+  const { registerFilePath } = require("../src/services/fileStorage.service");
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const hashed = await bcrypt.hash("Pass12345!", 10);
+
+  const customer = await prisma.user.create({
+    data: {
+      email: `qa.cust.${suffix}@example.com`,
+      password: hashed,
+      name: "Quote Customer",
+      role: "CUSTOMER",
+    },
+  });
+  const provider = await prisma.user.create({
+    data: {
+      email: `qa.prov.${suffix}@example.com`,
+      password: hashed,
+      name: "Quote Provider",
+      role: "PROVIDER",
+    },
+  });
+  const unrelatedCustomer = await prisma.user.create({
+    data: {
+      email: `qa.ucust.${suffix}@example.com`,
+      password: hashed,
+      name: "Unrelated Customer",
+      role: "CUSTOMER",
+    },
+  });
+  const unrelatedProvider = await prisma.user.create({
+    data: {
+      email: `qa.uprov.${suffix}@example.com`,
+      password: hashed,
+      name: "Unrelated Provider",
+      role: "PROVIDER",
+    },
+  });
+  const unrelatedSupplier = await prisma.user.create({
+    data: {
+      email: `qa.usup.${suffix}@example.com`,
+      password: hashed,
+      name: "Unrelated Supplier",
+      role: "SUPPLIER",
+    },
+  });
+  const admin = await prisma.user.create({
+    data: {
+      email: `qa.admin.${suffix}@example.com`,
+      password: hashed,
+      name: "Quote Admin",
+      role: "ADMIN",
+    },
+  });
+
+  const job = await prisma.job.create({
+    data: {
+      title: "Quotation privacy job",
+      description: "quotation acl",
+      price: 100,
+      customerId: customer.id,
+      providerId: provider.id,
+    },
+  });
+
+  const quoteRel = `jobs/${job.id}/quotations/quote-${suffix}.pdf`;
+  const quoteAbs = await writeUpload(quoteRel);
+  const quoteStored = await registerFilePath(quoteAbs, {
+    ownerUserId: provider.id,
+    type: "jobQuotation",
+    originalName: "quote.pdf",
+    mimeType: "application/pdf",
+  });
+  await prisma.job.update({
+    where: { id: job.id },
+    data: { quotationFileUrl: quoteStored.url },
+  });
+
+  const quoteAnon = await httpRequest(baseUrl, "GET", quoteStored.url);
+  assert.strictEqual(quoteAnon.status, 403, "1/7 anonymous quotation must be denied");
+
+  const quoteOwner = await httpRequest(baseUrl, "GET", quoteStored.url, {
+    headers: { Authorization: `Bearer ${signToken(provider)}` },
+  });
+  assert.strictEqual(quoteOwner.status, 200, "1/7 quotation owner/provider must be allowed");
+
+  const quoteCustomer = await httpRequest(baseUrl, "GET", quoteStored.url, {
+    headers: { Authorization: `Bearer ${signToken(customer)}` },
+  });
+  assert.strictEqual(quoteCustomer.status, 200, "2/7 job customer must be allowed quotation");
+
+  const quoteAdmin = await httpRequest(baseUrl, "GET", quoteStored.url, {
+    headers: { Authorization: `Bearer ${signToken(admin)}` },
+  });
+  assert.strictEqual(quoteAdmin.status, 200, "3/7 admin must be allowed quotation");
+
+  const quoteUnrelatedCustomer = await httpRequest(baseUrl, "GET", quoteStored.url, {
+    headers: { Authorization: `Bearer ${signToken(unrelatedCustomer)}` },
+  });
+  assert.strictEqual(quoteUnrelatedCustomer.status, 403, "4/7 unrelated customer must be denied quotation");
+
+  const quoteUnrelatedProvider = await httpRequest(baseUrl, "GET", quoteStored.url, {
+    headers: { Authorization: `Bearer ${signToken(unrelatedProvider)}` },
+  });
+  assert.strictEqual(quoteUnrelatedProvider.status, 403, "5/7 unrelated provider must be denied quotation");
+
+  const quoteUnrelatedSupplier = await httpRequest(baseUrl, "GET", quoteStored.url, {
+    headers: { Authorization: `Bearer ${signToken(unrelatedSupplier)}` },
+  });
+  assert.strictEqual(quoteUnrelatedSupplier.status, 403, "unrelated supplier must be denied quotation");
+
+  const kycRel = `providers/${provider.id}/documents/idDoc-${suffix}.pdf`;
+  const kycAbs = await writeUpload(kycRel);
+  const kycStored = await registerFilePath(kycAbs, {
+    ownerUserId: provider.id,
+    type: "idDoc",
+    originalName: "idDoc.pdf",
+    mimeType: "application/pdf",
+  });
+
+  const kycCustomer = await httpRequest(baseUrl, "GET", kycStored.url, {
+    headers: { Authorization: `Bearer ${signToken(customer)}` },
+  });
+  assert.strictEqual(kycCustomer.status, 403, "7/7 job customer must not read provider KYC");
+
+  const kycUnrelated = await httpRequest(baseUrl, "GET", kycStored.url, {
+    headers: { Authorization: `Bearer ${signToken(unrelatedCustomer)}` },
+  });
+  assert.strictEqual(kycUnrelated.status, 403, "unrelated customer must not read provider KYC");
+
+  const kycAnon = await httpRequest(baseUrl, "GET", kycStored.url);
+  assert.strictEqual(kycAnon.status, 403, "anonymous must not read provider KYC");
+
+  const kycOwner = await httpRequest(baseUrl, "GET", kycStored.url, {
+    headers: { Authorization: `Bearer ${signToken(provider)}` },
+  });
+  assert.strictEqual(kycOwner.status, 200, "provider owner must still read own KYC");
+}
+
 async function run() {
   const app = require("../src/app");
   const h = await listenApp(app);
@@ -253,6 +396,7 @@ async function run() {
     await testAnonymousStaticBlocks(h.baseUrl);
     await testPublicStaticStillOpen(h.baseUrl);
     await testAuthorizedCompletionHttp(h.baseUrl);
+    await testAuthorizedQuotationHttp(h.baseUrl);
   } finally {
     await h.close();
   }
