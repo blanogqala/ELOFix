@@ -176,6 +176,7 @@ function marketplaceSettlementEnabled() {
 
 /**
  * First enabled gateway that supports marketplace branch settlement.
+ * Used for payout-destination registration only — not for post-payment settlement.
  * @returns {import('./payfast.gateway') | null}
  */
 function settlementCapableGateway() {
@@ -190,6 +191,28 @@ function settlementCapableGateway() {
     }
   }
   return null;
+}
+
+/**
+ * Settlement adapter for a paid PaymentIntent. Bound to intent.provider so a
+ * Paystack status-only settlement cannot run against a PayFast/Payflex/PayJustNow charge.
+ * @param {{ provider?: string } | null | undefined} intent
+ */
+function settlementGatewayForIntent(intent) {
+  if (!marketplaceSettlementEnabled()) return null;
+  const { getGateway, normalizeProvider } = require("./gatewayRegistry");
+  const key = normalizeProvider(intent?.provider);
+  if (!key) return null;
+  let gw;
+  try {
+    gw = getGateway(key);
+  } catch {
+    return null;
+  }
+  if (typeof gw.supportsMarketplaceSettlement !== "function" || !gw.supportsMarketplaceSettlement()) {
+    return null;
+  }
+  return gw;
 }
 
 module.exports = {
@@ -212,4 +235,5 @@ module.exports = {
   assertProductionPaymentSafety,
   marketplaceSettlementEnabled,
   settlementCapableGateway,
+  settlementGatewayForIntent,
 };

@@ -11,6 +11,8 @@ const {
   mapPaystackRefundResult,
   alreadySplitSettlementResult,
   isPaystackSubaccountCode,
+  mapPaystackChargeEventState,
+  sanitizePaystackWebhookRaw,
 } = require("./paystack.payload");
 const {
   fetchSouthAfricanBanks,
@@ -167,11 +169,8 @@ function verifyWebhook(rawBody, signatureHeader) {
   }
   const event = String(body.event || "").toLowerCase();
   const data = body.data && typeof body.data === "object" ? body.data : {};
-  const status = String(data.status || "").toLowerCase();
-  let state = "PROCESSING";
-  if (event === "charge.success" || status === "success") state = "PAID";
-  else if (event === "charge.failed" || status === "failed") state = "FAILED";
-  else if (status === "abandoned" || status === "cancelled" || status === "canceled") state = "CANCELLED";
+  const state = mapPaystackChargeEventState(event) || "PROCESSING";
+  const raw = sanitizePaystackWebhookRaw(body);
 
   return {
     valid: true,
@@ -179,8 +178,8 @@ function verifyWebhook(rawBody, signatureHeader) {
     gatewayTransactionId: data.id != null ? String(data.id) : data.reference || null,
     state,
     amount: data.amount != null ? Number(data.amount) / 100 : undefined,
-    externalEventId: String(body.id || `${data.reference || "paystack"}-${event || status}`),
-    raw: body,
+    externalEventId: String(body.id || `${data.reference || "paystack"}-${event || "event"}`),
+    raw,
   };
 }
 
@@ -243,8 +242,8 @@ async function createPayoutDestination(profile) {
 
 async function updatePayoutDestination(recipientId, profile) {
   const code = String(recipientId || "").trim();
-  if (!isPaystackSubaccountCode(code) && !code) {
-    return { supported: false, requiresManualAction: true, message: "missing_subaccount_code" };
+  if (!isPaystackSubaccountCode(code)) {
+    return { supported: false, requiresManualAction: true, message: "invalid_subaccount_code" };
   }
   try {
     const bankCode = await resolveBankCodeForProfile(profile || {});

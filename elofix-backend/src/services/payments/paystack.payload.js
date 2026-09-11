@@ -2,9 +2,10 @@ const { toCents } = require("./money.util");
 
 const ELOFIX_GROSS_COMMISSION_PERCENT = 7;
 const PAYSTACK_API_BASE = "https://api.paystack.co";
-const MARKETPLACE_SPLIT_KINDS = new Set(["LABOR", "MATERIAL_ORDER", "JOB_STORE_ORDER"]);
+const MARKETPLACE_SPLIT_KINDS = new Set(["LABOR", "MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
 const REPAYMENT_KIND = "PROVIDER_REFUND_REPAYMENT";
-const NO_SPLIT_KINDS = new Set([REPAYMENT_KIND, "DELIVERY_FEE"]);
+const NO_SPLIT_KINDS = new Set([REPAYMENT_KIND]);
+const PAYSTACK_CHARGE_SETTLEMENT_EVENTS = new Set(["charge.success", "charge.failed"]);
 
 function isPaystackSubaccountCode(code) {
   return /^ACCT_/i.test(String(code || "").trim());
@@ -132,7 +133,7 @@ function buildBaseInitializePayload(intent, customer) {
 
 /**
  * Build Paystack initialize body. Marketplace split uses subaccount + bearer=subaccount.
- * PROVIDER_REFUND_REPAYMENT and DELIVERY_FEE never receive a split.
+ * PROVIDER_REFUND_REPAYMENT is the only kind that must go 100% to EloFix (no split).
  */
 function buildCheckoutInitializePayload(intent, customer, { subaccountCode } = {}) {
   const kind = String(intent?.kind || "").trim().toUpperCase();
@@ -247,11 +248,73 @@ function alreadySplitSettlementResult(intent) {
   };
 }
 
+/**
+ * Only charge.success / charge.failed may settle a PaymentIntent.
+ * Unrelated Paystack events (refund.*, transfer.*, invoice.*) must not map to PAID.
+ */
+function mapPaystackChargeEventState(event) {
+  const e = String(event || "").trim().toLowerCase();
+  if (e === "charge.success") return "PAID";
+  if (e === "charge.failed") return "FAILED";
+  return null;
+}
+
+function isPaystackChargeSettlementEvent(event) {
+  return PAYSTACK_CHARGE_SETTLEMENT_EVENTS.has(String(event || "").trim().toLowerCase());
+}
+
+function fourDigitLast4(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  const last4 = digits.slice(-4);
+  return last4.length === 4 ? last4 : null;
+}
+
+/**
+ * Minimized webhook object for later PaymentIntent.gatewayPayload persistence.
+ * Never include authorization objects, customer PII, bins, tokens, or bank accounts.
+ */
+function sanitizePaystackWebhookRaw(body) {
+  const data = body && typeof body.data === "object" && body.data && !Array.isArray(body.data) ? body.data : {};
+  const auth =
+    data.authorization && typeof data.authorization === "object" && !Array.isArray(data.authorization)
+      ? data.authorization
+      : {};
+  const last4 = fourDigitLast4(auth.last4 || data.last4 || data.card_last4);
+  const brand = String(auth.brand || auth.card_type || data.card_brand || "").trim() || null;
+  const feesSplitSrc =
+    data.fees_split && typeof data.fees_split === "object" && !Array.isArray(data.fees_split)
+      ? data.fees_split
+      : null;
+  const raw = {
+    event: body?.event != null ? String(body.event) : null,
+    reference: data.reference || null,
+    id: data.id != null ? data.id : null,
+    status: data.status || null,
+    amount: data.amount != null ? data.amount : null,
+    currency: data.currency || null,
+    channel: data.channel || null,
+  };
+  if (last4) raw.card_last4 = last4;
+  if (brand) raw.card_brand = brand;
+  const subaccount = data.subaccount || data.subaccount_code || null;
+  if (subaccount) raw.subaccount = subaccount;
+  if (data.fees != null) raw.fees = data.fees;
+  if (feesSplitSrc) {
+    raw.fees_split = {
+      paystack: feesSplitSrc.paystack ?? null,
+      integration: feesSplitSrc.integration ?? null,
+      subaccount: feesSplitSrc.subaccount ?? null,
+    };
+  }
+  return raw;
+}
+
 module.exports = {
   ELOFIX_GROSS_COMMISSION_PERCENT,
   PAYSTACK_API_BASE,
   MARKETPLACE_SPLIT_KINDS,
   REPAYMENT_KIND,
+  PAYSTACK_CHARGE_SETTLEMENT_EVENTS,
   isPaystackSubaccountCode,
   isMarketplaceSplitKind,
   isRepaymentKind,
@@ -265,5 +328,8 @@ module.exports = {
   assertInitializeRepaymentPayload,
   mapPaystackRefundResult,
   alreadySplitSettlementResult,
+  mapPaystackChargeEventState,
+  isPaystackChargeSettlementEvent,
+  sanitizePaystackWebhookRaw,
   toCents,
 };

@@ -141,8 +141,8 @@ async function initiateSettlementAfterPayment(tx, intent, order) {
     entityId: branchId,
   });
 
-  const { marketplaceSettlementEnabled, settlementCapableGateway } = require("./payments/paymentConfig");
-  const gw = settlementCapableGateway();
+  const { marketplaceSettlementEnabled, settlementGatewayForIntent } = require("./payments/paymentConfig");
+  const gw = settlementGatewayForIntent(intent);
   if (gw && marketplaceSettlementEnabled()) {
     if (!destinationReady.ready) {
       settlementStatus = destinationReady.reason?.includes("not verified") ? "ACTION_REQUIRED" : "PENDING";

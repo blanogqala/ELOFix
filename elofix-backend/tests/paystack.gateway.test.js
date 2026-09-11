@@ -19,6 +19,7 @@ const {
   isPaystackConfigured,
   paystackSecretKeyPrefix,
   settlementCapableGateway,
+  settlementGatewayForIntent,
 } = require("../src/services/payments/paymentConfig");
 const { splitCommission } = require("../src/services/payments/money.util");
 const paystack = require("../src/services/payments/paystack.gateway");
@@ -30,6 +31,8 @@ const {
   assertInitializeRepaymentPayload,
   mapPaystackRefundResult,
   alreadySplitSettlementResult,
+  sanitizePaystackWebhookRaw,
+  mapPaystackChargeEventState,
   toCents,
 } = require("../src/services/payments/paystack.payload");
 const {
@@ -247,6 +250,22 @@ function testCheckoutPayloadSplitAndRepayment() {
   assert.strictEqual(repayment.currency, "ZAR");
   assertInitializeRepaymentPayload(repayment);
 
+  const material = buildCheckoutInitializePayload(
+    {
+      id: "mat-1",
+      merchantReference: "EF-MATERIALREF1234567",
+      kind: "MATERIAL_ORDER",
+      amount: 100,
+      currency: "ZAR",
+      materialOrderId: "mo-1",
+    },
+    customer,
+    { subaccountCode: "ACCT_BRANCH" }
+  );
+  assert.strictEqual(material.subaccount, "ACCT_BRANCH");
+  assert.strictEqual(material.bearer, "subaccount");
+  assert.ok(!Object.prototype.hasOwnProperty.call(material, "transaction_charge"));
+
   const delivery = buildCheckoutInitializePayload(
     {
       id: "del-1",
@@ -256,10 +275,29 @@ function testCheckoutPayloadSplitAndRepayment() {
       currency: "ZAR",
     },
     customer,
-    { subaccountCode: "ACCT_MUST_BE_IGNORED" }
+    { subaccountCode: "ACCT_COURIER" }
   );
-  assert.ok(!Object.prototype.hasOwnProperty.call(delivery, "subaccount"));
-  assert.ok(!Object.prototype.hasOwnProperty.call(delivery, "bearer"));
+  assert.strictEqual(delivery.amount, 5000);
+  assert.strictEqual(delivery.subaccount, "ACCT_COURIER");
+  assert.strictEqual(delivery.bearer, "subaccount");
+  assert.ok(!Object.prototype.hasOwnProperty.call(delivery, "transaction_charge"));
+  assertInitializeSplitPayload(delivery);
+
+  assert.throws(
+    () =>
+      buildCheckoutInitializePayload(
+        {
+          id: "del-2",
+          merchantReference: "EF-DELIVERYREF0000002",
+          kind: "DELIVERY_FEE",
+          amount: 50,
+          currency: "ZAR",
+        },
+        customer,
+        { subaccountCode: null }
+      ),
+    (err) => err.code === "PAYSTACK_RECIPIENT_REQUIRED"
+  );
 
   assert.throws(
     () => buildCheckoutInitializePayload(laborIntent, customer, { subaccountCode: null }),
@@ -518,7 +556,25 @@ async function testVerifyTransactionMocked() {
 
 function testWebhookSignaturePrimitive() {
   withEnv({ ...validTestEnv() }, () => {
-    const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "EF-1", status: "success", amount: 10000, id: 8 } }));
+    const payload = {
+      event: "charge.success",
+      data: {
+        reference: "EF-1",
+        status: "success",
+        amount: 10000,
+        id: 8,
+        authorization: {
+          authorization_code: "AUTH_SECRET",
+          bin: "408408",
+          last4: "4242",
+          brand: "visa",
+          reusable: true,
+          bank: "TEST BANK",
+        },
+        customer: { email: "hidden@example.test", phone: "0800000000" },
+      },
+    };
+    const raw = Buffer.from(JSON.stringify(payload));
     const sig = crypto
       .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
       .update(raw)
@@ -527,9 +583,229 @@ function testWebhookSignaturePrimitive() {
     assert.strictEqual(ok.valid, true);
     assert.strictEqual(ok.state, "PAID");
     assert.strictEqual(ok.merchantReference, "EF-1");
+    assert.strictEqual(ok.raw.card_last4, "4242");
+    assert.strictEqual(ok.raw.card_brand, "visa");
+    assert.ok(!ok.raw.authorization);
+    assert.ok(!ok.raw.customer);
+    assert.ok(!ok.raw.authorization_code);
+    assert.ok(!JSON.stringify(ok.raw).includes("AUTH_SECRET"));
+    assert.ok(!JSON.stringify(ok.raw).includes("hidden@example.test"));
     const bad = paystack.verifyWebhook(raw, "00".repeat(64));
     assert.strictEqual(bad.valid, false);
   });
+}
+
+function testUnrelatedPaystackEventsDoNotSettle() {
+  withEnv({ ...validTestEnv() }, () => {
+    const refundBody = {
+      event: "refund.processed",
+      data: { reference: "EF-1", status: "success", amount: 10000, id: 99 },
+    };
+    const raw = Buffer.from(JSON.stringify(refundBody));
+    const sig = crypto.createHmac("sha512", process.env.PAYSTACK_SECRET_KEY).update(raw).digest("hex");
+    const out = paystack.verifyWebhook(raw, sig);
+    assert.strictEqual(out.valid, true);
+    assert.notStrictEqual(out.state, "PAID");
+    assert.strictEqual(out.state, "PROCESSING");
+    assert.strictEqual(mapPaystackChargeEventState("refund.processed"), null);
+    assert.strictEqual(mapPaystackChargeEventState("transfer.success"), null);
+    assert.strictEqual(mapPaystackChargeEventState("invoice.update"), null);
+    assert.strictEqual(mapPaystackChargeEventState("charge.success"), "PAID");
+    assert.strictEqual(mapPaystackChargeEventState("charge.failed"), "FAILED");
+  });
+}
+
+function testSanitizeWebhookRaw() {
+  const raw = sanitizePaystackWebhookRaw({
+    event: "charge.success",
+    data: {
+      reference: "EF-X",
+      id: 1,
+      status: "success",
+      amount: 10000,
+      currency: "ZAR",
+      channel: "card",
+      fees: 449,
+      fees_split: { paystack: 449, integration: 700, subaccount: 8851 },
+      subaccount: "ACCT_X",
+      authorization: { authorization_code: "AUTH_X", bin: "408408", last4: "1111", brand: "mastercard" },
+      customer: { email: "no@store.test", phone: "1" },
+    },
+  });
+  assert.strictEqual(raw.event, "charge.success");
+  assert.strictEqual(raw.reference, "EF-X");
+  assert.strictEqual(raw.card_last4, "1111");
+  assert.strictEqual(raw.card_brand, "mastercard");
+  assert.strictEqual(raw.subaccount, "ACCT_X");
+  assert.ok(!raw.authorization);
+  assert.ok(!raw.customer);
+  assert.ok(!raw.bin);
+  assert.ok(!Object.prototype.hasOwnProperty.call(raw, "authorization_code"));
+}
+
+function testInvalidSubaccountCodesRejected() {
+  const blank = paystack.updatePayoutDestination("", { bankName: "FNB" });
+  const numeric = paystack.updatePayoutDestination("123", { bankName: "FNB" });
+  const transfer = paystack.updatePayoutDestination("TRF_ABC", { bankName: "FNB" });
+  return Promise.all([blank, numeric, transfer]).then(([a, b, c]) => {
+    assert.strictEqual(a.supported, false);
+    assert.strictEqual(a.message, "invalid_subaccount_code");
+    assert.strictEqual(b.supported, false);
+    assert.strictEqual(b.message, "invalid_subaccount_code");
+    assert.strictEqual(c.supported, false);
+    assert.strictEqual(c.message, "invalid_subaccount_code");
+  });
+}
+
+async function testValidSubaccountCodeAcceptedForUpdate() {
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/bank") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: [{ name: "First National Bank", code: "001", currency: "ZAR", country: "South Africa" }],
+      });
+    }
+    if (url.includes("/subaccount/") && method === "PUT") {
+      return jsonResponse({
+        status: true,
+        data: { subaccount_code: "ACCT_VALID", percentage_charge: 7, active: true, is_verified: true },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv({ ...validTestEnv() }, async () => {
+      const result = await paystack.updatePayoutDestination("ACCT_VALID", {
+        bankName: "FNB",
+        accountHolder: "Test",
+        accountNumber: "1234567890",
+        branchCode: "250655",
+      });
+      assert.strictEqual(result.supported, true);
+      assert.strictEqual(result.recipientId, "ACCT_VALID");
+    });
+  } finally {
+    fetchMock.restore();
+  }
+}
+
+function testJobStoreRecipientMatch() {
+  const orders = [
+    { orderId: "ord-a", storeId: "branch-a", branchId: "branch-a" },
+    { orderId: "ord-b", storeId: "branch-b" },
+  ];
+  const hit = recipient.matchJobStoreOrderByOrderId(orders, "ord-a");
+  assert.strictEqual(hit.match.storeId, "branch-a");
+  assert.strictEqual(recipient.branchIdFromStoreOrder(hit.match), "branch-a");
+  const miss = recipient.matchJobStoreOrderByOrderId(orders, "");
+  assert.strictEqual(miss.match, null);
+  assert.strictEqual(miss.reason, "missing_order_id");
+  const unknown = recipient.matchJobStoreOrderByOrderId(orders, "ord-z");
+  assert.strictEqual(unknown.match, null);
+  const dupes = recipient.matchJobStoreOrderByOrderId(
+    [
+      { orderId: "same", storeId: "b1" },
+      { orderId: "same", storeId: "b2" },
+    ],
+    "same"
+  );
+  assert.strictEqual(dupes.match, null);
+  assert.strictEqual(dupes.reason, "ambiguous_order_id");
+}
+
+async function testCourierDeliveryLookupUsesProviderSubaccount() {
+  const fakePrisma = {
+    deliveryRequest: {
+      findUnique: async () => ({ courierId: "user-courier" }),
+    },
+    provider: {
+      findUnique: async () => ({ id: "prov-1" }),
+    },
+    providerWithdrawalProfile: {
+      findUnique: async () => ({
+        gatewayRecipientId: "ACCT_COURIER",
+        gatewayProvider: "PAYSTACK",
+        isActive: true,
+      }),
+    },
+  };
+  const code = await recipient.lookupMarketplaceSubaccount(
+    { kind: "DELIVERY_FEE", gatewayPayload: { deliveryRequestId: "dr-1" } },
+    fakePrisma
+  );
+  assert.strictEqual(code, "ACCT_COURIER");
+}
+
+async function testUnresolvedDeliveryFailsClosed() {
+  await assert.rejects(
+    () => recipient.lookupMarketplaceSubaccount({ kind: "DELIVERY_FEE", gatewayPayload: {} }, {}),
+    (err) => err.code === "PAYSTACK_RECIPIENT_REQUIRED"
+  );
+}
+
+async function testJobStoreLookupResolvableWithoutMaterialOrderId() {
+  const fakePrisma = {
+    materialOrder: { findUnique: async () => null },
+    job: {
+      findUnique: async () => ({
+        meta: {
+          storeOrders: [{ orderId: "ord-1", storeId: "branch-1", branchId: "branch-1" }],
+        },
+      }),
+    },
+    branchWithdrawalProfile: {
+      findUnique: async ({ where }) => {
+        assert.strictEqual(where.branchId, "branch-1");
+        return {
+          gatewayRecipientId: "ACCT_STORE",
+          gatewayProvider: "PAYSTACK",
+          isActive: true,
+        };
+      },
+    },
+  };
+  const code = await recipient.lookupMarketplaceSubaccount(
+    {
+      kind: "JOB_STORE_ORDER",
+      jobId: "job-1",
+      gatewayPayload: { orderId: "ord-1" },
+    },
+    fakePrisma
+  );
+  assert.strictEqual(code, "ACCT_STORE");
+}
+
+async function testJobStoreLookupFailsClosedWithoutOrderId() {
+  await assert.rejects(
+    () =>
+      recipient.lookupMarketplaceSubaccount(
+        { kind: "JOB_STORE_ORDER", jobId: "job-1", gatewayPayload: { supplierId: "store-x" } },
+        { materialOrder: { findUnique: async () => null } }
+      ),
+    (err) => err.code === "PAYSTACK_RECIPIENT_REQUIRED"
+  );
+}
+
+function testSettlementGatewayBoundToIntentProvider() {
+  withEnv(
+    {
+      ...validTestEnv(),
+      ENABLED_PAYMENT_PROVIDERS: "payfast,paystack",
+      MARKETPLACE_SETTLEMENT_ENABLED: "true",
+      PAYFAST_MERCHANT_ID: "10000100",
+      PAYFAST_MERCHANT_KEY: "testkey",
+      PAYFAST_MODE: "sandbox",
+    },
+    () => {
+      const payfastGw = settlementGatewayForIntent({ provider: "PAYFAST" });
+      assert.strictEqual(payfastGw, null, "PayFast must not use Paystack settlement");
+      const paystackGw = settlementGatewayForIntent({ provider: "PAYSTACK" });
+      assert.ok(paystackGw);
+      assert.strictEqual(paystackGw.name, "PAYSTACK");
+      const flexGw = settlementGatewayForIntent({ provider: "PAYFLEX" });
+      assert.strictEqual(flexGw, null);
+    }
+  );
 }
 
 function testSettlementCapableGatewaySeesPaystack() {
@@ -574,8 +850,18 @@ async function main() {
   testCheckoutPayloadSplitAndRepayment();
   testBankCodeNeverBlindBranchCode();
   testExtractSubaccountReuse();
+  testJobStoreRecipientMatch();
+  await testCourierDeliveryLookupUsesProviderSubaccount();
+  await testUnresolvedDeliveryFailsClosed();
+  await testJobStoreLookupResolvableWithoutMaterialOrderId();
+  await testJobStoreLookupFailsClosedWithoutOrderId();
   testSettlementCapableGatewaySeesPaystack();
+  testSettlementGatewayBoundToIntentProvider();
   testWebhookSignaturePrimitive();
+  testUnrelatedPaystackEventsDoNotSettle();
+  testSanitizeWebhookRaw();
+  await testInvalidSubaccountCodesRejected();
+  await testValidSubaccountCodeAcceptedForUpdate();
   await testCreateCheckoutHttpMocked();
   await testRepaymentCheckoutHasNoSplit();
   await testPayoutDestinationDoesNotUseBranchCode();
