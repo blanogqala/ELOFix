@@ -72,7 +72,7 @@ function createPrismaClient() {
 }
 
 /** Bump when Prisma schema/client changes so dev servers reload the client (nodemon keeps global). */
-const PRISMA_CLIENT_GENERATION = "20260601-courier-fulfillment";
+const PRISMA_CLIENT_GENERATION = "20260911-paystack-provider";
 
 function getPrismaClient() {
   if (
