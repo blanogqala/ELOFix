@@ -433,6 +433,455 @@ async function testStagedPendingKeepsCustomerProcessing() {
   }
 }
 
+async function testProcessedUsesStoredPendingRefundId() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const notificationEvents = require("../src/services/notificationEvents.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}fb`);
+  const storedId = "18237078";
+  const originalNotify = notificationEvents.notifyCustomerRefundProcessed;
+  let notified = 0;
+  notificationEvents.notifyCustomerRefundProcessed = async () => {
+    notified += 1;
+  };
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      return jsonResponse({
+        status: true,
+        data: { id: Number(storedId), status: "pending", amount: 9300, currency: "ZAR" },
+      });
+    }
+    if (url.includes(`/refund/${storedId}`) && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: {
+          id: Number(storedId),
+          status: "processed",
+          amount: 9300,
+          currency: "ZAR",
+          transaction: { reference: fix.intent.merchantReference },
+        },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundService.requestGatewayRefund(fix.intent.id, 93);
+      const out = await postRefundEvent("refund.processed", {
+        id: undefined,
+        refund_reference: null,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(out.httpStatus, 200, out.message);
+      assert.ok(fetchMock.calls.some((c) => c.method === "GET" && c.url.includes(`/refund/${storedId}`)));
+      const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.strictEqual(Number(intent.refundedAmount), 93);
+      assert.ok(intent.gatewayPayload.finalizedRefundIds.includes(storedId));
+      const job = await prisma.job.findUnique({ where: { id: fix.job.id } });
+      assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_COMPLETED");
+      assert.strictEqual(notified, 1);
+    });
+  } finally {
+    notificationEvents.notifyCustomerRefundProcessed = originalNotify;
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testWebhookRefundIdContradictionIsRejected() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}mm`);
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      return jsonResponse({
+        status: true,
+        data: { id: 111, status: "pending", amount: 9300, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/") && method === "GET") {
+      throw new Error("verify must not run on identity mismatch");
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundService.requestGatewayRefund(fix.intent.id, 93);
+      const out = await postRefundEvent("refund.processed", {
+        id: 999,
+        refund_reference: "999",
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(out.httpStatus, 400);
+      const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.strictEqual(Number(intent.refundedAmount), 0);
+      assert.strictEqual(intent.state, "PAID");
+      assert.strictEqual(intent.gatewayPayload.pendingRefund.externalRefundId, "111");
+    });
+  } finally {
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testTwoRefundsSameIntentHaveDistinctEventIds() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}tw`);
+  let postCount = 0;
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      postCount += 1;
+      const id = postCount === 1 ? 201 : 202;
+      const amount = id === 201 ? 9300 : 700;
+      return jsonResponse({
+        status: true,
+        data: { id, status: "pending", amount, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/201") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 201, status: "processed", amount: 9300, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/202") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 202, status: "processed", amount: 700, currency: "ZAR" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundService.requestGatewayRefund(fix.intent.id, 93, { idempotencyKey: "slice-a" });
+      const first = await postRefundEvent("refund.processed", {
+        id: 201,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(first.httpStatus, 200, first.message);
+      await refundService.requestGatewayRefund(fix.intent.id, 7, { idempotencyKey: "slice-b" });
+      const second = await postRefundEvent("refund.processed", {
+        id: 202,
+        status: "processed",
+        amount: 700,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(second.httpStatus, 200, second.message);
+      const events = await prisma.paymentWebhookEvent.findMany({
+        where: {
+          provider: "PAYSTACK",
+          externalEventId: { in: ["paystack-refund:201:refund.processed", "paystack-refund:202:refund.processed"] },
+        },
+      });
+      assert.strictEqual(events.length, 2);
+      const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.strictEqual(Number(intent.refundedAmount), 100);
+    });
+  } finally {
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testCrashRetryDoesNotDoubleIncrement() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const notificationEvents = require("../src/services/notificationEvents.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}cr`);
+  const originalNotify = notificationEvents.notifyCustomerRefundProcessed;
+  let notified = 0;
+  notificationEvents.notifyCustomerRefundProcessed = async () => {
+    notified += 1;
+  };
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      return jsonResponse({
+        status: true,
+        data: { id: 777, status: "pending", amount: 9300, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/777") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 777, status: "processed", amount: 9300, currency: "ZAR" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundService.requestGatewayRefund(fix.intent.id, 93);
+      const first = await postRefundEvent("refund.processed", {
+        id: 777,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(first.httpStatus, 200, first.message);
+      await prisma.paymentWebhookEvent.updateMany({
+        where: { provider: "PAYSTACK", externalEventId: "paystack-refund:777:refund.processed" },
+        data: { processedAt: null, processingError: null },
+      });
+      const retry = await postRefundEvent("refund.processed", {
+        id: 777,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(retry.httpStatus, 200, retry.message);
+      const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.strictEqual(Number(intent.refundedAmount), 93);
+      const invoices = await prisma.invoice.findMany({ where: { jobId: fix.job.id } });
+      assert.strictEqual(invoices.length, 1);
+      assert.strictEqual(notified, 1);
+    });
+  } finally {
+    notificationEvents.notifyCustomerRefundProcessed = originalNotify;
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testFifoContinuationAfterFirstProcessed() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const notificationEvents = require("../src/services/notificationEvents.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}fc`, {
+    jobMeta: { pendingRefund: 186, customerRefundStatus: "REFUND_PROCESSING" },
+  });
+  const second = await prisma.paymentIntent.create({
+    data: {
+      id: randomUUID(),
+      merchantReference: `EF-RF2-${randomUUID().slice(0, 8)}`.toUpperCase(),
+      provider: "PAYSTACK",
+      kind: "LABOR",
+      paymentType: "COMPLETION",
+      userId: fix.customer.id,
+      jobId: fix.job.id,
+      amount: new Prisma.Decimal("100.00"),
+      currency: "ZAR",
+      state: "PAID",
+      paidAt: new Date(Date.now() + 1000),
+      refundedAmount: new Prisma.Decimal("0"),
+      gatewayTransactionId: "tx-second-fifo",
+      gatewayPayload: {},
+    },
+  });
+  fix.secondIntent = second;
+  let notified = 0;
+  const originalNotify = notificationEvents.notifyCustomerRefundProcessed;
+  notificationEvents.notifyCustomerRefundProcessed = async () => {
+    notified += 1;
+  };
+  let nextId = 5001;
+  const posted = [];
+  const fetchMock = installFetchMock((url, method, body) => {
+    if (url.includes("/refund") && method === "POST") {
+      const id = nextId++;
+      posted.push({ id, transaction: body?.transaction, amount: body?.amount });
+      return jsonResponse({
+        status: true,
+        data: { id, status: "pending", amount: body?.amount, currency: "ZAR" },
+      });
+    }
+    const match = String(url).match(/\/refund\/(\d+)/);
+    if (match && method === "GET") {
+      const id = Number(match[1]);
+      const row = posted.find((p) => p.id === id);
+      return jsonResponse({
+        status: true,
+        data: { id, status: "processed", amount: row?.amount || 10000, currency: "ZAR" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      const started = await refundService.refundJobLaborAcrossIntents(fix.job.id, 186);
+      assert.strictEqual(started.pending, true);
+      assert.strictEqual(posted.length, 1);
+      assert.strictEqual(posted[0].transaction, fix.intent.gatewayTransactionId);
+      const firstProcessed = await postRefundEvent("refund.processed", {
+        refund_reference: null,
+        status: "processed",
+        amount: posted[0].amount,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(firstProcessed.httpStatus, 200, firstProcessed.message);
+      const firstIntent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.strictEqual(Number(firstIntent.refundedAmount), 100);
+      let job = await prisma.job.findUnique({ where: { id: fix.job.id } });
+      assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_PROCESSING");
+      assert.ok(!job.meta.refund.completedAt);
+      assert.strictEqual(notified, 0);
+      assert.strictEqual(posted.length, 2);
+      assert.strictEqual(posted[1].transaction, second.gatewayTransactionId);
+      const secondFresh = await prisma.paymentIntent.findUnique({ where: { id: second.id } });
+      assert.strictEqual(secondFresh.gatewayPayload.pendingRefund.externalRefundId, String(posted[1].id));
+
+      const secondProcessed = await postRefundEvent("refund.processed", {
+        id: posted[1].id,
+        status: "processed",
+        amount: posted[1].amount,
+        currency: "ZAR",
+        transaction_reference: second.merchantReference,
+      });
+      assert.strictEqual(secondProcessed.httpStatus, 200, secondProcessed.message);
+      job = await prisma.job.findUnique({ where: { id: fix.job.id } });
+      assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_COMPLETED");
+      assert.ok(job.meta.refund.completedAt);
+      assert.strictEqual(Number(job.meta.refund.pendingRefund), 0);
+      assert.strictEqual(notified, 1);
+      const completion = await prisma.paymentIntent.findUnique({ where: { id: second.id } });
+      assert.strictEqual(Number(completion.refundedAmount), 86);
+    });
+  } finally {
+    notificationEvents.notifyCustomerRefundProcessed = originalNotify;
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testUnpaidCompletionIsNotRefunded() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}uc`);
+  const unpaid = await prisma.paymentIntent.create({
+    data: {
+      id: randomUUID(),
+      merchantReference: `EF-UN-${randomUUID().slice(0, 8)}`.toUpperCase(),
+      provider: "PAYSTACK",
+      kind: "LABOR",
+      paymentType: "COMPLETION",
+      userId: fix.customer.id,
+      jobId: fix.job.id,
+      amount: new Prisma.Decimal("100.00"),
+      currency: "ZAR",
+      state: "PENDING",
+      refundedAmount: new Prisma.Decimal("0"),
+      gatewayPayload: {},
+    },
+  });
+  fix.secondIntent = unpaid;
+  const posted = [];
+  const fetchMock = installFetchMock((url, method, body) => {
+    if (url.includes("/refund") && method === "POST") {
+      posted.push(body?.transaction);
+      return jsonResponse({
+        status: true,
+        data: { id: 606, status: "pending", amount: 9300, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/606") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 606, status: "processed", amount: 9300, currency: "ZAR" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundService.refundJobLaborAcrossIntents(fix.job.id, 93);
+      const out = await postRefundEvent("refund.processed", {
+        id: 606,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: fix.intent.merchantReference,
+      });
+      assert.strictEqual(out.httpStatus, 200, out.message);
+      assert.strictEqual(posted.length, 1);
+      assert.strictEqual(posted[0], fix.intent.gatewayTransactionId);
+      const completion = await prisma.paymentIntent.findUnique({ where: { id: unpaid.id } });
+      assert.strictEqual(completion.state, "PENDING");
+      assert.strictEqual(Number(completion.refundedAmount), 0);
+      assert.ok(!completion.gatewayPayload?.pendingRefund);
+    });
+  } finally {
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testRefundGetAmountAndCurrencyMismatch() {
+  const prisma = require("../src/config/prisma");
+  const refundService = require("../src/services/payments/refund.service");
+  const amountFix = await seedPaidLabor(`${randomUUID().slice(0, 8)}am`);
+  const currencyFix = await seedPaidLabor(`${randomUUID().slice(0, 8)}cu`);
+  let postCount = 0;
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      postCount += 1;
+      const id = postCount === 1 ? 801 : 802;
+      return jsonResponse({
+        status: true,
+        data: { id, status: "pending", amount: 9300, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/801") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 801, status: "processed", amount: 5000, currency: "ZAR" },
+      });
+    }
+    if (url.includes("/refund/802") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 802, status: "processed", amount: 9300, currency: "USD" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundService.requestGatewayRefund(amountFix.intent.id, 93);
+      const amountOut = await postRefundEvent("refund.processed", {
+        id: 801,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: amountFix.intent.merchantReference,
+      });
+      assert.strictEqual(amountOut.httpStatus, 400);
+      const amountIntent = await prisma.paymentIntent.findUnique({ where: { id: amountFix.intent.id } });
+      assert.strictEqual(Number(amountIntent.refundedAmount), 0);
+
+      await refundService.requestGatewayRefund(currencyFix.intent.id, 93);
+      const currencyOut = await postRefundEvent("refund.processed", {
+        id: 802,
+        status: "processed",
+        amount: 9300,
+        currency: "ZAR",
+        transaction_reference: currencyFix.intent.merchantReference,
+      });
+      assert.strictEqual(currencyOut.httpStatus, 400);
+      const currencyIntent = await prisma.paymentIntent.findUnique({ where: { id: currencyFix.intent.id } });
+      assert.strictEqual(Number(currencyIntent.refundedAmount), 0);
+    });
+  } finally {
+    fetchMock.restore();
+    await cleanup(amountFix);
+    await cleanup(currencyFix);
+  }
+}
+
 async function testFifoStopsOnPending() {
   const prisma = require("../src/config/prisma");
   const refundService = require("../src/services/payments/refund.service");
@@ -491,6 +940,13 @@ async function main() {
   await testRefundProcessingNeedsAttentionFailedProcessed();
   await testStagedPendingKeepsCustomerProcessing();
   await testFifoStopsOnPending();
+  await testProcessedUsesStoredPendingRefundId();
+  await testWebhookRefundIdContradictionIsRejected();
+  await testTwoRefundsSameIntentHaveDistinctEventIds();
+  await testCrashRetryDoesNotDoubleIncrement();
+  await testFifoContinuationAfterFirstProcessed();
+  await testUnpaidCompletionIsNotRefunded();
+  await testRefundGetAmountAndCurrencyMismatch();
   console.log("paystack.refund.lifecycle.test.js: all passed");
 }
 

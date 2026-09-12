@@ -236,7 +236,21 @@ function mapPaystackRefundResult(json, httpOk) {
   const rawStatus = String(data.status || json?.status || "").trim().toLowerCase();
   const externalRefundId =
     data.id != null ? String(data.id) : data.refund_reference ? String(data.refund_reference) : null;
-  const safeData = { status: data.status || rawStatus };
+  const amountCents =
+    data.amount != null && Number.isFinite(Number(data.amount)) ? Math.round(Number(data.amount)) : null;
+  const currency = data.currency ? String(data.currency).trim().toUpperCase() : null;
+  const safeData = {
+    status: data.status || rawStatus,
+    amount: amountCents,
+    currency,
+  };
+
+  const money = {
+    externalRefundId,
+    amountCents,
+    currency,
+    data: safeData,
+  };
 
   if (rawStatus === "processed" || rawStatus === "success" || rawStatus === "completed") {
     return {
@@ -245,9 +259,8 @@ function mapPaystackRefundResult(json, httpOk) {
       pending: false,
       status: "COMPLETED",
       requiresManualAction: false,
-      externalRefundId,
       message: null,
-      data: safeData,
+      ...money,
     };
   }
 
@@ -258,9 +271,8 @@ function mapPaystackRefundResult(json, httpOk) {
       pending: true,
       status: "PENDING",
       requiresManualAction: false,
-      externalRefundId,
       message: "paystack_refund_pending",
-      data: safeData,
+      ...money,
     };
   }
 
@@ -271,9 +283,8 @@ function mapPaystackRefundResult(json, httpOk) {
       pending: true,
       status: "NEEDS_ATTENTION",
       requiresManualAction: true,
-      externalRefundId,
       message: "paystack_refund_needs_attention",
-      data: safeData,
+      ...money,
     };
   }
 
@@ -284,9 +295,8 @@ function mapPaystackRefundResult(json, httpOk) {
     pending: false,
     status: "FAILED",
     requiresManualAction: false,
-    externalRefundId,
     message: json?.message || (failed ? "paystack_refund_failed" : "paystack_refund_unknown"),
-    data: safeData,
+    ...money,
   };
 }
 

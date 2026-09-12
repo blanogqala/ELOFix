@@ -509,42 +509,66 @@ async function findPaystackRefundIntent(sanitized, refundId) {
   return null;
 }
 
-function pendingRefundMatches(intent, refundId) {
-  const refundService = require("./refund.service");
-  const pending = refundService.readPendingRefund(intent);
-  if (!pending?.externalRefundId || !refundId) return true;
-  return String(pending.externalRefundId) === String(refundId);
+function isTerminalPaystackRefundEvent(event) {
+  const e = String(event || "").trim().toLowerCase();
+  return e === "refund.processed" || e === "refund.failed";
 }
 
 async function handlePaystackRefundEvent(body, event) {
   const refundService = require("./refund.service");
   const sanitized = sanitizePaystackRefundRaw(body);
-  const refundId =
-    sanitized.id != null
-      ? String(sanitized.id)
-      : sanitized.refund_reference
-        ? String(sanitized.refund_reference)
-        : null;
-  const externalEventId = String(
-    body.id || `${refundId || sanitized.transaction_reference || "paystack"}-${event}`
-  );
+  const webhookRefundId = refundService.webhookRefundIdFromSanitized(sanitized);
+  const intent = await findPaystackRefundIntent(sanitized, webhookRefundId);
 
-  const intent = await findPaystackRefundIntent(sanitized, refundId);
-  const recorded = await recordPaystackWebhookEvent(externalEventId, sanitized, intent?.id);
+  if (!intent) {
+    if (!webhookRefundId) {
+      return { httpStatus: 200, result: { ignored: true, noIntent: true, refund: true } };
+    }
+    const orphanEventId = refundService.refundWebhookEventId(webhookRefundId, event);
+    const recorded = await recordPaystackWebhookEvent(orphanEventId, sanitized, null);
+    if (recorded.duplicate) {
+      return { httpStatus: 200, result: { duplicate: true, refund: true, noIntent: true } };
+    }
+    await markEventFullyProcessed(prisma, "PAYSTACK", orphanEventId, null);
+    return { httpStatus: 200, result: { processed: true, noIntent: true, refund: true } };
+  }
+
+  const resolved = refundService.resolveEffectiveRefundId(intent, webhookRefundId);
+  if (resolved.mismatch) {
+    console.error("[paystack-webhook] refund id contradicts stored pending id", {
+      merchantReference: intent.merchantReference,
+    });
+    return { httpStatus: 400, message: "Refund identity mismatch" };
+  }
+
+  const effectiveRefundId = resolved.effectiveRefundId;
+  if (!effectiveRefundId) {
+    if (isTerminalPaystackRefundEvent(event)) {
+      console.error("[paystack-webhook] terminal refund missing effectiveRefundId", {
+        merchantReference: intent.merchantReference,
+        event,
+      });
+      return { httpStatus: 400, message: "Refund identity missing" };
+    }
+    return { httpStatus: 200, result: { ignored: true, refund: true, reason: "missing_refund_id" } };
+  }
+
+  const externalEventId = refundService.refundWebhookEventId(effectiveRefundId, event);
+  const recorded = await recordPaystackWebhookEvent(externalEventId, sanitized, intent.id);
   if (recorded.duplicate) {
     return { httpStatus: 200, result: { duplicate: true, refund: true } };
   }
 
-  if (!intent) {
-    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, null);
-    return { httpStatus: 200, result: { processed: true, noIntent: true, refund: true } };
-  }
-
-  if (!pendingRefundMatches(intent, refundId)) {
-    console.error("[paystack-webhook] refund id does not match pending attempt", {
-      merchantReference: intent.merchantReference,
-    });
-    return { httpStatus: 400, message: "Refund identity mismatch" };
+  const pending = refundService.readPendingRefund(intent);
+  if (
+    resolved.alreadyFinalized ||
+    refundService.isRefundAlreadyFinalized(intent, {
+      externalRefundId: effectiveRefundId,
+      idempotencyKey: pending?.idempotencyKey || null,
+    })
+  ) {
+    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+    return { httpStatus: 200, result: { processed: true, refund: true, duplicate: true, alreadyFinalized: true } };
   }
 
   const gw = paystackAdapter();
@@ -553,47 +577,57 @@ async function handlePaystackRefundEvent(body, event) {
     ok: false,
     pending: true,
     status: "PENDING",
-    externalRefundId: refundId,
+    externalRefundId: effectiveRefundId,
   };
-  if (event === "refund.processed" || event === "refund.failed" || event.includes("needs-attention") || event.includes("needs_attention")) {
-    if (refundId && typeof gw.verifyRefund === "function") {
-      const verified = await gw.verifyRefund(refundId);
+  if (
+    event === "refund.processed" ||
+    event === "refund.failed" ||
+    event.includes("needs-attention") ||
+    event.includes("needs_attention")
+  ) {
+    if (typeof gw.verifyRefund === "function") {
+      const verified = await gw.verifyRefund(effectiveRefundId);
       if (verified.status === "VERIFY_FAILED" || String(verified.message || "") === "paystack_refund_verify_failed") {
         return { httpStatus: 500, message: verified.message || "Paystack refund verify failed" };
       }
       mapped = verified;
-      if (mapped.externalRefundId == null && refundId) mapped.externalRefundId = refundId;
+      if (mapped.externalRefundId == null) mapped.externalRefundId = effectiveRefundId;
     }
   } else if (event === "refund.processing") {
     mapped.status = "PENDING";
     mapped.pending = true;
+    mapped.externalRefundId = effectiveRefundId;
   }
 
-  const pending = refundService.readPendingRefund(intent);
   const requestedAmount = pending?.requestedAmount != null ? Number(pending.requestedAmount) : null;
 
   if (event === "refund.processed" || mapped.ok || mapped.status === "COMPLETED") {
     if (!mapped.ok && mapped.status !== "COMPLETED") {
       return { httpStatus: 400, message: "Refund not processed on Paystack" };
     }
-    const currency = String(sanitized.currency || "ZAR").toUpperCase();
-    if (currency && currency !== "ZAR") {
+    const verifiedCurrency = String(mapped.currency || "").trim().toUpperCase();
+    if (!verifiedCurrency || verifiedCurrency !== "ZAR") {
+      console.error("[paystack-webhook] refund currency mismatch", {
+        merchantReference: intent.merchantReference,
+      });
       return { httpStatus: 400, message: "Currency mismatch" };
     }
-    if (sanitized.amount != null && requestedAmount != null) {
-      const verifiedCents = Math.round(Number(sanitized.amount));
-      if (verifiedCents !== toCents(requestedAmount)) {
-        console.error("[paystack-webhook] refund amount mismatch", {
-          merchantReference: intent.merchantReference,
-        });
-        return { httpStatus: 400, message: "Refund amount mismatch" };
-      }
+    if (requestedAmount == null || mapped.amountCents == null) {
+      console.error("[paystack-webhook] refund amount missing from server verify", {
+        merchantReference: intent.merchantReference,
+      });
+      return { httpStatus: 400, message: "Refund amount mismatch" };
     }
-    const amount = requestedAmount != null ? requestedAmount : Number(intent.amount);
+    if (Math.round(Number(mapped.amountCents)) !== toCents(requestedAmount)) {
+      console.error("[paystack-webhook] refund amount mismatch", {
+        merchantReference: intent.merchantReference,
+      });
+      return { httpStatus: 400, message: "Refund amount mismatch" };
+    }
     await refundService.finalizeCustomerGatewayRefund(intent, {
-      amount,
-      externalRefundId: mapped.externalRefundId || refundId,
-      idempotencyKey: pending?.idempotencyKey || null,
+      amount: requestedAmount,
+      externalRefundId: mapped.externalRefundId || effectiveRefundId,
+      idempotencyKey: pending?.idempotencyKey || refundFinalizationIdempotency(effectiveRefundId),
       finalizeCustomerArtifacts: true,
     });
     await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
@@ -649,6 +683,10 @@ async function handlePaystackRefundEvent(body, event) {
   await refundService.updatePendingRefundStatus(intent, mapped.status || "PENDING");
   await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
   return { httpStatus: 200, result: { processed: true, refund: true, state: mapped.status || "PENDING" } };
+}
+
+function refundFinalizationIdempotency(effectiveRefundId) {
+  return `paystack-refund:${String(effectiveRefundId)}`;
 }
 
 async function handlePaystackChargeEvent(body, event) {
@@ -710,10 +748,43 @@ async function handlePaystackChargeEvent(body, event) {
   };
 
   let state = verified.state;
-  if (event === "charge.failed") {
-    state = "FAILED";
-  } else if (event === "charge.success") {
+  if (event === "charge.success") {
     state = "PAID";
+  } else if (event === "charge.failed") {
+    const verifyPaid = verified.state === "PAID";
+    const intentPaid = intent?.state === "PAID";
+    if (verifyPaid || intentPaid) {
+      const diagnostic = {
+        event,
+        merchantReference: reference,
+        verifyState: verified.state,
+        intentState: intent?.state || null,
+        reason: intentPaid
+          ? "charge_failed_ignored_paid_intent"
+          : "charge_failed_contradicts_verify",
+      };
+      console.error("[paystack-webhook] charge.failed ignored; server verify is authoritative", diagnostic);
+      await recordPaystackWebhookEvent(
+        `paystack-charge-ignored:${reference}:${event}:${body.id || verified.gatewayTransactionId || "tx"}`,
+        { ...sanitizePaystackWebhookRaw(body), diagnostic },
+        intent?.id || null
+      );
+      return {
+        httpStatus: 200,
+        result: { ignored: true, refund: false, diagnostic },
+      };
+    }
+    if (verified.state !== "FAILED") {
+      const diagnostic = {
+        event,
+        merchantReference: reference,
+        verifyState: verified.state,
+        reason: "charge_failed_verify_not_failed",
+      };
+      console.error("[paystack-webhook] charge.failed ignored; verify is not failed", diagnostic);
+      return { httpStatus: 200, result: { ignored: true, diagnostic } };
+    }
+    state = "FAILED";
   }
 
   return processWebhookResult("PAYSTACK", {

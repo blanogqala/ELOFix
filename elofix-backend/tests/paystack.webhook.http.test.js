@@ -610,6 +610,95 @@ async function testJobStoreAndDeliveryKinds() {
   }
 }
 
+async function postChargeEvent(app, reference, event, extra = {}) {
+  const payload = {
+    event,
+    data: {
+      reference,
+      status: extra.status != null ? extra.status : event === "charge.failed" ? "failed" : "success",
+      amount: extra.amount != null ? extra.amount : 10000,
+      currency: extra.currency || "ZAR",
+      id: extra.id || 44001,
+      subaccount: extra.subaccount || {
+        subaccount_code: "ACCT_PROV",
+        account_number: "1234567890",
+        settlement_bank: "Example Bank",
+      },
+    },
+  };
+  const { raw, sig } = sign(payload);
+  const h = await listenApp(app);
+  try {
+    return await httpRequest(h.baseUrl, "POST", "/api/payments/webhooks/paystack", {
+      headers: { "Content-Type": "application/json", "x-paystack-signature": sig },
+      body: raw,
+    });
+  } finally {
+    await h.close();
+  }
+}
+
+async function testChargeFailedDoesNotOverrideSuccessfulVerify() {
+  const prisma = require("../src/config/prisma");
+  const fix = await seedKindIntent("LABOR", `${randomUUID().slice(0, 8)}cf`, {
+    paymentType: "DEPOSIT",
+    quoted: 200,
+    amount: 100,
+    state: "PENDING",
+  });
+  const fetchMock = installFetchMock(
+    verifyRouter(fix.intent.merchantReference, { amount: 10000, subaccount: "ACCT_PROV", status: "success" })
+  );
+  try {
+    await withEnv(paystackEnv(), async () => {
+      const app = require("../src/app");
+      const res = await postChargeEvent(app, fix.intent.merchantReference, "charge.failed", {
+        amount: 10000,
+        subaccount: "ACCT_PROV",
+      });
+      assert.strictEqual(res.status, 200, res.text);
+      const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.notStrictEqual(intent.state, "FAILED");
+      assert.strictEqual(intent.state, "PENDING");
+    });
+  } finally {
+    fetchMock.restore();
+    await cleanupKind(fix);
+  }
+}
+
+async function testPaidIntentIgnoresStaleChargeFailed() {
+  const prisma = require("../src/config/prisma");
+  const fix = await seedKindIntent("LABOR", `${randomUUID().slice(0, 8)}pd`, {
+    paymentType: "DEPOSIT",
+    quoted: 200,
+    amount: 100,
+    state: "PAID",
+  });
+  await prisma.paymentIntent.update({
+    where: { id: fix.intent.id },
+    data: { paidAt: new Date(), gatewayTransactionId: "tx-paid-stale" },
+  });
+  const fetchMock = installFetchMock(
+    verifyRouter(fix.intent.merchantReference, { amount: 10000, subaccount: "ACCT_PROV", status: "success" })
+  );
+  try {
+    await withEnv(paystackEnv(), async () => {
+      const app = require("../src/app");
+      const res = await postChargeEvent(app, fix.intent.merchantReference, "charge.failed", {
+        amount: 10000,
+        subaccount: "ACCT_PROV",
+      });
+      assert.strictEqual(res.status, 200, res.text);
+      const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
+      assert.strictEqual(intent.state, "PAID");
+    });
+  } finally {
+    fetchMock.restore();
+    await cleanupKind(fix);
+  }
+}
+
 async function testRepaymentHasNoSplitAndMarksRecoveryOnce() {
   const prisma = require("../src/config/prisma");
   const refundRecovery = require("../src/services/refundRecovery.service");
@@ -718,6 +807,8 @@ async function main() {
   await testLaborCompletion();
   await testJobStoreAndDeliveryKinds();
   await testRepaymentHasNoSplitAndMarksRecoveryOnce();
+  await testChargeFailedDoesNotOverrideSuccessfulVerify();
+  await testPaidIntentIgnoresStaleChargeFailed();
   console.log("paystack.webhook.http.test.js: all passed");
 }
 

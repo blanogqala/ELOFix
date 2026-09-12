@@ -130,31 +130,107 @@ async function emitRefundDomainUpdate(intent) {
   }
 }
 
-function isRefundAlreadyFinalized(intent, externalRefundId) {
+function refundFinalizationKey(externalRefundId, idempotencyKey) {
+  if (externalRefundId) return `paystack-refund:${String(externalRefundId)}`;
+  if (idempotencyKey) return `paystack-refund-key:${String(idempotencyKey)}`;
+  return null;
+}
+
+function finalizedRefundIds(intent) {
   const payload = intentPayload(intent);
-  if (
-    payload.lastRefund?.finalized &&
-    externalRefundId &&
-    String(payload.lastRefund.externalRefundId) === String(externalRefundId)
-  ) {
-    return true;
+  return Array.isArray(payload.finalizedRefundIds) ? payload.finalizedRefundIds.map(String) : [];
+}
+
+function isRefundAlreadyFinalized(intent, externalRefundIdOrOpts, maybeKey) {
+  const opts =
+    externalRefundIdOrOpts && typeof externalRefundIdOrOpts === "object"
+      ? externalRefundIdOrOpts
+      : { externalRefundId: externalRefundIdOrOpts, idempotencyKey: maybeKey };
+  const externalRefundId = opts.externalRefundId != null ? String(opts.externalRefundId) : null;
+  const idempotencyKey = opts.idempotencyKey || null;
+  const payload = intentPayload(intent);
+  const last = payload.lastRefund && typeof payload.lastRefund === "object" ? payload.lastRefund : {};
+  const ids = finalizedRefundIds(intent);
+  if (externalRefundId && ids.includes(externalRefundId)) return true;
+  const key = refundFinalizationKey(externalRefundId, idempotencyKey);
+  if (last.finalized) {
+    if (externalRefundId && String(last.externalRefundId) === externalRefundId) return true;
+    if (key && last.finalizationKey && String(last.finalizationKey) === key) return true;
+    if (idempotencyKey && last.idempotencyKey && String(last.idempotencyKey) === String(idempotencyKey)) {
+      return true;
+    }
   }
   return false;
 }
 
+function webhookRefundIdFromSanitized(sanitized) {
+  if (!sanitized || typeof sanitized !== "object") return null;
+  if (sanitized.id != null && String(sanitized.id).trim()) return String(sanitized.id).trim();
+  if (sanitized.refund_reference && String(sanitized.refund_reference).trim()) {
+    return String(sanitized.refund_reference).trim();
+  }
+  return null;
+}
+
+function storedPendingRefundId(intent) {
+  const payload = intentPayload(intent);
+  const pending = payload.pendingRefund && typeof payload.pendingRefund === "object" ? payload.pendingRefund : null;
+  if (pending?.externalRefundId) return String(pending.externalRefundId);
+  return null;
+}
+
+/**
+ * Resolve the Paystack refund identity for a webhook.
+ * Webhook id/reference wins only when it does not contradict the stored pending id.
+ */
+function resolveEffectiveRefundId(intent, webhookRefundId) {
+  const hookId = webhookRefundId ? String(webhookRefundId).trim() : "";
+  const storedId = storedPendingRefundId(intent);
+  const ids = finalizedRefundIds(intent);
+
+  if (hookId && storedId && hookId !== storedId) {
+    if (ids.includes(hookId)) {
+      return { effectiveRefundId: hookId, alreadyFinalized: true, mismatch: false };
+    }
+    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: true };
+  }
+
+  const effectiveRefundId = hookId || storedId || null;
+  if (!effectiveRefundId) {
+    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: false };
+  }
+  return {
+    effectiveRefundId,
+    alreadyFinalized: ids.includes(effectiveRefundId) || isRefundAlreadyFinalized(intent, { externalRefundId: effectiveRefundId }),
+    mismatch: false,
+  };
+}
+
+function refundWebhookEventId(effectiveRefundId, event) {
+  return `paystack-refund:${String(effectiveRefundId)}:${String(event || "event")}`;
+}
+
 async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey) {
-  if (isRefundAlreadyFinalized(intent, result.externalRefundId)) {
+  const externalRefundId = result?.externalRefundId || null;
+  if (isRefundAlreadyFinalized(intent, { externalRefundId, idempotencyKey })) {
     return { alreadyFinalized: true, refundAmt, intent };
   }
   const newRefunded = roundMoney((Number(intent.refundedAmount) || 0) + refundAmt);
   const fullyRefunded = newRefunded >= roundMoney(Number(intent.amount)) - EPS;
   const payload = intentPayload(intent);
   delete payload.pendingRefund;
+  const key = refundFinalizationKey(externalRefundId, idempotencyKey);
+  const ids = finalizedRefundIds(intent);
+  if (externalRefundId && !ids.includes(String(externalRefundId))) {
+    ids.push(String(externalRefundId));
+  }
+  payload.finalizedRefundIds = ids;
   payload.lastRefund = {
     amount: refundAmt,
     at: new Date().toISOString(),
-    externalRefundId: result.externalRefundId,
+    externalRefundId,
     idempotencyKey: idempotencyKey || null,
+    finalizationKey: key,
     finalized: true,
   };
   const updated = await prisma.paymentIntent.update({
@@ -164,6 +240,7 @@ async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey)
       refundedAmount: newRefunded,
       refundedAt: fullyRefunded ? new Date() : intent.refundedAt || new Date(),
       gatewayPayload: payload,
+      ...(intent.kind === "LABOR" ? { escrowStatus: "REFUNDED" } : {}),
     },
   });
   await logAudit(AUDIT_ACTIONS.PAYMENT_REFUND, {
@@ -179,9 +256,6 @@ async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey)
       idempotencyKey: idempotencyKey || null,
     },
   });
-  if (intent.kind === "LABOR" && intent.jobId) {
-    await escrowSettlement.markLaborIntentRefunded(intent.jobId);
-  }
   if (intent.materialOrderId) {
     await escrowSettlement.markMaterialIntentRefunded(intent.materialOrderId, Boolean(refundAmt));
   }
@@ -202,8 +276,28 @@ async function hasFinalCustomerRefundInvoice(jobId, externalRefundId) {
   });
 }
 
+async function jobHasActivePendingRefund(jobId) {
+  const intents = await findRefundableLaborIntents(jobId);
+  return intents.some((row) => Boolean(readPendingRefund(row)));
+}
+
+/**
+ * After one Paystack slice processes, start the next FIFO slice only if
+ * customer business pending remains and no other slice is already pending.
+ */
+async function continueFifoRefundIfNeeded(jobId, remainingBusinessAmount) {
+  const left = roundMoney(remainingBusinessAmount);
+  if (left <= EPS) return { continued: false, reason: "nothing_remaining" };
+  if (await jobHasActivePendingRefund(jobId)) {
+    return { continued: false, reason: "already_pending" };
+  }
+  return refundJobLaborAcrossIntents(jobId, left, {
+    idempotencyKey: `paystack-fifo-continue:${jobId}:${left.toFixed(2)}`,
+  });
+}
+
 async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRefundId) {
-  if (!intent.jobId) return { invoiceCreated: false, notified: false };
+  if (!intent.jobId) return { invoiceCreated: false, notified: false, businessComplete: false };
   const paymentService = require("../payment.service");
   const notificationEvents = require("../notificationEvents.service");
   const { mutateJobMetaInTransaction } = require("../jobMeta.service");
@@ -212,13 +306,17 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
     where: { id: String(intent.jobId) },
     select: { id: true, customerId: true, meta: true },
   });
-  if (!job) return { invoiceCreated: false, notified: false };
+  if (!job) return { invoiceCreated: false, notified: false, businessComplete: false };
 
   const meta = job.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta : {};
   const refund = meta.refund && typeof meta.refund === "object" ? meta.refund : {};
+  const refsBefore = Array.isArray(refund.gatewayRefundRefs) ? refund.gatewayRefundRefs.map(String) : [];
+  const sliceAlreadyApplied = Boolean(externalRefundId && refsBefore.includes(String(externalRefundId)));
   const alreadyCompleted = String(refund.customerRefundStatus || "") === "REFUND_COMPLETED";
+  const alreadyNotified = Boolean(refund.customerNotifiedAt) || Boolean(refund.completedAt && alreadyCompleted);
+
   let invoiceCreated = false;
-  if (!alreadyCompleted && !(await hasFinalCustomerRefundInvoice(job.id, externalRefundId))) {
+  if (externalRefundId && !(await hasFinalCustomerRefundInvoice(job.id, externalRefundId))) {
     await paymentService.createRefundInvoiceInTransaction(prisma, {
       userId: job.customerId,
       jobId: job.id,
@@ -234,39 +332,59 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
     invoiceCreated = true;
   }
 
-  if (!alreadyCompleted) {
+  if (!sliceAlreadyApplied && !alreadyCompleted) {
     await prisma.$transaction(async (tx) => {
       await mutateJobMetaInTransaction(tx, job.id, (m) => {
         const current = m.refund && typeof m.refund === "object" ? m.refund : {};
         const prevImmediate = Number(current.immediateRefund) || 0;
         const prevPending = Number(current.pendingRefund) || 0;
+        const newPending = Math.max(0, roundMoney(prevPending - refundAmt));
+        const businessComplete = newPending <= EPS;
         const refs = Array.isArray(current.gatewayRefundRefs) ? current.gatewayRefundRefs.slice() : [];
         if (externalRefundId && !refs.includes(String(externalRefundId))) {
           refs.push(String(externalRefundId));
         }
+        const now = new Date().toISOString();
         return {
           ...m,
           refund: {
             ...current,
-            status: "processed",
-            customerRefundStatus: "REFUND_COMPLETED",
+            status: businessComplete ? "processed" : "partial",
+            customerRefundStatus: businessComplete ? "REFUND_COMPLETED" : "REFUND_PROCESSING",
             immediateRefund: roundMoney(prevImmediate + refundAmt),
-            pendingRefund: Math.max(0, roundMoney(prevPending - refundAmt)),
-            readyPayoutAmount: 0,
+            pendingRefund: newPending,
+            readyPayoutAmount: businessComplete ? 0 : current.readyPayoutAmount,
             gatewayRefundRefs: refs,
-            completedAt: current.completedAt || new Date().toISOString(),
+            completedAt: businessComplete ? current.completedAt || now : current.completedAt || null,
+            customerNotifiedAt: businessComplete ? current.customerNotifiedAt || now : current.customerNotifiedAt || null,
           },
         };
       });
     });
   }
 
+  const freshJob = await prisma.job.findUnique({
+    where: { id: job.id },
+    select: { meta: true },
+  });
+  const freshMeta = freshJob?.meta && typeof freshJob.meta === "object" ? freshJob.meta : {};
+  const freshRefund = freshMeta.refund && typeof freshMeta.refund === "object" ? freshMeta.refund : {};
+  const remaining = Math.max(0, roundMoney(Number(freshRefund.pendingRefund) || 0));
+  const businessComplete = remaining <= EPS;
+
   let notified = false;
-  if (job.customerId && !alreadyCompleted) {
-    await notificationEvents.notifyCustomerRefundProcessed(job.customerId, job.id, refundAmt);
+  if (job.customerId && businessComplete && !alreadyNotified) {
+    const notifyAmount = Number(freshRefund.immediateRefund) || refundAmt;
+    await notificationEvents.notifyCustomerRefundProcessed(job.customerId, job.id, notifyAmount);
     notified = true;
   }
-  return { invoiceCreated, notified };
+
+  let continued = null;
+  if (!businessComplete) {
+    continued = await continueFifoRefundIfNeeded(job.id, remaining);
+  }
+
+  return { invoiceCreated, notified, businessComplete, remaining, continued };
 }
 
 /**
@@ -540,4 +658,9 @@ module.exports = {
   applyIntentRefundMoney,
   hasFinalCustomerRefundInvoice,
   isRefundAlreadyFinalized,
+  refundFinalizationKey,
+  webhookRefundIdFromSanitized,
+  resolveEffectiveRefundId,
+  refundWebhookEventId,
+  continueFifoRefundIfNeeded,
 };
