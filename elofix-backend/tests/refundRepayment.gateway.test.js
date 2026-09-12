@@ -235,6 +235,13 @@ async function createJobFixtures(prisma, suffix, { debtAmount = 232.5, extraJob 
       customerId: customerUser.id,
       providerId: providerUser.id,
       status: "ACCEPTED",
+      meta: {
+        refund: {
+          pendingRefund: debtAmount,
+          immediateRefund: 0,
+          customerRefundStatus: null,
+        },
+      },
     },
   });
   const recovery = await prisma.refundRecovery.create({
@@ -261,7 +268,16 @@ async function createJobFixtures(prisma, suffix, { debtAmount = 232.5, extraJob 
     },
   });
   let jobB = null;
+  let customerB = null;
   if (extraJob) {
+    customerB = await prisma.user.create({
+      data: {
+        email: `gw-repay-custb-${suffix}@example.com`,
+        password: "hash",
+        name: "Gateway Customer B",
+        role: "CUSTOMER",
+      },
+    });
     jobB = await prisma.job.create({
       data: {
         title: `Gateway repay B ${suffix}`,
@@ -269,16 +285,23 @@ async function createJobFixtures(prisma, suffix, { debtAmount = 232.5, extraJob 
         location: "Cape Town",
         description: "second job",
         price: 250,
-        customerId: customerUser.id,
+        customerId: customerB.id,
         providerId: providerUser.id,
         status: "ACCEPTED",
+        meta: {
+          refund: {
+            pendingRefund: debtAmount,
+            immediateRefund: 0,
+            customerRefundStatus: null,
+          },
+        },
       },
     });
     await prisma.refundRecovery.create({
       data: {
         id: randomUUID(),
         providerId: provider.id,
-        customerId: customerUser.id,
+        customerId: customerB.id,
         jobId: jobB.id,
         totalPending: debtAmount,
         recoveredAmount: 0,
@@ -298,7 +321,7 @@ async function createJobFixtures(prisma, suffix, { debtAmount = 232.5, extraJob 
       },
     });
   }
-  return { providerUser, provider, customerUser, adminUser, job, jobB, recovery, debtAmount };
+  return { providerUser, provider, customerUser, customerB, adminUser, job, jobB, recovery, debtAmount };
 }
 
 async function cleanupJobFixtures(prisma, fixtures) {
@@ -317,7 +340,14 @@ async function cleanupJobFixtures(prisma, fixtures) {
   await prisma.user
     .deleteMany({
       where: {
-        id: { in: [fixtures.providerUser.id, fixtures.customerUser.id, fixtures.adminUser.id] },
+        id: {
+          in: [
+            fixtures.providerUser.id,
+            fixtures.customerUser.id,
+            fixtures.adminUser.id,
+            fixtures.customerB?.id,
+          ].filter(Boolean),
+        },
       },
     })
     .catch(() => {});
@@ -668,6 +698,156 @@ async function runDbIntegrationTests() {
     gwAdmin.restore();
     notifyAdmin.restore();
     await cleanupJobFixtures(prisma, fixturesAdmin);
+  }
+
+  const fixturesScope = await createJobFixtures(prisma, `${suffix}-scope`, { extraJob: true });
+  const gwScope = installGatewayMocks();
+  try {
+    const checkoutA = await refundRecovery.createProviderRefundRepaymentCheckout(
+      fixturesScope.providerUser.id,
+      fixturesScope.job.id,
+      { provider: "PAYFAST", amount: 232.5 }
+    );
+    const checkoutB = await refundRecovery.createProviderRefundRepaymentCheckout(
+      fixturesScope.providerUser.id,
+      fixturesScope.jobB.id,
+      { provider: "PAYSTACK", amount: 232.5 }
+    );
+
+    const expectedA = await refundRecovery.getProviderExpectedRepaymentAmount(
+      fixturesScope.provider.id,
+      { jobId: fixturesScope.job.id }
+    );
+    const expectedB = await refundRecovery.getProviderExpectedRepaymentAmount(
+      fixturesScope.provider.id,
+      { jobId: fixturesScope.jobB.id }
+    );
+    const expectedAll = await refundRecovery.getProviderExpectedRepaymentAmount(
+      fixturesScope.provider.id
+    );
+    assert.strictEqual(expectedA.expectedAmount, 232.5);
+    assert.strictEqual(expectedB.expectedAmount, 232.5);
+    assert.strictEqual(expectedAll.expectedAmount, 465);
+
+    const reviews = await refundRecovery.listAdminRefundRepayments({ view: "reviews" });
+    const adminA = reviews.find((r) => r.id === checkoutA.repaymentId);
+    const adminB = reviews.find((r) => r.id === checkoutB.repaymentId);
+    assert.strictEqual(adminA.expectedAmount, 232.5);
+    assert.strictEqual(adminB.expectedAmount, 232.5);
+    assert.strictEqual(adminA.amountMismatch, false);
+    assert.strictEqual(adminB.amountMismatch, false);
+
+    const summaryBoth = await refundRecovery.getProviderRefundDebtSummary(fixturesScope.provider.id);
+    const recA = summaryBoth.recoveries.find((r) => r.jobId === fixturesScope.job.id);
+    const recB = summaryBoth.recoveries.find((r) => r.jobId === fixturesScope.jobB.id);
+    assert.ok(recA && recB);
+    assert.strictEqual(recA.pendingRepayment.id, checkoutA.repaymentId);
+    assert.strictEqual(recB.pendingRepayment.id, checkoutB.repaymentId);
+    assert.strictEqual(recA.repaymentStatus, "REFUND_DUE");
+    assert.strictEqual(recB.repaymentStatus, "REFUND_DUE");
+
+    await prisma.paymentIntent.update({
+      where: { id: checkoutB.intentId },
+      data: {
+        state: "PAID",
+        paidAt: new Date(),
+        gatewayTransactionId: "ps-job-b",
+        amount: new Prisma.Decimal("232.50"),
+      },
+    });
+
+    const summaryPaidB = await refundRecovery.getProviderRefundDebtSummary(fixturesScope.provider.id);
+    const recAAfterPaidB = summaryPaidB.recoveries.find((r) => r.jobId === fixturesScope.job.id);
+    const recBAfterPaidB = summaryPaidB.recoveries.find((r) => r.jobId === fixturesScope.jobB.id);
+    assert.strictEqual(recAAfterPaidB.repaymentStatus, "REFUND_DUE");
+    assert.strictEqual(recBAfterPaidB.repaymentStatus, "AWAITING_VERIFICATION");
+    assert.strictEqual(recBAfterPaidB.pendingRepayment.gatewayPaymentVerified, true);
+    assert.notStrictEqual(recAAfterPaidB.pendingRepayment.id, recBAfterPaidB.pendingRepayment.id);
+
+    const jobAMetaBefore = await prisma.job.findUnique({
+      where: { id: fixturesScope.job.id },
+      select: { meta: true },
+    });
+
+    const confirmedB = await refundRecovery.confirmAdminRefundRepayment(
+      fixturesScope.adminUser.id,
+      checkoutB.repaymentId
+    );
+    assert.ok(confirmedB.repayment);
+    assert.ok(
+      !(confirmedB.customerRefund?.results || []).some((r) => r.jobId === fixturesScope.job.id),
+      "Job A must not appear in Job B customer-refund results"
+    );
+
+    const recoveryA = await prisma.refundRecovery.findFirst({
+      where: { providerId: fixturesScope.provider.id, jobId: fixturesScope.job.id },
+    });
+    const recoveryB = await prisma.refundRecovery.findFirst({
+      where: { providerId: fixturesScope.provider.id, jobId: fixturesScope.jobB.id },
+    });
+    assert.strictEqual(Number(recoveryA.recoveredAmount), 0);
+    assert.strictEqual(recoveryA.status, "PENDING");
+    assert.strictEqual(Number(recoveryB.recoveredAmount), 232.5);
+    assert.strictEqual(recoveryB.status, "RECOVERED");
+
+    const debtA = await prisma.earning.findMany({
+      where: {
+        providerId: fixturesScope.provider.id,
+        jobId: fixturesScope.job.id,
+        type: "debit",
+        status: "refund_debt",
+      },
+    });
+    const debtB = await prisma.earning.findMany({
+      where: {
+        providerId: fixturesScope.provider.id,
+        jobId: fixturesScope.jobB.id,
+        type: "debit",
+        status: "refund_debt",
+      },
+    });
+    assert.strictEqual(debtA.length, 1);
+    assert.strictEqual(Number(debtA[0].amount), 232.5);
+    assert.strictEqual(debtB.length, 0);
+
+    const jobAAfter = await prisma.job.findUnique({
+      where: { id: fixturesScope.job.id },
+      select: { meta: true },
+    });
+    const jobBAfter = await prisma.job.findUnique({
+      where: { id: fixturesScope.jobB.id },
+      select: { meta: true },
+    });
+    assert.deepStrictEqual(jobAAfter.meta, jobAMetaBefore.meta);
+    const jobBRefund =
+      jobBAfter.meta && typeof jobBAfter.meta === "object" ? jobBAfter.meta.refund : null;
+    assert.ok(jobBRefund && jobBRefund.customerRefundStatus);
+
+    await prisma.paymentIntent.update({
+      where: { id: checkoutA.intentId },
+      data: {
+        state: "PAID",
+        paidAt: new Date(),
+        gatewayTransactionId: "pf-job-a",
+        amount: new Prisma.Decimal("232.50"),
+      },
+    });
+    await refundRecovery.confirmAdminRefundRepayment(
+      fixturesScope.adminUser.id,
+      checkoutA.repaymentId
+    );
+    const recoveryA2 = await prisma.refundRecovery.findFirst({
+      where: { providerId: fixturesScope.provider.id, jobId: fixturesScope.job.id },
+    });
+    assert.strictEqual(Number(recoveryA2.recoveredAmount), 232.5);
+    assert.strictEqual(recoveryA2.status, "RECOVERED");
+    const stillB = await prisma.refundRecovery.findFirst({
+      where: { providerId: fixturesScope.provider.id, jobId: fixturesScope.jobB.id },
+    });
+    assert.strictEqual(Number(stillB.recoveredAmount), 232.5);
+  } finally {
+    gwScope.restore();
+    await cleanupJobFixtures(prisma, fixturesScope);
   }
 
   const fixturesBank = await createJobFixtures(prisma, `${suffix}-bank`);

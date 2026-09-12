@@ -89,13 +89,18 @@ async function createRefundDebt(tx, { providerId, jobId, amount, idempotencyKey 
  * Core FIFO refund_debt ledger reduction (no RefundRecovery mirror).
  * @returns {number} amount recovered
  */
-async function recoverRefundDebtLedgerOnly(tx, { providerId, jobId, amount, idempotencyKey }) {
+async function recoverRefundDebtLedgerOnly(tx, { providerId, jobId, debtJobId, amount, idempotencyKey }) {
   let remaining = Number(amount) || 0;
   let debtRecovered = 0;
   if (remaining <= EPS) return 0;
 
   const debts = await tx.earning.findMany({
-    where: { providerId, type: "debit", status: "refund_debt" },
+    where: {
+      providerId,
+      type: "debit",
+      status: "refund_debt",
+      ...(debtJobId ? { jobId: String(debtJobId) } : {}),
+    },
     orderBy: { createdAt: "asc" },
   });
 
@@ -122,13 +127,14 @@ async function recoverRefundDebtLedgerOnly(tx, { providerId, jobId, amount, idem
   return debtRecovered;
 }
 
-async function mirrorDebtRecoveryToRefundRecoveries(tx, { providerId, amount }) {
+async function mirrorDebtRecoveryToRefundRecoveries(tx, { providerId, amount, debtJobId }) {
   if (amount <= EPS) return [];
   try {
     const refundRecovery = require("./refundRecovery.service");
     return refundRecovery.applyRecoveryToRefundRecoveriesInTransaction(tx, {
       providerId,
       amount,
+      debtJobId: debtJobId || null,
     });
   } catch (_e) {
     return [];
@@ -165,16 +171,18 @@ async function recoverRefundDebtFromRelease(tx, { providerId, jobId, releaseAmou
  * Recover refund debt directly (bank transfer admin confirm) without a job release.
  * @returns {{ recovered: number, payouts: Array }}
  */
-async function recoverRefundDebtByAmount(tx, { providerId, jobId, amount, idempotencyKey }) {
+async function recoverRefundDebtByAmount(tx, { providerId, jobId, debtJobId, amount, idempotencyKey }) {
   const recovered = await recoverRefundDebtLedgerOnly(tx, {
     providerId,
     jobId,
+    debtJobId: debtJobId || null,
     amount,
     idempotencyKey,
   });
   const payouts = await mirrorDebtRecoveryToRefundRecoveries(tx, {
     providerId,
     amount: recovered,
+    debtJobId: debtJobId || null,
   });
   return { recovered, payouts };
 }

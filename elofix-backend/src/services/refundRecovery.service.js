@@ -277,7 +277,7 @@ async function createRefundRecoveryInTransaction(tx, {
  * Apply recovered amount to RefundRecovery rows FIFO; returns payout details for customer gateway.
  * @returns {Array<{ recoveryId, customerId, jobId, amount }>}
  */
-async function applyRecoveryToRefundRecoveriesInTransaction(tx, { providerId, amount }) {
+async function applyRecoveryToRefundRecoveriesInTransaction(tx, { providerId, amount, debtJobId = null }) {
   let remaining = roundMoney(amount);
   const payouts = [];
   if (remaining <= EPS) return payouts;
@@ -286,6 +286,7 @@ async function applyRecoveryToRefundRecoveriesInTransaction(tx, { providerId, am
     where: {
       providerId,
       status: { in: ACTIVE_RECOVERY_STATUSES },
+      ...(debtJobId ? { jobId: String(debtJobId) } : {}),
     },
     orderBy: { createdAt: "asc" },
   });
@@ -331,6 +332,7 @@ async function applyProviderRecovery(tx, {
   amount,
   source = "future_earnings",
   jobId = null,
+  debtJobId = null,
   idempotencyKey = null,
 }) {
   const target = roundMoney(amount);
@@ -339,6 +341,7 @@ async function applyProviderRecovery(tx, {
   const { recovered, payouts } = await earningService.recoverRefundDebtByAmount(tx, {
     providerId,
     jobId,
+    debtJobId: debtJobId || null,
     amount: target,
     idempotencyKey,
   });
@@ -555,7 +558,7 @@ async function getProviderRefundDebtSummary(providerProfileId) {
   await ensureRefundRecoveriesForProvider(providerProfileId);
   await repairOverstatedProviderRefundRecoveries(providerProfileId);
 
-  const [recoveries, pendingRepayment, lastRejectedRow] = await Promise.all([
+  const [recoveries, pendingRepayments, lastRejectedRow] = await Promise.all([
     prisma.refundRecovery.findMany({
       where: {
         providerId: providerProfileId,
@@ -573,7 +576,7 @@ async function getProviderRefundDebtSummary(providerProfileId) {
         },
       },
     }),
-    prisma.providerRefundRepayment.findFirst({
+    prisma.providerRefundRepayment.findMany({
       where: { providerId: providerProfileId, status: "SUBMITTED" },
       orderBy: { createdAt: "desc" },
       include: { paymentIntent: { select: SAFE_REPAYMENT_INTENT_SELECT } },
@@ -592,10 +595,20 @@ async function getProviderRefundDebtSummary(providerProfileId) {
   const earliestDue = recoveries[0]?.dueAt || null;
   const reference = recoveries[0]?.reference || null;
 
-  const pendingRepaymentDto = serializePendingRepayment(
-    pendingRepayment,
-    pendingRepayment?.paymentIntent || null
-  );
+  const pendingByJobId = new Map();
+  let legacyPendingDto = null;
+  for (const row of pendingRepayments) {
+    const dto = serializePendingRepayment(row, row.paymentIntent || null);
+    if (row.jobId) {
+      if (!pendingByJobId.has(String(row.jobId))) pendingByJobId.set(String(row.jobId), dto);
+    } else if (!legacyPendingDto) {
+      legacyPendingDto = dto;
+    }
+  }
+
+  const pendingRepaymentDto = pendingRepayments[0]
+    ? serializePendingRepayment(pendingRepayments[0], pendingRepayments[0].paymentIntent || null)
+    : null;
 
   const lastRejectedRepayment =
     !pendingRepaymentDto && lastRejectedRow
@@ -612,13 +625,22 @@ async function getProviderRefundDebtSummary(providerProfileId) {
         }
       : null;
 
+  function pendingForRecoveryJob(recoveryJobId) {
+    if (recoveryJobId && pendingByJobId.has(String(recoveryJobId))) {
+      return pendingByJobId.get(String(recoveryJobId));
+    }
+    if (pendingByJobId.size > 0) return null;
+    return legacyPendingDto;
+  }
+
   const recoveryDtos = recoveries.map((r) => {
     const balance = roundMoney(Number(r.totalPending) - Number(r.recoveredAmount));
     const refundMeta = refundMetaFromJob(r.job);
+    const pendingForRow = pendingForRecoveryJob(r.jobId);
     const repaymentStatus = deriveRepaymentStatus({
       recoveryStatus: r.status,
       balance,
-      pendingRepayment: pendingRepaymentDto,
+      pendingRepayment: pendingForRow,
       lastRejectedRepayment,
       customerRefundPending: refundMeta.customerRefundPending,
     });
@@ -633,6 +655,7 @@ async function getProviderRefundDebtSummary(providerProfileId) {
       balance,
       status: r.status,
       repaymentStatus,
+      pendingRepayment: pendingForRow,
       dueAt: r.dueAt,
       reference: r.reference,
       customerRefundPending: refundMeta.customerRefundPending,
@@ -774,7 +797,7 @@ async function getProviderJobRefundObligation(userId, jobId) {
 /**
  * Active refund-obligation total for a provider (authoritative expected repayment).
  */
-async function getProviderExpectedRepaymentAmount(providerProfileId) {
+async function getProviderExpectedRepaymentAmount(providerProfileId, { jobId } = {}) {
   await ensureRefundRecoveriesForProvider(providerProfileId);
   await repairOverstatedProviderRefundRecoveries(providerProfileId);
 
@@ -782,6 +805,7 @@ async function getProviderExpectedRepaymentAmount(providerProfileId) {
     where: {
       providerId: providerProfileId,
       status: { in: ACTIVE_RECOVERY_STATUSES },
+      ...(jobId ? { jobId: String(jobId) } : {}),
     },
     orderBy: { dueAt: "asc" },
     include: {
@@ -1797,10 +1821,23 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
 
   const providerIds = [...new Set(rows.map((r) => r.providerId))];
   const expectedByProvider = new Map();
+  const expectedByProviderJob = new Map();
   await Promise.all(
     providerIds.map(async (pid) => {
       expectedByProvider.set(pid, await getProviderExpectedRepaymentAmount(pid));
     })
+  );
+  await Promise.all(
+    rows
+      .filter((r) => r.jobId)
+      .map(async (r) => {
+        const key = `${r.providerId}:${r.jobId}`;
+        if (expectedByProviderJob.has(key)) return;
+        expectedByProviderJob.set(
+          key,
+          await getProviderExpectedRepaymentAmount(r.providerId, { jobId: r.jobId })
+        );
+      })
   );
 
   // Enrich with original customer payment refs for primary jobs
@@ -1852,7 +1889,15 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
   }
 
   return rows.map((row) => {
-    const ctx = { ...(expectedByProvider.get(row.providerId) || {}) };
+    const providerCtx = expectedByProvider.get(row.providerId) || {};
+    const jobCtx =
+      row.jobId ? expectedByProviderJob.get(`${row.providerId}:${row.jobId}`) : null;
+    const ctx = { ...(jobCtx || providerCtx) };
+    if (jobCtx) {
+      ctx.expectedAmount = jobCtx.expectedAmount;
+      ctx.recoveries = jobCtx.recoveries;
+      ctx.primary = jobCtx.primary || providerCtx.primary || null;
+    }
     // Prefer repayment-linked job for display/meta when present
     if (row.job) {
       ctx.primary = {
@@ -1899,7 +1944,10 @@ async function confirmAdminRefundRepayment(
     throw new AppError("Repayment amount is missing or invalid; cannot confirm", 400);
   }
 
-  const { expectedAmount } = await getProviderExpectedRepaymentAmount(repayment.providerId);
+  const debtJobId = repayment.jobId ? String(repayment.jobId) : null;
+  const { expectedAmount } = await getProviderExpectedRepaymentAmount(repayment.providerId, {
+    jobId: debtJobId,
+  });
   const difference = roundMoney(Math.abs(amount - expectedAmount));
   if (difference > EPS && !acknowledgePartial) {
     throw new AppError(
@@ -1915,9 +1963,13 @@ async function confirmAdminRefundRepayment(
       providerId: repayment.providerId,
       amount,
       source: repayment.method === "GATEWAY" ? "gateway_repayment" : "bank_transfer",
+      jobId: debtJobId,
+      debtJobId,
       idempotencyKey: `repayment:${repayment.id}`,
     });
-    payouts = p;
+    payouts = debtJobId
+      ? (p || []).filter((pay) => pay.jobId && String(pay.jobId) === debtJobId)
+      : p;
 
     await tx.providerRefundRepayment.update({
       where: { id: repayment.id },
@@ -1929,8 +1981,8 @@ async function confirmAdminRefundRepayment(
       },
     });
 
-    // Mark READY first so processAdminCustomerRefund / retry can find the job.
-    for (const pay of p) {
+    // Mark READY only for payouts belonging to this recovery (job-scoped when debtJobId is set).
+    for (const pay of payouts || []) {
       if (!pay.jobId || pay.amount <= EPS) continue;
       await mutateJobMetaInTransaction(tx, pay.jobId, (m) => {
         const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
@@ -2139,6 +2191,7 @@ module.exports = {
   assertProviderNoOverdueRefundDebt,
   assertProviderUserNoOverdueRefundDebt,
   getProviderRefundDebtSummary,
+  getProviderExpectedRepaymentAmount,
   getProviderJobRefundObligation,
   deriveRepaymentStatus,
   pendingRepaymentAwaitsAdmin,
