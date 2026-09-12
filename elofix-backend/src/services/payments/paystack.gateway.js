@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const AppError = require("../../utils/AppError");
 const { frontendBaseUrl, isPaystackConfigured, assertPaystackCredentials } = require("./paymentConfig");
 const { paystackRequest, readSecret, redactDeep } = require("./paystack.client");
+const { fromCents } = require("./money.util");
 const {
   ELOFIX_GROSS_COMMISSION_PERCENT,
   buildCheckoutInitializePayload,
@@ -13,6 +14,7 @@ const {
   isPaystackSubaccountCode,
   mapPaystackChargeEventState,
   sanitizePaystackWebhookRaw,
+  extractPaystackSplitEvidence,
 } = require("./paystack.payload");
 const {
   fetchSouthAfricanBanks,
@@ -126,20 +128,44 @@ async function verifyTransaction(reference) {
   if (status === "success") state = "PAID";
   else if (status === "failed") state = "FAILED";
   else if (status === "abandoned" || status === "cancelled" || status === "canceled") state = "CANCELLED";
+  const amountCents = data.amount != null ? Math.round(Number(data.amount)) : null;
+  const splitEvidence = extractPaystackSplitEvidence(data);
+  const raw = {
+    event: "transaction.verify",
+    reference: data.reference || ref,
+    id: data.id != null ? data.id : null,
+    status: data.status || null,
+    amount: amountCents,
+    currency: data.currency || "ZAR",
+    channel: data.channel || null,
+    verifySource: "paystack_transaction_verify",
+    ...splitEvidence,
+  };
+  const last4 = data.authorization && typeof data.authorization === "object" ? data.authorization.last4 : null;
+  const brand = data.authorization && typeof data.authorization === "object" ? data.authorization.brand : null;
+  if (last4) {
+    const digits = String(last4).replace(/\D/g, "").slice(-4);
+    if (digits.length === 4) raw.card_last4 = digits;
+  }
+  if (brand) raw.card_brand = String(brand).trim();
   return {
     valid: true,
     merchantReference: data.reference || ref,
     gatewayTransactionId: data.id != null ? String(data.id) : data.reference || ref,
     state,
-    amount: data.amount != null ? Number(data.amount) / 100 : undefined,
-    currency: data.currency || "ZAR",
+    amount: amountCents != null ? fromCents(amountCents) : undefined,
+    amountCents: Number.isFinite(amountCents) ? amountCents : undefined,
+    currency: String(data.currency || "ZAR").trim().toUpperCase() || "ZAR",
     status: data.status || null,
+    subaccount: splitEvidence.subaccount || null,
+    raw,
     data: redactDeep({
       status: data.status,
       reference: data.reference,
       amount: data.amount,
       currency: data.currency,
       channel: data.channel,
+      subaccount: splitEvidence.subaccount || null,
     }),
   };
 }
@@ -153,7 +179,8 @@ function verifyWebhookSignature(rawBody, signatureHeader, env = process.env) {
 }
 
 /**
- * Parse/verify primitive only. Not wired to app.js in Block 1.
+ * Parse/verify primitive only. Production settlement uses handlePaystackWebhook
+ * which re-verifies the transaction server-side after this signature check.
  * @param {Buffer|string} rawBody
  * @param {string|undefined} signatureHeader
  */
@@ -194,6 +221,7 @@ async function refund(gatewayTransactionIdOrReference, amountZar) {
     return {
       supported: true,
       ok: false,
+      pending: false,
       status: "FAILED",
       requiresManualAction: false,
       message: "missing_gateway_transaction_id",
@@ -211,9 +239,38 @@ async function refund(gatewayTransactionIdOrReference, amountZar) {
     return {
       supported: true,
       ok: false,
+      pending: false,
       status: "FAILED",
       requiresManualAction: false,
       message: err.message || "paystack_refund_failed",
+      data: err.paystack || null,
+    };
+  }
+}
+
+async function verifyRefund(refundId) {
+  const id = String(refundId || "").trim();
+  if (!id) {
+    return {
+      supported: true,
+      ok: false,
+      pending: false,
+      status: "FAILED",
+      requiresManualAction: false,
+      message: "missing_refund_id",
+    };
+  }
+  try {
+    const { json, httpStatus } = await paystackRequest("GET", `/refund/${encodeURIComponent(id)}`);
+    return mapPaystackRefundResult(json, httpStatus >= 200 && httpStatus < 300);
+  } catch (err) {
+    return {
+      supported: true,
+      ok: false,
+      pending: false,
+      status: "VERIFY_FAILED",
+      requiresManualAction: false,
+      message: "paystack_refund_verify_failed",
       data: err.paystack || null,
     };
   }
@@ -269,6 +326,9 @@ async function updatePayoutDestination(recipientId, profile) {
 async function deactivatePayoutDestination(recipientId) {
   const code = String(recipientId || "").trim();
   if (!code) return { supported: true, message: "no_recipient" };
+  if (!isPaystackSubaccountCode(code)) {
+    return { supported: false, requiresManualAction: true, message: "invalid_subaccount_code" };
+  }
   try {
     await paystackRequest("PUT", `/subaccount/${encodeURIComponent(code)}`, { active: false });
     return { supported: true, status: "DEACTIVATED" };
@@ -283,6 +343,9 @@ async function deactivatePayoutDestination(recipientId) {
 async function getPayoutDestinationStatus(recipientId) {
   const code = String(recipientId || "").trim();
   if (!code) return { supported: false, status: null };
+  if (!isPaystackSubaccountCode(code)) {
+    return { supported: false, requiresManualAction: true, status: null, message: "invalid_subaccount_code" };
+  }
   try {
     const { json } = await paystackRequest("GET", `/subaccount/${encodeURIComponent(code)}`);
     const mapped = destinationResult(json?.data || { subaccount_code: code });
@@ -326,6 +389,7 @@ module.exports = {
   verifyWebhook,
   verifyWebhookSignature,
   refund,
+  verifyRefund,
   supportsMarketplaceSettlement,
   createPayoutDestination,
   updatePayoutDestination,

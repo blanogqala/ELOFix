@@ -511,17 +511,20 @@ async function testRefundPendingNotFinal() {
     await withEnv({ ...validTestEnv() }, async () => {
       const raw = await paystack.refund("999", 93);
       assert.strictEqual(raw.ok, false);
+      assert.strictEqual(raw.pending, true);
       assert.strictEqual(raw.status, "PENDING");
       assert.strictEqual(raw.supported, true);
-      assert.strictEqual(raw.requiresManualAction, true);
+      assert.strictEqual(raw.requiresManualAction, false);
       assert.strictEqual(raw.externalRefundId, "18237078");
       const normalized = normalizeGatewayRefundResult(raw);
       assert.strictEqual(normalized.ok, false);
+      assert.strictEqual(normalized.pending, true);
       assert.strictEqual(normalized.status, "PENDING");
       const classified = classifyGatewayRefundResult(normalized);
       assert.strictEqual(classified.success, false);
       assert.strictEqual(classified.failed, false);
-      assert.strictEqual(classified.manualOnly, true);
+      assert.strictEqual(classified.manualOnly, false);
+      assert.strictEqual(classified.pending, true);
     });
   } finally {
     fetchMock.restore();
@@ -529,7 +532,14 @@ async function testRefundPendingNotFinal() {
 
   const processed = mapPaystackRefundResult({ status: true, data: { id: 1, status: "processed" } }, true);
   assert.strictEqual(processed.ok, true);
+  assert.strictEqual(processed.pending, false);
   assert.strictEqual(processed.status, "COMPLETED");
+
+  const needs = mapPaystackRefundResult({ status: true, data: { id: 2, status: "needs-attention" } }, true);
+  assert.strictEqual(needs.ok, false);
+  assert.strictEqual(needs.pending, true);
+  assert.strictEqual(needs.status, "NEEDS_ATTENTION");
+  assert.strictEqual(needs.requiresManualAction, true);
 }
 
 async function testVerifyTransactionMocked() {
@@ -643,17 +653,66 @@ function testSanitizeWebhookRaw() {
   assert.ok(!Object.prototype.hasOwnProperty.call(raw, "authorization_code"));
 }
 
+function testSanitizeWebhookRawSubaccountObject() {
+  const raw = sanitizePaystackWebhookRaw({
+    event: "charge.success",
+    data: {
+      reference: "EF-SAFE",
+      id: 9,
+      status: "success",
+      amount: 10000,
+      currency: "ZAR",
+      subaccount: {
+        subaccount_code: "ACCT_SAFE",
+        account_number: "1234567890",
+        settlement_bank: "Example Bank",
+      },
+      authorization: { authorization_code: "AUTH_KEEP_OUT", bank: "Example Bank", bin: "408408" },
+      customer: { email: "no@store.test" },
+    },
+  });
+  assert.strictEqual(raw.subaccount, "ACCT_SAFE");
+  const serialized = JSON.stringify(raw);
+  assert.ok(!serialized.includes("1234567890"));
+  assert.ok(!serialized.includes("Example Bank"));
+  assert.ok(!serialized.includes("AUTH_KEEP_OUT"));
+  assert.ok(!raw.account_number);
+  assert.ok(!raw.settlement_bank);
+  assert.ok(!raw.authorization);
+  assert.ok(!raw.customer);
+}
+
 function testInvalidSubaccountCodesRejected() {
   const blank = paystack.updatePayoutDestination("", { bankName: "FNB" });
   const numeric = paystack.updatePayoutDestination("123", { bankName: "FNB" });
   const transfer = paystack.updatePayoutDestination("TRF_ABC", { bankName: "FNB" });
-  return Promise.all([blank, numeric, transfer]).then(([a, b, c]) => {
+  const deactivateNumeric = paystack.deactivatePayoutDestination("123");
+  const deactivateTransfer = paystack.deactivatePayoutDestination("TRF_ABC");
+  const statusNumeric = paystack.getPayoutDestinationStatus("123");
+  const statusTransfer = paystack.getPayoutDestinationStatus("TRF_ABC");
+  return Promise.all([
+    blank,
+    numeric,
+    transfer,
+    deactivateNumeric,
+    deactivateTransfer,
+    statusNumeric,
+    statusTransfer,
+  ]).then(([a, b, c, d, e, f, g]) => {
     assert.strictEqual(a.supported, false);
     assert.strictEqual(a.message, "invalid_subaccount_code");
     assert.strictEqual(b.supported, false);
     assert.strictEqual(b.message, "invalid_subaccount_code");
     assert.strictEqual(c.supported, false);
     assert.strictEqual(c.message, "invalid_subaccount_code");
+    assert.strictEqual(d.supported, false);
+    assert.strictEqual(d.message, "invalid_subaccount_code");
+    assert.strictEqual(e.supported, false);
+    assert.strictEqual(e.message, "invalid_subaccount_code");
+    assert.strictEqual(f.supported, false);
+    assert.strictEqual(f.message, "invalid_subaccount_code");
+    assert.strictEqual(g.supported, false);
+    assert.strictEqual(g.message, "invalid_subaccount_code");
   });
 }
 
@@ -860,6 +919,7 @@ async function main() {
   testWebhookSignaturePrimitive();
   testUnrelatedPaystackEventsDoNotSettle();
   testSanitizeWebhookRaw();
+  testSanitizeWebhookRawSubaccountObject();
   await testInvalidSubaccountCodesRejected();
   await testValidSubaccountCodeAcceptedForUpdate();
   await testCreateCheckoutHttpMocked();

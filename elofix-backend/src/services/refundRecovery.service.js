@@ -235,14 +235,44 @@ async function processStagedCustomerPayouts(payouts) {
       const gateway = await attemptGatewayRefundFirst(p.jobId, p.amount);
       if (gateway.failed) {
         console.warn("[refundRecovery] staged payout gateway failed", p.jobId, gateway.result);
+        continue;
       }
-      await paymentService.createRefundInvoice(
-        p.customerId,
-        p.jobId,
-        p.amount,
-        0,
-        "0000"
-      );
+      if (!gateway.result?.ok) {
+        await prisma.$transaction(async (tx) => {
+          await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
+            const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
+            const pending = Boolean(gateway.pending || gateway.result?.pending);
+            const actionRequired = Boolean(gateway.manualOnly && pending);
+            return {
+              ...m,
+              refund: {
+                ...refund,
+                customerRefundStatus: actionRequired
+                  ? refund.customerRefundStatus || "REFUND_PROCESSING"
+                  : "REFUND_PROCESSING",
+                status: actionRequired ? "needs_attention" : refund.status || "processing",
+                actionRequired: actionRequired || Boolean(refund.actionRequired),
+                actionRequiredReason: actionRequired
+                  ? gateway.result?.message || "paystack_refund_needs_attention"
+                  : refund.actionRequiredReason || null,
+              },
+            };
+          });
+        });
+        continue;
+      }
+      const externalRefundId =
+        gateway.result?.externalRefundId ||
+        (gateway.result?.results || []).map((r) => r.externalRefundId).find(Boolean) ||
+        null;
+      await paymentService.createRefundInvoiceInTransaction(prisma, {
+        userId: p.customerId,
+        jobId: p.jobId,
+        laborRefund: p.amount,
+        materialsRefund: 0,
+        cardLast4: "0000",
+        meta: { externalRefundId, source: "staged_customer_payout" },
+      });
       await notificationEvents.notifyCustomerStagedRefundPayout({
         customerId: p.customerId,
         jobId: p.jobId,
@@ -257,8 +287,11 @@ async function processStagedCustomerPayouts(payouts) {
             ...m,
             refund: {
               ...refund,
+              status: "processed",
+              customerRefundStatus: "REFUND_COMPLETED",
               immediateRefund: roundMoney(prevImmediate + p.amount),
               pendingRefund: Math.max(0, roundMoney(prevPending - p.amount)),
+              completedAt: new Date().toISOString(),
             },
           };
         });
@@ -990,6 +1023,54 @@ async function executeCustomerRefundPayouts(adminUserId, repayment, payouts) {
       idempotencyKey: `admin-customer-refund:${repayment.id}:${p.jobId}`,
     });
 
+    if (gateway.pending && !gateway.requiresManualAction) {
+      await prisma.$transaction(async (tx) => {
+        await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
+          const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
+          return {
+            ...m,
+            refund: {
+              ...refund,
+              status: "processing",
+              customerRefundStatus: "REFUND_PROCESSING",
+              originalPaymentIntentIds: gateway.originalPaymentIntentIds || [],
+              gatewayRefundRefs: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
+            },
+          };
+        });
+      });
+      results.push({ jobId: p.jobId, status: "REFUND_PROCESSING", gateway });
+      continue;
+    }
+
+    if (gateway.pending && gateway.requiresManualAction) {
+      await prisma.$transaction(async (tx) => {
+        await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
+          const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
+          return {
+            ...m,
+            refund: {
+              ...refund,
+              status: "needs_attention",
+              customerRefundStatus: "REFUND_PROCESSING",
+              actionRequired: true,
+              actionRequiredReason: gateway.message || "paystack_refund_needs_attention",
+              originalPaymentIntentIds: gateway.originalPaymentIntentIds || [],
+              gatewayRefundRefs: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
+            },
+          };
+        });
+      });
+      await notificationEvents.notifyAdminGatewayRefundManualRequired({
+        jobId: p.jobId,
+        repaymentId: repayment.id,
+        amount: p.amount,
+        reason: gateway.message,
+      });
+      results.push({ jobId: p.jobId, status: "REFUND_PROCESSING", gateway });
+      continue;
+    }
+
     if (gateway.requiresManualAction || gateway.supported === false) {
       await prisma.$transaction(async (tx) => {
         await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
@@ -1051,7 +1132,15 @@ async function executeCustomerRefundPayouts(adminUserId, repayment, payouts) {
     }
 
     // Success — update meta and invoice
-    await paymentService.createRefundInvoice(p.customerId, p.jobId, p.amount, 0, "0000");
+    const externalRefundId = (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean)[0] || null;
+    await paymentService.createRefundInvoiceInTransaction(prisma, {
+      userId: p.customerId,
+      jobId: p.jobId,
+      laborRefund: p.amount,
+      materialsRefund: 0,
+      cardLast4: "0000",
+      meta: { externalRefundId, source: "admin_customer_refund" },
+    });
     await prisma.$transaction(async (tx) => {
       await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
         const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
@@ -1085,6 +1174,7 @@ function summarizeCustomerRefundPayoutResults(results) {
   const statuses = (results || []).map((r) => String(r.status || ""));
   if (!statuses.length) return "NONE";
   if (statuses.every((s) => s === "REFUND_COMPLETED")) return "REFUND_COMPLETED";
+  if (statuses.some((s) => s === "REFUND_PROCESSING")) return "REFUND_PROCESSING";
   if (statuses.some((s) => s === "REFUND_FAILED")) return "REFUND_FAILED";
   if (statuses.some((s) => s === "REFUND_MANUAL_ACTION_REQUIRED")) {
     return "REFUND_MANUAL_ACTION_REQUIRED";

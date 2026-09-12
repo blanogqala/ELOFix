@@ -5,6 +5,7 @@ const {
   marketplaceSettlementEnabled,
   settlementCapableGateway,
 } = require("./payments/paymentConfig");
+const { normalizeProvider, GATEWAYS } = require("./payments/gatewayRegistry");
 
 const SCOPES = new Set(["provider", "branch"]);
 const MATERIAL_FIELDS = ["bankName", "accountHolder", "accountNumber", "branchCode", "accountType"];
@@ -101,6 +102,20 @@ async function updateProfile(scope, entityId, data) {
   throw new AppError("Invalid payout scope", 400);
 }
 
+function profileRecipientOwnedByGateway(profile, gw) {
+  if (!profile?.gatewayRecipientId) return false;
+  const stored = normalizeProvider(profile.gatewayProvider);
+  const selected = normalizeProvider(gw?.name);
+  return Boolean(stored && selected && stored === selected);
+}
+
+function gatewayOwningStoredRecipient(profile) {
+  if (!profile?.gatewayProvider || !profile?.gatewayRecipientId) return null;
+  const key = normalizeProvider(profile.gatewayProvider);
+  if (!key || !GATEWAYS[key]) return null;
+  return GATEWAYS[key];
+}
+
 function buildDestinationPayload(profile, scope, entityId) {
   const plain = profilePlainFields(profile);
   return {
@@ -118,7 +133,7 @@ function buildDestinationPayload(profile, scope, entityId) {
 
 async function callGatewayRegister(gw, profile, scope, entityId) {
   const payload = buildDestinationPayload(profile, scope, entityId);
-  if (profile.gatewayRecipientId && typeof gw.updatePayoutDestination === "function") {
+  if (profileRecipientOwnedByGateway(profile, gw) && typeof gw.updatePayoutDestination === "function") {
     return gw.updatePayoutDestination(profile.gatewayRecipientId, payload);
   }
   if (typeof gw.createPayoutDestination === "function") {
@@ -193,7 +208,7 @@ async function deactivatePayoutDestination({ scope, entityId, profile: profileIn
   const profile = profileIn || (await loadProfile(scope, entityId));
   if (!profile) return { deactivated: false };
 
-  const gw = settlementCapableGateway();
+  const gw = gatewayOwningStoredRecipient(profile);
   if (gw && profile.gatewayRecipientId) {
     const result = await callGatewayDeactivate(gw, profile);
     if (result?.supported === false && profile.gatewayRecipientId) {
@@ -309,6 +324,17 @@ async function assertSettlementDestinationReady({ scope, entityId }) {
   return { ready: true, profile };
 }
 
+async function getPayoutDestinationStatus({ scope, entityId }) {
+  if (!SCOPES.has(scope)) throw new AppError("Invalid payout scope", 400);
+  const profile = await loadProfile(scope, entityId);
+  if (!profile?.gatewayRecipientId) return { supported: false, status: null };
+  const gw = gatewayOwningStoredRecipient(profile);
+  if (!gw || typeof gw.getPayoutDestinationStatus !== "function") {
+    return { supported: false, status: null, message: "owning_gateway_unavailable" };
+  }
+  return gw.getPayoutDestinationStatus(profile.gatewayRecipientId);
+}
+
 function toMaskedAdminProfile(profile, scope, entityId) {
   if (!profile) return null;
   return {
@@ -373,8 +399,11 @@ module.exports = {
   gatewaySettlementSupported,
   detectMaterialBankChange,
   profilePlainFields,
+  profileRecipientOwnedByGateway,
+  gatewayOwningStoredRecipient,
   registerPayoutDestination,
   deactivatePayoutDestination,
+  getPayoutDestinationStatus,
   canDeactivatePayoutProfile,
   assertSettlementDestinationReady,
   toMaskedAdminProfile,

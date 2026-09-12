@@ -6,9 +6,44 @@ const MARKETPLACE_SPLIT_KINDS = new Set(["LABOR", "MATERIAL_ORDER", "JOB_STORE_O
 const REPAYMENT_KIND = "PROVIDER_REFUND_REPAYMENT";
 const NO_SPLIT_KINDS = new Set([REPAYMENT_KIND]);
 const PAYSTACK_CHARGE_SETTLEMENT_EVENTS = new Set(["charge.success", "charge.failed"]);
+const PAYSTACK_REFUND_EVENTS = new Set([
+  "refund.pending",
+  "refund.processing",
+  "refund.needs-attention",
+  "refund.needs_attention",
+  "refund.failed",
+  "refund.processed",
+]);
+const ACTIVE_PENDING_REFUND_STATUSES = new Set(["PENDING", "PROCESSING", "NEEDS_ATTENTION"]);
 
 function isPaystackSubaccountCode(code) {
   return /^ACCT_/i.test(String(code || "").trim());
+}
+
+/**
+ * Persist only a safe ACCT_ code. Paystack may send subaccount as an object
+ * containing account_number / settlement_bank — never store that object.
+ */
+function safePaystackSubaccountCode(value) {
+  if (typeof value === "string") {
+    const code = value.trim();
+    return isPaystackSubaccountCode(code) ? code : null;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return (
+      safePaystackSubaccountCode(value.subaccount_code) ||
+      safePaystackSubaccountCode(value.subaccount)
+    );
+  }
+  return null;
+}
+
+function isPaystackRefundEvent(event) {
+  return PAYSTACK_REFUND_EVENTS.has(String(event || "").trim().toLowerCase());
+}
+
+function isActivePendingRefundStatus(status) {
+  return ACTIVE_PENDING_REFUND_STATUSES.has(String(status || "").trim().toUpperCase());
 }
 
 function isMarketplaceSplitKind(kind) {
@@ -194,23 +229,25 @@ function buildCreateRefundPayload({ transaction, amountMajor = null, currency = 
 
 /**
  * Map Paystack refund API status into the EloFix gateway.refund contract.
- * pending must NOT be treated as final money movement (ok: false).
+ * pending/processing is async — not final money movement and not manual failure.
  */
 function mapPaystackRefundResult(json, httpOk) {
   const data = json && typeof json === "object" ? json.data || json : {};
   const rawStatus = String(data.status || json?.status || "").trim().toLowerCase();
   const externalRefundId =
     data.id != null ? String(data.id) : data.refund_reference ? String(data.refund_reference) : null;
+  const safeData = { status: data.status || rawStatus };
 
   if (rawStatus === "processed" || rawStatus === "success" || rawStatus === "completed") {
     return {
       supported: true,
       ok: true,
+      pending: false,
       status: "COMPLETED",
       requiresManualAction: false,
       externalRefundId,
       message: null,
-      data: { status: data.status || rawStatus },
+      data: safeData,
     };
   }
 
@@ -218,11 +255,25 @@ function mapPaystackRefundResult(json, httpOk) {
     return {
       supported: true,
       ok: false,
+      pending: true,
       status: "PENDING",
-      requiresManualAction: true,
+      requiresManualAction: false,
       externalRefundId,
       message: "paystack_refund_pending",
-      data: { status: data.status || rawStatus },
+      data: safeData,
+    };
+  }
+
+  if (rawStatus === "needs-attention" || rawStatus === "needs_attention") {
+    return {
+      supported: true,
+      ok: false,
+      pending: true,
+      status: "NEEDS_ATTENTION",
+      requiresManualAction: true,
+      externalRefundId,
+      message: "paystack_refund_needs_attention",
+      data: safeData,
     };
   }
 
@@ -230,11 +281,12 @@ function mapPaystackRefundResult(json, httpOk) {
   return {
     supported: true,
     ok: false,
+    pending: false,
     status: "FAILED",
     requiresManualAction: false,
     externalRefundId,
     message: json?.message || (failed ? "paystack_refund_failed" : "paystack_refund_unknown"),
-    data: { status: data.status || rawStatus },
+    data: safeData,
   };
 }
 
@@ -269,6 +321,43 @@ function fourDigitLast4(value) {
   return last4.length === 4 ? last4 : null;
 }
 
+function numericOrNull(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Safe split evidence from a Paystack charge/verify payload.
+ * Never persist the full subaccount/authorization/customer objects.
+ */
+function extractPaystackSplitEvidence(data) {
+  const src = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  const evidence = {};
+  const subaccount = safePaystackSubaccountCode(src.subaccount) || safePaystackSubaccountCode(src.subaccount_code);
+  if (subaccount) evidence.subaccount = subaccount;
+  if (src.fees != null) evidence.fees = src.fees;
+  const feesSplitSrc =
+    src.fees_split && typeof src.fees_split === "object" && !Array.isArray(src.fees_split)
+      ? src.fees_split
+      : null;
+  if (feesSplitSrc) {
+    evidence.fees_split = {
+      paystack: numericOrNull(feesSplitSrc.paystack),
+      integration: numericOrNull(feesSplitSrc.integration),
+      subaccount: numericOrNull(feesSplitSrc.subaccount),
+    };
+  }
+  if (src.bearer != null && String(src.bearer).trim()) {
+    evidence.bearer = String(src.bearer).trim();
+  }
+  if (src.percentage_charge != null && src.percentage_charge !== "") {
+    const pct = Number(src.percentage_charge);
+    if (Number.isFinite(pct)) evidence.percentage_charge = pct;
+  }
+  return evidence;
+}
+
 /**
  * Minimized webhook object for later PaymentIntent.gatewayPayload persistence.
  * Never include authorization objects, customer PII, bins, tokens, or bank accounts.
@@ -280,14 +369,10 @@ function sanitizePaystackWebhookRaw(body) {
       ? data.authorization
       : {};
   const last4 = fourDigitLast4(auth.last4 || data.last4 || data.card_last4);
-  const brand = String(auth.brand || auth.card_type || data.card_brand || "").trim() || null;
-  const feesSplitSrc =
-    data.fees_split && typeof data.fees_split === "object" && !Array.isArray(data.fees_split)
-      ? data.fees_split
-      : null;
+  const brand = String(auth.brand || auth.card_type || data.card_type || data.card_brand || "").trim() || null;
   const raw = {
     event: body?.event != null ? String(body.event) : null,
-    reference: data.reference || null,
+    reference: data.reference || data.transaction_reference || null,
     id: data.id != null ? data.id : null,
     status: data.status || null,
     amount: data.amount != null ? data.amount : null,
@@ -296,17 +381,29 @@ function sanitizePaystackWebhookRaw(body) {
   };
   if (last4) raw.card_last4 = last4;
   if (brand) raw.card_brand = brand;
-  const subaccount = data.subaccount || data.subaccount_code || null;
-  if (subaccount) raw.subaccount = subaccount;
-  if (data.fees != null) raw.fees = data.fees;
-  if (feesSplitSrc) {
-    raw.fees_split = {
-      paystack: feesSplitSrc.paystack ?? null,
-      integration: feesSplitSrc.integration ?? null,
-      subaccount: feesSplitSrc.subaccount ?? null,
-    };
-  }
+  Object.assign(raw, extractPaystackSplitEvidence(data));
   return raw;
+}
+
+function sanitizePaystackRefundRaw(body) {
+  const data = body && typeof body.data === "object" && body.data && !Array.isArray(body.data) ? body.data : {};
+  const transaction =
+    data.transaction && typeof data.transaction === "object" && !Array.isArray(data.transaction)
+      ? data.transaction
+      : {};
+  return {
+    event: body?.event != null ? String(body.event) : null,
+    id: data.id != null ? data.id : null,
+    refund_reference: data.refund_reference != null ? String(data.refund_reference) : null,
+    transaction_reference:
+      data.transaction_reference ||
+      transaction.reference ||
+      data.reference ||
+      null,
+    amount: data.amount != null ? data.amount : null,
+    currency: data.currency || null,
+    status: data.status || null,
+  };
 }
 
 module.exports = {
@@ -315,10 +412,15 @@ module.exports = {
   MARKETPLACE_SPLIT_KINDS,
   REPAYMENT_KIND,
   PAYSTACK_CHARGE_SETTLEMENT_EVENTS,
+  PAYSTACK_REFUND_EVENTS,
+  ACTIVE_PENDING_REFUND_STATUSES,
   isPaystackSubaccountCode,
+  safePaystackSubaccountCode,
   isMarketplaceSplitKind,
   isRepaymentKind,
   isNoSplitKind,
+  isPaystackRefundEvent,
+  isActivePendingRefundStatus,
   buildCreateSubaccountPayload,
   buildUpdateSubaccountPayload,
   buildBaseInitializePayload,
@@ -330,6 +432,8 @@ module.exports = {
   alreadySplitSettlementResult,
   mapPaystackChargeEventState,
   isPaystackChargeSettlementEvent,
+  extractPaystackSplitEvidence,
   sanitizePaystackWebhookRaw,
+  sanitizePaystackRefundRaw,
   toCents,
 };

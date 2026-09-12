@@ -175,6 +175,7 @@ function normalizeInvoice(invoice) {
     createdAt: invoice.createdAt || new Date().toISOString(),
     driverName: invoice.driverName || undefined,
     vehicleInfo: invoice.vehicleInfo || undefined,
+    meta: invoice.meta && typeof invoice.meta === "object" ? invoice.meta : undefined,
   };
 }
 
