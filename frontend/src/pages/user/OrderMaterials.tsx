@@ -802,7 +802,7 @@ export default function OrderMaterials() {
               </div>
 
               <p className="text-sm text-muted-foreground">
-                Pay with PayFast, Payflex, or PayJustNow. You will be redirected to complete payment securely.
+                You will be redirected to complete payment securely with the selected payment provider.
               </p>
 
               {error && (

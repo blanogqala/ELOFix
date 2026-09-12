@@ -205,6 +205,36 @@ async function getWithdrawalProfile(reqUser, branchId) {
   return branchProfileResponse(branchId, profile, verificationStatus);
 }
 
+async function registerExistingPayoutGateway(reqUser, branchId) {
+  const actor = await resolveBranchPortalActor(reqUser);
+  await requireBranchAccess(actor, branchId);
+  await requireBranchManager(reqUser, branchId);
+
+  const profile = await prisma.branchWithdrawalProfile.findUnique({
+    where: { branchId: String(branchId) },
+  });
+  if (!profile || profile.isActive === false) {
+    throw new AppError("No active bank profile to register", 404);
+  }
+  if (!profile.bankName || !profile.accountHolder) {
+    throw new AppError("Bank profile is incomplete", 400);
+  }
+
+  const registration = await branchSettlementService.registerBranchPayoutProfile(branchId);
+  const refreshed = await prisma.branchWithdrawalProfile.findUnique({
+    where: { branchId: String(branchId) },
+  });
+  const verificationStatus = registration.verificationStatus || deriveVerificationStatus(refreshed);
+  await logBranchPayoutAudit(
+    AUDIT_ACTIONS.PAYOUT_VERIFICATION_REQUESTED,
+    branchId,
+    refreshed,
+    reqUser.userId,
+    { mode: "register-gateway" }
+  );
+  return branchProfileResponse(branchId, refreshed, verificationStatus);
+}
+
 async function persistBranchWithdrawalProfile(reqUser, branchId, body, { mode = "upsert" } = {}) {
   const actor = await resolveBranchPortalActor(reqUser);
   await requireBranchAccess(actor, branchId);
@@ -379,6 +409,7 @@ async function computeSupplierAvailableWithdrawalsSummary(supplierOrgId, query =
 module.exports = {
   getBranchBalance,
   getWithdrawalProfile,
+  registerExistingPayoutGateway,
   upsertWithdrawalProfile,
   replaceWithdrawalProfile,
   deactivateWithdrawalProfile,

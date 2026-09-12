@@ -622,6 +622,37 @@ async function getWithdrawalProfile(userId) {
   return providerProfileResponse(profile, verificationStatus, removeMeta);
 }
 
+async function registerExistingPayoutGateway(userId) {
+  const provider = await requireProviderByUserId(userId);
+  const profile = await prisma.providerWithdrawalProfile.findUnique({
+    where: { providerId: provider.id },
+  });
+  if (!profile || profile.isActive === false) {
+    throw new AppError("No active payout profile to register", 404);
+  }
+  if (!profile.bankName || !profile.accountHolder) {
+    throw new AppError("Payout profile is incomplete", 400);
+  }
+
+  const registration = await payoutDestinationService.registerPayoutDestination({
+    scope: "provider",
+    entityId: provider.id,
+  });
+
+  const refreshed = await prisma.providerWithdrawalProfile.findUnique({
+    where: { providerId: provider.id },
+  });
+  const verificationStatus = registration.verificationStatus || deriveVerificationStatus(refreshed);
+  const removeMeta = await payoutDestinationService.canDeactivatePayoutProfile({
+    scope: "provider",
+    entityId: provider.id,
+  });
+  await logPayoutAudit(AUDIT_ACTIONS.PAYOUT_VERIFICATION_REQUESTED, provider, refreshed, userId, {
+    mode: "register-gateway",
+  });
+  return providerProfileResponse(refreshed, verificationStatus, removeMeta);
+}
+
 async function upsertWithdrawalProfile(userId, body) {
   return persistProviderWithdrawalProfile(userId, body, { mode: "upsert", actorUserId: userId });
 }
@@ -937,6 +968,7 @@ module.exports = {
   getLedgerSummary,
   getLedgerSummaryTx,
   getWithdrawalProfile,
+  registerExistingPayoutGateway,
   upsertWithdrawalProfile,
   replaceWithdrawalProfile,
   deactivateWithdrawalProfile,

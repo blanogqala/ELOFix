@@ -64,9 +64,57 @@ async function testConfirmReturnDoesNotPay() {
   }
 }
 
+async function testPaystackConfirmReturnDoesNotPay() {
+  if (!process.env.DATABASE_URL) {
+    console.log("confirmPaymentReturn.production.test.js: skip Paystack DB case (DATABASE_URL not set)");
+    return;
+  }
+  const { Prisma } = require("@prisma/client");
+  const prisma = require("../src/config/prisma");
+  const paymentIntentService = require("../src/services/payments/paymentIntent.service");
+  const merchantReference = `EF-PSK-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+  const user =
+    (await prisma.user.findFirst({ where: { role: "CUSTOMER" }, select: { id: true } })) ||
+    (await prisma.user.create({
+      data: {
+        email: `ret.psk.${Date.now()}@example.com`,
+        password: "x",
+        name: "Return Paystack",
+        role: "CUSTOMER",
+      },
+    }));
+  const intent = await prisma.paymentIntent.create({
+    data: {
+      id: randomUUID(),
+      merchantReference,
+      provider: "PAYSTACK",
+      kind: "LABOR",
+      paymentType: "DEPOSIT",
+      userId: user.id,
+      amount: new Prisma.Decimal("100.00"),
+      commissionAmount: new Prisma.Decimal("7.00"),
+      recipientAmount: new Prisma.Decimal("93.00"),
+      currency: "ZAR",
+      state: "PENDING",
+      escrowStatus: "HELD",
+    },
+  });
+  try {
+    const out = await paymentIntentService.confirmPaymentReturn(intent.id, user.id, "CUSTOMER");
+    assert.notStrictEqual(out.intent.state, "PAID");
+    assert.strictEqual(out.intent.state, "PROCESSING");
+    const fresh = await prisma.paymentIntent.findUnique({ where: { id: intent.id } });
+    assert.notStrictEqual(fresh.state, "PAID");
+    assert.strictEqual(fresh.state, "PROCESSING");
+  } finally {
+    await prisma.paymentIntent.delete({ where: { id: intent.id } }).catch(() => {});
+  }
+}
+
 async function run() {
   await testFlag();
   await testConfirmReturnDoesNotPay();
+  await testPaystackConfirmReturnDoesNotPay();
   console.log("confirmPaymentReturn.production.test.js: all passed");
 }
 

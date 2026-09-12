@@ -15,6 +15,7 @@ const {
   mapPaystackChargeEventState,
   sanitizePaystackWebhookRaw,
   extractPaystackSplitEvidence,
+  safePaystackSubaccountCode,
 } = require("./paystack.payload");
 const {
   fetchSouthAfricanBanks,
@@ -56,9 +57,24 @@ async function resolveBankCodeForProfile(profile) {
 }
 
 function destinationResult(data, bankCode) {
-  const code = data?.subaccount_code || data?.subaccount || null;
+  const code = safePaystackSubaccountCode(data?.subaccount_code || data?.subaccount);
   const verified = Boolean(data?.is_verified);
   const active = data?.active !== false;
+  if (!code) {
+    return {
+      supported: false,
+      requiresManualAction: true,
+      status: "INVALID_RECIPIENT",
+      message: "Paystack destination did not return a valid subaccount",
+      data: {
+        is_verified: verified,
+        active,
+        domain: data?.domain || null,
+        paystackBankCode: bankCode || null,
+        bank_code: bankCode || null,
+      },
+    };
+  }
   let status = "PENDING";
   if (!active) status = "DEACTIVATED";
   else if (verified) status = "VERIFIED";
@@ -86,9 +102,9 @@ async function createCheckout(intent, customer) {
   if (!isConfigured()) {
     throw new AppError("PAYSTACK is not configured", 503);
   }
-  const subaccountCode = await paystackRecipient.lookupMarketplaceSubaccount(intent);
   let payload;
   try {
+    const subaccountCode = await paystackRecipient.lookupMarketplaceSubaccount(intent);
     payload = buildCheckoutInitializePayload(
       { ...intent, returnUrl: checkoutReturnUrl(intent) },
       customer,
@@ -363,7 +379,40 @@ async function createProviderSettlement(intent) {
   return alreadySplitSettlementResult(intent);
 }
 
-async function createSupplierSettlement(intent) {
+function paystackSplitEvidenceCode(intent) {
+  const payload =
+    intent?.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
+      ? intent.gatewayPayload
+      : {};
+  return safePaystackSubaccountCode(payload.subaccount || payload.subaccount_code);
+}
+
+function isPaystackIntent(intent) {
+  return String(intent?.provider || "").trim().toUpperCase() === "PAYSTACK";
+}
+
+async function createSupplierSettlement(intent, destination) {
+  if (!isPaystackIntent(intent)) {
+    return { supported: false, alreadySplitAtCharge: false, message: "not_paystack_intent" };
+  }
+  const destCode = destination?.recipientId != null ? String(destination.recipientId).trim() : "";
+  if (destCode && !isPaystackSubaccountCode(destCode)) {
+    return {
+      supported: false,
+      alreadySplitAtCharge: true,
+      requiresManualAction: true,
+      message: "invalid_paystack_recipient",
+    };
+  }
+  const evidenceCode = paystackSplitEvidenceCode(intent);
+  if (evidenceCode && destCode && evidenceCode.toUpperCase() !== destCode.toUpperCase()) {
+    return {
+      supported: false,
+      alreadySplitAtCharge: true,
+      requiresManualAction: true,
+      message: "subaccount_mismatch",
+    };
+  }
   return alreadySplitSettlementResult(intent);
 }
 

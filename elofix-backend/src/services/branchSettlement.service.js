@@ -136,17 +136,29 @@ async function initiateSettlementAfterPayment(tx, intent, order) {
   let gatewaySettlementId = null;
   let failureReason = null;
 
-  const destinationReady = await payoutDestinationService.assertSettlementDestinationReady({
-    scope: "branch",
-    entityId: branchId,
-  });
-
   const { marketplaceSettlementEnabled, settlementGatewayForIntent } = require("./payments/paymentConfig");
+  const { normalizeProvider } = require("./payments/gatewayRegistry");
   const gw = settlementGatewayForIntent(intent);
   if (gw && marketplaceSettlementEnabled()) {
+    const paystackIntent = normalizeProvider(intent?.provider) === "PAYSTACK";
+    const destinationReady = paystackIntent
+      ? await payoutDestinationService.assertPaystackSplitBookkeepingReady({
+          scope: "branch",
+          entityId: branchId,
+          intent,
+        })
+      : await payoutDestinationService.assertSettlementDestinationReady({
+          scope: "branch",
+          entityId: branchId,
+        });
     if (!destinationReady.ready) {
-      settlementStatus = destinationReady.reason?.includes("not verified") ? "ACTION_REQUIRED" : "PENDING";
-      failureReason = destinationReady.reason || "Branch bank profile not ready for settlement";
+      if (destinationReady.contradiction) {
+        settlementStatus = "FAILED";
+        failureReason = destinationReady.reason || "Paystack split recipient mismatch";
+      } else {
+        settlementStatus = destinationReady.reason?.includes("not verified") ? "ACTION_REQUIRED" : "PENDING";
+        failureReason = destinationReady.reason || "Branch bank profile not ready for settlement";
+      }
     } else {
       const profile = destinationReady.profile;
       const settlementResult = await gw.createSupplierSettlement(intent, {
@@ -154,7 +166,10 @@ async function initiateSettlementAfterPayment(tx, intent, order) {
         branchId,
         netAmount: net,
       });
-      if (settlementResult?.supported && settlementResult.settlementId) {
+      if (settlementResult?.message === "subaccount_mismatch") {
+        settlementStatus = "FAILED";
+        failureReason = "Paystack split recipient mismatch";
+      } else if (settlementResult?.supported && settlementResult.settlementId) {
         gatewaySettlementId = settlementResult.settlementId;
         settlementStatus = mapGatewaySettlementStatus(settlementResult.status);
       } else if (settlementResult?.supported) {
