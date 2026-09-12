@@ -6,6 +6,15 @@ const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/au
 const { roundMoney, EPS, isAsyncPendingGatewayRefund } = require("../../utils/refundMath.util");
 const { emitDomainUpdate } = require("../../utils/realtimeEmitter");
 const { isActivePendingRefundStatus } = require("./paystack.payload");
+const { toCents } = require("./money.util");
+
+const refundFinalizationTestHooks = {
+  afterApplyIntentRefundMoney: null,
+};
+
+function setRefundFinalizationTestHook(name, fn) {
+  refundFinalizationTestHooks[name] = typeof fn === "function" ? fn : null;
+}
 
 const REFUNDABLE_STATES = new Set(["PAID", "PARTIALLY_REFUNDED", "DISPUTED"]);
 
@@ -173,37 +182,133 @@ function webhookRefundIdFromSanitized(sanitized) {
 }
 
 function storedPendingRefundId(intent) {
-  const payload = intentPayload(intent);
-  const pending = payload.pendingRefund && typeof payload.pendingRefund === "object" ? payload.pendingRefund : null;
+  const pending = readPendingRefund(intent);
   if (pending?.externalRefundId) return String(pending.externalRefundId);
   return null;
+}
+
+function lastRefundRecord(intent) {
+  const last = intentPayload(intent).lastRefund;
+  return last && typeof last === "object" && !Array.isArray(last) ? last : null;
+}
+
+function lastRefundAttemptRecord(intent) {
+  const last = intentPayload(intent).lastRefundAttempt;
+  return last && typeof last === "object" && !Array.isArray(last) ? last : null;
+}
+
+/**
+ * Safe finalized-slice metadata for crash/retry resume.
+ * Never guesses from PaymentIntent.amount.
+ */
+function readFinalizedRefund(intent, externalRefundId) {
+  const last = lastRefundRecord(intent);
+  if (!last || last.finalized !== true) return null;
+  const lastId = last.externalRefundId != null ? String(last.externalRefundId) : null;
+  const wantId = externalRefundId != null && String(externalRefundId).trim() ? String(externalRefundId).trim() : null;
+  if (wantId && lastId && wantId !== lastId) return null;
+  if (wantId && !lastId && !finalizedRefundIds(intent).includes(wantId)) return null;
+  if (last.amount == null || !Number.isFinite(Number(last.amount))) return null;
+  return {
+    externalRefundId: lastId || wantId,
+    amount: roundMoney(Number(last.amount)),
+    idempotencyKey: last.idempotencyKey || null,
+    finalizationKey: last.finalizationKey || null,
+    finalized: true,
+  };
+}
+
+function amountCentsMatchesMajor(amountCents, major) {
+  if (amountCents == null || major == null || !Number.isFinite(Number(major))) return null;
+  if (!Number.isFinite(Number(amountCents))) return null;
+  return Math.round(Number(amountCents)) === toCents(major);
 }
 
 /**
  * Resolve the Paystack refund identity for a webhook.
  * Webhook id/reference wins only when it does not contradict the stored pending id.
+ * Missing webhook id may fall back to pending, lastRefund, or lastRefundAttempt
+ * only when that identity is unambiguous for this PaymentIntent.
  */
-function resolveEffectiveRefundId(intent, webhookRefundId) {
+function resolveEffectiveRefundId(intent, webhookRefundId, opts = {}) {
+  const event = String(opts.event || "").trim().toLowerCase();
+  const webhookAmountCents = opts.webhookAmountCents;
   const hookId = webhookRefundId ? String(webhookRefundId).trim() : "";
-  const storedId = storedPendingRefundId(intent);
+  const pending = readPendingRefund(intent);
+  const storedId = pending?.externalRefundId ? String(pending.externalRefundId) : null;
+  const last = lastRefundRecord(intent);
+  const lastId = last?.externalRefundId ? String(last.externalRefundId) : null;
+  const lastAttempt = lastRefundAttemptRecord(intent);
+  const lastAttemptId = lastAttempt?.externalRefundId ? String(lastAttempt.externalRefundId) : null;
   const ids = finalizedRefundIds(intent);
 
   if (hookId && storedId && hookId !== storedId) {
-    if (ids.includes(hookId)) {
-      return { effectiveRefundId: hookId, alreadyFinalized: true, mismatch: false };
+    if (ids.includes(hookId) || (lastId && hookId === lastId)) {
+      return { effectiveRefundId: hookId, alreadyFinalized: true, mismatch: false, source: "webhook_finalized" };
     }
-    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: true };
+    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: true, source: "contradiction" };
   }
 
-  const effectiveRefundId = hookId || storedId || null;
-  if (!effectiveRefundId) {
-    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: false };
+  if (hookId) {
+    return {
+      effectiveRefundId: hookId,
+      alreadyFinalized: ids.includes(hookId) || isRefundAlreadyFinalized(intent, { externalRefundId: hookId }),
+      mismatch: false,
+      source: "webhook",
+    };
   }
-  return {
-    effectiveRefundId,
-    alreadyFinalized: ids.includes(effectiveRefundId) || isRefundAlreadyFinalized(intent, { externalRefundId: effectiveRefundId }),
-    mismatch: false,
-  };
+
+  if (event === "refund.failed") {
+    if (storedId) {
+      return { effectiveRefundId: storedId, alreadyFinalized: false, mismatch: false, source: "pending" };
+    }
+    if (lastAttemptId) {
+      return { effectiveRefundId: lastAttemptId, alreadyFinalized: true, mismatch: false, source: "lastRefundAttempt" };
+    }
+    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: false, ambiguous: false, source: "none" };
+  }
+
+  if (storedId && !lastId) {
+    return { effectiveRefundId: storedId, alreadyFinalized: false, mismatch: false, source: "pending" };
+  }
+
+  if (!storedId && lastId) {
+    if (webhookAmountCents != null && amountCentsMatchesMajor(webhookAmountCents, last.amount) === false) {
+      return {
+        effectiveRefundId: null,
+        alreadyFinalized: false,
+        mismatch: false,
+        ambiguous: true,
+        source: "lastRefund_amount_mismatch",
+      };
+    }
+    return {
+      effectiveRefundId: lastId,
+      alreadyFinalized: true,
+      mismatch: false,
+      source: "lastRefund",
+    };
+  }
+
+  if (storedId && lastId) {
+    const lastMatch = amountCentsMatchesMajor(webhookAmountCents, last.amount);
+    const pendingMatch = amountCentsMatchesMajor(webhookAmountCents, pending?.requestedAmount);
+    if (lastMatch === true && pendingMatch !== true) {
+      return { effectiveRefundId: lastId, alreadyFinalized: true, mismatch: false, source: "lastRefund_amount" };
+    }
+    if (pendingMatch === true && lastMatch !== true) {
+      return { effectiveRefundId: storedId, alreadyFinalized: false, mismatch: false, source: "pending_amount" };
+    }
+    return {
+      effectiveRefundId: null,
+      alreadyFinalized: false,
+      mismatch: false,
+      ambiguous: true,
+      source: "ambiguous_pending_and_last",
+    };
+  }
+
+  return { effectiveRefundId: null, alreadyFinalized: false, mismatch: false, source: "none" };
 }
 
 function refundWebhookEventId(effectiveRefundId, event) {
@@ -260,6 +365,13 @@ async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey)
     await escrowSettlement.markMaterialIntentRefunded(intent.materialOrderId, Boolean(refundAmt));
   }
   await emitRefundDomainUpdate(intent);
+  if (typeof refundFinalizationTestHooks.afterApplyIntentRefundMoney === "function") {
+    await refundFinalizationTestHooks.afterApplyIntentRefundMoney({
+      intent: updated,
+      refundAmt,
+      externalRefundId,
+    });
+  }
   return { alreadyFinalized: false, refundAmt, intent: updated };
 }
 
@@ -287,13 +399,44 @@ async function jobHasActivePendingRefund(jobId) {
  */
 async function continueFifoRefundIfNeeded(jobId, remainingBusinessAmount) {
   const left = roundMoney(remainingBusinessAmount);
-  if (left <= EPS) return { continued: false, reason: "nothing_remaining" };
+  if (left <= EPS) return { continued: false, reason: "nothing_remaining", established: false };
   if (await jobHasActivePendingRefund(jobId)) {
-    return { continued: false, reason: "already_pending" };
+    return { continued: false, reason: "already_pending", established: true };
   }
-  return refundJobLaborAcrossIntents(jobId, left, {
+  const out = await refundJobLaborAcrossIntents(jobId, left, {
     idempotencyKey: `paystack-fifo-continue:${jobId}:${left.toFixed(2)}`,
   });
+  const established = Boolean(
+    out.pending ||
+      (Array.isArray(out.results) &&
+        out.results.some((row) => row.pending && (row.externalRefundId || row.status === "PENDING" || row.status === "NEEDS_ATTENTION")))
+  );
+  return { ...out, continued: established, established };
+}
+
+function classifyFifoContinuation(businessComplete, continued) {
+  if (businessComplete) {
+    return { needed: false, established: true, retryable: false, reason: null };
+  }
+  if (!continued) {
+    return { needed: true, established: false, retryable: true, reason: "continuation_not_attempted" };
+  }
+  if (continued.reason === "already_pending") {
+    return { needed: true, established: true, retryable: false, reason: "already_pending" };
+  }
+  if (continued.reason === "nothing_remaining") {
+    return { needed: false, established: true, retryable: false, reason: "nothing_remaining" };
+  }
+  if (continued.established || continued.pending) {
+    return { needed: true, established: true, retryable: false, reason: continued.message || "pending" };
+  }
+  const msg = continued.message || "continuation_failed";
+  const nonRetry =
+    msg === "no_paid_intent" ||
+    msg === "insufficient_paid_tranche" ||
+    msg === "manual_action_required" ||
+    msg === "zero_amount";
+  return { needed: true, established: false, retryable: !nonRetry, reason: msg };
 }
 
 async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRefundId) {
@@ -383,8 +526,37 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
   if (!businessComplete) {
     continued = await continueFifoRefundIfNeeded(job.id, remaining);
   }
+  const continuation = classifyFifoContinuation(businessComplete, continued);
 
-  return { invoiceCreated, notified, businessComplete, remaining, continued };
+  if (continuation.needed && !continuation.established) {
+    await prisma.$transaction(async (tx) => {
+      await mutateJobMetaInTransaction(tx, job.id, (m) => {
+        const current = m.refund && typeof m.refund === "object" ? m.refund : {};
+        return {
+          ...m,
+          refund: {
+            ...current,
+            customerRefundStatus: "REFUND_PROCESSING",
+            continuationError: continuation.reason || "continuation_failed",
+            continuationRetryable: continuation.retryable,
+          },
+        };
+      });
+    });
+  } else if (!continuation.needed || continuation.established) {
+    await prisma.$transaction(async (tx) => {
+      await mutateJobMetaInTransaction(tx, job.id, (m) => {
+        const current = m.refund && typeof m.refund === "object" ? m.refund : {};
+        if (!current.continuationError) return m;
+        const next = { ...current };
+        delete next.continuationError;
+        delete next.continuationRetryable;
+        return { ...m, refund: next };
+      });
+    });
+  }
+
+  return { invoiceCreated, notified, businessComplete, remaining, continued, continuation };
 }
 
 /**
@@ -392,10 +564,25 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
  * Customer invoice/notification only when finalizeCustomerArtifacts is true.
  */
 async function finalizeCustomerGatewayRefund(intent, { amount, externalRefundId, idempotencyKey, finalizeCustomerArtifacts = false } = {}) {
-  const refundAmt = roundMoney(amount != null ? amount : 0);
+  const recovered = readFinalizedRefund(intent, externalRefundId);
+  let refundAmt = amount != null && Number.isFinite(Number(amount)) ? roundMoney(Number(amount)) : null;
+  if (refundAmt == null && recovered?.amount != null) refundAmt = recovered.amount;
+  if (refundAmt == null) {
+    return {
+      alreadyFinalized: Boolean(recovered),
+      refundAmt: 0,
+      amount: 0,
+      intentId: intent.id,
+      invoiceCreated: false,
+      notified: false,
+      businessComplete: false,
+      continuation: { needed: false, established: false, retryable: false, reason: "missing_slice_amount" },
+      failedClosed: true,
+    };
+  }
   const result = { externalRefundId, ok: true, status: "COMPLETED" };
-  const money = await applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey);
-  let artifacts = { invoiceCreated: false, notified: false };
+  const money = await applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey || recovered?.idempotencyKey);
+  let artifacts = { invoiceCreated: false, notified: false, continuation: null };
   if (finalizeCustomerArtifacts) {
     const fresh = await prisma.paymentIntent.findUnique({ where: { id: intent.id } });
     artifacts = await finalizeJobCustomerRefundArtifacts(fresh || intent, refundAmt, externalRefundId);
@@ -663,4 +850,7 @@ module.exports = {
   resolveEffectiveRefundId,
   refundWebhookEventId,
   continueFifoRefundIfNeeded,
+  readFinalizedRefund,
+  lastRefundAttemptRecord,
+  setRefundFinalizationTestHook,
 };

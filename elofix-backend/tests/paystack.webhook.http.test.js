@@ -660,6 +660,10 @@ async function testChargeFailedDoesNotOverrideSuccessfulVerify() {
       const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
       assert.notStrictEqual(intent.state, "FAILED");
       assert.strictEqual(intent.state, "PENDING");
+      const events = await prisma.paymentWebhookEvent.findMany({
+        where: { paymentIntentId: fix.intent.id, provider: "PAYSTACK" },
+      });
+      assert.ok(events.some((row) => row.processedAt && String(row.externalEventId).includes("charge-ignored")));
     });
   } finally {
     fetchMock.restore();
@@ -690,8 +694,17 @@ async function testPaidIntentIgnoresStaleChargeFailed() {
         subaccount: "ACCT_PROV",
       });
       assert.strictEqual(res.status, 200, res.text);
+      const second = await postChargeEvent(app, fix.intent.merchantReference, "charge.failed", {
+        amount: 10000,
+        subaccount: "ACCT_PROV",
+      });
+      assert.strictEqual(second.status, 200, second.text);
       const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
       assert.strictEqual(intent.state, "PAID");
+      const events = await prisma.paymentWebhookEvent.findMany({
+        where: { paymentIntentId: fix.intent.id, provider: "PAYSTACK" },
+      });
+      assert.ok(events.some((row) => row.processedAt && String(row.externalEventId).includes("charge-ignored")));
     });
   } finally {
     fetchMock.restore();
