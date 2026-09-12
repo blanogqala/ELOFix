@@ -13,22 +13,64 @@ export type ProviderRefundDisplayMode =
   | 'customer_processing'
   | 'customer_completed';
 
+export type ProviderRefundPendingInput = {
+  id?: string;
+  status?: string;
+  jobId?: string | null;
+  method?: string | null;
+  gatewayProvider?: string | null;
+  paymentIntentState?: string | null;
+  gatewayPaymentVerified?: boolean;
+};
+
 export type ProviderRefundDisplayInput = {
   amountDue?: number | null;
-  pendingRepayment?: { id?: string; status?: string; jobId?: string | null } | null;
+  pendingRepayment?: ProviderRefundPendingInput | null;
   repaymentStatus?: string | null;
   customerRefundStatus?: string | null;
   /** Optional: current job id to ignore unrelated provider-wide SUBMITTED repayments */
   jobId?: string | null;
 };
 
+export type ProviderRefundDisplayResult = {
+  mode: ProviderRefundDisplayMode;
+  label: string;
+  showRepayCta: boolean;
+  processing: boolean;
+  ctaLabel: string | null;
+};
+
 function norm(s: string | null | undefined): string {
   return String(s || '').trim().toUpperCase();
 }
 
+function unpaidGatewayAttempt(pending: ProviderRefundPendingInput | null | undefined): boolean {
+  if (!pending) return false;
+  if (pending.gatewayPaymentVerified === true) return false;
+  const method = norm(pending.method);
+  if (method !== 'GATEWAY') return false;
+  const intentState = norm(pending.paymentIntentState);
+  return intentState !== 'PAID';
+}
+
+function displayResult(
+  mode: ProviderRefundDisplayMode,
+  label: string,
+  showRepayCta: boolean,
+  extras: { processing?: boolean; ctaLabel?: string | null } = {}
+): ProviderRefundDisplayResult {
+  return {
+    mode,
+    label,
+    showRepayCta,
+    processing: extras.processing ?? (showRepayCta ? false : mode !== 'hidden' && mode !== 'rejected'),
+    ctaLabel: showRepayCta ? extras.ctaLabel ?? 'Repay' : null,
+  };
+}
+
 export function resolveProviderRefundDisplay(
   input: ProviderRefundDisplayInput
-): { mode: ProviderRefundDisplayMode; label: string; showRepayCta: boolean } {
+): ProviderRefundDisplayResult {
   const crs = norm(input.customerRefundStatus);
   const rs = norm(input.repaymentStatus);
   const amountDue = Number(input.amountDue) || 0;
@@ -41,91 +83,105 @@ export function resolveProviderRefundDisplay(
     Boolean(pending) &&
     pendingStatus === 'SUBMITTED' &&
     (!jobId || !pendingJobId || pendingJobId === jobId);
+  const unpaidGateway = pendingAppliesToJob && unpaidGatewayAttempt(pending);
+  const awaitingAdmin =
+    pendingAppliesToJob &&
+    !unpaidGateway &&
+    (pending?.gatewayPaymentVerified === true ||
+      norm(pending?.method) !== 'GATEWAY');
 
   if (crs === 'REFUND_COMPLETED') {
-    return { mode: 'customer_completed', label: 'Customer refund completed', showRepayCta: false };
+    return displayResult('customer_completed', 'Customer refund completed', false, {
+      processing: false,
+    });
   }
   if (crs === 'REFUND_REQUESTED' || crs === 'REFUND_PROCESSING') {
-    return {
-      mode: 'customer_processing',
-      label: 'Repayment verified — customer refund processing',
-      showRepayCta: false,
-    };
+    return displayResult(
+      'customer_processing',
+      'Repayment verified — customer refund processing',
+      false,
+      { processing: true }
+    );
   }
   if (crs === 'REFUND_MANUAL_ACTION_REQUIRED') {
-    return {
-      mode: 'customer_processing',
-      label: 'Repayment verified — customer refund processing',
-      showRepayCta: false,
-    };
+    return displayResult(
+      'customer_processing',
+      'Repayment verified — customer refund processing',
+      false,
+      { processing: true }
+    );
   }
   if (crs === 'REFUND_FAILED') {
-    return {
-      mode: 'customer_processing',
-      label: 'Customer refund delayed — EloFix is following up',
-      showRepayCta: false,
-    };
+    return displayResult(
+      'customer_processing',
+      'Customer refund delayed — EloFix is following up',
+      false,
+      { processing: true }
+    );
   }
   if (crs === 'READY' || crs === 'REFUND_READY') {
-    return {
-      mode: 'verified_pending_customer',
-      label: 'Repayment verified — customer refund pending',
-      showRepayCta: false,
-    };
+    return displayResult(
+      'verified_pending_customer',
+      'Repayment verified — customer refund pending',
+      false,
+      { processing: true }
+    );
   }
 
   if (rs === 'REFUNDED' && amountDue <= 0 && !pendingAppliesToJob) {
-    return { mode: 'customer_completed', label: 'Customer refund completed', showRepayCta: false };
+    return displayResult('customer_completed', 'Customer refund completed', false, {
+      processing: false,
+    });
   }
   if (rs === 'REFUND_PROCESSING' && amountDue <= 0) {
-    return {
-      mode: 'verified_pending_customer',
-      label: 'Repayment verified — customer refund pending',
-      showRepayCta: false,
-    };
+    return displayResult(
+      'verified_pending_customer',
+      'Repayment verified — customer refund pending',
+      false,
+      { processing: true }
+    );
   }
 
-  if (pendingAppliesToJob && (amountDue > 0 || !crs)) {
-    return {
-      mode: 'awaiting_verification',
-      label: 'Repayment submitted — awaiting EloFix verification',
-      showRepayCta: false,
-    };
+  if (awaitingAdmin && (amountDue > 0 || !crs)) {
+    return displayResult(
+      'awaiting_verification',
+      'Repayment submitted — awaiting EloFix verification',
+      false,
+      { processing: true }
+    );
   }
 
-  if (rs === 'AWAITING_VERIFICATION' && amountDue > 0) {
-    return {
-      mode: 'awaiting_verification',
-      label: 'Repayment submitted — awaiting EloFix verification',
-      showRepayCta: false,
-    };
+  if (rs === 'AWAITING_VERIFICATION' && amountDue > 0 && !unpaidGateway) {
+    return displayResult(
+      'awaiting_verification',
+      'Repayment submitted — awaiting EloFix verification',
+      false,
+      { processing: true }
+    );
   }
 
   if (rs === 'PAYMENT_REJECTED' && amountDue > 0) {
-    return {
-      mode: 'rejected',
-      label: 'Repayment rejected — resubmit',
-      showRepayCta: true,
-    };
+    return displayResult('rejected', 'Repayment rejected — resubmit', true, {
+      processing: false,
+      ctaLabel: 'Repay',
+    });
   }
 
   if (rs === 'OVERDUE' && amountDue > 0) {
-    return {
-      mode: 'overdue',
-      label: 'Overdue — payment required',
-      showRepayCta: true,
-    };
+    return displayResult('overdue', 'Overdue — payment required', true, {
+      processing: false,
+      ctaLabel: unpaidGateway ? 'Continue payment' : 'Repay',
+    });
   }
 
   if (amountDue > 0) {
-    return {
-      mode: 'required',
-      label: 'Refund required',
-      showRepayCta: true,
-    };
+    return displayResult('required', unpaidGateway ? 'Continue payment' : 'Refund required', true, {
+      processing: false,
+      ctaLabel: unpaidGateway ? 'Continue payment' : 'Repay',
+    });
   }
 
-  return { mode: 'hidden', label: '', showRepayCta: false };
+  return displayResult('hidden', '', false, { processing: false, ctaLabel: null });
 }
 
 /** Customer-facing refund display from job DTO fields. */

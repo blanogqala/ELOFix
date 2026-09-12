@@ -1,61 +1,92 @@
 import { describe, expect, it } from 'vitest';
-
-/** Mirrors Service Price CTA visibility for provider refund repayment. */
-function canShowRepayRefundCta(obligation: {
-  amountDue: number;
-  pendingRepayment?: { id: string } | null;
-} | null): boolean {
-  if (!obligation) return false;
-  return obligation.amountDue > 0 || Boolean(obligation.pendingRepayment);
-}
-
-function repayCtaMode(obligation: {
-  amountDue: number;
-  pendingRepayment?: { id: string } | null;
-  customerRefundStatus?: string | null;
-  repaymentStatus?: string | null;
-} | null): 'hidden' | 'pending' | 'repay' | 'verified' | 'completed' {
-  if (!obligation) return 'hidden';
-  const crs = String(obligation.customerRefundStatus || '').toUpperCase();
-  if (crs === 'REFUND_COMPLETED') return 'completed';
-  if (crs === 'READY' || crs === 'REFUND_READY' || crs === 'REFUND_PROCESSING') return 'verified';
-  if (obligation.pendingRepayment && obligation.amountDue > 0) return 'pending';
-  if (obligation.amountDue > 0) return 'repay';
-  return 'hidden';
-}
-
-function repayCtaLabel(obligation: {
-  amountDue: number;
-  pendingRepayment?: { id: string } | null;
-} | null): string | null {
-  if (repayCtaMode(obligation) !== 'repay' || !obligation) return null;
-  return `Repay R${Number(obligation.amountDue).toFixed(2)}`;
-}
+import { resolveProviderRefundDisplay } from '@/lib/refundStatusDisplay';
 
 describe('provider repay refund CTA', () => {
   it('hides when no obligation', () => {
-    expect(repayCtaMode(null)).toBe('hidden');
-    expect(repayCtaMode({ amountDue: 0, pendingRepayment: null })).toBe('hidden');
+    const d = resolveProviderRefundDisplay({
+      amountDue: 0,
+      pendingRepayment: null,
+    });
+    expect(d.showRepayCta).toBe(false);
+    expect(d.mode).toBe('hidden');
   });
 
-  it('shows repay with amount in label when amount due and no pending submission', () => {
-    expect(repayCtaMode({ amountDue: 465, pendingRepayment: null })).toBe('repay');
-    expect(repayCtaLabel({ amountDue: 465, pendingRepayment: null })).toBe('Repay R465.00');
+  it('shows repay with amount due and no pending submission', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 465,
+      pendingRepayment: null,
+      repaymentStatus: 'REFUND_DUE',
+    });
+    expect(d.showRepayCta).toBe(true);
+    expect(d.ctaLabel).toBe('Repay');
   });
 
-  it('shows pending when repayment submitted', () => {
-    expect(
-      repayCtaMode({ amountDue: 250, pendingRepayment: { id: 'r1' } })
-    ).toBe('pending');
+  it('shows Continue payment for unpaid PENDING gateway repayment', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: {
+        id: 'r1',
+        status: 'SUBMITTED',
+        method: 'GATEWAY',
+        paymentIntentState: 'PENDING',
+        gatewayPaymentVerified: false,
+      },
+      repaymentStatus: 'REFUND_DUE',
+    });
+    expect(d.showRepayCta).toBe(true);
+    expect(d.processing).toBe(false);
+    expect(d.ctaLabel).toBe('Continue payment');
+  });
+
+  it('hides repay after gateway payment is authoritatively PAID', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: {
+        id: 'r1',
+        status: 'SUBMITTED',
+        method: 'GATEWAY',
+        paymentIntentState: 'PAID',
+        gatewayPaymentVerified: true,
+      },
+      repaymentStatus: 'AWAITING_VERIFICATION',
+    });
+    expect(d.showRepayCta).toBe(false);
+    expect(d.mode).toBe('awaiting_verification');
+  });
+
+  it('shows pending when manual transfer submitted', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 250,
+      pendingRepayment: { id: 'r1', status: 'SUBMITTED', method: 'BANK_TRANSFER' },
+    });
+    expect(d.mode).toBe('awaiting_verification');
+    expect(d.showRepayCta).toBe(false);
   });
 
   it('shows verified after admin confirm even if leftover pending object', () => {
-    expect(
-      repayCtaMode({
-        amountDue: 0,
-        pendingRepayment: { id: 'r1' },
-        customerRefundStatus: 'READY',
-      })
-    ).toBe('verified');
+    const d = resolveProviderRefundDisplay({
+      amountDue: 0,
+      pendingRepayment: { id: 'r1', status: 'SUBMITTED' },
+      customerRefundStatus: 'READY',
+    });
+    expect(d.mode).toBe('verified_pending_customer');
+    expect(d.showRepayCta).toBe(false);
+  });
+
+  it('returning from cancel and refetching unpaid attempt keeps CTA', () => {
+    const afterCancel = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: {
+        id: 'r1',
+        status: 'SUBMITTED',
+        method: 'GATEWAY',
+        gatewayProvider: 'PAYFAST',
+        paymentIntentState: 'PENDING',
+        gatewayPaymentVerified: false,
+      },
+      repaymentStatus: 'REFUND_DUE',
+    });
+    expect(afterCancel.showRepayCta).toBe(true);
+    expect(afterCancel.ctaLabel).toBe('Continue payment');
   });
 });

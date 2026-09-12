@@ -43,6 +43,79 @@ describe('resolveProviderRefundDisplay', () => {
       jobId: 'job-1',
     });
     expect(d.mode).toBe('awaiting_verification');
+    expect(d.showRepayCta).toBe(false);
+    expect(d.processing).toBe(true);
+  });
+
+  it('keeps repay CTA for unpaid PENDING gateway repayment', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: {
+        id: 'p1',
+        status: 'SUBMITTED',
+        jobId: 'job-1',
+        method: 'GATEWAY',
+        gatewayProvider: 'PAYFAST',
+        paymentIntentState: 'PENDING',
+        gatewayPaymentVerified: false,
+      },
+      repaymentStatus: 'REFUND_DUE',
+      customerRefundStatus: null,
+      jobId: 'job-1',
+    });
+    expect(d.showRepayCta).toBe(true);
+    expect(d.processing).toBe(false);
+    expect(d.ctaLabel).toBe('Continue payment');
+  });
+
+  it('hides repay CTA when gateway PaymentIntent is PAID and awaiting admin', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: {
+        id: 'p1',
+        status: 'SUBMITTED',
+        jobId: 'job-1',
+        method: 'GATEWAY',
+        gatewayProvider: 'PAYSTACK',
+        paymentIntentState: 'PAID',
+        gatewayPaymentVerified: true,
+      },
+      repaymentStatus: 'AWAITING_VERIFICATION',
+      customerRefundStatus: null,
+      jobId: 'job-1',
+    });
+    expect(d.mode).toBe('awaiting_verification');
+    expect(d.showRepayCta).toBe(false);
+    expect(d.processing).toBe(true);
+  });
+
+  it('retains awaiting verification for manual bank transfer', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: {
+        id: 'p1',
+        status: 'SUBMITTED',
+        jobId: 'job-1',
+        method: 'BANK_TRANSFER',
+        gatewayPaymentVerified: false,
+      },
+      repaymentStatus: 'AWAITING_VERIFICATION',
+      customerRefundStatus: null,
+      jobId: 'job-1',
+    });
+    expect(d.mode).toBe('awaiting_verification');
+    expect(d.showRepayCta).toBe(false);
+  });
+
+  it('keeps R232.50 provider-liability display/math unchanged', () => {
+    const d = resolveProviderRefundDisplay({
+      amountDue: 232.5,
+      pendingRepayment: null,
+      repaymentStatus: 'REFUND_DUE',
+      customerRefundStatus: null,
+    });
+    expect(d.showRepayCta).toBe(true);
+    expect(d.mode).toBe('required');
   });
 
   it('shows customer refund completed', () => {

@@ -1229,7 +1229,7 @@ export default function ProviderJobDetail() {
                         size="sm"
                         onClick={() => navigate(`/provider/jobs/${job.id}/refund`)}
                       >
-                        Repay
+                        {display.ctaLabel || 'Repay'}
                       </Button>
                     </div>
                     {jobRefundDebt.dueAt ? (
