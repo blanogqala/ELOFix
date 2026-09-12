@@ -18,6 +18,127 @@ function dueAtFromNow() {
   return new Date(Date.now() + getRefundDebtDueMs());
 }
 
+function isoDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
+function pendingRepaymentAwaitsAdmin(pendingRepayment) {
+  if (!pendingRepayment) return false;
+  if (pendingRepayment.gatewayPaymentVerified === true) return true;
+  const method = String(pendingRepayment.method || "").trim().toUpperCase();
+  if (method === "GATEWAY") {
+    return Boolean(pendingRepayment.gatewayPaymentVerified);
+  }
+  // BANK_TRANSFER or legacy DTO without method — submitted for admin review.
+  return true;
+}
+
+function serializePendingRepayment(row, intent) {
+  if (!row) return null;
+  const method = String(row.method || "BANK_TRANSFER").toUpperCase();
+  const intentState = intent ? String(intent.state || "").toUpperCase() : null;
+  const gatewayPaymentVerified =
+    method === "GATEWAY" &&
+    Boolean(intent) &&
+    String(intent.kind || "").toUpperCase() === "PROVIDER_REFUND_REPAYMENT" &&
+    String(intent.state || "").toUpperCase() === "PAID";
+  return {
+    id: row.id,
+    amount: Number(row.amount),
+    reference: row.reference,
+    status: row.status,
+    jobId: row.jobId || null,
+    createdAt: isoDate(row.createdAt),
+    method,
+    gatewayProvider: intent ? String(intent.provider || "") || null : null,
+    paymentIntentState: intentState,
+    gatewayPaymentVerified,
+  };
+}
+
+const SAFE_REPAYMENT_INTENT_SELECT = {
+  id: true,
+  state: true,
+  provider: true,
+  kind: true,
+  jobId: true,
+  userId: true,
+  amount: true,
+  commissionAmount: true,
+  paidAt: true,
+  gatewayTransactionId: true,
+  merchantReference: true,
+};
+
+function resolveRepaymentCheckoutProvider(preferredProvider, enabled) {
+  const list = Array.isArray(enabled) ? enabled : [];
+  if (!list.length) {
+    throw new AppError("No payment gateway is configured for repayment", 503);
+  }
+  const raw = preferredProvider == null ? "" : String(preferredProvider).trim();
+  const explicit = raw.length > 0;
+  const { normalizeProvider } = require("./payments/gatewayRegistry");
+  if (explicit) {
+    const key = normalizeProvider(raw);
+    if (!key || !list.includes(key)) {
+      throw new AppError("Selected payment method is not available", 400);
+    }
+    return key;
+  }
+  return list[0];
+}
+
+function isUnresolvedGatewayIntent(intent) {
+  return ["PENDING", "PROCESSING"].includes(String(intent?.state || "").toUpperCase());
+}
+
+function isAuthoritativeFailedGatewayIntent(intent) {
+  return ["FAILED", "CANCELLED"].includes(String(intent?.state || "").toUpperCase());
+}
+
+function assertGatewayRepaymentIntentPayable(repayment, intent) {
+  const method = String(repayment?.method || "BANK_TRANSFER").toUpperCase();
+  const hasIntentLink = Boolean(repayment?.paymentIntentId || intent?.id);
+  if (method !== "GATEWAY" && !hasIntentLink) {
+    return true;
+  }
+  if (!intent) {
+    throw new AppError(
+      "Gateway repayment cannot be confirmed until the linked payment is found",
+      409
+    );
+  }
+  if (String(intent.kind || "").toUpperCase() !== "PROVIDER_REFUND_REPAYMENT") {
+    throw new AppError("Linked payment is not a provider refund repayment", 409);
+  }
+  if (String(intent.state || "").toUpperCase() !== "PAID") {
+    throw new AppError(
+      "Gateway repayment cannot be confirmed until payment is verified as paid",
+      409
+    );
+  }
+  if (!intent.paidAt) {
+    throw new AppError("Gateway repayment is missing authoritative paid proof", 409);
+  }
+  if (!intent.gatewayTransactionId && !intent.merchantReference) {
+    throw new AppError("Gateway repayment is missing transaction proof", 409);
+  }
+  const providerUserId = repayment?.provider?.userId || repayment?.providerUserId;
+  if (providerUserId && String(intent.userId) !== String(providerUserId)) {
+    throw new AppError("Payment does not belong to this provider", 409);
+  }
+  if (repayment?.jobId && intent.jobId && String(intent.jobId) !== String(repayment.jobId)) {
+    throw new AppError("Payment job does not match this repayment", 409);
+  }
+  const { toCents } = require("./payments/money.util");
+  if (toCents(intent.amount) !== toCents(repayment.amount)) {
+    throw new AppError("Payment amount does not match the repayment", 409);
+  }
+  return true;
+}
+
 /**
  * Derived UI/API status for provider repayment + staged customer refund.
  * Does not invent a parallel Prisma enum — maps existing recovery/repayment/meta.
@@ -34,7 +155,7 @@ function deriveRepaymentStatus({
   if (bal <= EPS && pendingCust <= EPS) {
     return "REFUNDED";
   }
-  if (pendingRepayment) {
+  if (pendingRepaymentAwaitsAdmin(pendingRepayment)) {
     return "AWAITING_VERIFICATION";
   }
   if (String(recoveryStatus || "").toUpperCase() === "OVERDUE" && bal > EPS) {
@@ -156,7 +277,7 @@ async function createRefundRecoveryInTransaction(tx, {
  * Apply recovered amount to RefundRecovery rows FIFO; returns payout details for customer gateway.
  * @returns {Array<{ recoveryId, customerId, jobId, amount }>}
  */
-async function applyRecoveryToRefundRecoveriesInTransaction(tx, { providerId, amount }) {
+async function applyRecoveryToRefundRecoveriesInTransaction(tx, { providerId, amount, debtJobId = null }) {
   let remaining = roundMoney(amount);
   const payouts = [];
   if (remaining <= EPS) return payouts;
@@ -165,6 +286,7 @@ async function applyRecoveryToRefundRecoveriesInTransaction(tx, { providerId, am
     where: {
       providerId,
       status: { in: ACTIVE_RECOVERY_STATUSES },
+      ...(debtJobId ? { jobId: String(debtJobId) } : {}),
     },
     orderBy: { createdAt: "asc" },
   });
@@ -210,6 +332,7 @@ async function applyProviderRecovery(tx, {
   amount,
   source = "future_earnings",
   jobId = null,
+  debtJobId = null,
   idempotencyKey = null,
 }) {
   const target = roundMoney(amount);
@@ -218,6 +341,7 @@ async function applyProviderRecovery(tx, {
   const { recovered, payouts } = await earningService.recoverRefundDebtByAmount(tx, {
     providerId,
     jobId,
+    debtJobId: debtJobId || null,
     amount: target,
     idempotencyKey,
   });
@@ -434,7 +558,7 @@ async function getProviderRefundDebtSummary(providerProfileId) {
   await ensureRefundRecoveriesForProvider(providerProfileId);
   await repairOverstatedProviderRefundRecoveries(providerProfileId);
 
-  const [recoveries, pendingRepayment, lastRejectedRow] = await Promise.all([
+  const [recoveries, pendingRepayments, lastRejectedRow] = await Promise.all([
     prisma.refundRecovery.findMany({
       where: {
         providerId: providerProfileId,
@@ -452,9 +576,10 @@ async function getProviderRefundDebtSummary(providerProfileId) {
         },
       },
     }),
-    prisma.providerRefundRepayment.findFirst({
+    prisma.providerRefundRepayment.findMany({
       where: { providerId: providerProfileId, status: "SUBMITTED" },
       orderBy: { createdAt: "desc" },
+      include: { paymentIntent: { select: SAFE_REPAYMENT_INTENT_SELECT } },
     }),
     prisma.providerRefundRepayment.findFirst({
       where: { providerId: providerProfileId, status: "REJECTED" },
@@ -470,18 +595,19 @@ async function getProviderRefundDebtSummary(providerProfileId) {
   const earliestDue = recoveries[0]?.dueAt || null;
   const reference = recoveries[0]?.reference || null;
 
-  const pendingRepaymentDto = pendingRepayment
-    ? {
-        id: pendingRepayment.id,
-        amount: Number(pendingRepayment.amount),
-        reference: pendingRepayment.reference,
-        status: pendingRepayment.status,
-        jobId: pendingRepayment.jobId || null,
-        createdAt:
-          pendingRepayment.createdAt instanceof Date
-            ? pendingRepayment.createdAt.toISOString()
-            : String(pendingRepayment.createdAt),
-      }
+  const pendingByJobId = new Map();
+  let legacyPendingDto = null;
+  for (const row of pendingRepayments) {
+    const dto = serializePendingRepayment(row, row.paymentIntent || null);
+    if (row.jobId) {
+      if (!pendingByJobId.has(String(row.jobId))) pendingByJobId.set(String(row.jobId), dto);
+    } else if (!legacyPendingDto) {
+      legacyPendingDto = dto;
+    }
+  }
+
+  const pendingRepaymentDto = pendingRepayments[0]
+    ? serializePendingRepayment(pendingRepayments[0], pendingRepayments[0].paymentIntent || null)
     : null;
 
   const lastRejectedRepayment =
@@ -499,13 +625,22 @@ async function getProviderRefundDebtSummary(providerProfileId) {
         }
       : null;
 
+  function pendingForRecoveryJob(recoveryJobId) {
+    if (recoveryJobId && pendingByJobId.has(String(recoveryJobId))) {
+      return pendingByJobId.get(String(recoveryJobId));
+    }
+    if (pendingByJobId.size > 0) return null;
+    return legacyPendingDto;
+  }
+
   const recoveryDtos = recoveries.map((r) => {
     const balance = roundMoney(Number(r.totalPending) - Number(r.recoveredAmount));
     const refundMeta = refundMetaFromJob(r.job);
+    const pendingForRow = pendingForRecoveryJob(r.jobId);
     const repaymentStatus = deriveRepaymentStatus({
       recoveryStatus: r.status,
       balance,
-      pendingRepayment: pendingRepaymentDto,
+      pendingRepayment: pendingForRow,
       lastRejectedRepayment,
       customerRefundPending: refundMeta.customerRefundPending,
     });
@@ -520,6 +655,7 @@ async function getProviderRefundDebtSummary(providerProfileId) {
       balance,
       status: r.status,
       repaymentStatus,
+      pendingRepayment: pendingForRow,
       dueAt: r.dueAt,
       reference: r.reference,
       customerRefundPending: refundMeta.customerRefundPending,
@@ -593,19 +729,10 @@ async function getProviderJobRefundObligation(userId, jobId) {
         OR: [{ jobId: job.id }, { jobId: null }],
       },
       orderBy: { createdAt: "desc" },
+      include: { paymentIntent: { select: SAFE_REPAYMENT_INTENT_SELECT } },
     });
     if (pendingRow && (!pendingRow.jobId || String(pendingRow.jobId) === String(job.id))) {
-      pendingForJob = {
-        id: pendingRow.id,
-        amount: Number(pendingRow.amount),
-        reference: pendingRow.reference,
-        status: pendingRow.status,
-        jobId: pendingRow.jobId || null,
-        createdAt:
-          pendingRow.createdAt instanceof Date
-            ? pendingRow.createdAt.toISOString()
-            : String(pendingRow.createdAt),
-      };
+      pendingForJob = serializePendingRepayment(pendingRow, pendingRow.paymentIntent || null);
     }
   }
 
@@ -670,7 +797,7 @@ async function getProviderJobRefundObligation(userId, jobId) {
 /**
  * Active refund-obligation total for a provider (authoritative expected repayment).
  */
-async function getProviderExpectedRepaymentAmount(providerProfileId) {
+async function getProviderExpectedRepaymentAmount(providerProfileId, { jobId } = {}) {
   await ensureRefundRecoveriesForProvider(providerProfileId);
   await repairOverstatedProviderRefundRecoveries(providerProfileId);
 
@@ -678,6 +805,7 @@ async function getProviderExpectedRepaymentAmount(providerProfileId) {
     where: {
       providerId: providerProfileId,
       status: { in: ACTIVE_RECOVERY_STATUSES },
+      ...(jobId ? { jobId: String(jobId) } : {}),
     },
     orderBy: { dueAt: "asc" },
     include: {
@@ -705,6 +833,116 @@ async function getProviderExpectedRepaymentAmount(providerProfileId) {
   };
 }
 
+function repaymentCheckoutUrls(jobId, intentId) {
+  const { frontendBaseUrl } = require("./payments/paymentConfig");
+  return {
+    returnUrl: `${frontendBaseUrl()}/provider/jobs/${jobId}/refund?intentId=${intentId}`,
+    cancelUrl: `${frontendBaseUrl()}/provider/jobs/${jobId}/refund?cancelled=1`,
+  };
+}
+
+function checkoutResponse({
+  repayment,
+  intent,
+  checkout,
+  providerKey,
+  derivedAmount,
+  status = "SUBMITTED",
+  gatewayPaymentVerified = false,
+  lockedProvider = null,
+}) {
+  return {
+    repaymentId: repayment.id,
+    intentId: intent.id,
+    amount: derivedAmount,
+    provider: providerKey,
+    merchantReference: intent.merchantReference,
+    checkout: checkout || null,
+    status,
+    gatewayPaymentVerified,
+    lockedProvider: lockedProvider || (isUnresolvedGatewayIntent(intent) ? String(intent.provider) : null),
+  };
+}
+
+async function createRepaymentGatewayCheckout(intent, customer, derivedAmount, urls) {
+  const { getGateway } = require("./payments/gatewayRegistry");
+  const gw = getGateway(intent.provider);
+  return gw.createCheckout(
+    {
+      ...intent,
+      amount: derivedAmount != null ? derivedAmount : Number(intent.amount),
+      returnUrl: urls.returnUrl || intent.returnUrl,
+      cancelUrl: urls.cancelUrl || intent.cancelUrl,
+    },
+    customer
+  );
+}
+
+async function resetRepaymentIntentForRetry(tx, intent, {
+  providerKey,
+  derivedAmount,
+  returnUrl,
+  cancelUrl,
+}) {
+  const { Prisma } = require("@prisma/client");
+  const { paymentCurrency } = require("./payments/paymentConfig");
+  const merchantReference = `EFX-RR-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+  return tx.paymentIntent.update({
+    where: { id: intent.id },
+    data: {
+      merchantReference,
+      provider: providerKey,
+      amount: new Prisma.Decimal(derivedAmount.toFixed(2)),
+      commissionAmount: new Prisma.Decimal("0"),
+      recipientAmount: new Prisma.Decimal(derivedAmount.toFixed(2)),
+      currency: paymentCurrency(),
+      state: "PENDING",
+      failedAt: null,
+      cancelledAt: null,
+      paidAt: null,
+      refundedAt: null,
+      gatewayTransactionId: null,
+      returnUrl,
+      cancelUrl,
+    },
+  });
+}
+
+async function applyPaystackVerifyToRepaymentIntent(intent, verified) {
+  const webhookService = require("./payments/webhook.service");
+  const state = String(verified.state || "").toUpperCase();
+  return webhookService.processWebhookResult("PAYSTACK", {
+    valid: true,
+    merchantReference: verified.merchantReference || intent.merchantReference,
+    gatewayTransactionId: verified.gatewayTransactionId,
+    state,
+    amount: verified.amount,
+    currency: verified.currency || intent.currency || "ZAR",
+    externalEventId: `repay-verify:${intent.id}:${verified.gatewayTransactionId || Date.now()}`,
+    raw: {
+      ...(verified.raw && typeof verified.raw === "object" ? verified.raw : {}),
+      source: "provider_refund_repayment_verify",
+    },
+  });
+}
+
+async function verifyPaystackRepaymentIntent(intent) {
+  const { getGateway } = require("./payments/gatewayRegistry");
+  const gw = getGateway("PAYSTACK");
+  if (typeof gw.verifyTransaction !== "function") {
+    throw new AppError("Paystack verification is unavailable", 503);
+  }
+  try {
+    return await gw.verifyTransaction(intent.merchantReference);
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(
+      err?.message || "Could not verify the existing Paystack repayment. Try again shortly.",
+      503
+    );
+  }
+}
+
 /**
  * Provider gateway checkout to repay EloFix (primary repayment path).
  * Amount is always server-derived from the job obligation.
@@ -714,8 +952,8 @@ async function createProviderRefundRepaymentCheckout(
   jobId,
   { provider: preferredProvider, amount: clientAmount } = {}
 ) {
-  const { getGateway, normalizeProvider, listEnabledGateways } = require("./payments/gatewayRegistry");
-  const { frontendBaseUrl, paymentCurrency } = require("./payments/paymentConfig");
+  const { getGateway, listEnabledGateways } = require("./payments/gatewayRegistry");
+  const { paymentCurrency } = require("./payments/paymentConfig");
   const { Prisma } = require("@prisma/client");
 
   const obligation = await getProviderJobRefundObligation(userId, String(jobId));
@@ -739,64 +977,54 @@ async function createProviderRefundRepaymentCheckout(
   if (!provider) throw new AppError("Provider profile not found", 404);
 
   const enabled = listEnabledGateways();
-  if (!enabled.length) {
-    throw new AppError("No payment gateway is configured for repayment", 503);
-  }
-  let providerKey = preferredProvider ? normalizeProvider(preferredProvider) : null;
-  if (!providerKey || !enabled.includes(providerKey)) {
-    providerKey = enabled[0];
-  }
-  const gw = getGateway(providerKey);
+  const providerKey = resolveRepaymentCheckoutProvider(preferredProvider, enabled);
+  getGateway(providerKey);
 
   const customer = await prisma.user.findUnique({
     where: { id: String(userId) },
     select: { email: true, name: true, phone: true },
   });
 
-  const result = await prisma.$transaction(async (tx) => {
+  const existing = await prisma.providerRefundRepayment.findFirst({
+    where: {
+      providerId: provider.id,
+      jobId: String(jobId),
+      status: "SUBMITTED",
+    },
+    include: { paymentIntent: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (existing) {
+    return continueExistingProviderRefundRepaymentCheckout({
+      existing,
+      preferredProvider,
+      providerKey,
+      derivedAmount,
+      jobId,
+      customer,
+    });
+  }
+
+  const urls = repaymentCheckoutUrls(jobId, "pending");
+  const created = await prisma.$transaction(async (tx) => {
     const pending = await tx.providerRefundRepayment.findFirst({
-      where: { providerId: provider.id, status: "SUBMITTED" },
+      where: {
+        providerId: provider.id,
+        jobId: String(jobId),
+        status: "SUBMITTED",
+      },
     });
     if (pending) {
-      // Reuse existing gateway checkout if still pending payment
-      if (pending.method === "GATEWAY" && pending.paymentIntentId) {
-        const existingIntent = await tx.paymentIntent.findUnique({
-          where: { id: pending.paymentIntentId },
-        });
-        if (existingIntent && ["PENDING", "PROCESSING"].includes(existingIntent.state)) {
-          const reuseGw = getGateway(existingIntent.provider);
-          const checkout = await reuseGw.createCheckout(
-            {
-              ...existingIntent,
-              amount: Number(existingIntent.amount),
-              returnUrl:
-                existingIntent.returnUrl ||
-                `${frontendBaseUrl()}/provider/jobs/${jobId}/refund?intentId=${existingIntent.id}`,
-              cancelUrl:
-                existingIntent.cancelUrl ||
-                `${frontendBaseUrl()}/provider/jobs/${jobId}/refund?cancelled=1`,
-            },
-            customer
-          );
-          return {
-            reuse: true,
-            repayment: pending,
-            intent: existingIntent,
-            checkout,
-            providerKey: existingIntent.provider,
-          };
-        }
-      }
       throw new AppError(
-        "You already have a repayment waiting for admin review. Please wait for approval before submitting again.",
+        "A repayment attempt is already in progress for this job.",
         409
       );
     }
 
     const intentId = randomUUID();
     const merchantReference = `EFX-RR-${intentId.replace(/-/g, "").slice(0, 16).toUpperCase()}`;
-    const returnUrl = `${frontendBaseUrl()}/provider/jobs/${jobId}/refund?intentId=${intentId}`;
-    const cancelUrl = `${frontendBaseUrl()}/provider/jobs/${jobId}/refund?cancelled=1`;
+    const { returnUrl, cancelUrl } = repaymentCheckoutUrls(jobId, intentId);
 
     const intent = await tx.paymentIntent.create({
       data: {
@@ -835,38 +1063,229 @@ async function createProviderRefundRepaymentCheckout(
       },
     });
 
-    const checkout = await gw.createCheckout(
-      {
-        ...intent,
-        amount: derivedAmount,
-        returnUrl,
-        cancelUrl,
-      },
-      customer
-    );
-
-    return { reuse: false, repayment, intent, checkout, providerKey };
+    return { repayment, intent, returnUrl, cancelUrl };
   });
 
-  if (!result.reuse) {
-    await notificationEvents.notifyAdminRefundRepaymentSubmitted({
-      providerId: userId,
-      repaymentId: result.repayment.id,
-      amount: derivedAmount,
-      reference: result.repayment.reference,
-    });
-    await notificationEvents.notifyProviderRepaymentSubmitted(userId, derivedAmount);
+  const checkout = await createRepaymentGatewayCheckout(
+    created.intent,
+    customer,
+    derivedAmount,
+    { returnUrl: created.returnUrl, cancelUrl: created.cancelUrl }
+  );
+
+  return checkoutResponse({
+    repayment: created.repayment,
+    intent: created.intent,
+    checkout,
+    providerKey,
+    derivedAmount,
+    status: "SUBMITTED",
+    gatewayPaymentVerified: false,
+    lockedProvider: providerKey,
+  });
+}
+
+async function continueExistingProviderRefundRepaymentCheckout({
+  existing,
+  preferredProvider,
+  providerKey,
+  derivedAmount,
+  jobId,
+  customer,
+}) {
+  const method = String(existing.method || "BANK_TRANSFER").toUpperCase();
+  if (method !== "GATEWAY" || !existing.paymentIntentId) {
+    throw new AppError(
+      "You already have a repayment waiting for admin review. Please wait for approval before submitting again.",
+      409
+    );
   }
 
-  return {
-    repaymentId: result.repayment.id,
-    intentId: result.intent.id,
-    amount: derivedAmount,
-    provider: result.providerKey,
-    merchantReference: result.intent.merchantReference,
-    checkout: result.checkout,
-    status: "SUBMITTED",
-  };
+  const intent = existing.paymentIntent
+    || await prisma.paymentIntent.findUnique({ where: { id: existing.paymentIntentId } });
+  if (!intent) {
+    throw new AppError("The existing repayment payment could not be found. Contact support.", 409);
+  }
+  if (String(intent.kind || "") !== "PROVIDER_REFUND_REPAYMENT") {
+    throw new AppError("Linked payment is not a provider refund repayment", 409);
+  }
+
+  const existingProvider = String(intent.provider || "").toUpperCase();
+  const requestedDifferentGateway =
+    Boolean(preferredProvider && String(preferredProvider).trim()) &&
+    existingProvider &&
+    existingProvider !== String(providerKey);
+
+  if (String(intent.state || "").toUpperCase() === "PAID") {
+    return checkoutResponse({
+      repayment: existing,
+      intent,
+      checkout: null,
+      providerKey: existingProvider,
+      derivedAmount,
+      status: "AWAITING_VERIFICATION",
+      gatewayPaymentVerified: true,
+      lockedProvider: existingProvider,
+    });
+  }
+
+  if (existingProvider === "PAYSTACK") {
+    let verified;
+    try {
+      verified = await verifyPaystackRepaymentIntent(intent);
+    } catch (err) {
+      throw err instanceof AppError
+        ? err
+        : new AppError("Could not verify the existing Paystack repayment. Try again shortly.", 503);
+    }
+    const verifyState = String(verified?.state || "").toUpperCase();
+    if (verifyState === "PAID") {
+      await applyPaystackVerifyToRepaymentIntent(intent, verified);
+      const paidIntent = await prisma.paymentIntent.findUnique({ where: { id: intent.id } });
+      return checkoutResponse({
+        repayment: existing,
+        intent: paidIntent || intent,
+        checkout: null,
+        providerKey: existingProvider,
+        derivedAmount,
+        status: "AWAITING_VERIFICATION",
+        gatewayPaymentVerified: true,
+        lockedProvider: existingProvider,
+      });
+    }
+    if (verifyState === "PROCESSING" || verifyState === "PENDING") {
+      const urls = repaymentCheckoutUrls(jobId, intent.id);
+      const checkout = await createRepaymentGatewayCheckout(intent, customer, derivedAmount, urls);
+      return checkoutResponse({
+        repayment: existing,
+        intent,
+        checkout,
+        providerKey: existingProvider,
+        derivedAmount,
+        status: "PROCESSING",
+        gatewayPaymentVerified: false,
+        lockedProvider: existingProvider,
+      });
+    }
+    if (verifyState === "FAILED" || verifyState === "CANCELLED") {
+      const urls = repaymentCheckoutUrls(jobId, intent.id);
+      const refreshed = await prisma.$transaction(async (tx) => {
+        const latest = await tx.paymentIntent.findUnique({ where: { id: intent.id } });
+        if (latest && String(latest.state).toUpperCase() === "PAID") {
+          return { alreadyPaid: true, intent: latest };
+        }
+        const next = await resetRepaymentIntentForRetry(tx, intent, {
+          providerKey,
+          derivedAmount,
+          returnUrl: urls.returnUrl,
+          cancelUrl: urls.cancelUrl,
+        });
+        await tx.providerRefundRepayment.update({
+          where: { id: existing.id },
+          data: {
+            merchantReference: next.merchantReference,
+            paymentIntentId: next.id,
+            method: "GATEWAY",
+          },
+        });
+        return { alreadyPaid: false, intent: next };
+      });
+      if (refreshed.alreadyPaid) {
+        return checkoutResponse({
+          repayment: existing,
+          intent: refreshed.intent,
+          checkout: null,
+          providerKey: existingProvider,
+          derivedAmount,
+          status: "AWAITING_VERIFICATION",
+          gatewayPaymentVerified: true,
+          lockedProvider: existingProvider,
+        });
+      }
+      const checkout = await createRepaymentGatewayCheckout(
+        refreshed.intent,
+        customer,
+        derivedAmount,
+        urls
+      );
+      return checkoutResponse({
+        repayment: existing,
+        intent: refreshed.intent,
+        checkout,
+        providerKey,
+        derivedAmount,
+        status: "SUBMITTED",
+        gatewayPaymentVerified: false,
+        lockedProvider: providerKey,
+      });
+    }
+    throw new AppError(
+      "Could not determine the existing Paystack repayment status. Try again shortly.",
+      503
+    );
+  }
+
+  // PayFast (and other adapters without reliable server lookup): fail closed on switch.
+  if (isUnresolvedGatewayIntent(intent)) {
+    if (requestedDifferentGateway) {
+      throw new AppError(
+        `Complete or resolve the existing ${existingProvider} payment before choosing another method.`,
+        409
+      );
+    }
+    const urls = {
+      returnUrl: intent.returnUrl || repaymentCheckoutUrls(jobId, intent.id).returnUrl,
+      cancelUrl: intent.cancelUrl || repaymentCheckoutUrls(jobId, intent.id).cancelUrl,
+    };
+    const checkout = await createRepaymentGatewayCheckout(intent, customer, derivedAmount, urls);
+    return checkoutResponse({
+      repayment: existing,
+      intent,
+      checkout,
+      providerKey: existingProvider,
+      derivedAmount,
+      status: "SUBMITTED",
+      gatewayPaymentVerified: false,
+      lockedProvider: existingProvider,
+    });
+  }
+
+  if (isAuthoritativeFailedGatewayIntent(intent)) {
+    const urls = repaymentCheckoutUrls(jobId, intent.id);
+    const refreshed = await prisma.$transaction(async (tx) => {
+      const next = await resetRepaymentIntentForRetry(tx, intent, {
+        providerKey,
+        derivedAmount,
+        returnUrl: urls.returnUrl,
+        cancelUrl: urls.cancelUrl,
+      });
+      await tx.providerRefundRepayment.update({
+        where: { id: existing.id },
+        data: {
+          merchantReference: next.merchantReference,
+          paymentIntentId: next.id,
+          method: "GATEWAY",
+        },
+      });
+      return next;
+    });
+    const checkout = await createRepaymentGatewayCheckout(refreshed, customer, derivedAmount, urls);
+    return checkoutResponse({
+      repayment: existing,
+      intent: refreshed,
+      checkout,
+      providerKey,
+      derivedAmount,
+      status: "SUBMITTED",
+      gatewayPaymentVerified: false,
+      lockedProvider: providerKey,
+    });
+  }
+
+  throw new AppError(
+    "The existing repayment cannot be safely restarted yet. Complete the current payment or contact support.",
+    409
+  );
 }
 
 /**
@@ -1297,7 +1716,11 @@ async function submitProviderRepayment(userId, { amount, reference, proofUrl, jo
 
   const row = await prisma.$transaction(async (tx) => {
     const pending = await tx.providerRefundRepayment.findFirst({
-      where: { providerId: provider.id, status: "SUBMITTED" },
+      where: {
+        providerId: provider.id,
+        status: "SUBMITTED",
+        ...(jobId ? { jobId: String(jobId) } : {}),
+      },
     });
     if (pending) {
       throw new AppError(
@@ -1398,10 +1821,23 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
 
   const providerIds = [...new Set(rows.map((r) => r.providerId))];
   const expectedByProvider = new Map();
+  const expectedByProviderJob = new Map();
   await Promise.all(
     providerIds.map(async (pid) => {
       expectedByProvider.set(pid, await getProviderExpectedRepaymentAmount(pid));
     })
+  );
+  await Promise.all(
+    rows
+      .filter((r) => r.jobId)
+      .map(async (r) => {
+        const key = `${r.providerId}:${r.jobId}`;
+        if (expectedByProviderJob.has(key)) return;
+        expectedByProviderJob.set(
+          key,
+          await getProviderExpectedRepaymentAmount(r.providerId, { jobId: r.jobId })
+        );
+      })
   );
 
   // Enrich with original customer payment refs for primary jobs
@@ -1453,7 +1889,15 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
   }
 
   return rows.map((row) => {
-    const ctx = { ...(expectedByProvider.get(row.providerId) || {}) };
+    const providerCtx = expectedByProvider.get(row.providerId) || {};
+    const jobCtx =
+      row.jobId ? expectedByProviderJob.get(`${row.providerId}:${row.jobId}`) : null;
+    const ctx = { ...(jobCtx || providerCtx) };
+    if (jobCtx) {
+      ctx.expectedAmount = jobCtx.expectedAmount;
+      ctx.recoveries = jobCtx.recoveries;
+      ctx.primary = jobCtx.primary || providerCtx.primary || null;
+    }
     // Prefer repayment-linked job for display/meta when present
     if (row.job) {
       ctx.primary = {
@@ -1480,19 +1924,30 @@ async function confirmAdminRefundRepayment(
 ) {
   const repayment = await prisma.providerRefundRepayment.findUnique({
     where: { id: String(repaymentId) },
-    include: { provider: { include: { user: true } } },
+    include: {
+      provider: { include: { user: true } },
+      paymentIntent: true,
+    },
   });
   if (!repayment) throw new AppError("Repayment not found", 404);
+  if (repayment.status === "CONFIRMED") {
+    return { repayment, customerRefund: { status: "NONE", results: [] }, idempotent: true };
+  }
   if (repayment.status !== "SUBMITTED") {
     throw new AppError("Repayment already reviewed", 400);
   }
+
+  assertGatewayRepaymentIntentPayable(repayment, repayment.paymentIntent);
 
   const amount = Number(repayment.amount);
   if (!Number.isFinite(amount) || amount <= EPS) {
     throw new AppError("Repayment amount is missing or invalid; cannot confirm", 400);
   }
 
-  const { expectedAmount } = await getProviderExpectedRepaymentAmount(repayment.providerId);
+  const debtJobId = repayment.jobId ? String(repayment.jobId) : null;
+  const { expectedAmount } = await getProviderExpectedRepaymentAmount(repayment.providerId, {
+    jobId: debtJobId,
+  });
   const difference = roundMoney(Math.abs(amount - expectedAmount));
   if (difference > EPS && !acknowledgePartial) {
     throw new AppError(
@@ -1508,9 +1963,13 @@ async function confirmAdminRefundRepayment(
       providerId: repayment.providerId,
       amount,
       source: repayment.method === "GATEWAY" ? "gateway_repayment" : "bank_transfer",
+      jobId: debtJobId,
+      debtJobId,
       idempotencyKey: `repayment:${repayment.id}`,
     });
-    payouts = p;
+    payouts = debtJobId
+      ? (p || []).filter((pay) => pay.jobId && String(pay.jobId) === debtJobId)
+      : p;
 
     await tx.providerRefundRepayment.update({
       where: { id: repayment.id },
@@ -1522,8 +1981,8 @@ async function confirmAdminRefundRepayment(
       },
     });
 
-    // Mark READY first so processAdminCustomerRefund / retry can find the job.
-    for (const pay of p) {
+    // Mark READY only for payouts belonging to this recovery (job-scoped when debtJobId is set).
+    for (const pay of payouts || []) {
       if (!pay.jobId || pay.amount <= EPS) continue;
       await mutateJobMetaInTransaction(tx, pay.jobId, (m) => {
         const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
@@ -1732,8 +2191,13 @@ module.exports = {
   assertProviderNoOverdueRefundDebt,
   assertProviderUserNoOverdueRefundDebt,
   getProviderRefundDebtSummary,
+  getProviderExpectedRepaymentAmount,
   getProviderJobRefundObligation,
   deriveRepaymentStatus,
+  pendingRepaymentAwaitsAdmin,
+  serializePendingRepayment,
+  resolveRepaymentCheckoutProvider,
+  assertGatewayRepaymentIntentPayable,
   submitProviderRepayment,
   createProviderRefundRepaymentCheckout,
   markGatewayRepaymentPaidFromIntent,

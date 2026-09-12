@@ -304,6 +304,10 @@ export interface ProviderRefundDebtSummary {
     status: string;
     jobId?: string | null;
     createdAt: string;
+    method?: string | null;
+    gatewayProvider?: string | null;
+    paymentIntentState?: string | null;
+    gatewayPaymentVerified?: boolean;
   } | null;
   lastRejectedRepayment?: {
     amount: number;
@@ -366,8 +370,10 @@ export async function createProviderRefundRepaymentCheckout(
     url: string;
     method?: string;
     formFields?: Record<string, string>;
-  };
+  } | null;
   status: string;
+  gatewayPaymentVerified?: boolean;
+  lockedProvider?: string | null;
 }> {
   const { data } = await apiClient.post(`/provider/jobs/${jobId}/refund-obligation/checkout`, body ?? {}, {
     headers: idempotencyHeaders(),

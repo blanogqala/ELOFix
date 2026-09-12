@@ -1459,6 +1459,7 @@ model RefundRecovery {
 }
 
 /// Provider repayment toward refund debt (gateway checkout or bank transfer) — admin confirms.
+/// One SUBMITTED repayment per provider+job is enforced by a partial unique SQL index.
 model ProviderRefundRepayment {
   id                   String                         @id @default(uuid())
   providerId           String

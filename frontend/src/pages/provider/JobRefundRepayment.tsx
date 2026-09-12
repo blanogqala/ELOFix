@@ -11,6 +11,8 @@ import {
   submitProviderRefundRepayment,
   type ProviderJobRefundObligation,
 } from '@/lib/api/providerAccount';
+import { getPaymentProviders, isPaymentProvider, type PaymentProvider } from '@/lib/api/payments';
+import { PaymentMethodSelector } from '@/components/payments/PaymentMethodSelector';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
 import { ArrowLeft, Loader2 } from 'lucide-react';
@@ -41,6 +43,23 @@ function statusLabelFromObligation(obligation: ProviderJobRefundObligation): str
     default:
       return 'Payment required';
   }
+}
+
+function lockedRepaymentGateway(
+  obligation: ProviderJobRefundObligation | null
+): PaymentProvider | null {
+  const pending = obligation?.pendingRepayment;
+  const provider = pending?.gatewayProvider;
+  if (
+    pending?.method === 'GATEWAY' &&
+    pending.gatewayPaymentVerified !== true &&
+    ['PENDING', 'PROCESSING'].includes(String(pending.paymentIntentState || '').toUpperCase()) &&
+    provider &&
+    isPaymentProvider(provider)
+  ) {
+    return provider;
+  }
+  return null;
 }
 
 function redirectCheckout(checkout: {
@@ -77,6 +96,10 @@ export default function ProviderJobRefundRepayment() {
   const [submitting, setSubmitting] = useState(false);
   const [paying, setPaying] = useState(false);
   const [showEft, setShowEft] = useState(false);
+  const [providers, setProviders] = useState<PaymentProvider[]>([]);
+  const [selectedGateway, setSelectedGateway] = useState<PaymentProvider | ''>('');
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providersError, setProvidersError] = useState(false);
 
   const load = async () => {
     if (!jobId) return;
@@ -97,8 +120,23 @@ export default function ProviderJobRefundRepayment() {
     }
   };
 
+  const loadProviders = async () => {
+    setProvidersLoading(true);
+    setProvidersError(false);
+    try {
+      const list = await getPaymentProviders();
+      setProviders(list);
+    } catch {
+      setProviders([]);
+      setProvidersError(true);
+    } finally {
+      setProvidersLoading(false);
+    }
+  };
+
   useEffect(() => {
     void load();
+    void loadProviders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
 
@@ -108,6 +146,7 @@ export default function ProviderJobRefundRepayment() {
         title: 'Payment cancelled',
         description: 'You can try again when ready.',
       });
+      void load();
     } else if (searchParams.get('intentId')) {
       toast({
         title: 'Payment submitted',
@@ -118,17 +157,55 @@ export default function ProviderJobRefundRepayment() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  useEffect(() => {
+    const locked = lockedRepaymentGateway(obligation);
+    if (locked) {
+      setSelectedGateway(locked);
+      return;
+    }
+    if (providers.length === 1) {
+      setSelectedGateway((current) => current || providers[0]);
+    }
+  }, [
+    obligation,
+    providers,
+  ]);
+
   const handlePay = async () => {
     if (!obligation || !jobId) return;
     if (obligation.amountDue <= 0) {
       toast({ title: 'No amount due for this obligation', variant: 'destructive' });
       return;
     }
+    const gatewayToUse = lockedRepaymentGateway(obligation) || selectedGateway;
+    if (!gatewayToUse) {
+      toast({ title: 'Please select a payment method', variant: 'destructive' });
+      return;
+    }
     setPaying(true);
     try {
       const data = await createProviderRefundRepaymentCheckout(jobId, {
         amount: obligation.amountDue,
+        provider: gatewayToUse,
       });
+      if (data.gatewayPaymentVerified || data.status === 'AWAITING_VERIFICATION') {
+        toast({
+          title: 'Payment received',
+          description: 'EloFix will verify the repayment shortly.',
+        });
+        await load();
+        setPaying(false);
+        return;
+      }
+      if (data.status === 'PROCESSING' && !data.checkout?.url) {
+        toast({
+          title: 'Payment processing',
+          description: 'This repayment is still being confirmed by the payment gateway.',
+        });
+        await load();
+        setPaying(false);
+        return;
+      }
       if (!data.checkout?.url) {
         throw new Error('Checkout URL missing from payment gateway');
       }
@@ -201,7 +278,6 @@ export default function ProviderJobRefundRepayment() {
     );
   }
 
-  const pending = Boolean(obligation.pendingRepayment);
   const display = resolveProviderRefundDisplay({
     amountDue: obligation.amountDue,
     pendingRepayment: obligation.pendingRepayment,
@@ -209,9 +285,18 @@ export default function ProviderJobRefundRepayment() {
     customerRefundStatus: obligation.customerRefundStatus,
     jobId: obligation.jobId,
   });
+  const awaitingAdmin = display.mode === 'awaiting_verification';
   const canPay = display.showRepayCta && obligation.amountDue > 0;
+  const lockedGateway = lockedRepaymentGateway(obligation);
+  const effectiveGateway = lockedGateway || selectedGateway;
   const bank = obligation.platformBank;
   const amountLabel = formatCurrency(obligation.amountDue, { decimals: 2 });
+  const payDisabled =
+    paying ||
+    providersLoading ||
+    providersError ||
+    providers.length === 0 ||
+    !effectiveGateway;
 
   return (
     <DashboardLayout>
@@ -260,7 +345,7 @@ export default function ProviderJobRefundRepayment() {
             Customer card numbers and CVV are never shown to you.
           </p>
 
-          {pending ? (
+          {awaitingAdmin ? (
             <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               Repayment submitted — awaiting EloFix verification (
               {formatCurrency(obligation.pendingRepayment!.amount, { decimals: 2 })}). Customer
@@ -270,13 +355,54 @@ export default function ProviderJobRefundRepayment() {
 
           {canPay ? (
             <div className="space-y-3">
+              <div>
+                <Label className="mb-2 block">Payment method</Label>
+                {providersError ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-destructive">
+                      Payment methods are unavailable. Please retry.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void loadProviders()}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : providers.length === 0 && !providersLoading ? (
+                  <p className="text-sm text-destructive">
+                    No payment methods are available right now. Contact support or use bank
+                    transfer.
+                  </p>
+                ) : (
+                  <>
+                    <PaymentMethodSelector
+                      value={effectiveGateway}
+                      onChange={setSelectedGateway}
+                      availableProviders={providers}
+                      disabled={paying || providersLoading || Boolean(lockedGateway)}
+                      loading={providersLoading}
+                    />
+                    {lockedGateway ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        The existing {lockedGateway === 'PAYFAST' ? 'PayFast' : 'Paystack'} payment
+                        must be completed or resolved before another payment method can be chosen.
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
               <Button
                 className="w-full sm:w-auto"
-                disabled={paying}
+                disabled={payDisabled}
                 onClick={() => void handlePay()}
               >
                 {paying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Pay {amountLabel}
+                {display.ctaLabel === 'Continue payment'
+                  ? `Continue payment ${amountLabel}`
+                  : `Pay ${amountLabel}`}
               </Button>
 
               <div>

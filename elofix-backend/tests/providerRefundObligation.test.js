@@ -40,6 +40,44 @@ function testDeriveRepaymentStatus() {
   assert.strictEqual(
     deriveRepaymentStatus({
       recoveryStatus: "PENDING",
+      balance: 232.5,
+      pendingRepayment: {
+        id: "gw-unpaid",
+        method: "GATEWAY",
+        gatewayPaymentVerified: false,
+        paymentIntentState: "PENDING",
+      },
+    }),
+    "REFUND_DUE"
+  );
+  assert.strictEqual(
+    deriveRepaymentStatus({
+      recoveryStatus: "PENDING",
+      balance: 232.5,
+      pendingRepayment: {
+        id: "gw-paid",
+        method: "GATEWAY",
+        gatewayPaymentVerified: true,
+        paymentIntentState: "PAID",
+      },
+    }),
+    "AWAITING_VERIFICATION"
+  );
+  assert.strictEqual(
+    deriveRepaymentStatus({
+      recoveryStatus: "PENDING",
+      balance: 232.5,
+      pendingRepayment: {
+        id: "bank",
+        method: "BANK_TRANSFER",
+        gatewayPaymentVerified: false,
+      },
+    }),
+    "AWAITING_VERIFICATION"
+  );
+  assert.strictEqual(
+    deriveRepaymentStatus({
+      recoveryStatus: "PENDING",
       balance: 50,
       pendingRepayment: null,
       lastRejectedRepayment: { amount: 50 },
