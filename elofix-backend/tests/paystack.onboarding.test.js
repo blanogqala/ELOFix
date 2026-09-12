@@ -338,6 +338,115 @@ async function testBankCodeComesFromListBanksNotBranchCode() {
   }
 }
 
+async function testSupportedWithoutRecipientKeepsForeignOwnership() {
+  const originalCreate = paystack.createPayoutDestination;
+  paystack.createPayoutDestination = async () => ({
+    supported: true,
+    recipientId: null,
+    status: "PENDING",
+  });
+  const fix = await seedProvider(`${randomUUID().slice(0, 8)}nr`);
+  try {
+    await prisma.providerWithdrawalProfile.update({
+      where: { id: fix.profile.id },
+      data: { gatewayProvider: "PAYFAST", gatewayRecipientId: "PF-FOREIGN" },
+    });
+    await withEnv(paystackEnv(), async () => {
+      await providerAccountService.registerExistingPayoutGateway(fix.user.id);
+    });
+    const fresh = await prisma.providerWithdrawalProfile.findUnique({
+      where: { providerId: fix.provider.id },
+    });
+    assert.strictEqual(fresh.gatewayProvider, "PAYFAST");
+    assert.strictEqual(fresh.gatewayRecipientId, "PF-FOREIGN");
+  } finally {
+    paystack.createPayoutDestination = originalCreate;
+    await cleanupProvider(fix);
+  }
+}
+
+async function testInvalidRecipientKeepsForeignOwnership() {
+  const originalCreate = paystack.createPayoutDestination;
+  paystack.createPayoutDestination = async () => ({
+    supported: true,
+    recipientId: "TRF_BAD",
+    status: "PENDING",
+  });
+  const fix = await seedProvider(`${randomUUID().slice(0, 8)}tr`);
+  try {
+    await prisma.providerWithdrawalProfile.update({
+      where: { id: fix.profile.id },
+      data: { gatewayProvider: "PAYFAST", gatewayRecipientId: "PF-FOREIGN" },
+    });
+    await withEnv(paystackEnv(), async () => {
+      await providerAccountService.registerExistingPayoutGateway(fix.user.id);
+    });
+    const fresh = await prisma.providerWithdrawalProfile.findUnique({
+      where: { providerId: fix.provider.id },
+    });
+    assert.strictEqual(fresh.gatewayProvider, "PAYFAST");
+    assert.strictEqual(fresh.gatewayRecipientId, "PF-FOREIGN");
+  } finally {
+    paystack.createPayoutDestination = originalCreate;
+    await cleanupProvider(fix);
+  }
+}
+
+async function testMalformedResponseDoesNotMarkPaystackConnected() {
+  const originalCreate = paystack.createPayoutDestination;
+  paystack.createPayoutDestination = async () => ({
+    supported: true,
+    recipientId: "not-a-subaccount",
+    status: "PENDING",
+  });
+  const fix = await seedProvider(`${randomUUID().slice(0, 8)}ml`);
+  try {
+    await withEnv(paystackEnv(), async () => {
+      const out = await providerAccountService.registerExistingPayoutGateway(fix.user.id);
+      assert.notStrictEqual(out.profile?.gatewaySettlementProfile?.provider, "PAYSTACK");
+      assert.strictEqual(out.profile?.gatewaySettlementProfile?.recipientConfigured, false);
+    });
+    const fresh = await prisma.providerWithdrawalProfile.findUnique({
+      where: { providerId: fix.provider.id },
+    });
+    assert.notStrictEqual(fresh.gatewayProvider, "PAYSTACK");
+    assert.ok(!fresh.gatewayRecipientId);
+  } finally {
+    paystack.createPayoutDestination = originalCreate;
+    await cleanupProvider(fix);
+  }
+}
+
+async function testSameGatewayUpdateRemainsSupported() {
+  const updates = [];
+  const originalCreate = paystack.createPayoutDestination;
+  const originalUpdate = paystack.updatePayoutDestination;
+  paystack.createPayoutDestination = async () => {
+    throw new Error("must update existing Paystack recipient");
+  };
+  paystack.updatePayoutDestination = async (id) => {
+    updates.push(id);
+    return { supported: true, recipientId: id, status: "PENDING" };
+  };
+  const fix = await seedProvider(`${randomUUID().slice(0, 8)}up`);
+  try {
+    await prisma.providerWithdrawalProfile.update({
+      where: { id: fix.profile.id },
+      data: { gatewayProvider: "PAYSTACK", gatewayRecipientId: "ACCT_EXISTING" },
+    });
+    await withEnv(paystackEnv(), async () => {
+      const out = await providerAccountService.registerExistingPayoutGateway(fix.user.id);
+      assert.strictEqual(out.profile.gatewaySettlementProfile.provider, "PAYSTACK");
+      assert.strictEqual(out.profile.gatewaySettlementProfile.recipientConfigured, true);
+      assert.deepStrictEqual(updates, ["ACCT_EXISTING"]);
+    });
+  } finally {
+    paystack.createPayoutDestination = originalCreate;
+    paystack.updatePayoutDestination = originalUpdate;
+    await cleanupProvider(fix);
+  }
+}
+
 async function testMissingProfileFailsClosed() {
   const user = await prisma.user.create({
     data: {
@@ -378,6 +487,10 @@ async function main() {
   await testForeignRecipientCreatesThenReplaces();
   await testRegistrationFailureLeavesPriorOwnership();
   await testBankCodeComesFromListBanksNotBranchCode();
+  await testSupportedWithoutRecipientKeepsForeignOwnership();
+  await testInvalidRecipientKeepsForeignOwnership();
+  await testMalformedResponseDoesNotMarkPaystackConnected();
+  await testSameGatewayUpdateRemainsSupported();
   await testMissingProfileFailsClosed();
   console.log("paystack.onboarding.test.js: all passed");
 }

@@ -6,6 +6,7 @@ const {
   settlementCapableGateway,
 } = require("./payments/paymentConfig");
 const { normalizeProvider, GATEWAYS } = require("./payments/gatewayRegistry");
+const { isPaystackSubaccountCode, safePaystackSubaccountCode } = require("./payments/paystack.payload");
 
 const SCOPES = new Set(["provider", "branch"]);
 const MATERIAL_FIELDS = ["bankName", "accountHolder", "accountNumber", "branchCode", "accountType"];
@@ -131,6 +132,31 @@ function buildDestinationPayload(profile, scope, entityId) {
   };
 }
 
+function isRecipientValidForGateway(gw, recipientId) {
+  const id = String(recipientId || "").trim();
+  if (!id) return false;
+  if (normalizeProvider(gw?.name) === "PAYSTACK") {
+    return isPaystackSubaccountCode(id);
+  }
+  return true;
+}
+
+/**
+ * Never persist a foreign recipient as the new gateway's destination.
+ * Same-gateway updates may reuse the existing owned recipient.
+ */
+function recipientIdToPersist(gw, result, profile) {
+  const incoming = String(result?.recipientId || "").trim();
+  const sameOwner = profileRecipientOwnedByGateway(profile, gw);
+  if (incoming) {
+    return isRecipientValidForGateway(gw, incoming) ? incoming : null;
+  }
+  if (sameOwner && isRecipientValidForGateway(gw, profile.gatewayRecipientId)) {
+    return profile.gatewayRecipientId;
+  }
+  return null;
+}
+
 async function callGatewayRegister(gw, profile, scope, entityId) {
   const payload = buildDestinationPayload(profile, scope, entityId);
   if (profileRecipientOwnedByGateway(profile, gw) && typeof gw.updatePayoutDestination === "function") {
@@ -175,8 +201,10 @@ async function registerPayoutDestination({ scope, entityId }) {
   }
 
   const result = await callGatewayRegister(gw, profile, scope, entityId);
+  const persistId = recipientIdToPersist(gw, result, profile);
+  const sameOwner = profileRecipientOwnedByGateway(profile, gw);
 
-  if (!result?.supported) {
+  if (!result?.supported || !persistId) {
     await updateProfile(scope, entityId, {
       verificationStatus: "PENDING_VERIFICATION",
       gatewayProfileStatus: result?.status || "UNSUPPORTED",
@@ -189,7 +217,7 @@ async function registerPayoutDestination({ scope, entityId }) {
   await updateProfile(scope, entityId, {
     verificationStatus,
     gatewayProvider: gw.name,
-    gatewayRecipientId: result.recipientId || profile.gatewayRecipientId || null,
+    gatewayRecipientId: persistId,
     gatewayProfileStatus: result.status || "PENDING",
     gatewayProfilePayload: result.data || null,
     isActive: true,
@@ -199,7 +227,8 @@ async function registerPayoutDestination({ scope, entityId }) {
   return {
     verificationStatus,
     gatewaySettlementSupported: true,
-    recipientId: result.recipientId || profile.gatewayRecipientId,
+    recipientId: persistId,
+    sameOwner,
   };
 }
 
@@ -324,6 +353,36 @@ async function assertSettlementDestinationReady({ scope, entityId }) {
   return { ready: true, profile };
 }
 
+/**
+ * Paystack split-at-charge bookkeeping. Does not require bank verification.
+ * Fail-closed on recipient ownership or persisted split contradiction.
+ */
+async function assertPaystackSplitBookkeepingReady({ scope, entityId, intent }) {
+  if (!SCOPES.has(scope)) throw new AppError("Invalid payout scope", 400);
+  if (normalizeProvider(intent?.provider) !== "PAYSTACK") {
+    return { ready: false, reason: "not_paystack_intent" };
+  }
+  const profile = await loadProfile(scope, entityId);
+  if (!profile || profile.isActive === false) {
+    return { ready: false, reason: "Payout profile not configured or inactive" };
+  }
+  if (normalizeProvider(profile.gatewayProvider) !== "PAYSTACK") {
+    return { ready: false, reason: "Paystack recipient ownership required" };
+  }
+  if (!isPaystackSubaccountCode(profile.gatewayRecipientId)) {
+    return { ready: false, reason: "Paystack recipient is not configured" };
+  }
+  const payload =
+    intent?.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
+      ? intent.gatewayPayload
+      : {};
+  const evidenceCode = safePaystackSubaccountCode(payload.subaccount || payload.subaccount_code);
+  if (evidenceCode && evidenceCode.toUpperCase() !== String(profile.gatewayRecipientId).toUpperCase()) {
+    return { ready: false, contradiction: true, reason: "subaccount_mismatch" };
+  }
+  return { ready: true, profile };
+}
+
 async function getPayoutDestinationStatus({ scope, entityId }) {
   if (!SCOPES.has(scope)) throw new AppError("Invalid payout scope", 400);
   const profile = await loadProfile(scope, entityId);
@@ -406,6 +465,8 @@ module.exports = {
   getPayoutDestinationStatus,
   canDeactivatePayoutProfile,
   assertSettlementDestinationReady,
+  assertPaystackSplitBookkeepingReady,
+  recipientIdToPersist,
   toMaskedAdminProfile,
   listPendingVerificationProfiles,
 };

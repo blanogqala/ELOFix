@@ -471,6 +471,7 @@ async function testSettlementsDoNotTransfer() {
     const intent = {
       merchantReference: "EF-MERCHANTREF1234567",
       gatewayTransactionId: "999",
+      provider: "PAYSTACK",
       kind: "LABOR",
       amount: 100,
     };
@@ -902,6 +903,66 @@ function testExtractSubaccountReuse() {
   );
 }
 
+async function testDestinationResultRequiresAcctCode() {
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/bank") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: [{ name: "First National Bank", code: "001", currency: "ZAR", country: "South Africa" }],
+      });
+    }
+    if (url.includes("/subaccount") && method === "POST") {
+      return jsonResponse({
+        status: true,
+        data: { subaccount_code: "TRF_BAD", percentage_charge: 7, active: true, is_verified: false },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv({ ...validTestEnv() }, async () => {
+      const invalid = await paystack.createPayoutDestination({
+        bankName: "FNB",
+        accountHolder: "Test",
+        accountNumber: "1234567890",
+        branchCode: "250655",
+      });
+      assert.strictEqual(invalid.supported, false);
+      assert.strictEqual(invalid.requiresManualAction, true);
+      assert.ok(!invalid.recipientId);
+    });
+  } finally {
+    fetchMock.restore();
+  }
+
+  const missingMock = installFetchMock((url, method) => {
+    if (url.includes("/bank") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: [{ name: "First National Bank", code: "001", currency: "ZAR", country: "South Africa" }],
+      });
+    }
+    if (url.includes("/subaccount") && method === "POST") {
+      return jsonResponse({ status: true, data: { percentage_charge: 7, active: true } });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv({ ...validTestEnv() }, async () => {
+      const missing = await paystack.createPayoutDestination({
+        bankName: "FNB",
+        accountHolder: "Test",
+        accountNumber: "1234567890",
+        branchCode: "250655",
+      });
+      assert.strictEqual(missing.supported, false);
+      assert.ok(!missing.recipientId);
+    });
+  } finally {
+    missingMock.restore();
+  }
+}
+
 async function main() {
   testNormalizeProvider();
   testEnabledRegistry();
@@ -925,6 +986,7 @@ async function main() {
   await testCreateCheckoutHttpMocked();
   await testRepaymentCheckoutHasNoSplit();
   await testPayoutDestinationDoesNotUseBranchCode();
+  await testDestinationResultRequiresAcctCode();
   await testSettlementsDoNotTransfer();
   await testRefundPendingNotFinal();
   await testVerifyTransactionMocked();
