@@ -424,6 +424,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           manualOnly: Boolean(gatewayPreflight?.manualOnly),
           gatewaySuccess: gatewayPreflight?.result?.ok === true,
           isFullRefund,
+          pending: Boolean(gatewayPreflight?.pending || gatewayPreflight?.result?.pending),
         });
 
         const laborPaidFlag = Boolean(job.laborPaid) || Boolean(metaBefore?.laborPaid);

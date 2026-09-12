@@ -2,7 +2,18 @@ const { randomUUID } = require("crypto");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../../config/prisma");
 const escrowSettlement = require("./escrowSettlement.service");
-const { getGateway } = require("./gatewayRegistry");
+const { getGateway, GATEWAYS } = require("./gatewayRegistry");
+const { toCents } = require("./money.util");
+const {
+  ELOFIX_GROSS_COMMISSION_PERCENT,
+  isMarketplaceSplitKind,
+  isRepaymentKind,
+  isPaystackChargeSettlementEvent,
+  isPaystackRefundEvent,
+  sanitizePaystackWebhookRaw,
+  sanitizePaystackRefundRaw,
+  safePaystackSubaccountCode,
+} = require("./paystack.payload");
 
 const POST_SETTLEMENT_PENDING = "post_settlement_pending";
 
@@ -389,10 +400,510 @@ async function handlePayjustnowWebhook(rawBuffer, signatureHeader) {
   return processWebhookResult("PAYJUSTNOW", verifyResult);
 }
 
+function paystackAdapter() {
+  return GATEWAYS.PAYSTACK;
+}
+
+async function reconcilePaystackSplit(intent, verified) {
+  const kind = String(intent?.kind || "");
+  const verifiedCode = safePaystackSubaccountCode(
+    verified?.subaccount || verified?.raw?.subaccount
+  );
+  const bearer = verified?.raw?.bearer != null ? String(verified.raw.bearer).trim().toLowerCase() : null;
+  const pct =
+    verified?.raw?.percentage_charge != null ? Number(verified.raw.percentage_charge) : null;
+
+  if (isRepaymentKind(kind)) {
+    if (verifiedCode || bearer === "subaccount" || (pct != null && Number.isFinite(pct))) {
+      console.error("[paystack-webhook] repayment split contradiction", {
+        merchantReference: intent.merchantReference,
+        hasSubaccount: Boolean(verifiedCode),
+      });
+      return { ok: false, reason: "repayment_has_marketplace_split" };
+    }
+    return { ok: true };
+  }
+
+  if (!isMarketplaceSplitKind(kind)) return { ok: true };
+
+  if (pct != null && Number.isFinite(pct) && pct !== ELOFIX_GROSS_COMMISSION_PERCENT) {
+    console.error("[paystack-webhook] percentage_charge contradiction", {
+      merchantReference: intent.merchantReference,
+      percentage_charge: pct,
+    });
+    return { ok: false, reason: "percentage_charge_mismatch" };
+  }
+  if (bearer && bearer !== "subaccount") {
+    console.error("[paystack-webhook] bearer contradiction", {
+      merchantReference: intent.merchantReference,
+      bearer,
+    });
+    return { ok: false, reason: "bearer_mismatch" };
+  }
+  if (!verifiedCode) return { ok: true };
+
+  try {
+    const paystackRecipient = require("./paystack.recipient");
+    const expected = await paystackRecipient.lookupMarketplaceSubaccount(intent);
+    if (expected && String(expected).toUpperCase() !== String(verifiedCode).toUpperCase()) {
+      console.error("[paystack-webhook] subaccount contradiction", {
+        merchantReference: intent.merchantReference,
+      });
+      return { ok: false, reason: "subaccount_mismatch" };
+    }
+  } catch (err) {
+    if (err.code !== "PAYSTACK_RECIPIENT_REQUIRED") {
+      throw err;
+    }
+  }
+  return { ok: true };
+}
+
+async function recordPaystackWebhookEvent(externalEventId, rawPayload, paymentIntentId) {
+  const existing = await prisma.paymentWebhookEvent.findUnique({
+    where: {
+      provider_externalEventId: {
+        provider: "PAYSTACK",
+        externalEventId,
+      },
+    },
+  });
+  if (isEventFullyProcessed(existing)) {
+    return { existing, duplicate: true };
+  }
+  if (!existing) {
+    await prisma.paymentWebhookEvent.create({
+      data: {
+        id: randomUUID(),
+        provider: "PAYSTACK",
+        externalEventId,
+        paymentIntentId: paymentIntentId || null,
+        signatureValid: true,
+        rawPayload: rawPayload || {},
+      },
+    });
+  }
+  return { existing, duplicate: false };
+}
+
+async function findPaystackRefundIntent(sanitized, refundId) {
+  const reference = String(sanitized.transaction_reference || "").trim();
+  if (reference) {
+    const byRef = await prisma.paymentIntent.findUnique({
+      where: { merchantReference: reference },
+    });
+    if (byRef) return byRef;
+  }
+  if (refundId) {
+    const byPending = await prisma.paymentIntent.findFirst({
+      where: {
+        provider: "PAYSTACK",
+        gatewayPayload: {
+          path: ["pendingRefund", "externalRefundId"],
+          equals: String(refundId),
+        },
+      },
+    });
+    if (byPending) return byPending;
+  }
+  return null;
+}
+
+function isTerminalPaystackRefundEvent(event) {
+  const e = String(event || "").trim().toLowerCase();
+  return e === "refund.processed" || e === "refund.failed";
+}
+
+async function handlePaystackRefundEvent(body, event) {
+  const refundService = require("./refund.service");
+  const sanitized = sanitizePaystackRefundRaw(body);
+  const webhookRefundId = refundService.webhookRefundIdFromSanitized(sanitized);
+  const intent = await findPaystackRefundIntent(sanitized, webhookRefundId);
+
+  if (!intent) {
+    if (!webhookRefundId) {
+      return { httpStatus: 200, result: { ignored: true, noIntent: true, refund: true } };
+    }
+    const orphanEventId = refundService.refundWebhookEventId(webhookRefundId, event);
+    const recorded = await recordPaystackWebhookEvent(orphanEventId, sanitized, null);
+    if (recorded.duplicate) {
+      return { httpStatus: 200, result: { duplicate: true, refund: true, noIntent: true } };
+    }
+    await markEventFullyProcessed(prisma, "PAYSTACK", orphanEventId, null);
+    return { httpStatus: 200, result: { processed: true, noIntent: true, refund: true } };
+  }
+
+  const resolved = refundService.resolveEffectiveRefundId(intent, webhookRefundId, {
+    event,
+    webhookAmountCents: sanitized.amount != null ? Number(sanitized.amount) : null,
+  });
+  if (resolved.mismatch) {
+    console.error("[paystack-webhook] refund id contradicts stored pending id", {
+      merchantReference: intent.merchantReference,
+    });
+    return { httpStatus: 400, message: "Refund identity mismatch" };
+  }
+
+  const effectiveRefundId = resolved.effectiveRefundId;
+  if (!effectiveRefundId) {
+    if (resolved.ambiguous || isTerminalPaystackRefundEvent(event)) {
+      console.error("[paystack-webhook] terminal refund identity ambiguous or missing", {
+        merchantReference: intent.merchantReference,
+        event,
+        source: resolved.source || null,
+      });
+      return {
+        httpStatus: 200,
+        result: { ignored: true, refund: true, reason: resolved.source || "missing_refund_id" },
+      };
+    }
+    return { httpStatus: 200, result: { ignored: true, refund: true, reason: "missing_refund_id" } };
+  }
+
+  const externalEventId = refundService.refundWebhookEventId(effectiveRefundId, event);
+  const recorded = await recordPaystackWebhookEvent(externalEventId, sanitized, intent.id);
+  if (recorded.duplicate) {
+    return { httpStatus: 200, result: { duplicate: true, refund: true } };
+  }
+
+  const pending = refundService.readPendingRefund(intent);
+  const lastFailedAttempt = refundService.lastRefundAttemptRecord(intent);
+  const targetsCurrentPending = Boolean(
+    pending?.externalRefundId && String(pending.externalRefundId) === String(effectiveRefundId)
+  );
+  const moneyAlreadyFinalized = Boolean(
+    resolved.alreadyFinalized ||
+      refundService.isRefundAlreadyFinalized(intent, {
+        externalRefundId: effectiveRefundId,
+        idempotencyKey: targetsCurrentPending ? pending?.idempotencyKey || null : null,
+      })
+  );
+
+  const gw = paystackAdapter();
+  let mapped = {
+    supported: true,
+    ok: false,
+    pending: true,
+    status: "PENDING",
+    externalRefundId: effectiveRefundId,
+  };
+  if (
+    event === "refund.processed" ||
+    event === "refund.failed" ||
+    event.includes("needs-attention") ||
+    event.includes("needs_attention")
+  ) {
+    if (typeof gw.verifyRefund === "function") {
+      const verified = await gw.verifyRefund(effectiveRefundId);
+      if (verified.status === "VERIFY_FAILED" || String(verified.message || "") === "paystack_refund_verify_failed") {
+        return { httpStatus: 500, message: verified.message || "Paystack refund verify failed" };
+      }
+      mapped = verified;
+      if (mapped.externalRefundId == null) mapped.externalRefundId = effectiveRefundId;
+    }
+  } else if (event === "refund.processing") {
+    mapped.status = "PENDING";
+    mapped.pending = true;
+    mapped.externalRefundId = effectiveRefundId;
+  }
+
+  const finalizedSlice = refundService.readFinalizedRefund(intent, effectiveRefundId);
+  const historicalAttemptAmount =
+    lastFailedAttempt?.externalRefundId &&
+    String(lastFailedAttempt.externalRefundId) === String(effectiveRefundId) &&
+    lastFailedAttempt.requestedAmount != null
+      ? Number(lastFailedAttempt.requestedAmount)
+      : null;
+  const requestedAmount =
+    targetsCurrentPending && pending?.requestedAmount != null ? Number(pending.requestedAmount) : null;
+  const recoveredAmount =
+    finalizedSlice?.amount != null
+      ? Number(finalizedSlice.amount)
+      : historicalAttemptAmount;
+
+  if (mapped.ok || mapped.status === "COMPLETED") {
+    if (!mapped.ok && mapped.status !== "COMPLETED") {
+      return { httpStatus: 400, message: "Refund not processed on Paystack" };
+    }
+    const verifiedCurrency = String(mapped.currency || "").trim().toUpperCase();
+    if (!moneyAlreadyFinalized && (!verifiedCurrency || verifiedCurrency !== "ZAR")) {
+      console.error("[paystack-webhook] refund currency mismatch", {
+        merchantReference: intent.merchantReference,
+      });
+      return { httpStatus: 400, message: "Currency mismatch" };
+    }
+    let sliceAmount = requestedAmount != null ? requestedAmount : recoveredAmount;
+    if (!moneyAlreadyFinalized) {
+      if (sliceAmount == null || mapped.amountCents == null) {
+        console.error("[paystack-webhook] refund amount missing from server verify", {
+          merchantReference: intent.merchantReference,
+        });
+        return { httpStatus: 400, message: "Refund amount mismatch" };
+      }
+      if (Math.round(Number(mapped.amountCents)) !== toCents(sliceAmount)) {
+        console.error("[paystack-webhook] refund amount mismatch", {
+          merchantReference: intent.merchantReference,
+        });
+        return { httpStatus: 400, message: "Refund amount mismatch" };
+      }
+    } else if (sliceAmount == null) {
+      return {
+        httpStatus: 200,
+        result: { ignored: true, refund: true, reason: "missing_finalized_slice_amount" },
+      };
+    }
+    let finalized;
+    try {
+      finalized = await refundService.finalizeCustomerGatewayRefund(intent, {
+        amount: sliceAmount,
+        externalRefundId: mapped.externalRefundId || effectiveRefundId,
+        idempotencyKey: targetsCurrentPending
+          ? pending?.idempotencyKey || refundFinalizationIdempotency(effectiveRefundId)
+          : finalizedSlice?.idempotencyKey || refundFinalizationIdempotency(effectiveRefundId),
+        finalizeCustomerArtifacts: true,
+      });
+    } catch (err) {
+      console.error("[paystack-webhook] refund finalization incomplete", {
+        merchantReference: intent.merchantReference,
+        message: err?.message || err,
+      });
+      return { httpStatus: 500, message: err?.message || "Refund finalization incomplete" };
+    }
+    if (finalized?.failedClosed) {
+      return { httpStatus: 400, message: "Refund amount mismatch" };
+    }
+    if (
+      finalized?.continuation?.needed &&
+      !finalized.continuation.established &&
+      finalized.continuation.retryable
+    ) {
+      return {
+        httpStatus: 500,
+        message: finalized.continuation.reason || "Refund continuation retryable",
+        result: { processed: false, refund: true, continuationRetryable: true },
+      };
+    }
+    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+    return { httpStatus: 200, result: { processed: true, refund: true, state: "PROCESSED" } };
+  }
+
+  if (mapped.status === "FAILED") {
+    if (!targetsCurrentPending) {
+      await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+      return {
+        httpStatus: 200,
+        result: { processed: true, refund: true, duplicate: true, stale: true, state: "FAILED" },
+      };
+    }
+    await refundService.updatePendingRefundStatus(intent, "FAILED");
+    if (intent.jobId) {
+      const { mutateJobMetaInTransaction } = require("../jobMeta.service");
+      await prisma.$transaction(async (tx) => {
+        await mutateJobMetaInTransaction(tx, intent.jobId, (m) => {
+          const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
+          return {
+            ...m,
+            refund: {
+              ...refund,
+              customerRefundStatus: "REFUND_FAILED",
+              status: "gateway_failed",
+            },
+          };
+        });
+      });
+    }
+    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+    return { httpStatus: 200, result: { processed: true, refund: true, state: "FAILED" } };
+  }
+
+  if (mapped.status === "NEEDS_ATTENTION") {
+    if (!targetsCurrentPending) {
+      await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+      return {
+        httpStatus: 200,
+        result: { processed: true, refund: true, stale: true, state: "NEEDS_ATTENTION" },
+      };
+    }
+    await refundService.updatePendingRefundStatus(intent, "NEEDS_ATTENTION", { actionRequired: true });
+    if (intent.jobId) {
+      const { mutateJobMetaInTransaction } = require("../jobMeta.service");
+      await prisma.$transaction(async (tx) => {
+        await mutateJobMetaInTransaction(tx, intent.jobId, (m) => {
+          const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
+          return {
+            ...m,
+            refund: {
+              ...refund,
+              customerRefundStatus: "REFUND_PROCESSING",
+              status: "needs_attention",
+              actionRequired: true,
+              actionRequiredReason: "paystack_refund_needs_attention",
+            },
+          };
+        });
+      });
+    }
+    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+    return { httpStatus: 200, result: { processed: true, refund: true, state: "NEEDS_ATTENTION" } };
+  }
+
+  if (!targetsCurrentPending) {
+    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+    return {
+      httpStatus: 200,
+      result: { ignored: true, stale: true, refund: true, state: mapped.status || "PENDING" },
+    };
+  }
+  await refundService.updatePendingRefundStatus(intent, mapped.status || "PENDING");
+  await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+  return { httpStatus: 200, result: { processed: true, refund: true, state: mapped.status || "PENDING" } };
+}
+
+function refundFinalizationIdempotency(effectiveRefundId) {
+  return `paystack-refund:${String(effectiveRefundId)}`;
+}
+
+async function handlePaystackChargeEvent(body, event) {
+  const gw = paystackAdapter();
+  const data = body.data && typeof body.data === "object" ? body.data : {};
+  const reference = String(data.reference || "").trim();
+  if (!reference) {
+    return { httpStatus: 400, message: "Invalid webhook" };
+  }
+
+  let verified;
+  try {
+    verified = await gw.verifyTransaction(reference);
+  } catch (err) {
+    return { httpStatus: 500, message: err.message || "Paystack verify failed" };
+  }
+
+  const intent = await prisma.paymentIntent.findUnique({
+    where: { merchantReference: reference },
+  });
+
+  if (event === "charge.success") {
+    if (verified.state !== "PAID") {
+      return { httpStatus: 400, message: "Paystack verification not success" };
+    }
+    if (intent) {
+      if (String(verified.merchantReference || "") !== String(intent.merchantReference)) {
+        return { httpStatus: 400, message: "Reference mismatch" };
+      }
+      const expectedCents = toCents(intent.amount);
+      const gotCents =
+        verified.amountCents != null ? Math.round(Number(verified.amountCents)) : toCents(verified.amount);
+      if (expectedCents !== gotCents) {
+        return {
+          httpStatus: 500,
+          message: "Amount mismatch",
+          failure: "AMOUNT_MISMATCH",
+          amountValid: false,
+        };
+      }
+      const expectedCur = String(intent.currency || "ZAR").trim().toUpperCase() || "ZAR";
+      const gotCur = String(verified.currency || "ZAR").trim().toUpperCase() || "ZAR";
+      if (expectedCur !== gotCur) {
+        return { httpStatus: 400, message: "Currency mismatch" };
+      }
+      const split = await reconcilePaystackSplit(intent, verified);
+      if (!split.ok) {
+        return { httpStatus: 400, message: "Split reconciliation failed" };
+      }
+    }
+  }
+
+  const webhookRaw = sanitizePaystackWebhookRaw(body);
+  const raw = {
+    ...webhookRaw,
+    ...(verified.raw && typeof verified.raw === "object" ? verified.raw : {}),
+    event,
+    verifySource: "paystack_transaction_verify",
+  };
+
+  let state = verified.state;
+  if (event === "charge.success") {
+    state = "PAID";
+  } else if (event === "charge.failed") {
+    const verifyPaid = verified.state === "PAID";
+    const intentPaid = intent?.state === "PAID";
+    if (verifyPaid || intentPaid || verified.state !== "FAILED") {
+      const diagnostic = {
+        event,
+        merchantReference: reference,
+        verifyState: verified.state,
+        intentState: intent?.state || null,
+        reason: intentPaid
+          ? "charge_failed_ignored_paid_intent"
+          : verifyPaid
+            ? "charge_failed_contradicts_verify"
+            : "charge_failed_verify_not_failed",
+      };
+      console.error("[paystack-webhook] charge.failed ignored; server verify is authoritative", diagnostic);
+      const ignoredEventId = `paystack-charge-ignored:${reference}:${event}:${body.id || verified.gatewayTransactionId || "tx"}`;
+      const ignored = await recordPaystackWebhookEvent(
+        ignoredEventId,
+        { ...sanitizePaystackWebhookRaw(body), diagnostic },
+        intent?.id || null
+      );
+      if (!ignored.duplicate) {
+        await markEventFullyProcessed(prisma, "PAYSTACK", ignoredEventId, intent?.id || null);
+      }
+      return {
+        httpStatus: 200,
+        result: { ignored: true, refund: false, diagnostic },
+      };
+    }
+    state = "FAILED";
+  }
+
+  return processWebhookResult("PAYSTACK", {
+    valid: true,
+    merchantReference: verified.merchantReference || reference,
+    gatewayTransactionId: verified.gatewayTransactionId,
+    state,
+    amount: verified.amount,
+    currency: verified.currency,
+    externalEventId: String(body.id || `${reference}-${event}-${verified.gatewayTransactionId || "tx"}`),
+    raw,
+  });
+}
+
+async function handlePaystackWebhook(rawBuffer, signatureHeader) {
+  if (!Buffer.isBuffer(rawBuffer)) {
+    return { httpStatus: 400, message: "Expected raw body" };
+  }
+  const gw = paystackAdapter();
+  if (typeof gw.isConfigured === "function" && !gw.isConfigured()) {
+    return { httpStatus: 503, message: "PAYSTACK is not configured" };
+  }
+  if (!gw.verifyWebhookSignature(rawBuffer, signatureHeader)) {
+    return { httpStatus: 400, message: "Invalid webhook" };
+  }
+
+  let body;
+  try {
+    body = JSON.parse(rawBuffer.toString("utf8"));
+  } catch {
+    return { httpStatus: 400, message: "Invalid webhook" };
+  }
+
+  const event = String(body.event || "").trim().toLowerCase();
+  if (isPaystackRefundEvent(event)) {
+    return handlePaystackRefundEvent(body, event);
+  }
+  if (!isPaystackChargeSettlementEvent(event)) {
+    return { httpStatus: 200, message: "ignored", result: { ignored: true, event } };
+  }
+  return handlePaystackChargeEvent(body, event);
+}
+
 module.exports = {
   POST_SETTLEMENT_PENDING,
   processWebhookResult,
   handlePayfastWebhook,
   handlePayflexWebhook,
   handlePayjustnowWebhook,
+  handlePaystackWebhook,
+  reconcilePaystackSplit,
 };

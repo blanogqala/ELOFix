@@ -101,28 +101,43 @@ function disputeGrossToLaborNet(action, amount, job, meta) {
   return netCourierCancelRefundFromGross(gross);
 }
 
+function isAsyncPendingGatewayRefund(result) {
+  if (!result) return false;
+  if (result.pending === true) return true;
+  const status = String(result.status || "").trim().toUpperCase();
+  return status === "PENDING" || status === "PROCESSING" || status === "NEEDS_ATTENTION";
+}
+
 function classifyGatewayRefundResult(result) {
-  if (!result) return { manualOnly: false, success: false, failed: false };
+  if (!result) return { manualOnly: false, success: false, failed: false, pending: false };
+  const pending = isAsyncPendingGatewayRefund(result);
+  const needsAttention =
+    pending &&
+    (result.requiresManualAction === true ||
+      String(result.status || "").trim().toUpperCase() === "NEEDS_ATTENTION");
   const manualOnly =
+    needsAttention ||
     result.reason === "refund_not_supported" ||
     result.supported === false ||
-    result.requiresManualAction === true ||
+    (!pending && result.requiresManualAction === true) ||
     result.status === "MANUAL_REQUIRED" ||
     result.message === "refund_not_supported";
   const success = Boolean(result.ok);
   const failed =
     !manualOnly &&
     !success &&
+    !pending &&
     result.reason !== "zero_amount" &&
     result.reason !== "no_intent" &&
     result.message !== "zero_amount" &&
     result.message !== "no_paid_intent" &&
     result.message !== "nothing_left_to_refund";
-  return { manualOnly, success, failed };
+  return { manualOnly, success, failed, pending };
 }
 
-function resolveRefundStatusAfterGateway({ manualOnly, gatewaySuccess, isFullRefund }) {
+function resolveRefundStatusAfterGateway({ manualOnly, gatewaySuccess, isFullRefund, pending }) {
   if (gatewaySuccess) return isFullRefund ? "processed" : "partial";
+  if (pending && !manualOnly) return "processing";
   if (manualOnly) return "pending_manual_gateway";
   return "recorded";
 }
@@ -139,4 +154,5 @@ module.exports = {
   disputeGrossToLaborNet,
   classifyGatewayRefundResult,
   resolveRefundStatusAfterGateway,
+  isAsyncPendingGatewayRefund,
 };

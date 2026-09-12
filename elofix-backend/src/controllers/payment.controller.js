@@ -186,6 +186,17 @@ async function payjustnowWebhook(req, res) {
   res.status(status).json({ success: status < 400, ...out });
 }
 
+async function paystackWebhook(req, res) {
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf)) {
+    return res.status(400).json({ success: false, message: "Expected raw body" });
+  }
+  const sig = req.headers["x-paystack-signature"];
+  const out = await webhookService.handlePaystackWebhook(buf, sig);
+  const status = out.httpStatus != null ? out.httpStatus : 200;
+  res.status(status).json({ success: status < 400, ...out });
+}
+
 async function settlementWebhook(req, res) {
   const provider = String(req.params.provider || "").trim();
   const branchSettlement = require("../services/branchSettlement.service");
@@ -231,5 +242,6 @@ module.exports = {
   payfastWebhook,
   payflexWebhook,
   payjustnowWebhook,
+  paystackWebhook,
   settlementWebhook,
 };

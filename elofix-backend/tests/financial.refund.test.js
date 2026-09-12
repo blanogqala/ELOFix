@@ -66,6 +66,18 @@ function testClassifyGatewayRefundResult() {
 
   const fail = classifyGatewayRefundResult({ ok: false, reason: "declined" });
   assert.strictEqual(fail.failed, true);
+
+  const pending = classifyGatewayRefundResult({
+    ok: false,
+    pending: true,
+    status: "PENDING",
+    requiresManualAction: false,
+    supported: true,
+  });
+  assert.strictEqual(pending.pending, true);
+  assert.strictEqual(pending.failed, false);
+  assert.strictEqual(pending.success, false);
+  assert.strictEqual(pending.manualOnly, false);
 }
 
 function testResolveRefundStatusAfterGateway() {
@@ -80,6 +92,15 @@ function testResolveRefundStatusAfterGateway() {
   assert.strictEqual(
     resolveRefundStatusAfterGateway({ manualOnly: false, gatewaySuccess: false, isFullRefund: false }),
     "recorded"
+  );
+  assert.strictEqual(
+    resolveRefundStatusAfterGateway({
+      manualOnly: false,
+      gatewaySuccess: false,
+      isFullRefund: false,
+      pending: true,
+    }),
+    "processing"
   );
 }
 

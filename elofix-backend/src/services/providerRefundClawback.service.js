@@ -235,12 +235,15 @@ async function attemptGatewayRefundFirst(jobId, laborNet) {
   });
   const result = {
     ok: multi.ok,
+    pending: Boolean(multi.pending),
     supported: multi.supported,
     requiresManualAction: multi.requiresManualAction,
+    status: multi.status || null,
     message: multi.message,
     reason: multi.message,
     results: multi.results,
     refundedTotal: multi.refundedTotal,
+    externalRefundId: (multi.results || []).map((r) => r.externalRefundId).find(Boolean) || null,
   };
   if (!multi.originalPaymentIntentIds?.length && multi.message === "no_paid_intent") {
     return {
@@ -250,8 +253,14 @@ async function attemptGatewayRefundFirst(jobId, laborNet) {
       failed: false,
     };
   }
-  const { manualOnly, success, failed } = classifyGatewayRefundResult(result);
-  return { attempted: !manualOnly, result, manualOnly, failed };
+  const classified = classifyGatewayRefundResult(result);
+  return {
+    attempted: !classified.manualOnly || classified.pending,
+    result,
+    manualOnly: classified.manualOnly,
+    failed: classified.failed,
+    pending: classified.pending,
+  };
 }
 
 /**
@@ -350,6 +359,7 @@ async function orchestrateJobLaborRefund({
         manualOnly: gatewayPreflight.manualOnly,
         gatewaySuccess: gatewayPreflight.result?.ok === true,
         isFullRefund,
+        pending: Boolean(gatewayPreflight.pending || gatewayPreflight.result?.pending),
       });
 
       const clawbackResult = await applyProviderRefundClawbackInTransaction(tx, {
@@ -396,17 +406,25 @@ async function processGatewayRefundForJob(jobId, laborNet) {
     idempotencyKey: `process:${jobId}:${Number(laborNet).toFixed(2)}`,
   });
   if (!gatewayResult.ok) {
+    const pending = Boolean(gatewayResult.pending);
     await prisma.$transaction(async (tx) => {
       await mutateJobMetaInTransaction(tx, jobId, (m) => ({
         ...m,
         refund: {
           ...(m.refund && typeof m.refund === "object" ? m.refund : {}),
-          status: gatewayResult.requiresManualAction
-            ? "pending_manual_gateway"
-            : "gateway_failed",
-          customerRefundStatus: gatewayResult.requiresManualAction
-            ? "REFUND_MANUAL_ACTION_REQUIRED"
-            : "REFUND_FAILED",
+          status: pending
+            ? gatewayResult.requiresManualAction
+              ? "needs_attention"
+              : "processing"
+            : gatewayResult.requiresManualAction
+              ? "pending_manual_gateway"
+              : "gateway_failed",
+          customerRefundStatus: pending
+            ? "REFUND_PROCESSING"
+            : gatewayResult.requiresManualAction
+              ? "REFUND_MANUAL_ACTION_REQUIRED"
+              : "REFUND_FAILED",
+          actionRequired: pending && gatewayResult.requiresManualAction,
           gatewayResult,
           originalPaymentIntentIds: gatewayResult.originalPaymentIntentIds || [],
         },

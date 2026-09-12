@@ -735,7 +735,14 @@ async function confirmPaymentReturn(intentId, userId, role) {
   }
   await authorizeIntentAccess(intent, userId, role);
 
-  if (
+  if (intent.provider === "PAYSTACK") {
+    if (intent.state === "PENDING" || intent.state === "PROCESSING") {
+      await prisma.paymentIntent.update({
+        where: { id: intent.id },
+        data: { state: "PROCESSING" },
+      });
+    }
+  } else if (
     intent.state !== "PAID" &&
     intent.provider === "PAYFAST" &&
     payfastSettleOnReturn()

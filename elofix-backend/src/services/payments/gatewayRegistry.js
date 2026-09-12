@@ -2,12 +2,14 @@ const AppError = require("../../utils/AppError");
 const payfast = require("./payfast.gateway");
 const payflex = require("./payflex.gateway");
 const payjustnow = require("./payjustnow.gateway");
-const { isProviderEnabled } = require("./paymentConfig");
+const paystack = require("./paystack.gateway");
+const { isProviderEnabled, providerEnvKey } = require("./paymentConfig");
 
 const GATEWAYS = {
   PAYFAST: payfast,
   PAYFLEX: payflex,
   PAYJUSTNOW: payjustnow,
+  PAYSTACK: paystack,
 };
 
 function normalizeProvider(input) {
@@ -19,6 +21,7 @@ function normalizeProvider(input) {
   if (p === "PAYFAST") return "PAYFAST";
   if (p === "PAYFLEX") return "PAYFLEX";
   if (p === "PAYJUSTNOW" || p === "PJN") return "PAYJUSTNOW";
+  if (p === "PAYSTACK") return "PAYSTACK";
   return null;
 }
 
@@ -27,7 +30,7 @@ function getGateway(providerInput) {
   if (!key || !GATEWAYS[key]) {
     throw new AppError("Invalid payment provider", 400);
   }
-  const mapKey = { PAYFAST: "payfast", PAYFLEX: "payflex", PAYJUSTNOW: "payjustnow" }[key];
+  const mapKey = providerEnvKey(key);
   if (!isProviderEnabled(mapKey)) {
     throw new AppError("Payment provider is not enabled", 503);
   }
@@ -41,7 +44,7 @@ function getGateway(providerInput) {
 function listEnabledGateways() {
   return Object.entries(GATEWAYS)
     .filter(([k]) => {
-      const mapKey = { PAYFAST: "payfast", PAYFLEX: "payflex", PAYJUSTNOW: "payjustnow" }[k];
+      const mapKey = providerEnvKey(k);
       return isProviderEnabled(mapKey) && GATEWAYS[k].isConfigured();
     })
     .map(([k]) => k);

@@ -36,6 +36,7 @@ app.use(
       "X-Requested-With",
       "x-payflex-signature",
       "x-payjustnow-signature",
+      "x-paystack-signature",
       "x-signature",
       "x-webhook-signature",
     ],
@@ -62,6 +63,11 @@ app.post(
   "/api/payments/webhooks/payjustnow",
   express.raw({ type: "application/json" }),
   asyncHandler(paymentController.payjustnowWebhook)
+);
+app.post(
+  "/api/payments/webhooks/paystack",
+  express.raw({ type: "application/json" }),
+  asyncHandler(paymentController.paystackWebhook)
 );
 app.post(
   "/api/payments/webhooks/:provider/settlement",

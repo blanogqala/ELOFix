@@ -78,6 +78,7 @@ enum PaymentProvider {
   PAYFAST
   PAYFLEX
   PAYJUSTNOW
+  PAYSTACK
 }
 
 enum PaymentIntentKind {

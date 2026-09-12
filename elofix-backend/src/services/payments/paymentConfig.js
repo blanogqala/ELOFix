@@ -27,6 +27,86 @@ function isProviderEnabled(providerKey) {
   return enabledProviders().has(String(providerKey).toLowerCase());
 }
 
+const PROVIDER_ENV_KEYS = {
+  PAYFAST: "payfast",
+  PAYFLEX: "payflex",
+  PAYJUSTNOW: "payjustnow",
+  PAYSTACK: "paystack",
+};
+
+function providerEnvKey(providerEnum) {
+  const key = String(providerEnum || "").trim().toUpperCase();
+  return PROVIDER_ENV_KEYS[key] || key.toLowerCase();
+}
+
+function paystackMode(env = process.env) {
+  return String(env.PAYSTACK_MODE || "").trim().toLowerCase();
+}
+
+function paystackSecretKeyPrefix(secret) {
+  const s = String(secret || "").trim();
+  if (s.startsWith("sk_live_")) return "sk_live_";
+  if (s.startsWith("sk_test_")) return "sk_test_";
+  return "";
+}
+
+function paystackPublicKeyPrefix(publicKey) {
+  const s = String(publicKey || "").trim();
+  if (s.startsWith("pk_live_")) return "pk_live_";
+  if (s.startsWith("pk_test_")) return "pk_test_";
+  return "";
+}
+
+/**
+ * Fail-closed Paystack credentials. Mode is never inferred from NODE_ENV.
+ * Does not return or log secret values.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+function assertPaystackCredentials(env = process.env) {
+  const mode = paystackMode(env);
+  const secret = String(env.PAYSTACK_SECRET_KEY || "").trim();
+  const publicKey = String(env.PAYSTACK_PUBLIC_KEY || "").trim();
+  const secretPrefix = paystackSecretKeyPrefix(secret);
+
+  if (mode !== "test" && mode !== "live") {
+    const err = new Error("PAYSTACK_MODE must be test or live");
+    err.code = "PAYSTACK_MODE_INVALID";
+    throw err;
+  }
+
+  const expectedSecretPrefix = mode === "live" ? "sk_live_" : "sk_test_";
+  if (!secret || secretPrefix !== expectedSecretPrefix) {
+    const err = new Error(
+      mode === "live"
+        ? "PAYSTACK_SECRET_KEY must start with sk_live_ when PAYSTACK_MODE=live"
+        : "PAYSTACK_SECRET_KEY must start with sk_test_ when PAYSTACK_MODE=test"
+    );
+    err.code = "PAYSTACK_KEY_MODE_MISMATCH";
+    throw err;
+  }
+
+  if (publicKey) {
+    const publicPrefix = paystackPublicKeyPrefix(publicKey);
+    const expectedPublicPrefix = mode === "live" ? "pk_live_" : "pk_test_";
+    if (publicPrefix !== expectedPublicPrefix) {
+      const err = new Error("PAYSTACK_PUBLIC_KEY prefix must match PAYSTACK_MODE");
+      err.code = "PAYSTACK_PUBLIC_KEY_MODE_MISMATCH";
+      throw err;
+    }
+  }
+
+  return { mode, keyPrefix: secretPrefix };
+}
+
+function isPaystackConfigured(env = process.env) {
+  try {
+    assertPaystackCredentials(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isProductionEnv(nodeEnv = process.env.NODE_ENV) {
   return String(nodeEnv || "").toLowerCase() === "production";
 }
@@ -96,6 +176,7 @@ function marketplaceSettlementEnabled() {
 
 /**
  * First enabled gateway that supports marketplace branch settlement.
+ * Used for payout-destination registration only — not for post-payment settlement.
  * @returns {import('./payfast.gateway') | null}
  */
 function settlementCapableGateway() {
@@ -103,7 +184,7 @@ function settlementCapableGateway() {
   const { GATEWAYS } = require("./gatewayRegistry");
   const { enabledProviders } = module.exports;
   for (const [key, gw] of Object.entries(GATEWAYS)) {
-    const mapKey = { PAYFAST: "payfast", PAYFLEX: "payflex", PAYJUSTNOW: "payjustnow" }[key];
+    const mapKey = providerEnvKey(key);
     if (!enabledProviders().has(mapKey)) continue;
     if (typeof gw.supportsMarketplaceSettlement === "function" && gw.supportsMarketplaceSettlement()) {
       if (typeof gw.isConfigured === "function" && gw.isConfigured()) return gw;
@@ -112,12 +193,41 @@ function settlementCapableGateway() {
   return null;
 }
 
+/**
+ * Settlement adapter for a paid PaymentIntent. Bound to intent.provider so a
+ * Paystack status-only settlement cannot run against a PayFast/Payflex/PayJustNow charge.
+ * @param {{ provider?: string } | null | undefined} intent
+ */
+function settlementGatewayForIntent(intent) {
+  if (!marketplaceSettlementEnabled()) return null;
+  const { getGateway, normalizeProvider } = require("./gatewayRegistry");
+  const key = normalizeProvider(intent?.provider);
+  if (!key) return null;
+  let gw;
+  try {
+    gw = getGateway(key);
+  } catch {
+    return null;
+  }
+  if (typeof gw.supportsMarketplaceSettlement !== "function" || !gw.supportsMarketplaceSettlement()) {
+    return null;
+  }
+  return gw;
+}
+
 module.exports = {
   paymentCurrency,
   frontendBaseUrl,
   paymentBaseUrl,
   enabledProviders,
   isProviderEnabled,
+  PROVIDER_ENV_KEYS,
+  providerEnvKey,
+  paystackMode,
+  paystackSecretKeyPrefix,
+  paystackPublicKeyPrefix,
+  assertPaystackCredentials,
+  isPaystackConfigured,
   allowAdminPaymentOverride,
   isProductionEnv,
   payfastSkipIpCheckAllowed,
@@ -125,4 +235,5 @@ module.exports = {
   assertProductionPaymentSafety,
   marketplaceSettlementEnabled,
   settlementCapableGateway,
+  settlementGatewayForIntent,
 };
