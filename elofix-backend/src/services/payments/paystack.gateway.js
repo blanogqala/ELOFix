@@ -86,9 +86,9 @@ async function createCheckout(intent, customer) {
   if (!isConfigured()) {
     throw new AppError("PAYSTACK is not configured", 503);
   }
-  const subaccountCode = await paystackRecipient.lookupMarketplaceSubaccount(intent);
   let payload;
   try {
+    const subaccountCode = await paystackRecipient.lookupMarketplaceSubaccount(intent);
     payload = buildCheckoutInitializePayload(
       { ...intent, returnUrl: checkoutReturnUrl(intent) },
       customer,

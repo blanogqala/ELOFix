@@ -281,4 +281,87 @@ describe('PaymentModal hosted checkout (no EloFix card/CVC)', () => {
       expect(screen.getByText('ZAR')).toBeInTheDocument();
     });
   });
+
+  it('does not show Paystack when the server list omits it', async () => {
+    getPaymentProviders.mockResolvedValue(['PAYFAST']);
+    renderModal();
+    await waitFor(() => {
+      expect(screen.getByText('PayFast')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Paystack')).not.toBeInTheDocument();
+  });
+
+  it('shows Paystack when the server list includes it', async () => {
+    getPaymentProviders.mockResolvedValue(['PAYFAST', 'PAYSTACK']);
+    renderModal();
+    await waitFor(() => {
+      expect(screen.getByText('Paystack')).toBeInTheDocument();
+    });
+  });
+
+  it('keeps Pay disabled while provider discovery is loading', async () => {
+    let resolveProviders: (value: string[]) => void = () => {};
+    getPaymentProviders.mockReturnValue(
+      new Promise((resolve) => {
+        resolveProviders = resolve;
+      })
+    );
+    renderModal();
+    await waitFor(() => {
+      expect(screen.getByText(/Loading payment methods/i)).toBeInTheDocument();
+    });
+    const payBtn = screen.getByRole('button', { name: /Pay/i });
+    expect(payBtn).toBeDisabled();
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    resolveProviders(['PAYFAST']);
+    await waitFor(() => {
+      expect(screen.getByText('PayFast')).toBeInTheDocument();
+    });
+  });
+
+  it('fails closed when provider discovery fails', async () => {
+    getPaymentProviders.mockRejectedValue(new Error('network'));
+    renderModal();
+    await waitFor(() => {
+      expect(screen.getByText(/Payment methods are unavailable/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /Pay/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument();
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it('selecting PAYSTACK uses generic checkout redirect', async () => {
+    getPaymentProviders.mockResolvedValue(['PAYSTACK']);
+    const user = setupUser();
+    renderModal();
+    await waitFor(() => {
+      expect(screen.getByText('Paystack')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /Pay/i }));
+    await waitFor(() => {
+      expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+    });
+    const arg = createPaymentIntent.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.provider).toBe('PAYSTACK');
+    expect(arg.kind).toBe('LABOR');
+    expect(arg).not.toHaveProperty('cardNumber');
+    expect(submitCheckout).toHaveBeenCalledWith({
+      type: 'redirect',
+      url: 'https://example.com/pay',
+    });
+  });
+
+  it('forwards the displayed amount without treating it as charge authority', async () => {
+    const user = setupUser();
+    renderModal({ amount: 500 });
+    await waitFor(() => expect(screen.getByRole('checkbox')).toBeInTheDocument());
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /Pay/i }));
+    await waitFor(() => expect(createPaymentIntent).toHaveBeenCalled());
+    const arg = createPaymentIntent.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.amount).toBe(500);
+    expect(arg).not.toHaveProperty('amountCents');
+    expect(arg).not.toHaveProperty('chargeAmount');
+  });
 });

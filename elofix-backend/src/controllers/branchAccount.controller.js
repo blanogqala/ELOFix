@@ -10,6 +10,11 @@ async function getWithdrawalProfile(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function postWithdrawalProfileRegisterGateway(req, res) {
+  const data = await branchAccountService.registerExistingPayoutGateway(req.user, req.params.branchId);
+  res.json({ success: true, ...data });
+}
+
 async function putWithdrawalProfile(req, res) {
   const data = await branchAccountService.upsertWithdrawalProfile(
     req.user,
@@ -65,6 +70,7 @@ async function getOrgBranchWithdrawals(req, res) {
 module.exports = {
   getBalance,
   getWithdrawalProfile,
+  postWithdrawalProfileRegisterGateway,
   putWithdrawalProfile,
   putWithdrawalProfileReplace,
   deleteWithdrawalProfile,

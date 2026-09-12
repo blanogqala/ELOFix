@@ -1,8 +1,18 @@
 import { SavedCard, Invoice } from '@/types';
 import apiClient from '@/api/client';
 
-export type PaymentProvider = 'PAYFAST' | 'PAYFLEX' | 'PAYJUSTNOW';
+export const PAYMENT_PROVIDERS = ['PAYFAST', 'PAYFLEX', 'PAYJUSTNOW', 'PAYSTACK'] as const;
+export type PaymentProvider = (typeof PAYMENT_PROVIDERS)[number];
 export type PaymentIntentKind = 'LABOR' | 'MATERIAL_ORDER' | 'JOB_STORE_ORDER' | 'DELIVERY_FEE';
+
+export function isPaymentProvider(value: string): value is PaymentProvider {
+  return (PAYMENT_PROVIDERS as readonly string[]).includes(value);
+}
+
+export function pickPreferredPaymentProvider(available: PaymentProvider[]): PaymentProvider | '' {
+  if (available.includes('PAYFAST')) return 'PAYFAST';
+  return available[0] || '';
+}
 
 export interface PaymentIntent {
   id: string;
@@ -91,7 +101,7 @@ export async function createInvoice(invoice: Omit<Invoice, 'id' | 'createdAt'>):
 
 export async function getPaymentProviders(): Promise<PaymentProvider[]> {
   const { data } = await apiClient.get<{ success: boolean; providers: string[] }>('/payments/providers');
-  return (data?.providers || []) as PaymentProvider[];
+  return (data?.providers || []).filter((value): value is PaymentProvider => isPaymentProvider(String(value)));
 }
 
 export async function createPaymentIntent(input: {

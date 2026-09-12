@@ -14,6 +14,7 @@ import {
   PaymentProvider,
   createPaymentIntent,
   getPaymentProviders,
+  pickPreferredPaymentProvider,
 } from '@/lib/api/payments';
 import { PaymentMethodSelector } from '@/components/payments/PaymentMethodSelector';
 import { CheckoutLegalAcceptanceCheckbox } from '@/components/payments/CheckoutLegalAcceptanceCheckbox';
@@ -77,6 +78,28 @@ function checkoutLegalErrorMessage(err: unknown): string | null {
   return null;
 }
 
+function checkoutUnavailableMessage(err: unknown): string {
+  const legalMsg = checkoutLegalErrorMessage(err);
+  if (legalMsg) return legalMsg;
+  if (err instanceof ApiHttpError) {
+    const code = String((err.data as { code?: string } | undefined)?.code || '');
+    if (
+      code === 'PAYSTACK_RECIPIENT_REQUIRED' ||
+      code === 'PAYSTACK_CHECKOUT' ||
+      code === 'PAYSTACK_CHECKOUT_URL' ||
+      code === 'PAYSTACK' ||
+      err.status === 503
+    ) {
+      return 'This payment method is not available right now. Please try another method or try again later.';
+    }
+    const msg = String(err.message || '');
+    if (msg && !/ACCT_|sk_|pk_|stack|branchCode|accountNumber/i.test(msg)) {
+      return msg;
+    }
+  }
+  return 'This payment method is not available right now. Please try another method or try again later.';
+}
+
 export function PaymentModal({
   open,
   onOpenChange,
@@ -94,10 +117,31 @@ export function PaymentModal({
 }: PaymentModalProps) {
   const [providers, setProviders] = useState<PaymentProvider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<PaymentProvider | ''>('');
+  const [providersLoading, setProvidersLoading] = useState(Boolean(open));
+  const [providersError, setProvidersError] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Transaction-specific acceptance — reset every open; never carry across deposits/completions. */
   const [checkoutLegalAccepted, setCheckoutLegalAccepted] = useState(false);
+
+  const loadProviders = async () => {
+    setProvidersLoading(true);
+    setProvidersError(false);
+    setProviders([]);
+    setSelectedProvider('');
+    try {
+      const list = await getPaymentProviders();
+      setProviders(list);
+      setSelectedProvider(pickPreferredPaymentProvider(list));
+    } catch {
+      setProviders([]);
+      setSelectedProvider('');
+      setProvidersError(true);
+      setError('Payment methods are unavailable. Please retry.');
+    } finally {
+      setProvidersLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) {
@@ -107,17 +151,14 @@ export function PaymentModal({
     setError(null);
     setIsProcessing(false);
     setCheckoutLegalAccepted(false);
-
-    getPaymentProviders()
-      .then((list) => {
-        setProviders(list);
-        setSelectedProvider(list[0] || '');
-      })
-      .catch(() => setProviders([]));
+    void loadProviders();
   }, [open]);
 
+  const selectedIsAvailable =
+    Boolean(selectedProvider) && providers.includes(selectedProvider as PaymentProvider);
+
   const canPay =
-    Boolean(selectedProvider) && !isProcessing && checkoutLegalAccepted;
+    selectedIsAvailable && !providersLoading && !providersError && !isProcessing && checkoutLegalAccepted;
 
   const handlePayment = async () => {
     setError(null);
@@ -125,7 +166,7 @@ export function PaymentModal({
       setError('You must accept the Refund, Returns & Cancellation Policy before payment.');
       return;
     }
-    if (!selectedProvider) {
+    if (!selectedProvider || !providers.includes(selectedProvider)) {
       setError('Please select a payment method');
       return;
     }
@@ -148,7 +189,7 @@ export function PaymentModal({
         setCheckoutLegalAccepted(false);
         setError(legalMsg);
       } else {
-        setError(err instanceof Error ? err.message : 'Failed to start payment. Please try again.');
+        setError(checkoutUnavailableMessage(err));
       }
       setIsProcessing(false);
     }
@@ -197,8 +238,23 @@ export function PaymentModal({
                 value={selectedProvider}
                 onChange={setSelectedProvider}
                 availableProviders={providers}
-                disabled={isProcessing}
+                disabled={isProcessing || providersLoading}
+                loading={providersLoading}
               />
+              {providersError ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => {
+                    setError(null);
+                    void loadProviders();
+                  }}
+                >
+                  Retry
+                </Button>
+              ) : null}
             </div>
 
             <CheckoutLegalAcceptanceCheckbox

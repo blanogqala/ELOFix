@@ -13,6 +13,10 @@ router.get("/balance", asyncHandler(providerAccountController.getBalance));
 router.get("/earnings", asyncHandler(providerAccountController.getEarnings));
 router.get("/earnings/:jobId", asyncHandler(providerAccountController.getEarningJob));
 router.get("/withdrawal-profile", asyncHandler(providerAccountController.getWithdrawalProfile));
+router.post(
+  "/withdrawal-profile/register-gateway",
+  asyncHandler(providerAccountController.postWithdrawalProfileRegisterGateway)
+);
 router.put("/withdrawal-profile", asyncHandler(providerAccountController.putWithdrawalProfile));
 router.put("/withdrawal-profile/replace", asyncHandler(providerAccountController.putWithdrawalProfileReplace));
 router.delete("/withdrawal-profile", asyncHandler(providerAccountController.deleteWithdrawalProfile));

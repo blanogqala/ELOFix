@@ -33,6 +33,10 @@ router.post("/branches", ownerOnly, asyncHandler(supplierBranch.createBranch));
 router.get("/branches/:branchId", ownerOnly, asyncHandler(supplierBranch.getBranch));
 router.get("/branches/:branchId/balance", asyncHandler(branchAccount.getBalance));
 router.get("/branches/:branchId/withdrawal-profile", asyncHandler(branchAccount.getWithdrawalProfile));
+router.post(
+  "/branches/:branchId/withdrawal-profile/register-gateway",
+  asyncHandler(branchAccount.postWithdrawalProfileRegisterGateway)
+);
 router.put("/branches/:branchId/withdrawal-profile", asyncHandler(branchAccount.putWithdrawalProfile));
 router.put("/branches/:branchId/withdrawal-profile/replace", asyncHandler(branchAccount.putWithdrawalProfileReplace));
 router.delete("/branches/:branchId/withdrawal-profile", asyncHandler(branchAccount.deleteWithdrawalProfile));

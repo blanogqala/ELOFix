@@ -20,6 +20,10 @@ const PROVIDER_META: Record<
     label: 'PayJustNow',
     description: 'Buy now, pay later',
   },
+  PAYSTACK: {
+    label: 'Paystack',
+    description: 'Card and hosted checkout',
+  },
 };
 
 interface PaymentMethodSelectorProps {
@@ -27,6 +31,7 @@ interface PaymentMethodSelectorProps {
   onChange: (provider: PaymentProvider) => void;
   availableProviders: PaymentProvider[];
   disabled?: boolean;
+  loading?: boolean;
 }
 
 export function PaymentMethodSelector({
@@ -34,7 +39,11 @@ export function PaymentMethodSelector({
   onChange,
   availableProviders,
   disabled,
+  loading,
 }: PaymentMethodSelectorProps) {
+  if (loading) {
+    return <p className="text-sm text-muted-foreground">Loading payment methods…</p>;
+  }
   if (availableProviders.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -63,12 +72,12 @@ export function PaymentMethodSelector({
             <RadioGroupItem value={provider} id={`provider-${provider}`} className="mt-1" />
             <Label htmlFor={`provider-${provider}`} className="flex-1 cursor-pointer">
               <div className="flex items-center gap-2 font-medium">
-                {provider === 'PAYFAST' ? (
+                {provider === 'PAYFAST' || provider === 'PAYSTACK' ? (
                   <CreditCard className="h-4 w-4 text-muted-foreground" />
                 ) : (
                   <Wallet className="h-4 w-4 text-muted-foreground" />
                 )}
-                {meta.label}
+                <span>{meta?.label || provider}</span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">{meta.description}</p>
             </Label>

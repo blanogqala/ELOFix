@@ -20,6 +20,11 @@ async function getWithdrawalProfile(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function postWithdrawalProfileRegisterGateway(req, res) {
+  const data = await providerAccountService.registerExistingPayoutGateway(req.user.userId);
+  res.json({ success: true, ...data });
+}
+
 async function putWithdrawalProfile(req, res) {
   const data = await providerAccountService.upsertWithdrawalProfile(req.user.userId, req.body || {});
   res.json({ success: true, ...data });
@@ -120,6 +125,7 @@ module.exports = {
   getEarnings,
   getEarningJob,
   getWithdrawalProfile,
+  postWithdrawalProfileRegisterGateway,
   putWithdrawalProfile,
   putWithdrawalProfileReplace,
   deleteWithdrawalProfile,

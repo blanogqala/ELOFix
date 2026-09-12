@@ -207,6 +207,13 @@ type SavePayoutBody = {
   confirmReplace?: boolean;
 };
 
+export async function registerWithdrawalProfileGateway(): Promise<PayoutProfileResponse> {
+  const { data } = await apiClient.post<PayoutProfileResponse>(
+    '/provider/withdrawal-profile/register-gateway'
+  );
+  return data;
+}
+
 export async function saveWithdrawalProfile(body: SavePayoutBody): Promise<PayoutProfileResponse> {
   const { data } = await apiClient.put<PayoutProfileResponse>('/provider/withdrawal-profile', body);
   return data;

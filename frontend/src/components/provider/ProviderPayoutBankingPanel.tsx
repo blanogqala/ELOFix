@@ -25,6 +25,7 @@ import { AlertTriangle, CheckCircle2, Landmark, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   getWithdrawalProfile,
+  registerWithdrawalProfileGateway,
   removeWithdrawalProfile,
   replaceWithdrawalProfile,
   saveWithdrawalProfile,
@@ -34,6 +35,7 @@ import {
 } from '@/lib/api/providerAccount';
 import {
   gatewaySettlementLabel,
+  needsPayoutGatewayConnect,
   payoutStatusBadgeClass,
   payoutVerificationLabel,
   postSaveVerificationMessage,
@@ -61,6 +63,7 @@ export function ProviderPayoutBankingPanel({
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
@@ -113,7 +116,7 @@ export function ProviderPayoutBankingPanel({
     } finally {
       setLoading(false);
     }
-  }, [applyResponse, toast]);
+  }, [applyResponse]);
 
   useEffect(() => {
     void load();
@@ -165,6 +168,28 @@ export function ProviderPayoutBankingPanel({
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleConnectGateway = async () => {
+    setConnecting(true);
+    try {
+      const data = await registerWithdrawalProfileGateway();
+      applyResponse(data);
+      toast({
+        title: 'Payout destination updated',
+        description: data.profile?.gatewaySettlementProfile?.recipientConfigured
+          ? gatewaySettlementLabel(Boolean(data.gatewaySettlementSupported), data.profile.gatewaySettlementProfile)
+          : 'Could not connect a payout destination yet.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not connect payout destination',
+        description: error instanceof Error ? error.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -322,6 +347,16 @@ export function ProviderPayoutBankingPanel({
       <div className="flex flex-wrap gap-3">
         {mode === 'view' && profile ? (
           <>
+            {needsPayoutGatewayConnect(gatewaySettlementSupported, profile.gatewaySettlementProfile) ? (
+              <Button
+                type="button"
+                onClick={() => void handleConnectGateway()}
+                disabled={connecting || saving}
+              >
+                {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Connect payout destination
+              </Button>
+            ) : null}
             <Button type="button" variant="secondary" onClick={() => setMode('edit')}>
               Edit bank details
             </Button>

@@ -29,11 +29,31 @@ export function payoutVerificationLabel(status: PayoutVerificationStatus | strin
   }
 }
 
+export function isPaystackDestinationConnected(
+  gatewayProfile?: GatewaySettlementProfile | null
+): boolean {
+  return Boolean(
+    gatewayProfile?.recipientConfigured &&
+      String(gatewayProfile.provider || '').toUpperCase() === 'PAYSTACK'
+  );
+}
+
+export function needsPayoutGatewayConnect(
+  supported: boolean,
+  gatewayProfile?: GatewaySettlementProfile | null
+): boolean {
+  if (!supported) return false;
+  return !isPaystackDestinationConnected(gatewayProfile);
+}
+
 export function gatewaySettlementLabel(
   supported: boolean,
   gatewayProfile?: GatewaySettlementProfile | null
 ): string {
   if (!supported) return 'Gateway settlement not yet enabled';
+  if (isPaystackDestinationConnected(gatewayProfile)) {
+    return 'Paystack payout destination connected';
+  }
   if (!gatewayProfile?.recipientConfigured) {
     const status = String(gatewayProfile?.status || '').toUpperCase();
     if (status === 'GATEWAY_NOT_CONFIGURED' || status === 'AUTOMATIC_SETTLEMENT_UNAVAILABLE') {
@@ -42,11 +62,10 @@ export function gatewaySettlementLabel(
     return gatewayProfile?.status || 'Not registered';
   }
   const status = String(gatewayProfile.status || '').toUpperCase();
-  if (status === 'VERIFIED' || status === 'ACTIVE') return 'Verified';
   if (status === 'GATEWAY_NOT_CONFIGURED' || status === 'AUTOMATIC_SETTLEMENT_UNAVAILABLE') {
     return 'Not yet enabled';
   }
-  return gatewayProfile.status || 'Pending';
+  return gatewayProfile.status || 'Registered with another gateway';
 }
 
 export function payoutStatusBadgeClass(status: PayoutVerificationStatus | string | null | undefined): string {

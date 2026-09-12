@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   getBranchWithdrawalProfile,
+  registerBranchWithdrawalProfileGateway,
   removeBranchWithdrawalProfile,
   replaceBranchWithdrawalProfile,
   saveBranchWithdrawalProfile,
@@ -8,6 +9,7 @@ import {
 } from '@/lib/api/supplierPortal';
 import {
   gatewaySettlementLabel,
+  needsPayoutGatewayConnect,
   payoutStatusBadgeClass,
   payoutVerificationLabel,
   postSaveVerificationMessage,
@@ -64,6 +66,7 @@ export function BranchBankDetailsTab({
   const [accountType, setAccountType] = useState<AccountType | ''>('');
   const [profileLoading, setProfileLoading] = useState(false);
   const [savingBank, setSavingBank] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [mode, setMode] = useState<PanelMode>('create');
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
@@ -116,7 +119,7 @@ export function BranchBankDetailsTab({
     } finally {
       setProfileLoading(false);
     }
-  }, [branchId, applyResponse, toast]);
+  }, [branchId, applyResponse]);
 
   useEffect(() => {
     void loadProfile();
@@ -159,6 +162,30 @@ export function BranchBankDetailsTab({
       });
     } finally {
       setSavingBank(false);
+    }
+  };
+
+  const handleConnectGateway = async () => {
+    if (!canEdit) return;
+    setConnecting(true);
+    try {
+      const data = await registerBranchWithdrawalProfileGateway(branchId);
+      applyResponse(data);
+      toast({
+        title: 'Payout destination updated',
+        description: data.profile?.gatewaySettlementProfile?.recipientConfigured
+          ? gatewaySettlementLabel(Boolean(data.gatewaySettlementSupported), data.profile.gatewaySettlementProfile)
+          : 'Could not connect a payout destination yet.',
+      });
+      onSaved?.();
+    } catch (error) {
+      toast({
+        title: 'Could not connect payout destination',
+        description: error instanceof Error ? error.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -315,6 +342,16 @@ export function BranchBankDetailsTab({
           <div className="flex flex-wrap gap-3">
             {mode === 'view' && hasSavedProfile ? (
               <>
+                {needsPayoutGatewayConnect(gatewaySettlementSupported, gatewayProfile) ? (
+                  <Button
+                    type="button"
+                    onClick={() => void handleConnectGateway()}
+                    disabled={connecting || savingBank}
+                  >
+                    {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Connect payout destination
+                  </Button>
+                ) : null}
                 <Button type="button" variant="secondary" onClick={() => setMode('edit')}>
                   Edit bank details
                 </Button>

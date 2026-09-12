@@ -696,6 +696,15 @@ type BranchSavePayoutBody = {
   confirmReplace?: boolean;
 };
 
+export async function registerBranchWithdrawalProfileGateway(
+  branchId: string
+): Promise<BranchPayoutProfileResponse> {
+  const { data } = await apiClient.post<BranchPayoutProfileResponse>(
+    `/supplier/branches/${encodeURIComponent(branchId)}/withdrawal-profile/register-gateway`
+  );
+  return data;
+}
+
 export async function saveBranchWithdrawalProfile(
   branchId: string,
   body: BranchSavePayoutBody
