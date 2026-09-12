@@ -244,28 +244,91 @@ function resolveEffectiveRefundId(intent, webhookRefundId, opts = {}) {
 
   if (hookId && storedId && hookId !== storedId) {
     if (ids.includes(hookId) || (lastId && hookId === lastId)) {
-      return { effectiveRefundId: hookId, alreadyFinalized: true, mismatch: false, source: "webhook_finalized" };
+      return {
+        effectiveRefundId: hookId,
+        alreadyFinalized: true,
+        mismatch: false,
+        historical: true,
+        source: "webhook_finalized",
+      };
+    }
+    if (lastAttemptId && hookId === lastAttemptId) {
+      return {
+        effectiveRefundId: hookId,
+        alreadyFinalized: true,
+        mismatch: false,
+        historical: true,
+        source: "webhook_lastRefundAttempt",
+      };
     }
     return { effectiveRefundId: null, alreadyFinalized: false, mismatch: true, source: "contradiction" };
   }
 
   if (hookId) {
+    const historical = Boolean(
+      ids.includes(hookId) ||
+        (lastId && hookId === lastId) ||
+        (lastAttemptId && hookId === lastAttemptId)
+    );
     return {
       effectiveRefundId: hookId,
-      alreadyFinalized: ids.includes(hookId) || isRefundAlreadyFinalized(intent, { externalRefundId: hookId }),
+      alreadyFinalized:
+        historical || isRefundAlreadyFinalized(intent, { externalRefundId: hookId }),
       mismatch: false,
+      historical,
       source: "webhook",
     };
   }
 
   if (event === "refund.failed") {
-    if (storedId) {
+    if (storedId && !lastAttemptId) {
       return { effectiveRefundId: storedId, alreadyFinalized: false, mismatch: false, source: "pending" };
     }
-    if (lastAttemptId) {
-      return { effectiveRefundId: lastAttemptId, alreadyFinalized: true, mismatch: false, source: "lastRefundAttempt" };
+    if (!storedId && lastAttemptId) {
+      if (
+        webhookAmountCents != null &&
+        amountCentsMatchesMajor(webhookAmountCents, lastAttempt.requestedAmount) === false
+      ) {
+        return {
+          effectiveRefundId: null,
+          alreadyFinalized: false,
+          mismatch: false,
+          ambiguous: true,
+          source: "lastRefundAttempt_amount_mismatch",
+        };
+      }
+      return {
+        effectiveRefundId: lastAttemptId,
+        alreadyFinalized: true,
+        mismatch: false,
+        historical: true,
+        source: "lastRefundAttempt",
+      };
     }
-    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: false, ambiguous: false, source: "none" };
+    if (storedId && lastAttemptId) {
+      const attemptMatch = amountCentsMatchesMajor(webhookAmountCents, lastAttempt.requestedAmount);
+      const pendingMatch = amountCentsMatchesMajor(webhookAmountCents, pending?.requestedAmount);
+      if (attemptMatch === true && pendingMatch !== true) {
+        return {
+          effectiveRefundId: lastAttemptId,
+          alreadyFinalized: true,
+          mismatch: false,
+          historical: true,
+          source: "lastRefundAttempt_amount",
+        };
+      }
+      if (pendingMatch === true && attemptMatch !== true) {
+        return { effectiveRefundId: storedId, alreadyFinalized: false, mismatch: false, source: "pending_amount" };
+      }
+      return {
+        effectiveRefundId: null,
+        alreadyFinalized: false,
+        mismatch: false,
+        ambiguous: true,
+        source: "ambiguous_pending_and_lastRefundAttempt",
+      };
+    }
+    return { effectiveRefundId: null, alreadyFinalized: false, mismatch: false, source: "none" };
   }
 
   if (storedId && !lastId) {
@@ -323,7 +386,16 @@ async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey)
   const newRefunded = roundMoney((Number(intent.refundedAmount) || 0) + refundAmt);
   const fullyRefunded = newRefunded >= roundMoney(Number(intent.amount)) - EPS;
   const payload = intentPayload(intent);
-  delete payload.pendingRefund;
+  const pendingOnIntent =
+    payload.pendingRefund && typeof payload.pendingRefund === "object" ? payload.pendingRefund : null;
+  const pendingMatchesThisRefund = Boolean(
+    pendingOnIntent?.externalRefundId &&
+      externalRefundId &&
+      String(pendingOnIntent.externalRefundId) === String(externalRefundId)
+  );
+  if (!pendingOnIntent || pendingMatchesThisRefund) {
+    delete payload.pendingRefund;
+  }
   const key = refundFinalizationKey(externalRefundId, idempotencyKey);
   const ids = finalizedRefundIds(intent);
   if (externalRefundId && !ids.includes(String(externalRefundId))) {

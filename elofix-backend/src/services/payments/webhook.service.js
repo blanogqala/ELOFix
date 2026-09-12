@@ -567,14 +567,17 @@ async function handlePaystackRefundEvent(body, event) {
   }
 
   const pending = refundService.readPendingRefund(intent);
+  const lastFailedAttempt = refundService.lastRefundAttemptRecord(intent);
+  const targetsCurrentPending = Boolean(
+    pending?.externalRefundId && String(pending.externalRefundId) === String(effectiveRefundId)
+  );
   const moneyAlreadyFinalized = Boolean(
     resolved.alreadyFinalized ||
       refundService.isRefundAlreadyFinalized(intent, {
         externalRefundId: effectiveRefundId,
-        idempotencyKey: pending?.idempotencyKey || null,
+        idempotencyKey: targetsCurrentPending ? pending?.idempotencyKey || null : null,
       })
   );
-  const lastFailedAttempt = refundService.lastRefundAttemptRecord(intent);
 
   const gw = paystackAdapter();
   let mapped = {
@@ -605,10 +608,20 @@ async function handlePaystackRefundEvent(body, event) {
   }
 
   const finalizedSlice = refundService.readFinalizedRefund(intent, effectiveRefundId);
-  const requestedAmount = pending?.requestedAmount != null ? Number(pending.requestedAmount) : null;
-  const recoveredAmount = finalizedSlice?.amount != null ? Number(finalizedSlice.amount) : null;
+  const historicalAttemptAmount =
+    lastFailedAttempt?.externalRefundId &&
+    String(lastFailedAttempt.externalRefundId) === String(effectiveRefundId) &&
+    lastFailedAttempt.requestedAmount != null
+      ? Number(lastFailedAttempt.requestedAmount)
+      : null;
+  const requestedAmount =
+    targetsCurrentPending && pending?.requestedAmount != null ? Number(pending.requestedAmount) : null;
+  const recoveredAmount =
+    finalizedSlice?.amount != null
+      ? Number(finalizedSlice.amount)
+      : historicalAttemptAmount;
 
-  if (event === "refund.processed" || mapped.ok || mapped.status === "COMPLETED") {
+  if (mapped.ok || mapped.status === "COMPLETED") {
     if (!mapped.ok && mapped.status !== "COMPLETED") {
       return { httpStatus: 400, message: "Refund not processed on Paystack" };
     }
@@ -644,7 +657,9 @@ async function handlePaystackRefundEvent(body, event) {
       finalized = await refundService.finalizeCustomerGatewayRefund(intent, {
         amount: sliceAmount,
         externalRefundId: mapped.externalRefundId || effectiveRefundId,
-        idempotencyKey: pending?.idempotencyKey || finalizedSlice?.idempotencyKey || refundFinalizationIdempotency(effectiveRefundId),
+        idempotencyKey: targetsCurrentPending
+          ? pending?.idempotencyKey || refundFinalizationIdempotency(effectiveRefundId)
+          : finalizedSlice?.idempotencyKey || refundFinalizationIdempotency(effectiveRefundId),
         finalizeCustomerArtifacts: true,
       });
     } catch (err) {
@@ -672,10 +687,13 @@ async function handlePaystackRefundEvent(body, event) {
     return { httpStatus: 200, result: { processed: true, refund: true, state: "PROCESSED" } };
   }
 
-  if (mapped.status === "FAILED" || event === "refund.failed") {
-    if (!pending && lastFailedAttempt) {
+  if (mapped.status === "FAILED") {
+    if (!targetsCurrentPending) {
       await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
-      return { httpStatus: 200, result: { processed: true, refund: true, duplicate: true, state: "FAILED" } };
+      return {
+        httpStatus: 200,
+        result: { processed: true, refund: true, duplicate: true, stale: true, state: "FAILED" },
+      };
     }
     await refundService.updatePendingRefundStatus(intent, "FAILED");
     if (intent.jobId) {
@@ -698,7 +716,14 @@ async function handlePaystackRefundEvent(body, event) {
     return { httpStatus: 200, result: { processed: true, refund: true, state: "FAILED" } };
   }
 
-  if (mapped.status === "NEEDS_ATTENTION" || event.includes("needs-attention") || event.includes("needs_attention")) {
+  if (mapped.status === "NEEDS_ATTENTION") {
+    if (!targetsCurrentPending) {
+      await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+      return {
+        httpStatus: 200,
+        result: { processed: true, refund: true, stale: true, state: "NEEDS_ATTENTION" },
+      };
+    }
     await refundService.updatePendingRefundStatus(intent, "NEEDS_ATTENTION", { actionRequired: true });
     if (intent.jobId) {
       const { mutateJobMetaInTransaction } = require("../jobMeta.service");
@@ -722,6 +747,13 @@ async function handlePaystackRefundEvent(body, event) {
     return { httpStatus: 200, result: { processed: true, refund: true, state: "NEEDS_ATTENTION" } };
   }
 
+  if (!targetsCurrentPending) {
+    await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
+    return {
+      httpStatus: 200,
+      result: { ignored: true, stale: true, refund: true, state: mapped.status || "PENDING" },
+    };
+  }
   await refundService.updatePendingRefundStatus(intent, mapped.status || "PENDING");
   await markEventFullyProcessed(prisma, "PAYSTACK", externalEventId, intent.id);
   return { httpStatus: 200, result: { processed: true, refund: true, state: mapped.status || "PENDING" } };
