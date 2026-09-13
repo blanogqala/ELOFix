@@ -30,6 +30,18 @@ describe('branchSettlementDisplay', () => {
         profile: { bankName: 'FNB', accountHolder: 'Branch' },
       })
     ).toBe(false);
+    expect(shouldShowBankOnboarding({ bankProfileComplete: true })).toBe(false);
+  });
+
+  it('does not show onboarding before the payout profile has loaded', () => {
+    expect(shouldShowBankOnboarding({})).toBe(false);
+    expect(
+      shouldShowBankOnboarding({
+        verificationStatus: undefined,
+        bankProfileComplete: undefined,
+        profile: undefined,
+      })
+    ).toBe(false);
   });
 
   it('scopes dismiss key to branch', () => {

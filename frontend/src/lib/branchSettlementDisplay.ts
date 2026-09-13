@@ -43,6 +43,12 @@ export function shouldShowBankOnboarding(input: {
   bankProfileComplete?: boolean;
   profile?: { bankName?: string; accountHolder?: string } | null;
 }): boolean {
+  const profileLoaded =
+    input.verificationStatus != null ||
+    input.bankProfileComplete != null ||
+    input.profile !== undefined;
+  if (!profileLoaded) return false;
+
   const status = input.verificationStatus || 'NOT_CONFIGURED';
   if (status === 'VERIFIED' || status === 'PENDING_VERIFICATION') {
     return false;

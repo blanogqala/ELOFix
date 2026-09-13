@@ -53,7 +53,7 @@ export default function SupplierBranchEarningsPage() {
     enabled: Boolean(userId && branchId),
   });
 
-  const { data: settlementSummary, isLoading: balanceLoading } = useQuery({
+  const { data: settlementSummary } = useQuery({
     queryKey: ['supplier', 'branch-settlement-summary', branchId, userId],
     queryFn: () => getBranchBalance(branchId),
     enabled: Boolean(userId && branchId),
@@ -96,7 +96,7 @@ export default function SupplierBranchEarningsPage() {
 
   const branchMeta = profile?.branches?.find((b) => b.id === branchId);
   const title = branchMeta?.displayName || branchMeta?.name || 'Branch';
-  const cardsLoading = ordersLoading || balanceLoading;
+  const cardsLoading = ordersLoading;
 
   return (
     <DashboardLayout>
@@ -116,7 +116,7 @@ export default function SupplierBranchEarningsPage() {
           )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Card className="card-elevated">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Revenue</CardTitle>
@@ -148,28 +148,6 @@ export default function SupplierBranchEarningsPage() {
                 {cardsLoading ? '…' : formatCurrency(activeSummary.net)}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">Branch share · excluding cancelled</p>
-            </CardContent>
-          </Card>
-          <Card className="card-elevated">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Pending settlement</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold tabular-nums text-primary">
-                {balanceLoading ? '…' : formatCurrency(settlementSummary?.pendingSettlement ?? 0)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">Awaiting gateway settlement</p>
-            </CardContent>
-          </Card>
-          <Card className="card-elevated">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Settled</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                {balanceLoading ? '…' : formatCurrency(settlementSummary?.settled ?? 0)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">Verified to branch bank</p>
             </CardContent>
           </Card>
         </div>

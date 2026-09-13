@@ -44,7 +44,7 @@ export default function SupplierDashboard() {
 
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
 
-  const { data: branchPayoutProfile } = useQuery({
+  const { data: branchPayoutProfile, isSuccess: payoutProfileReady } = useQuery({
     queryKey: ['supplier', 'branch-payout-profile', branchStaffId],
     queryFn: () => getBranchWithdrawalProfile(branchStaffId),
     enabled: Boolean(isBranchStaff && branchStaffId),
@@ -56,15 +56,19 @@ export default function SupplierDashboard() {
     enabled: Boolean(isBranchStaff && branchStaffId),
   });
 
+  const needsBankOnboarding =
+    payoutProfileReady &&
+    shouldShowBankOnboarding({
+      verificationStatus: branchPayoutProfile.verificationStatus,
+      bankProfileComplete: branchPayoutProfile.bankProfileComplete,
+      profile: branchPayoutProfile.profile,
+    });
+
   const showBankOnboarding =
     isBranchStaff &&
     Boolean(branchStaffId) &&
     !onboardingDismissed &&
-    shouldShowBankOnboarding({
-      verificationStatus: branchPayoutProfile?.verificationStatus,
-      bankProfileComplete: branchPayoutProfile?.bankProfileComplete,
-      profile: branchPayoutProfile?.profile,
-    }) &&
+    needsBankOnboarding &&
     (() => {
       try {
         return sessionStorage.getItem(bankOnboardingDismissKey(branchStaffId)) !== '1';
@@ -76,11 +80,7 @@ export default function SupplierDashboard() {
   const showBankBanner =
     isBranchStaff &&
     Boolean(branchStaffId) &&
-    shouldShowBankOnboarding({
-      verificationStatus: branchPayoutProfile?.verificationStatus,
-      bankProfileComplete: branchPayoutProfile?.bankProfileComplete,
-      profile: branchPayoutProfile?.profile,
-    });
+    needsBankOnboarding;
 
   const [dashBranchFilter, setDashBranchFilter] = useState<'all' | string>('all');
   const defaultedBranchRef = useRef(false);
@@ -324,7 +324,7 @@ export default function SupplierDashboard() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
           <Card className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
@@ -359,34 +359,6 @@ export default function SupplierDashboard() {
                     : '—'}
                 </p>
                 <p className="text-xs text-muted-foreground sm:text-sm">Net branch earnings</p>
-              </div>
-            </div>
-          </Card>
-          <Card className="card-elevated p-4 sm:p-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <DollarSign className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <p className="text-xl font-bold sm:text-2xl">
-                  {branchSettlement != null
-                    ? formatCurrency(branchSettlement.pendingSettlement)
-                    : '—'}
-                </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Pending settlement</p>
-              </div>
-            </div>
-          </Card>
-          <Card className="card-elevated p-4 sm:p-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10">
-                <DollarSign className="h-4 w-4 text-emerald-600" />
-              </div>
-              <div>
-                <p className="text-xl font-bold sm:text-2xl">
-                  {branchSettlement != null ? formatCurrency(branchSettlement.settled) : '—'}
-                </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Settled</p>
               </div>
             </div>
           </Card>
