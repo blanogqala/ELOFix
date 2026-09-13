@@ -3,7 +3,12 @@ const { getGateway } = require("./gatewayRegistry");
 const escrowSettlement = require("./escrowSettlement.service");
 const { logAudit } = require("../auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
-const { roundMoney, EPS, isAsyncPendingGatewayRefund } = require("../../utils/refundMath.util");
+const {
+  roundMoney,
+  EPS,
+  isAsyncPendingGatewayRefund,
+  netCourierCancelRefundFromGross,
+} = require("../../utils/refundMath.util");
 const { emitDomainUpdate } = require("../../utils/realtimeEmitter");
 const { isActivePendingRefundStatus } = require("./paystack.payload");
 const { toCents } = require("./money.util");
@@ -383,6 +388,18 @@ async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey)
   if (isRefundAlreadyFinalized(intent, { externalRefundId, idempotencyKey })) {
     return { alreadyFinalized: true, refundAmt, intent };
   }
+  const requestedAmt = roundMoney(Number(refundAmt) || 0);
+  const remainingCap = remainingRefundableOnIntent(intent);
+  const appliedAmt = roundMoney(Math.min(requestedAmt, remainingCap));
+  if (appliedAmt <= EPS) {
+    return {
+      alreadyFinalized: remainingCap <= EPS,
+      refundAmt: 0,
+      intent,
+      blockedOverCeiling: requestedAmt > EPS,
+    };
+  }
+  refundAmt = appliedAmt;
   const newRefunded = roundMoney((Number(intent.refundedAmount) || 0) + refundAmt);
   const fullyRefunded = newRefunded >= roundMoney(Number(intent.amount)) - EPS;
   const payload = intentPayload(intent);
@@ -469,8 +486,18 @@ async function jobHasActivePendingRefund(jobId) {
  * After one Paystack slice processes, start the next FIFO slice only if
  * customer business pending remains and no other slice is already pending.
  */
+async function remainingPolicyRefundableLaborForJob(jobId) {
+  const intents = await findRefundableLaborIntents(jobId);
+  return roundMoney(
+    intents.reduce((sum, row) => sum + remainingRefundableOnIntent(row), 0)
+  );
+}
+
 async function continueFifoRefundIfNeeded(jobId, remainingBusinessAmount) {
-  const left = roundMoney(remainingBusinessAmount);
+  const authorized = roundMoney(Math.max(0, Number(remainingBusinessAmount) || 0));
+  if (authorized <= EPS) return { continued: false, reason: "nothing_remaining", established: false };
+  const policyLeft = await remainingPolicyRefundableLaborForJob(jobId);
+  const left = roundMoney(Math.min(authorized, policyLeft));
   if (left <= EPS) return { continued: false, reason: "nothing_remaining", established: false };
   if (await jobHasActivePendingRefund(jobId)) {
     return { continued: false, reason: "already_pending", established: true };
@@ -525,13 +552,19 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
 
   const meta = job.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta : {};
   const refund = meta.refund && typeof meta.refund === "object" ? meta.refund : {};
-  const refsBefore = Array.isArray(refund.gatewayRefundRefs) ? refund.gatewayRefundRefs.map(String) : [];
-  const sliceAlreadyApplied = Boolean(externalRefundId && refsBefore.includes(String(externalRefundId)));
+  const finalizedBefore = Array.isArray(refund.finalizedGatewayRefundRefs)
+    ? refund.finalizedGatewayRefundRefs.map(String)
+    : [];
+  const sliceAlreadyApplied = Boolean(externalRefundId && finalizedBefore.includes(String(externalRefundId)));
   const alreadyCompleted = String(refund.customerRefundStatus || "") === "REFUND_COMPLETED";
   const alreadyNotified = Boolean(refund.customerNotifiedAt) || Boolean(refund.completedAt && alreadyCompleted);
 
   let invoiceCreated = false;
-  if (externalRefundId && !(await hasFinalCustomerRefundInvoice(job.id, externalRefundId))) {
+  if (
+    refundAmt > EPS &&
+    externalRefundId &&
+    !(await hasFinalCustomerRefundInvoice(job.id, externalRefundId))
+  ) {
     await paymentService.createRefundInvoiceInTransaction(prisma, {
       userId: job.customerId,
       jobId: job.id,
@@ -556,8 +589,14 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
         const newPending = Math.max(0, roundMoney(prevPending - refundAmt));
         const businessComplete = newPending <= EPS;
         const refs = Array.isArray(current.gatewayRefundRefs) ? current.gatewayRefundRefs.slice() : [];
+        const finalizedRefs = Array.isArray(current.finalizedGatewayRefundRefs)
+          ? current.finalizedGatewayRefundRefs.slice()
+          : [];
         if (externalRefundId && !refs.includes(String(externalRefundId))) {
           refs.push(String(externalRefundId));
+        }
+        if (externalRefundId && !finalizedRefs.includes(String(externalRefundId))) {
+          finalizedRefs.push(String(externalRefundId));
         }
         const now = new Date().toISOString();
         return {
@@ -570,6 +609,7 @@ async function finalizeJobCustomerRefundArtifacts(intent, refundAmt, externalRef
             pendingRefund: newPending,
             readyPayoutAmount: businessComplete ? 0 : current.readyPayoutAmount,
             gatewayRefundRefs: refs,
+            finalizedGatewayRefundRefs: finalizedRefs,
             completedAt: businessComplete ? current.completedAt || now : current.completedAt || null,
             customerNotifiedAt: businessComplete ? current.customerNotifiedAt || now : current.customerNotifiedAt || null,
           },
@@ -654,12 +694,13 @@ async function finalizeCustomerGatewayRefund(intent, { amount, externalRefundId,
   }
   const result = { externalRefundId, ok: true, status: "COMPLETED" };
   const money = await applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey || recovered?.idempotencyKey);
+  const appliedAmt = money.refundAmt != null ? roundMoney(Number(money.refundAmt) || 0) : refundAmt;
   let artifacts = { invoiceCreated: false, notified: false, continuation: null };
-  if (finalizeCustomerArtifacts) {
+  if (finalizeCustomerArtifacts && appliedAmt > EPS) {
     const fresh = await prisma.paymentIntent.findUnique({ where: { id: intent.id } });
-    artifacts = await finalizeJobCustomerRefundArtifacts(fresh || intent, refundAmt, externalRefundId);
+    artifacts = await finalizeJobCustomerRefundArtifacts(fresh || intent, appliedAmt, externalRefundId);
   }
-  return { ...money, ...artifacts, amount: refundAmt, intentId: intent.id };
+  return { ...money, ...artifacts, amount: appliedAmt, intentId: intent.id };
 }
 
 /**
@@ -676,9 +717,31 @@ async function findRefundableLaborIntents(jobId) {
   });
 }
 
+function finiteMoneyOrNull(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Maximum customer-refundable amount on one PaymentIntent.
+ * LABOR never includes EloFix's 7% commission. Other kinds keep gross remainder.
+ */
+function laborCustomerRefundCeiling(intent) {
+  const gross = Math.max(0, finiteMoneyOrNull(intent?.amount) || 0);
+  const recipient = finiteMoneyOrNull(intent?.recipientAmount);
+  if (recipient != null) return roundMoney(Math.max(0, recipient));
+  const commission = finiteMoneyOrNull(intent?.commissionAmount);
+  if (commission != null) return roundMoney(Math.max(0, gross - commission));
+  return netCourierCancelRefundFromGross(gross);
+}
+
 function remainingRefundableOnIntent(intent) {
-  const gross = Number(intent.amount) || 0;
-  const already = Number(intent.refundedAmount) || 0;
+  const already = Math.max(0, finiteMoneyOrNull(intent?.refundedAmount) || 0);
+  if (String(intent?.kind || "") === "LABOR") {
+    return roundMoney(Math.max(0, laborCustomerRefundCeiling(intent) - already));
+  }
+  const gross = Math.max(0, finiteMoneyOrNull(intent?.amount) || 0);
   return roundMoney(Math.max(0, gross - already));
 }
 
@@ -909,6 +972,7 @@ module.exports = {
   refundJobLaborAcrossIntents,
   findRefundableLaborIntents,
   normalizeGatewayRefundResult,
+  laborCustomerRefundCeiling,
   remainingRefundableOnIntent,
   readPendingRefund,
   persistPendingRefund,

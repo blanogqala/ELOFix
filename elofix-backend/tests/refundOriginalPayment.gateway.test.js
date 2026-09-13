@@ -10,6 +10,7 @@ const assert = require("assert");
 const {
   normalizeGatewayRefundResult,
   remainingRefundableOnIntent,
+  laborCustomerRefundCeiling,
 } = require("../src/services/payments/refund.service");
 const { classifyGatewayRefundResult } = require("../src/utils/refundMath.util");
 const payfast = require("../src/services/payments/payfast.gateway");
@@ -41,6 +42,45 @@ function testRemainingRefundable() {
   );
 }
 
+function testLaborRefundCeilingExcludesCommission() {
+  const labor = {
+    kind: "LABOR",
+    amount: 250,
+    commissionAmount: 17.5,
+    recipientAmount: 232.5,
+    refundedAmount: 0,
+  };
+  assert.strictEqual(laborCustomerRefundCeiling(labor), 232.5);
+  assert.strictEqual(remainingRefundableOnIntent(labor), 232.5);
+  assert.strictEqual(
+    remainingRefundableOnIntent({ ...labor, refundedAmount: 232.5 }),
+    0
+  );
+  assert.strictEqual(
+    remainingRefundableOnIntent({
+      kind: "LABOR",
+      amount: 250,
+      commissionAmount: 17.5,
+      refundedAmount: 0,
+    }),
+    232.5
+  );
+  assert.strictEqual(
+    remainingRefundableOnIntent({ kind: "LABOR", amount: 250, refundedAmount: 0 }),
+    232.5
+  );
+  assert.strictEqual(
+    remainingRefundableOnIntent({
+      kind: "MATERIAL_ORDER",
+      amount: 250,
+      commissionAmount: 17.5,
+      recipientAmount: 232.5,
+      refundedAmount: 0,
+    }),
+    250
+  );
+}
+
 function testNormalizeUnsupported() {
   const n = normalizeGatewayRefundResult({
     supported: false,
@@ -53,6 +93,7 @@ function testNormalizeUnsupported() {
 async function main() {
   await testPayfastRefundIsManual();
   testRemainingRefundable();
+  testLaborRefundCeilingExcludesCommission();
   testNormalizeUnsupported();
   console.log("refundOriginalPayment.gateway.test.js: all passed");
 }
