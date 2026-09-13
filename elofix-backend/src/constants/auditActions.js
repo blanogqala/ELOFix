@@ -29,6 +29,8 @@ const AUDIT_ACTIONS = {
 
   // Refunds
   ADMIN_JOB_REFUND: "admin.job_refund",
+  ADMIN_REFUND_REPAYMENT_ATTEMPT_ABANDONED: "admin.refund_repayment.attempt_abandoned",
+  PAYMENT_REPAYMENT_LATE_PAID_AFTER_ABANDON: "payment.refund_repayment.late_paid_after_abandon",
 
   // Disputes
   DISPUTE_OPENED: "dispute.opened",

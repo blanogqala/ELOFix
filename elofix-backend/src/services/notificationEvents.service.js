@@ -994,6 +994,28 @@ async function notifyCustomerRefundFailed({ customerId, jobId, amount }) {
   });
 }
 
+async function notifyAdminAbandonedRepaymentLatePaid({
+  intentId,
+  jobId,
+  merchantReference,
+  amount,
+}) {
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  const ref = merchantReference ? ` PayFast ref ${merchantReference}.` : "";
+  const jobBit = jobId ? ` Job ${jobId}.` : "";
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "admin_repayment_late_paid_after_abandon",
+      title: "MANUAL RECONCILIATION: late PayFast repayment",
+      message:
+        `A PayFast repayment of R ${Number(amount || 0).toFixed(2)} arrived after the unpaid attempt was abandoned.${jobBit}${ref} ` +
+        `Do not treat this as automatic debt recovery. Reconcile manually.`,
+      jobId: jobId || undefined,
+      dedupeKey: `admin_repay_late_paid:${intentId}`,
+    });
+  }
+}
+
 async function notifyAdminGatewayRefundManualRequired({ jobId, repaymentId, amount, reason }) {
   const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
   for (const admin of admins) {
@@ -1100,6 +1122,7 @@ module.exports = {
   notifyCustomerRefundApproved,
   notifyCustomerRefundProcessing,
   notifyCustomerRefundFailed,
+  notifyAdminAbandonedRepaymentLatePaid,
   notifyAdminGatewayRefundManualRequired,
   notifyAdminGatewayRefundFailed,
   notifyProviderRefundCompleted,

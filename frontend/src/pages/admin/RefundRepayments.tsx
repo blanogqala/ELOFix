@@ -26,10 +26,17 @@ import {
   listAdminRefundRepayments,
   confirmAdminRefundRepayment,
   rejectAdminRefundRepayment,
+  abandonUnpaidPayfastRepayment,
   processAdminCustomerRefund,
   type AdminRefundRepaymentRow,
 } from '@/lib/api/adminRefundRepayments';
-import { canRetryCustomerRefund, confirmCustomerRefundToast } from '@/lib/adminRefundRepaymentUi';
+import {
+  canAbandonUnpaidPayfastAttempt,
+  canRetryCustomerRefund,
+  confirmCustomerRefundToast,
+} from '@/lib/adminRefundRepaymentUi';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { unblockProvider } from '@/lib/api/providers';
 import { ExternalLink, Loader2, RotateCcw, Search } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -120,6 +127,18 @@ function RepaymentVerificationDetails({ row }: { row: AdminRefundRepaymentRow })
           <dt className="text-xs text-muted-foreground">Repayment method</dt>
           <dd className="font-medium">{row.method === 'GATEWAY' ? 'Gateway checkout' : 'Bank transfer'}</dd>
         </div>
+        {row.method === 'GATEWAY' ? (
+          <>
+            <div>
+              <dt className="text-xs text-muted-foreground">Merchant reference</dt>
+              <dd className="font-mono text-xs sm:text-sm">{row.merchantReference || row.reference || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">PaymentIntent state</dt>
+              <dd className="font-medium">{row.paymentIntentState || '—'}</dd>
+            </div>
+          </>
+        ) : null}
         <div>
           <dt className="text-xs text-muted-foreground">Expected provider repayment</dt>
           <dd className="font-semibold tabular-nums">{moneyOrMissing(expected, missing)}</dd>
@@ -194,6 +213,9 @@ export default function AdminRefundRepayments() {
   const [unblockPrompt, setUnblockPrompt] = useState<UnblockPrompt | null>(null);
   const [unblocking, setUnblocking] = useState(false);
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt | null>(null);
+  const [abandonPrompt, setAbandonPrompt] = useState<AdminRefundRepaymentRow | null>(null);
+  const [abandonNote, setAbandonNote] = useState('');
+  const [abandonChecked, setAbandonChecked] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -293,6 +315,42 @@ export default function AdminRefundRepayments() {
     }
   };
 
+  const runAbandon = async () => {
+    if (!abandonPrompt) return;
+    if (!abandonChecked || abandonNote.trim().length < 10) {
+      toast({
+        title: 'Confirmation required',
+        description:
+          'Confirm the PayFast merchant dashboard was checked and add a note before abandoning.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setActingId(abandonPrompt.id);
+    try {
+      await abandonUnpaidPayfastRepayment(abandonPrompt.id, {
+        adminNote: abandonNote.trim(),
+        confirmPayfastMerchantUnchecked: true,
+      });
+      toast({
+        title: 'PayFast attempt abandoned',
+        description: 'The unpaid attempt was cancelled. Provider debt was not reduced.',
+      });
+      setAbandonPrompt(null);
+      setAbandonNote('');
+      setAbandonChecked(false);
+      await load();
+    } catch (e: unknown) {
+      toast({
+        title: 'Could not abandon attempt',
+        description: e instanceof Error ? e.message : 'Request failed',
+        variant: 'destructive',
+      });
+    } finally {
+      setActingId(null);
+    }
+  };
+
   const runReject = async (id: string) => {
     setActingId(id);
     try {
@@ -384,7 +442,7 @@ export default function AdminRefundRepayments() {
                     className="flex flex-col gap-3 p-4 transition-colors hover:bg-muted/40 sm:flex-row sm:items-start sm:justify-between"
                   >
                     <RepaymentVerificationDetails row={row} />
-                    <div className="flex shrink-0 gap-2">
+                    <div className="flex shrink-0 flex-col gap-2">
                       <Button
                         size="sm"
                         onClick={() => requestConfirm(row)}
@@ -396,14 +454,31 @@ export default function AdminRefundRepayments() {
                           'Confirm repayment'
                         )}
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void runReject(row.id)}
-                        disabled={actingId === row.id}
-                      >
-                        Reject repayment
-                      </Button>
+                      {canAbandonUnpaidPayfastAttempt(row) ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setAbandonNote(
+                              `Checked PayFast merchant dashboard for ${row.merchantReference || row.reference}. No successful payment exists.`
+                            );
+                            setAbandonChecked(false);
+                            setAbandonPrompt(row);
+                          }}
+                          disabled={actingId === row.id}
+                        >
+                          Abandon unpaid PayFast attempt
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void runReject(row.id)}
+                          disabled={actingId === row.id}
+                        >
+                          Reject repayment
+                        </Button>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -565,6 +640,104 @@ export default function AdminRefundRepayments() {
                 'Confirm partial repayment'
               ) : (
                 'Confirm repayment'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={abandonPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open && !actingId) {
+            setAbandonPrompt(null);
+            setAbandonChecked(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Abandon unpaid PayFast attempt?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  This cancels the unpaid PayFast checkout so the provider can choose a payment
+                  method again. It does not reduce provider debt and does not refund the customer.
+                </p>
+                <dl className="grid gap-1.5">
+                  <div>
+                    <dt className="text-xs">Provider</dt>
+                    <dd className="font-medium text-foreground">
+                      {abandonPrompt?.provider?.user?.name || 'Provider'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs">Job</dt>
+                    <dd className="font-medium text-foreground">
+                      {abandonPrompt?.jobTitle || abandonPrompt?.jobId || '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs">Amount</dt>
+                    <dd className="font-medium text-foreground">
+                      {moneyOrMissing(abandonPrompt?.submittedAmount ?? abandonPrompt?.amount)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs">PayFast merchant reference</dt>
+                    <dd className="font-mono text-foreground">
+                      {abandonPrompt?.merchantReference || abandonPrompt?.reference || '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs">PaymentIntent state</dt>
+                    <dd className="font-medium text-foreground">
+                      {abandonPrompt?.paymentIntentState || '—'}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="space-y-1.5">
+                  <Label htmlFor="abandon-note" className="text-foreground">
+                    Admin note
+                  </Label>
+                  <Textarea
+                    id="abandon-note"
+                    value={abandonNote}
+                    onChange={(e) => setAbandonNote(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+                <label className="flex items-start gap-2 text-foreground">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={abandonChecked}
+                    onChange={(e) => setAbandonChecked(e.target.checked)}
+                  />
+                  <span>
+                    I checked the PayFast merchant dashboard for this reference and no successful
+                    payment exists.
+                  </span>
+                </label>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(actingId)}>Keep attempt</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={Boolean(actingId) || !abandonChecked || abandonNote.trim().length < 10}
+              onClick={(e) => {
+                e.preventDefault();
+                void runAbandon();
+              }}
+            >
+              {actingId ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Abandoning…
+                </>
+              ) : (
+                'Abandon unpaid PayFast attempt'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

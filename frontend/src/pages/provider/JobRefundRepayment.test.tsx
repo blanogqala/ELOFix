@@ -141,6 +141,66 @@ describe('JobRefundRepayment gateway selection + retry CTA', () => {
     expect(createProviderRefundRepaymentCheckout).not.toHaveBeenCalled();
   });
 
+  it('locks Paystack while an unresolved PayFast attempt is pending', async () => {
+    getProviderJobRefundObligation.mockResolvedValue({
+      success: true,
+      obligation: obligation({
+        pendingRepayment: {
+          id: 'rr-1',
+          amount: 232.5,
+          reference: 'EFX-RR-TEST',
+          status: 'SUBMITTED',
+          jobId: 'job-1',
+          createdAt: new Date().toISOString(),
+          method: 'GATEWAY',
+          gatewayProvider: 'PAYFAST',
+          paymentIntentState: 'PENDING',
+          gatewayPaymentVerified: false,
+        },
+      }),
+    });
+    renderPage();
+    await waitFor(() => {
+      expect(
+        screen.getByText(/must be completed or resolved before another payment method/i)
+      ).toBeInTheDocument();
+    });
+    const radios = screen.getAllByRole('radio');
+    expect(radios.every((el) => el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true')).toBe(
+      true
+    );
+  });
+
+  it('unlocks PayFast and Paystack after the unresolved repayment is gone', async () => {
+    getProviderJobRefundObligation.mockResolvedValue({
+      success: true,
+      obligation: obligation({
+        repaymentStatus: 'PAYMENT_REJECTED',
+        pendingRepayment: null,
+        lastRejectedRepayment: {
+          amount: 232.5,
+          reference: 'EFX-RR-TEST',
+          adminNote: 'Checked PayFast dashboard. No successful payment.',
+          reviewedAt: new Date().toISOString(),
+        },
+      }),
+    });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Paystack')).toBeInTheDocument());
+    expect(
+      screen.queryByText(/must be completed or resolved before another payment method/i)
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByText('Paystack'));
+    await user.click(screen.getByRole('button', { name: /Pay|Repay/i }));
+    await waitFor(() => {
+      expect(createProviderRefundRepaymentCheckout).toHaveBeenCalledWith('job-1', {
+        amount: 232.5,
+        provider: 'PAYSTACK',
+      });
+    });
+  });
+
   it('still displays Continue payment for unpaid PENDING gateway repayment', async () => {
     getProviderJobRefundObligation.mockResolvedValue({
       success: true,

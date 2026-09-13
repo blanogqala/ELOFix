@@ -28,6 +28,9 @@ export interface AdminRefundRepaymentRow {
   gatewayTransactionId?: string | null;
   merchantReference?: string | null;
   paymentIntentId?: string | null;
+  gatewayProvider?: string | null;
+  paymentIntentState?: string | null;
+  canAbandonUnpaidPayfastAttempt?: boolean;
   status: string;
   reviewedBy?: string | null;
   reviewedAt?: string | null;
@@ -78,6 +81,17 @@ export async function rejectAdminRefundRepayment(
   body?: { adminNote?: string }
 ): Promise<{ success: boolean }> {
   const { data } = await apiClient.post(`/admin/refund-repayments/${id}/reject`, body ?? {});
+  return data;
+}
+
+export async function abandonUnpaidPayfastRepayment(
+  id: string,
+  body: { adminNote: string; confirmPayfastMerchantUnchecked: true }
+): Promise<{ success: boolean; abandoned?: boolean }> {
+  const { data } = await apiClient.post(
+    `/admin/refund-repayments/${id}/abandon-unpaid-payfast`,
+    body
+  );
   return data;
 }
 

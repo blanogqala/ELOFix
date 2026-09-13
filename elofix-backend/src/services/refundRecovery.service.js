@@ -98,6 +98,27 @@ function isAuthoritativeFailedGatewayIntent(intent) {
   return ["FAILED", "CANCELLED"].includes(String(intent?.state || "").toUpperCase());
 }
 
+function repaymentGatewayPayload(intent) {
+  const payload = intent?.gatewayPayload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) return payload;
+  return {};
+}
+
+function isAbandonedRepaymentAttempt(intent) {
+  return repaymentGatewayPayload(intent).repaymentAttemptAbandoned === true;
+}
+
+function canAbandonUnpaidPayfastAttempt(repayment, intent) {
+  if (!repayment || String(repayment.status || "").toUpperCase() !== "SUBMITTED") return false;
+  if (String(repayment.method || "").toUpperCase() !== "GATEWAY") return false;
+  if (!intent) return false;
+  if (String(intent.kind || "").toUpperCase() !== "PROVIDER_REFUND_REPAYMENT") return false;
+  if (String(intent.provider || "").toUpperCase() !== "PAYFAST") return false;
+  const state = String(intent.state || "").toUpperCase();
+  if (state === "PAID") return false;
+  return state === "PENDING" || state === "PROCESSING";
+}
+
 function assertGatewayRepaymentIntentPayable(repayment, intent) {
   const method = String(repayment?.method || "BANK_TRANSFER").toUpperCase();
   const hasIntentLink = Boolean(repayment?.paymentIntentId || intent?.id);
@@ -1294,6 +1315,7 @@ async function continueExistingProviderRefundRepaymentCheckout({
  */
 async function markGatewayRepaymentPaidFromIntent(intent) {
   if (!intent || intent.kind !== "PROVIDER_REFUND_REPAYMENT") return null;
+  if (isAbandonedRepaymentAttempt(intent)) return null;
 
   const repayment = await prisma.providerRefundRepayment.findFirst({
     where: {
@@ -1663,6 +1685,13 @@ function mapAdminRefundRepaymentRow(row, expectedCtx) {
     customerRefundPending: refundMeta.customerRefundPending,
     originalCustomerPayments: originalPayments,
     manualActionReason: refundMeta.manualActionReason,
+    gatewayProvider: row.paymentIntent
+      ? String(row.paymentIntent.provider || "") || null
+      : null,
+    paymentIntentState: row.paymentIntent
+      ? String(row.paymentIntent.state || "") || null
+      : null,
+    canAbandonUnpaidPayfastAttempt: canAbandonUnpaidPayfastAttempt(row, row.paymentIntent || null),
     provider: row.provider
       ? {
           blocked: Boolean(row.provider.blocked),
@@ -1816,6 +1845,7 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
           customer: { select: { id: true, name: true } },
         },
       },
+      paymentIntent: { select: SAFE_REPAYMENT_INTENT_SELECT },
     },
   });
 
@@ -2051,11 +2081,17 @@ async function confirmAdminRefundRepayment(
 async function rejectAdminRefundRepayment(adminUserId, repaymentId, { adminNote } = {}) {
   const repayment = await prisma.providerRefundRepayment.findUnique({
     where: { id: String(repaymentId) },
-    include: { provider: { include: { user: true } } },
+    include: { provider: { include: { user: true } }, paymentIntent: true },
   });
   if (!repayment) throw new AppError("Repayment not found", 404);
   if (repayment.status !== "SUBMITTED") {
     throw new AppError("Repayment already reviewed", 400);
+  }
+  if (canAbandonUnpaidPayfastAttempt(repayment, repayment.paymentIntent)) {
+    throw new AppError(
+      "This unpaid PayFast attempt must be abandoned, not rejected. Use Abandon unpaid PayFast attempt after checking the merchant dashboard.",
+      400
+    );
   }
 
   await prisma.providerRefundRepayment.update({
@@ -2075,6 +2111,117 @@ async function rejectAdminRefundRepayment(adminUserId, repaymentId, { adminNote 
   );
 
   return repayment;
+}
+
+/**
+ * Admin-only: abandon an unpaid PayFast PROVIDER_REFUND_REPAYMENT attempt.
+ * Does not recover debt, stage a customer refund, or start a replacement checkout.
+ */
+async function abandonUnpaidPayfastRepaymentAttempt(
+  adminUserId,
+  repaymentId,
+  { adminNote, confirmPayfastMerchantUnchecked } = {}
+) {
+  const actor = await prisma.user.findUnique({
+    where: { id: String(adminUserId) },
+    select: { id: true, role: true },
+  });
+  if (!actor || String(actor.role || "").toUpperCase() !== "ADMIN") {
+    throw new AppError("Only an administrator can abandon an unpaid gateway attempt", 403);
+  }
+  if (confirmPayfastMerchantUnchecked !== true) {
+    throw new AppError(
+      "Confirm that the PayFast merchant dashboard was checked and no successful payment exists",
+      400
+    );
+  }
+  const note = adminNote != null ? String(adminNote).trim() : "";
+  if (note.length < 10) {
+    throw new AppError(
+      "Add a note confirming the PayFast merchant dashboard/reference was checked and no successful payment exists",
+      400
+    );
+  }
+
+  const repayment = await prisma.providerRefundRepayment.findUnique({
+    where: { id: String(repaymentId) },
+    include: {
+      paymentIntent: true,
+      provider: { include: { user: true } },
+    },
+  });
+  if (!repayment) throw new AppError("Repayment not found", 404);
+
+  const intent = repayment.paymentIntent;
+  const intentState = String(intent?.state || "").toUpperCase();
+  if (intent && intentState === "PAID") {
+    throw new AppError("A paid PayFast repayment cannot be abandoned", 409);
+  }
+  if (!canAbandonUnpaidPayfastAttempt(repayment, intent)) {
+    if (repayment.status !== "SUBMITTED") {
+      throw new AppError("Repayment already reviewed", 400);
+    }
+    throw new AppError("This repayment cannot be abandoned", 400);
+  }
+
+  const now = new Date();
+  const merchantReference = intent.merchantReference;
+  const nextPayload = {
+    ...repaymentGatewayPayload(intent),
+    repaymentAttemptAbandoned: true,
+    repaymentAttemptAbandonedAt: now.toISOString(),
+    repaymentAttemptAbandonedBy: String(adminUserId),
+    repaymentAttemptAbandonReason: note,
+  };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.providerRefundRepayment.update({
+      where: { id: repayment.id },
+      data: {
+        status: "REJECTED",
+        reviewedBy: String(adminUserId),
+        reviewedAt: now,
+        adminNote: note,
+      },
+    });
+    await tx.paymentIntent.update({
+      where: { id: intent.id },
+      data: {
+        state: "CANCELLED",
+        cancelledAt: now,
+        merchantReference,
+        gatewayPayload: nextPayload,
+      },
+    });
+  });
+
+  await logAudit(AUDIT_ACTIONS.ADMIN_REFUND_REPAYMENT_ATTEMPT_ABANDONED, {
+    actorType: ACTOR_TYPES.ADMIN,
+    userId: String(adminUserId),
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: intent.id,
+    newValue: {
+      repaymentId: repayment.id,
+      jobId: repayment.jobId || null,
+      merchantReference,
+      amount: Number(repayment.amount),
+    },
+  });
+
+  await notificationEvents.notifyProviderRepaymentRejected(
+    repayment.provider.userId,
+    Number(repayment.amount),
+    note
+  );
+
+  return {
+    repaymentId: repayment.id,
+    status: "REJECTED",
+    paymentIntentId: intent.id,
+    paymentIntentState: "CANCELLED",
+    merchantReference,
+    abandoned: true,
+  };
 }
 
 /**
@@ -2198,6 +2345,8 @@ module.exports = {
   serializePendingRepayment,
   resolveRepaymentCheckoutProvider,
   assertGatewayRepaymentIntentPayable,
+  canAbandonUnpaidPayfastAttempt,
+  isAbandonedRepaymentAttempt,
   submitProviderRepayment,
   createProviderRefundRepaymentCheckout,
   markGatewayRepaymentPaidFromIntent,
@@ -2206,6 +2355,7 @@ module.exports = {
   listAdminRefundRepayments,
   confirmAdminRefundRepayment,
   rejectAdminRefundRepayment,
+  abandonUnpaidPayfastRepaymentAttempt,
   ensureRefundRecoveriesForProvider,
   dueAtFromNow,
   clearProviderRefundDebtRestrictionIfClear,

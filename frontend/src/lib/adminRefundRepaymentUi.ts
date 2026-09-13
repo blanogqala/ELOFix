@@ -6,6 +6,23 @@ export type CustomerRefundPayoutStatus =
   | 'UNKNOWN'
   | string;
 
+export function canAbandonUnpaidPayfastAttempt(row: {
+  status?: string | null;
+  method?: string | null;
+  gatewayProvider?: string | null;
+  paymentIntentState?: string | null;
+  canAbandonUnpaidPayfastAttempt?: boolean;
+}): boolean {
+  if (row.canAbandonUnpaidPayfastAttempt === true) return true;
+  if (row.canAbandonUnpaidPayfastAttempt === false) return false;
+  return (
+    String(row.status || '').toUpperCase() === 'SUBMITTED' &&
+    String(row.method || '').toUpperCase() === 'GATEWAY' &&
+    String(row.gatewayProvider || '').toUpperCase() === 'PAYFAST' &&
+    ['PENDING', 'PROCESSING'].includes(String(row.paymentIntentState || '').toUpperCase())
+  );
+}
+
 export function canRetryCustomerRefund(customerRefundStatus: string | null | undefined): boolean {
   return ['REFUND_FAILED', 'REFUND_MANUAL_ACTION_REQUIRED'].includes(
     String(customerRefundStatus || '')
