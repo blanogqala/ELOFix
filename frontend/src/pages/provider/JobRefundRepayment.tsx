@@ -353,7 +353,14 @@ export default function ProviderJobRefundRepayment() {
             </p>
           ) : null}
 
-          {canPay ? (
+          {obligation.lateRepaymentReconciliationRequired ? (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              PayFast reported a payment after the previous attempt was abandoned. EloFix must
+              reconcile that payment before another repayment can be made.
+            </p>
+          ) : null}
+
+          {canPay && !obligation.lateRepaymentReconciliationRequired ? (
             <div className="space-y-3">
               <div>
                 <Label className="mb-2 block">Payment method</Label>

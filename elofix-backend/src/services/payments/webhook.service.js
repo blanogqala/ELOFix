@@ -26,6 +26,53 @@ function isEventFullyProcessed(ev) {
   return String(ev.processingError || "") !== POST_SETTLEMENT_PENDING;
 }
 
+function repaymentGatewayPayload(intent) {
+  const payload = intent?.gatewayPayload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) return payload;
+  return {};
+}
+
+function isAbandonedProviderRefundRepaymentAttempt(intent) {
+  return (
+    String(intent?.kind || "").toUpperCase() === "PROVIDER_REFUND_REPAYMENT" &&
+    repaymentGatewayPayload(intent).repaymentAttemptAbandoned === true
+  );
+}
+
+function sanitizeAbandonedLatePaidEvidence(verifyResult) {
+  return {
+    latePaidItnAfterAbandon: true,
+    latePaidItnAfterAbandonAt: new Date().toISOString(),
+    latePaidItnMerchantReference: verifyResult?.merchantReference
+      ? String(verifyResult.merchantReference)
+      : null,
+    latePaidItnGatewayTransactionId: verifyResult?.gatewayTransactionId
+      ? String(verifyResult.gatewayTransactionId)
+      : null,
+    latePaidItnAmount:
+      verifyResult?.amount != null && Number.isFinite(Number(verifyResult.amount))
+        ? Number(verifyResult.amount)
+        : null,
+    latePaidItnExternalEventId: verifyResult?.externalEventId
+      ? String(verifyResult.externalEventId)
+      : null,
+    latePaidItnReconciliationRequired: true,
+    latePaidItnReconciliationResolved: false,
+  };
+}
+
+function mergeAbandonedRepaymentWebhookDiagnostics(intent, verifyResult) {
+  const state = String(verifyResult?.state || "").toUpperCase() || "UNKNOWN";
+  return {
+    ...repaymentGatewayPayload(intent),
+    lastPostAbandonGatewayState: state,
+    lastPostAbandonGatewayEventAt: new Date().toISOString(),
+    lastPostAbandonExternalEventId: verifyResult?.externalEventId
+      ? String(verifyResult.externalEventId)
+      : null,
+  };
+}
+
 function postSettlementFlags(intent) {
   const kind = String(intent?.kind || "");
   const postSettleJobStore = kind === "JOB_STORE_ORDER" && !intent.materialOrderId;
@@ -150,8 +197,57 @@ async function processWebhookResult(providerKey, verifyResult) {
           ? String(verifyResult.gatewayTransactionId)
           : intent.gatewayTransactionId;
 
+        if (isAbandonedProviderRefundRepaymentAttempt(intent) && verifyResult.state !== "PAID") {
+          await tx.paymentIntent.update({
+            where: { id: intent.id },
+            data: {
+              state: "CANCELLED",
+              gatewayPayload: mergeAbandonedRepaymentWebhookDiagnostics(intent, {
+                ...verifyResult,
+                externalEventId,
+              }),
+            },
+          });
+          await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+          return {
+            processed: true,
+            fullyProcessed: true,
+            abandonedIntentShielded: true,
+            intentId: intent.id,
+            state: "CANCELLED",
+          };
+        }
+
         if (verifyResult.state === "PAID") {
           const flags = postSettlementFlags(intent);
+
+          if (isAbandonedProviderRefundRepaymentAttempt(intent)) {
+            const evidence = sanitizeAbandonedLatePaidEvidence({
+              ...verifyResult,
+              externalEventId,
+            });
+            await tx.paymentIntent.update({
+              where: { id: intent.id },
+              data: {
+                gatewayPayload: {
+                  ...repaymentGatewayPayload(intent),
+                  ...evidence,
+                },
+              },
+            });
+            await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+            return {
+              processed: true,
+              fullyProcessed: true,
+              abandonedLatePaid: true,
+              latePaymentReconciliationRequired: true,
+              intentId: intent.id,
+              state: String(intent.state || ""),
+              jobId: intent.jobId || null,
+              merchantReference: intent.merchantReference || null,
+              amount: Number(intent.amount),
+            };
+          }
 
           if (intent.state === "PAID") {
             if (flags.needsPostSettlement) {
@@ -261,6 +357,37 @@ async function processWebhookResult(providerKey, verifyResult) {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       }
     );
+
+    if (result?.abandonedLatePaid && result?.intentId) {
+      try {
+        const { logAudit } = require("../auditLog.service");
+        const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
+        await logAudit(AUDIT_ACTIONS.PAYMENT_REPAYMENT_LATE_PAID_AFTER_ABANDON, {
+          actorType: ACTOR_TYPES.SYSTEM,
+          entityType: ENTITY_TYPES.PAYMENT,
+          entityId: result.intentId,
+          newValue: {
+            jobId: result.jobId,
+            merchantReference: result.merchantReference,
+            amount: result.amount,
+            reconciliationRequired: true,
+          },
+        });
+      } catch (auditErr) {
+        console.error("[processWebhookResult] abandoned late-paid audit failed", auditErr);
+      }
+      try {
+        const notificationEvents = require("../notificationEvents.service");
+        await notificationEvents.notifyAdminAbandonedRepaymentLatePaid({
+          intentId: result.intentId,
+          jobId: result.jobId,
+          merchantReference: result.merchantReference,
+          amount: result.amount,
+        });
+      } catch (notifyErr) {
+        console.error("[processWebhookResult] abandoned late-paid admin alert failed", notifyErr);
+      }
+    }
 
     if (result?.needsPostSettlement && result?.intentId && !result?.fullyProcessed) {
       try {

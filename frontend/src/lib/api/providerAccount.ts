@@ -337,6 +337,7 @@ export interface ProviderJobRefundObligation {
   lastRejectedRepayment: ProviderRefundDebtSummary['lastRejectedRepayment'];
   recoveries: ProviderRefundRecoveryRow[];
   totalOwed: number;
+  lateRepaymentReconciliationRequired?: boolean;
 }
 
 export async function getProviderRefundDebt(): Promise<{ success: boolean } & ProviderRefundDebtSummary> {
