@@ -23,6 +23,14 @@ export function canAbandonUnpaidPayfastAttempt(row: {
   );
 }
 
+export function canResolveLatePayfastReconciliation(row: {
+  canResolveLatePayfastReconciliation?: boolean;
+  latePayfastReconciliation?: { required?: boolean } | null;
+}): boolean {
+  if (row.canResolveLatePayfastReconciliation === true) return true;
+  return row.latePayfastReconciliation?.required === true;
+}
+
 export function canRetryCustomerRefund(customerRefundStatus: string | null | undefined): boolean {
   return ['REFUND_FAILED', 'REFUND_MANUAL_ACTION_REQUIRED'].includes(
     String(customerRefundStatus || '')

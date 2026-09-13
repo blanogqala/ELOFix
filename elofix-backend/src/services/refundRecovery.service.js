@@ -108,6 +108,105 @@ function isAbandonedRepaymentAttempt(intent) {
   return repaymentGatewayPayload(intent).repaymentAttemptAbandoned === true;
 }
 
+const LATE_REPAYMENT_RECONCILIATION_REQUIRED = "LATE_REPAYMENT_RECONCILIATION_REQUIRED";
+const LATE_REPAYMENT_RECONCILIATION_MESSAGE =
+  "PayFast reported a payment after the previous attempt was abandoned. EloFix must reconcile that payment before another repayment can be made.";
+
+function throwLateRepaymentReconciliationRequired() {
+  throw new AppError(LATE_REPAYMENT_RECONCILIATION_MESSAGE, 409, LATE_REPAYMENT_RECONCILIATION_REQUIRED);
+}
+
+function isUnresolvedLateAbandonedRepaymentIntent(intent) {
+  if (String(intent?.kind || "").toUpperCase() !== "PROVIDER_REFUND_REPAYMENT") return false;
+  const payload = repaymentGatewayPayload(intent);
+  return (
+    payload.repaymentAttemptAbandoned === true &&
+    payload.latePaidItnAfterAbandon === true &&
+    payload.latePaidItnReconciliationRequired === true &&
+    payload.latePaidItnReconciliationResolved !== true
+  );
+}
+
+function serializeLatePayfastReconciliation(intent, otherRepayment = null) {
+  const payload = repaymentGatewayPayload(intent);
+  if (payload.repaymentAttemptAbandoned !== true || payload.latePaidItnAfterAbandon !== true) {
+    return null;
+  }
+  const required =
+    payload.latePaidItnReconciliationRequired === true &&
+    payload.latePaidItnReconciliationResolved !== true;
+  return {
+    required,
+    resolved: payload.latePaidItnReconciliationResolved === true,
+    merchantReference: payload.latePaidItnMerchantReference || intent.merchantReference || null,
+    gatewayTransactionId: payload.latePaidItnGatewayTransactionId || null,
+    amount:
+      payload.latePaidItnAmount != null && Number.isFinite(Number(payload.latePaidItnAmount))
+        ? Number(payload.latePaidItnAmount)
+        : Number(intent.amount),
+    resolution: payload.latePaidItnReconciliationResolution || null,
+    otherRepaymentExists: Boolean(otherRepayment?.exists),
+    otherRepaymentPaid: Boolean(otherRepayment?.paid),
+    otherRepaymentConfirmed: Boolean(otherRepayment?.confirmed),
+  };
+}
+
+async function findUnresolvedLateAbandonedRepayment({ providerUserId, jobId }) {
+  if (!providerUserId || !jobId) return null;
+  const intents = await prisma.paymentIntent.findMany({
+    where: {
+      kind: "PROVIDER_REFUND_REPAYMENT",
+      userId: String(providerUserId),
+      jobId: String(jobId),
+    },
+    include: {
+      providerRefundRepayment: {
+        select: { id: true, status: true, amount: true, jobId: true, providerId: true },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  return intents.find((intent) => isUnresolvedLateAbandonedRepaymentIntent(intent)) || null;
+}
+
+async function assertNoUnresolvedLateAbandonedRepayment({
+  providerUserId,
+  jobId,
+  allowPaidReplacementIntent = null,
+}) {
+  const late = await findUnresolvedLateAbandonedRepayment({ providerUserId, jobId });
+  if (!late) return null;
+  if (
+    allowPaidReplacementIntent &&
+    String(allowPaidReplacementIntent.state || "").toUpperCase() === "PAID"
+  ) {
+    return late;
+  }
+  throwLateRepaymentReconciliationRequired();
+}
+
+async function jobHasOtherRepaymentActivity(providerId, jobId, exceptRepaymentId) {
+  if (!providerId || !jobId) return { exists: false, paid: false, confirmed: false };
+  const others = await prisma.providerRefundRepayment.findMany({
+    where: {
+      providerId: String(providerId),
+      jobId: String(jobId),
+      ...(exceptRepaymentId ? { id: { not: String(exceptRepaymentId) } } : {}),
+    },
+    include: { paymentIntent: { select: { id: true, state: true } } },
+  });
+  return {
+    exists: others.length > 0,
+    paid: others.some((row) => String(row.paymentIntent?.state || "").toUpperCase() === "PAID"),
+    confirmed: others.some((row) => String(row.status || "").toUpperCase() === "CONFIRMED"),
+  };
+}
+
+const ADMIN_REPAYMENT_INTENT_SELECT = {
+  ...SAFE_REPAYMENT_INTENT_SELECT,
+  gatewayPayload: true,
+};
+
 function canAbandonUnpaidPayfastAttempt(repayment, intent) {
   if (!repayment || String(repayment.status || "").toUpperCase() !== "SUBMITTED") return false;
   if (String(repayment.method || "").toUpperCase() !== "GATEWAY") return false;
@@ -812,6 +911,12 @@ async function getProviderJobRefundObligation(userId, jobId) {
     lastRejectedRepayment: summary.lastRejectedRepayment,
     recoveries,
     totalOwed: summary.totalOwed,
+    lateRepaymentReconciliationRequired: Boolean(
+      await findUnresolvedLateAbandonedRepayment({
+        providerUserId: String(userId),
+        jobId: job.id,
+      })
+    ),
   };
 }
 
@@ -1016,6 +1121,12 @@ async function createProviderRefundRepaymentCheckout(
     orderBy: { createdAt: "desc" },
   });
 
+  await assertNoUnresolvedLateAbandonedRepayment({
+    providerUserId: String(userId),
+    jobId: String(jobId),
+    allowPaidReplacementIntent: existing?.paymentIntent || null,
+  });
+
   if (existing) {
     return continueExistingProviderRefundRepaymentCheckout({
       existing,
@@ -1041,6 +1152,16 @@ async function createProviderRefundRepaymentCheckout(
         "A repayment attempt is already in progress for this job.",
         409
       );
+    }
+    const lateIntents = await tx.paymentIntent.findMany({
+      where: {
+        kind: "PROVIDER_REFUND_REPAYMENT",
+        userId: String(userId),
+        jobId: String(jobId),
+      },
+    });
+    if (lateIntents.some((intent) => isUnresolvedLateAbandonedRepaymentIntent(intent))) {
+      throwLateRepaymentReconciliationRequired();
     }
 
     const intentId = randomUUID();
@@ -1130,6 +1251,12 @@ async function continueExistingProviderRefundRepaymentCheckout({
   if (String(intent.kind || "") !== "PROVIDER_REFUND_REPAYMENT") {
     throw new AppError("Linked payment is not a provider refund repayment", 409);
   }
+
+  await assertNoUnresolvedLateAbandonedRepayment({
+    providerUserId: String(intent.userId),
+    jobId: String(jobId),
+    allowPaidReplacementIntent: intent,
+  });
 
   const existingProvider = String(intent.provider || "").toUpperCase();
   const requestedDifferentGateway =
@@ -1692,6 +1819,8 @@ function mapAdminRefundRepaymentRow(row, expectedCtx) {
       ? String(row.paymentIntent.state || "") || null
       : null,
     canAbandonUnpaidPayfastAttempt: canAbandonUnpaidPayfastAttempt(row, row.paymentIntent || null),
+    latePayfastReconciliation: null,
+    canResolveLatePayfastReconciliation: false,
     provider: row.provider
       ? {
           blocked: Boolean(row.provider.blocked),
@@ -1742,6 +1871,13 @@ async function submitProviderRepayment(userId, { amount, reference, proofUrl, jo
   }
 
   const amt = derivedAmount;
+
+  if (jobId) {
+    await assertNoUnresolvedLateAbandonedRepayment({
+      providerUserId: String(userId),
+      jobId: String(jobId),
+    });
+  }
 
   const row = await prisma.$transaction(async (tx) => {
     const pending = await tx.providerRefundRepayment.findFirst({
@@ -1827,7 +1963,7 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
       ? [{ reviewedAt: "desc" }, { createdAt: "desc" }]
       : { createdAt: "desc" };
 
-  const rows = await prisma.providerRefundRepayment.findMany({
+  let rows = await prisma.providerRefundRepayment.findMany({
     where,
     orderBy,
     include: {
@@ -1845,9 +1981,61 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
           customer: { select: { id: true, name: true } },
         },
       },
-      paymentIntent: { select: SAFE_REPAYMENT_INTENT_SELECT },
+      paymentIntent: { select: ADMIN_REPAYMENT_INTENT_SELECT },
     },
   });
+
+  if (mode !== "history") {
+    const reconRows = await prisma.providerRefundRepayment.findMany({
+      where: {
+        status: "REJECTED",
+        method: "GATEWAY",
+        ...(term
+          ? {
+              OR: [
+                { reference: { contains: term, mode: "insensitive" } },
+                {
+                  provider: {
+                    user: {
+                      OR: [
+                        { name: { contains: term, mode: "insensitive" } },
+                        { email: { contains: term, mode: "insensitive" } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        provider: {
+          select: {
+            blocked: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+        job: {
+          select: {
+            id: true,
+            title: true,
+            meta: true,
+            customer: { select: { id: true, name: true } },
+          },
+        },
+        paymentIntent: { select: ADMIN_REPAYMENT_INTENT_SELECT },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const seen = new Set(rows.map((r) => r.id));
+    for (const row of reconRows) {
+      if (seen.has(row.id)) continue;
+      if (!isUnresolvedLateAbandonedRepaymentIntent(row.paymentIntent)) continue;
+      rows.push(row);
+      seen.add(row.id);
+    }
+  }
 
   const providerIds = [...new Set(rows.map((r) => r.providerId))];
   const expectedByProvider = new Map();
@@ -1918,7 +2106,7 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
     paymentsByJob.set(intent.jobId, list);
   }
 
-  return rows.map((row) => {
+  const mapped = rows.map((row) => {
     const providerCtx = expectedByProvider.get(row.providerId) || {};
     const jobCtx =
       row.jobId ? expectedByProviderJob.get(`${row.providerId}:${row.jobId}`) : null;
@@ -1940,11 +2128,31 @@ async function listAdminRefundRepayments({ status, search, view } = {}) {
       };
     }
     const jid = row.jobId || ctx.primary?.jobId;
-    return mapAdminRefundRepaymentRow(row, {
-      ...ctx,
-      originalPayments: jid ? paymentsByJob.get(jid) || [] : [],
-    });
+    return {
+      dto: mapAdminRefundRepaymentRow(row, {
+        ...ctx,
+        originalPayments: jid ? paymentsByJob.get(jid) || [] : [],
+      }),
+      row,
+    };
   });
+
+  return Promise.all(
+    mapped.map(async ({ dto, row }) => {
+      const recon = serializeLatePayfastReconciliation(
+        row.paymentIntent,
+        row.jobId
+          ? await jobHasOtherRepaymentActivity(row.providerId, row.jobId, row.id)
+          : null
+      );
+      if (!recon) return dto;
+      return {
+        ...dto,
+        latePayfastReconciliation: recon,
+        canResolveLatePayfastReconciliation: recon.required === true,
+      };
+    })
+  );
 }
 
 async function confirmAdminRefundRepayment(
@@ -2225,6 +2433,95 @@ async function abandonUnpaidPayfastRepaymentAttempt(
 }
 
 /**
+ * Admin-only: mark a late PayFast payment after abandon as externally refunded.
+ * Does not recover provider debt. USE_LATE_PAYMENT is not implemented here.
+ */
+async function resolveLateAbandonedPayfastReconciliation(
+  adminUserId,
+  repaymentId,
+  { resolution, confirmExternalRefund, adminNote } = {}
+) {
+  const actor = await prisma.user.findUnique({
+    where: { id: String(adminUserId) },
+    select: { id: true, role: true },
+  });
+  if (!actor || String(actor.role || "").toUpperCase() !== "ADMIN") {
+    throw new AppError("Only an administrator can resolve late repayment reconciliation", 403);
+  }
+
+  const requested = String(resolution || "").trim().toUpperCase();
+  if (requested === "USE_LATE_PAYMENT") {
+    throw new AppError(
+      "Applying the late PayFast payment as the job repayment is not supported yet. Confirm an external PayFast refund instead.",
+      400
+    );
+  }
+  if (requested !== "EXTERNAL_REFUND_CONFIRMED") {
+    throw new AppError("Unsupported reconciliation resolution", 400);
+  }
+  if (confirmExternalRefund !== true) {
+    throw new AppError(
+      "Confirm that the late PayFast payment was refunded in the merchant dashboard",
+      400
+    );
+  }
+  const note = adminNote != null ? String(adminNote).trim() : "";
+  if (note.length < 10) {
+    throw new AppError(
+      "Add a note of at least 10 characters describing the external PayFast refund",
+      400
+    );
+  }
+
+  const repayment = await prisma.providerRefundRepayment.findUnique({
+    where: { id: String(repaymentId) },
+    include: { paymentIntent: true },
+  });
+  if (!repayment) throw new AppError("Repayment not found", 404);
+  if (!isUnresolvedLateAbandonedRepaymentIntent(repayment.paymentIntent)) {
+    throw new AppError("There is no unresolved late PayFast reconciliation for this repayment", 400);
+  }
+
+  const now = new Date();
+  const intent = repayment.paymentIntent;
+  const nextPayload = {
+    ...repaymentGatewayPayload(intent),
+    latePaidItnReconciliationRequired: true,
+    latePaidItnReconciliationResolved: true,
+    latePaidItnReconciliationResolvedAt: now.toISOString(),
+    latePaidItnReconciliationResolvedBy: String(adminUserId),
+    latePaidItnReconciliationResolution: "EXTERNAL_REFUND_CONFIRMED",
+    latePaidItnReconciliationNote: note,
+  };
+
+  await prisma.paymentIntent.update({
+    where: { id: intent.id },
+    data: { gatewayPayload: nextPayload },
+  });
+
+  await logAudit(AUDIT_ACTIONS.ADMIN_REFUND_REPAYMENT_LATE_RECONCILED, {
+    actorType: ACTOR_TYPES.ADMIN,
+    userId: String(adminUserId),
+    entityType: ENTITY_TYPES.PAYMENT,
+    entityId: intent.id,
+    newValue: {
+      repaymentId: repayment.id,
+      jobId: repayment.jobId || null,
+      resolution: "EXTERNAL_REFUND_CONFIRMED",
+      merchantReference: intent.merchantReference,
+    },
+  });
+
+  return {
+    repaymentId: repayment.id,
+    resolved: true,
+    resolution: "EXTERNAL_REFUND_CONFIRMED",
+    paymentIntentId: intent.id,
+    merchantReference: intent.merchantReference,
+  };
+}
+
+/**
  * Backfill RefundRecovery for legacy refund_debt rows without a recovery record.
  */
 async function ensureRefundRecoveriesForProvider(providerProfileId) {
@@ -2347,6 +2644,8 @@ module.exports = {
   assertGatewayRepaymentIntentPayable,
   canAbandonUnpaidPayfastAttempt,
   isAbandonedRepaymentAttempt,
+  isUnresolvedLateAbandonedRepaymentIntent,
+  findUnresolvedLateAbandonedRepayment,
   submitProviderRepayment,
   createProviderRefundRepaymentCheckout,
   markGatewayRepaymentPaidFromIntent,
@@ -2356,6 +2655,7 @@ module.exports = {
   confirmAdminRefundRepayment,
   rejectAdminRefundRepayment,
   abandonUnpaidPayfastRepaymentAttempt,
+  resolveLateAbandonedPayfastReconciliation,
   ensureRefundRecoveriesForProvider,
   dueAtFromNow,
   clearProviderRefundDebtRestrictionIfClear,

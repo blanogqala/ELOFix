@@ -171,6 +171,24 @@ describe('JobRefundRepayment gateway selection + retry CTA', () => {
     );
   });
 
+  it('blocks checkout while late PayFast reconciliation is required', async () => {
+    getProviderJobRefundObligation.mockResolvedValue({
+      success: true,
+      obligation: obligation({
+        repaymentStatus: 'PAYMENT_REJECTED',
+        pendingRepayment: null,
+        lateRepaymentReconciliationRequired: true,
+      }),
+    });
+    renderPage();
+    await waitFor(() => {
+      expect(
+        screen.getByText(/PayFast reported a payment after the previous attempt was abandoned/i)
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /Pay|Repay|Continue payment/i })).not.toBeInTheDocument();
+  });
+
   it('unlocks PayFast and Paystack after the unresolved repayment is gone', async () => {
     getProviderJobRefundObligation.mockResolvedValue({
       success: true,

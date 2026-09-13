@@ -31,6 +31,18 @@ export interface AdminRefundRepaymentRow {
   gatewayProvider?: string | null;
   paymentIntentState?: string | null;
   canAbandonUnpaidPayfastAttempt?: boolean;
+  latePayfastReconciliation?: {
+    required: boolean;
+    resolved: boolean;
+    merchantReference: string | null;
+    gatewayTransactionId: string | null;
+    amount: number | null;
+    resolution?: string | null;
+    otherRepaymentExists?: boolean;
+    otherRepaymentPaid?: boolean;
+    otherRepaymentConfirmed?: boolean;
+  } | null;
+  canResolveLatePayfastReconciliation?: boolean;
   status: string;
   reviewedBy?: string | null;
   reviewedAt?: string | null;
@@ -90,6 +102,21 @@ export async function abandonUnpaidPayfastRepayment(
 ): Promise<{ success: boolean; abandoned?: boolean }> {
   const { data } = await apiClient.post(
     `/admin/refund-repayments/${id}/abandon-unpaid-payfast`,
+    body
+  );
+  return data;
+}
+
+export async function resolveLatePayfastReconciliation(
+  id: string,
+  body: {
+    resolution: 'EXTERNAL_REFUND_CONFIRMED';
+    confirmExternalRefund: true;
+    adminNote: string;
+  }
+): Promise<{ success: boolean; resolved?: boolean }> {
+  const { data } = await apiClient.post(
+    `/admin/refund-repayments/${id}/resolve-late-payfast`,
     body
   );
   return data;

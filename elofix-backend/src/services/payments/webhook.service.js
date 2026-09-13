@@ -57,6 +57,7 @@ function sanitizeAbandonedLatePaidEvidence(verifyResult) {
       ? String(verifyResult.externalEventId)
       : null,
     latePaidItnReconciliationRequired: true,
+    latePaidItnReconciliationResolved: false,
   };
 }
 

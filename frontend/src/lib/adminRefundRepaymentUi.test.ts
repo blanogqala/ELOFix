@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canAbandonUnpaidPayfastAttempt,
+  canResolveLatePayfastReconciliation,
   canRetryCustomerRefund,
   confirmCustomerRefundToast,
 } from '@/lib/adminRefundRepaymentUi';
@@ -35,6 +36,20 @@ describe('canAbandonUnpaidPayfastAttempt', () => {
         gatewayProvider: 'PAYFAST',
         paymentIntentState: 'PAID',
       })
+    ).toBe(false);
+  });
+});
+
+describe('canResolveLatePayfastReconciliation', () => {
+  it('uses the server flag or required reconciliation state', () => {
+    expect(canResolveLatePayfastReconciliation({ canResolveLatePayfastReconciliation: true })).toBe(
+      true
+    );
+    expect(
+      canResolveLatePayfastReconciliation({ latePayfastReconciliation: { required: true } })
+    ).toBe(true);
+    expect(
+      canResolveLatePayfastReconciliation({ latePayfastReconciliation: { required: false } })
     ).toBe(false);
   });
 });

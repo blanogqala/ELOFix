@@ -129,6 +129,10 @@ router.post(
   asyncHandler(adminController.abandonUnpaidPayfastRepayment)
 );
 router.post(
+  "/refund-repayments/:id/resolve-late-payfast",
+  asyncHandler(adminController.resolveLatePayfastReconciliation)
+);
+router.post(
   "/refund-repayments/:id/process-customer-refund",
   asyncHandler(adminController.processCustomerRefundFromRepayment)
 );

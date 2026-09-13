@@ -613,6 +613,16 @@ async function abandonUnpaidPayfastRepayment(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function resolveLatePayfastReconciliation(req, res) {
+  const refundRecovery = require("../services/refundRecovery.service");
+  const data = await refundRecovery.resolveLateAbandonedPayfastReconciliation(
+    req.user.userId,
+    req.params.id,
+    req.body || {}
+  );
+  res.json({ success: true, ...data });
+}
+
 async function processCustomerRefundFromRepayment(req, res) {
   const refundRecovery = require("../services/refundRecovery.service");
   const data = await refundRecovery.processAdminCustomerRefund(req.user.userId, req.params.id);
@@ -785,6 +795,7 @@ module.exports = {
   confirmRefundRepayment,
   rejectRefundRepayment,
   abandonUnpaidPayfastRepayment,
+  resolveLatePayfastReconciliation,
   processCustomerRefundFromRepayment,
   processAdminJobRefund,
   repairStaleCourierJobs,
