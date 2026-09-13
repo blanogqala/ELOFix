@@ -61,6 +61,18 @@ function sanitizeAbandonedLatePaidEvidence(verifyResult) {
   };
 }
 
+function mergeAbandonedRepaymentWebhookDiagnostics(intent, verifyResult) {
+  const state = String(verifyResult?.state || "").toUpperCase() || "UNKNOWN";
+  return {
+    ...repaymentGatewayPayload(intent),
+    lastPostAbandonGatewayState: state,
+    lastPostAbandonGatewayEventAt: new Date().toISOString(),
+    lastPostAbandonExternalEventId: verifyResult?.externalEventId
+      ? String(verifyResult.externalEventId)
+      : null,
+  };
+}
+
 function postSettlementFlags(intent) {
   const kind = String(intent?.kind || "");
   const postSettleJobStore = kind === "JOB_STORE_ORDER" && !intent.materialOrderId;
@@ -184,6 +196,27 @@ async function processWebhookResult(providerKey, verifyResult) {
         const gwTxId = verifyResult.gatewayTransactionId
           ? String(verifyResult.gatewayTransactionId)
           : intent.gatewayTransactionId;
+
+        if (isAbandonedProviderRefundRepaymentAttempt(intent) && verifyResult.state !== "PAID") {
+          await tx.paymentIntent.update({
+            where: { id: intent.id },
+            data: {
+              state: "CANCELLED",
+              gatewayPayload: mergeAbandonedRepaymentWebhookDiagnostics(intent, {
+                ...verifyResult,
+                externalEventId,
+              }),
+            },
+          });
+          await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+          return {
+            processed: true,
+            fullyProcessed: true,
+            abandonedIntentShielded: true,
+            intentId: intent.id,
+            state: "CANCELLED",
+          };
+        }
 
         if (verifyResult.state === "PAID") {
           const flags = postSettlementFlags(intent);

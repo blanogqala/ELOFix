@@ -244,6 +244,26 @@ async function sendLatePaid(webhookService, merchantReference, intentId, amount 
   });
 }
 
+async function sendPostAbandonWebhook(webhookService, merchantReference, intentId, state) {
+  return webhookService.processWebhookResult("PAYFAST", {
+    valid: true,
+    merchantReference,
+    gatewayTransactionId: `pf-${String(state).toLowerCase()}-${intentId.slice(0, 8)}`,
+    state,
+    amount: 232.5,
+    externalEventId: `post-abandon-${String(state).toLowerCase()}-${intentId}`,
+    raw: { passphrase: "secret-must-not-be-copied", payment_status: state },
+  });
+}
+
+function assertAbandonedMetadataIntact(payload) {
+  assert.strictEqual(payload.repaymentAttemptAbandoned, true);
+  assert.ok(payload.repaymentAttemptAbandonedAt);
+  assert.ok(payload.repaymentAttemptAbandonedBy);
+  assert.ok(payload.repaymentAttemptAbandonReason);
+  assert.ok(!Object.prototype.hasOwnProperty.call(payload, "passphrase"));
+}
+
 async function debtSnapshot(prisma, providerId, jobId) {
   const recovery = await prisma.refundRecovery.findFirst({
     where: { providerId, jobId },
@@ -574,6 +594,190 @@ async function runDbIntegrationTests() {
     gwPaid.restore();
     notifyPaid.restore();
     await cleanupJobFixtures(prisma, fixturesPaid);
+  }
+
+  const fixturesShieldFail = await createJobFixtures(prisma, `${suffix}-sf`);
+  const gwShieldFail = installGatewayMocks();
+  const notifyShieldFail = installNotifySpy();
+  try {
+    const first = await abandonPayfast(refundRecovery, fixturesShieldFail, fixturesShieldFail.job.id);
+    const debtBefore = await debtSnapshot(prisma, fixturesShieldFail.provider.id, fixturesShieldFail.job.id);
+    const failed = await sendPostAbandonWebhook(
+      webhookService,
+      first.merchantReference,
+      first.intentId,
+      "FAILED"
+    );
+    assert.ok(!failed.httpStatus || failed.httpStatus === 200);
+    const afterFail = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterFail.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterFail.gatewayPayload);
+    assert.strictEqual(afterFail.gatewayPayload.lastPostAbandonGatewayState, "FAILED");
+    assert.deepStrictEqual(
+      await debtSnapshot(prisma, fixturesShieldFail.provider.id, fixturesShieldFail.job.id),
+      debtBefore
+    );
+    await sendPostAbandonWebhook(
+      webhookService,
+      first.merchantReference,
+      first.intentId,
+      "PROCESSING"
+    );
+    const afterProcessing = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterProcessing.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterProcessing.gatewayPayload);
+
+    const late = await sendLatePaid(webhookService, first.merchantReference, first.intentId);
+    assert.ok(!late.httpStatus || late.httpStatus === 200);
+    assert.strictEqual(late.result?.abandonedLatePaid, true);
+    const afterPaid = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterPaid.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterPaid.gatewayPayload);
+    assert.strictEqual(afterPaid.gatewayPayload.latePaidItnAfterAbandon, true);
+    assert.strictEqual(afterPaid.gatewayPayload.latePaidItnReconciliationRequired, true);
+    assert.strictEqual(afterPaid.gatewayPayload.latePaidItnReconciliationResolved, false);
+    assert.deepStrictEqual(
+      await debtSnapshot(prisma, fixturesShieldFail.provider.id, fixturesShieldFail.job.id),
+      debtBefore
+    );
+    let blocked;
+    try {
+      await refundRecovery.createProviderRefundRepaymentCheckout(
+        fixturesShieldFail.providerUser.id,
+        fixturesShieldFail.job.id,
+        { provider: "PAYSTACK", amount: 232.5 }
+      );
+    } catch (e) {
+      blocked = e;
+    }
+    assertLateReconLock(blocked);
+  } finally {
+    gwShieldFail.restore();
+    notifyShieldFail.restore();
+    await cleanupJobFixtures(prisma, fixturesShieldFail);
+  }
+
+  const fixturesShieldCancel = await createJobFixtures(prisma, `${suffix}-sc`);
+  const gwShieldCancel = installGatewayMocks();
+  const notifyShieldCancel = installNotifySpy();
+  try {
+    const first = await abandonPayfast(refundRecovery, fixturesShieldCancel, fixturesShieldCancel.job.id);
+    const debtBefore = await debtSnapshot(prisma, fixturesShieldCancel.provider.id, fixturesShieldCancel.job.id);
+    const cancelled = await sendPostAbandonWebhook(
+      webhookService,
+      first.merchantReference,
+      first.intentId,
+      "CANCELLED"
+    );
+    assert.ok(!cancelled.httpStatus || cancelled.httpStatus === 200);
+    const afterCancel = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterCancel.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterCancel.gatewayPayload);
+    assert.strictEqual(afterCancel.gatewayPayload.lastPostAbandonGatewayState, "CANCELLED");
+    assert.deepStrictEqual(
+      await debtSnapshot(prisma, fixturesShieldCancel.provider.id, fixturesShieldCancel.job.id),
+      debtBefore
+    );
+
+    const late = await sendLatePaid(webhookService, first.merchantReference, first.intentId);
+    assert.strictEqual(late.result?.abandonedLatePaid, true);
+    const afterPaid = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterPaid.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterPaid.gatewayPayload);
+    assert.strictEqual(afterPaid.gatewayPayload.latePaidItnReconciliationRequired, true);
+    assert.deepStrictEqual(
+      await debtSnapshot(prisma, fixturesShieldCancel.provider.id, fixturesShieldCancel.job.id),
+      debtBefore
+    );
+    let blocked;
+    try {
+      await refundRecovery.createProviderRefundRepaymentCheckout(
+        fixturesShieldCancel.providerUser.id,
+        fixturesShieldCancel.job.id,
+        { provider: "PAYSTACK", amount: 232.5 }
+      );
+    } catch (e) {
+      blocked = e;
+    }
+    assertLateReconLock(blocked);
+  } finally {
+    gwShieldCancel.restore();
+    notifyShieldCancel.restore();
+    await cleanupJobFixtures(prisma, fixturesShieldCancel);
+  }
+
+  const fixturesStaleFail = await createJobFixtures(prisma, `${suffix}-stf`);
+  const gwStaleFail = installGatewayMocks();
+  const notifyStaleFail = installNotifySpy();
+  try {
+    const first = await abandonPayfast(refundRecovery, fixturesStaleFail, fixturesStaleFail.job.id);
+    await sendLatePaid(webhookService, first.merchantReference, first.intentId);
+    await sendPostAbandonWebhook(webhookService, first.merchantReference, first.intentId, "FAILED");
+    const afterStale = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterStale.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterStale.gatewayPayload);
+    assert.strictEqual(afterStale.gatewayPayload.latePaidItnAfterAbandon, true);
+    assert.strictEqual(afterStale.gatewayPayload.latePaidItnReconciliationRequired, true);
+    assert.strictEqual(afterStale.gatewayPayload.latePaidItnReconciliationResolved, false);
+    assert.strictEqual(afterStale.gatewayPayload.lastPostAbandonGatewayState, "FAILED");
+  } finally {
+    gwStaleFail.restore();
+    notifyStaleFail.restore();
+    await cleanupJobFixtures(prisma, fixturesStaleFail);
+  }
+
+  const fixturesResolvedStale = await createJobFixtures(prisma, `${suffix}-rs`);
+  const gwResolvedStale = installGatewayMocks();
+  const notifyResolvedStale = installNotifySpy();
+  try {
+    const first = await abandonPayfast(refundRecovery, fixturesResolvedStale, fixturesResolvedStale.job.id);
+    const debtBefore = await debtSnapshot(prisma, fixturesResolvedStale.provider.id, fixturesResolvedStale.job.id);
+    await sendLatePaid(webhookService, first.merchantReference, first.intentId);
+    await refundRecovery.resolveLateAbandonedPayfastReconciliation(
+      fixturesResolvedStale.adminUser.id,
+      first.repaymentId,
+      {
+        resolution: "EXTERNAL_REFUND_CONFIRMED",
+        confirmExternalRefund: true,
+        adminNote: "Refunded late PayFast payment in merchant dashboard.",
+      }
+    );
+    await sendPostAbandonWebhook(
+      webhookService,
+      first.merchantReference,
+      first.intentId,
+      "CANCELLED"
+    );
+    await sendPostAbandonWebhook(
+      webhookService,
+      first.merchantReference,
+      first.intentId,
+      "FAILED"
+    );
+    const afterStale = await prisma.paymentIntent.findUnique({ where: { id: first.intentId } });
+    assert.strictEqual(afterStale.state, "CANCELLED");
+    assertAbandonedMetadataIntact(afterStale.gatewayPayload);
+    assert.strictEqual(afterStale.gatewayPayload.latePaidItnReconciliationResolved, true);
+    assert.strictEqual(
+      afterStale.gatewayPayload.latePaidItnReconciliationResolution,
+      "EXTERNAL_REFUND_CONFIRMED"
+    );
+    assert.ok(afterStale.gatewayPayload.latePaidItnReconciliationResolvedAt);
+    assert.ok(afterStale.gatewayPayload.latePaidItnReconciliationNote);
+    assert.deepStrictEqual(
+      await debtSnapshot(prisma, fixturesResolvedStale.provider.id, fixturesResolvedStale.job.id),
+      debtBefore
+    );
+    const replacement = await refundRecovery.createProviderRefundRepaymentCheckout(
+      fixturesResolvedStale.providerUser.id,
+      fixturesResolvedStale.job.id,
+      { provider: "PAYSTACK", amount: 232.5 }
+    );
+    assert.strictEqual(replacement.provider, "PAYSTACK");
+  } finally {
+    gwResolvedStale.restore();
+    notifyResolvedStale.restore();
+    await cleanupJobFixtures(prisma, fixturesResolvedStale);
   }
 
   console.log("refundRepayment.abandon.test.js: OK (DB integration)");
