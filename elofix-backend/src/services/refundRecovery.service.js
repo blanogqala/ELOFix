@@ -1725,6 +1725,7 @@ async function executeCustomerRefundPayouts(adminUserId, repayment, payouts) {
             readyPayoutAmount: 0,
             originalPaymentIntentIds: gateway.originalPaymentIntentIds || [],
             gatewayRefundRefs: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
+            finalizedGatewayRefundRefs: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
             completedAt: new Date().toISOString(),
           },
         };

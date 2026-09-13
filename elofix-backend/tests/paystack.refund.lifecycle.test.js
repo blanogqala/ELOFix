@@ -146,6 +146,8 @@ async function seedPaidLabor(suffix, { amount = 100, refundedAmount = 0, jobMeta
       state: "PAID",
       paidAt: new Date(),
       refundedAmount: new Prisma.Decimal(Number(refundedAmount).toFixed(2)),
+      commissionAmount: new Prisma.Decimal((Number(amount) * 0.07).toFixed(2)),
+      recipientAmount: new Prisma.Decimal((Number(amount) * 0.93).toFixed(2)),
       gatewayTransactionId: `tx-${suffix}`,
       gatewayPayload: {},
     },
@@ -534,13 +536,15 @@ async function testWebhookRefundIdContradictionIsRejected() {
 async function testTwoRefundsSameIntentHaveDistinctEventIds() {
   const prisma = require("../src/config/prisma");
   const refundService = require("../src/services/payments/refund.service");
-  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}tw`);
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}tw`, {
+    jobMeta: { pendingRefund: 50 },
+  });
   let postCount = 0;
   const fetchMock = installFetchMock((url, method) => {
     if (url.includes("/refund") && method === "POST") {
       postCount += 1;
       const id = postCount === 1 ? 201 : 202;
-      const amount = id === 201 ? 9300 : 700;
+      const amount = id === 201 ? 5000 : 700;
       return jsonResponse({
         status: true,
         data: { id, status: "pending", amount, currency: "ZAR" },
@@ -549,7 +553,7 @@ async function testTwoRefundsSameIntentHaveDistinctEventIds() {
     if (url.includes("/refund/201") && method === "GET") {
       return jsonResponse({
         status: true,
-        data: { id: 201, status: "processed", amount: 9300, currency: "ZAR" },
+        data: { id: 201, status: "processed", amount: 5000, currency: "ZAR" },
       });
     }
     if (url.includes("/refund/202") && method === "GET") {
@@ -562,11 +566,11 @@ async function testTwoRefundsSameIntentHaveDistinctEventIds() {
   });
   try {
     await withEnv(paystackEnv(), async () => {
-      await refundService.requestGatewayRefund(fix.intent.id, 93, { idempotencyKey: "slice-a" });
+      await refundService.requestGatewayRefund(fix.intent.id, 50, { idempotencyKey: "slice-a" });
       const first = await postRefundEvent("refund.processed", {
         id: 201,
         status: "processed",
-        amount: 9300,
+        amount: 5000,
         currency: "ZAR",
         transaction_reference: fix.intent.merchantReference,
       });
@@ -588,7 +592,8 @@ async function testTwoRefundsSameIntentHaveDistinctEventIds() {
       });
       assert.strictEqual(events.length, 2);
       const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
-      assert.strictEqual(Number(intent.refundedAmount), 100);
+      assert.strictEqual(Number(intent.refundedAmount), 57);
+      assert.strictEqual(intent.state, "PARTIALLY_REFUNDED");
     });
   } finally {
     fetchMock.restore();
@@ -678,6 +683,8 @@ async function testFifoContinuationAfterFirstProcessed() {
       state: "PAID",
       paidAt: new Date(Date.now() + 1000),
       refundedAmount: new Prisma.Decimal("0"),
+      commissionAmount: new Prisma.Decimal("7.00"),
+      recipientAmount: new Prisma.Decimal("93.00"),
       gatewayTransactionId: "tx-second-fifo",
       gatewayPayload: {},
     },
@@ -725,7 +732,8 @@ async function testFifoContinuationAfterFirstProcessed() {
       });
       assert.strictEqual(firstProcessed.httpStatus, 200, firstProcessed.message);
       const firstIntent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
-      assert.strictEqual(Number(firstIntent.refundedAmount), 100);
+      assert.strictEqual(Number(firstIntent.refundedAmount), 93);
+      assert.strictEqual(firstIntent.state, "PARTIALLY_REFUNDED");
       let job = await prisma.job.findUnique({ where: { id: fix.job.id } });
       assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_PROCESSING");
       assert.ok(!job.meta.refund.completedAt);
@@ -749,7 +757,8 @@ async function testFifoContinuationAfterFirstProcessed() {
       assert.strictEqual(Number(job.meta.refund.pendingRefund), 0);
       assert.strictEqual(notified, 1);
       const completion = await prisma.paymentIntent.findUnique({ where: { id: second.id } });
-      assert.strictEqual(Number(completion.refundedAmount), 86);
+      assert.strictEqual(Number(completion.refundedAmount), 93);
+      assert.strictEqual(completion.state, "PARTIALLY_REFUNDED");
     });
   } finally {
     notificationEvents.notifyCustomerRefundProcessed = originalNotify;
@@ -1095,13 +1104,15 @@ async function testFailedRetryWithoutRefundId() {
 async function testOldRefundRetryDoesNotStealNewPending() {
   const prisma = require("../src/config/prisma");
   const refundService = require("../src/services/payments/refund.service");
-  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}ab`);
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}ab`, {
+    jobMeta: { pendingRefund: 50 },
+  });
   let postCount = 0;
   const fetchMock = installFetchMock((url, method) => {
     if (url.includes("/refund") && method === "POST") {
       postCount += 1;
       const id = postCount === 1 ? 701 : 702;
-      const amount = id === 701 ? 9300 : 700;
+      const amount = id === 701 ? 5000 : 700;
       return jsonResponse({
         status: true,
         data: { id, status: "pending", amount, currency: "ZAR" },
@@ -1110,7 +1121,7 @@ async function testOldRefundRetryDoesNotStealNewPending() {
     if (url.includes("/refund/701") && method === "GET") {
       return jsonResponse({
         status: true,
-        data: { id: 701, status: "processed", amount: 9300, currency: "ZAR" },
+        data: { id: 701, status: "processed", amount: 5000, currency: "ZAR" },
       });
     }
     if (url.includes("/refund/702") && method === "GET") {
@@ -1120,11 +1131,11 @@ async function testOldRefundRetryDoesNotStealNewPending() {
   });
   try {
     await withEnv(paystackEnv(), async () => {
-      await refundService.requestGatewayRefund(fix.intent.id, 93, { idempotencyKey: "slice-a" });
+      await refundService.requestGatewayRefund(fix.intent.id, 50, { idempotencyKey: "slice-a" });
       const processed = await postRefundEvent("refund.processed", {
         id: 701,
         status: "processed",
-        amount: 9300,
+        amount: 5000,
         currency: "ZAR",
         transaction_reference: fix.intent.merchantReference,
       });
@@ -1133,13 +1144,13 @@ async function testOldRefundRetryDoesNotStealNewPending() {
       const stale = await postRefundEvent("refund.processed", {
         refund_reference: null,
         status: "processed",
-        amount: 9300,
+        amount: 5000,
         currency: "ZAR",
         transaction_reference: fix.intent.merchantReference,
       });
       assert.ok(stale.httpStatus === 200 || stale.result?.ignored, stale.message);
       const intent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
-      assert.strictEqual(Number(intent.refundedAmount), 93);
+      assert.strictEqual(Number(intent.refundedAmount), 50);
       assert.strictEqual(intent.gatewayPayload.pendingRefund.externalRefundId, "702");
       assert.strictEqual(Number(intent.gatewayPayload.pendingRefund.requestedAmount), 7);
     });
@@ -1170,6 +1181,8 @@ async function testFifoContinuationTransientFailureThenRetry() {
       state: "PAID",
       paidAt: new Date(Date.now() + 1000),
       refundedAmount: new Prisma.Decimal("0"),
+      commissionAmount: new Prisma.Decimal("7.00"),
+      recipientAmount: new Prisma.Decimal("93.00"),
       gatewayTransactionId: "tx-second-fifo-retry",
       gatewayPayload: {},
     },
@@ -1221,7 +1234,8 @@ async function testFifoContinuationTransientFailureThenRetry() {
       });
       assert.strictEqual(firstProcessed.httpStatus, 500, firstProcessed.message);
       const firstIntent = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
-      assert.strictEqual(Number(firstIntent.refundedAmount), 100);
+      assert.strictEqual(Number(firstIntent.refundedAmount), 93);
+      assert.strictEqual(firstIntent.state, "PARTIALLY_REFUNDED");
       let job = await prisma.job.findUnique({ where: { id: fix.job.id } });
       assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_PROCESSING");
       assert.ok(Number(job.meta.refund.pendingRefund) > 0);
@@ -1239,7 +1253,7 @@ async function testFifoContinuationTransientFailureThenRetry() {
       });
       assert.strictEqual(retry.httpStatus, 200, retry.message);
       const firstAgain = await prisma.paymentIntent.findUnique({ where: { id: fix.intent.id } });
-      assert.strictEqual(Number(firstAgain.refundedAmount), 100);
+      assert.strictEqual(Number(firstAgain.refundedAmount), 93);
       secondFresh = await prisma.paymentIntent.findUnique({ where: { id: second.id } });
       assert.ok(secondFresh.gatewayPayload.pendingRefund);
       assert.strictEqual(posted.length, 2);
@@ -1281,6 +1295,8 @@ async function testFifoStopsOnPending() {
       state: "PAID",
       paidAt: new Date(Date.now() + 1000),
       refundedAmount: new Prisma.Decimal("0"),
+      commissionAmount: new Prisma.Decimal("7.00"),
+      recipientAmount: new Prisma.Decimal("93.00"),
       gatewayTransactionId: "tx-second",
     },
   });
@@ -1312,7 +1328,7 @@ async function testFifoStopsOnPending() {
   }
 }
 
-async function seedFailedThenPending(fix, refundService, { aId, bId, aAmount = 93, bAmount = 7 }) {
+async function seedFailedThenPending(fix, refundService, { aId, bId, aAmount = 50, bAmount = 7 }) {
   await refundService.requestGatewayRefund(fix.intent.id, aAmount, { idempotencyKey: "stale-a" });
   const failed = await postRefundEvent("refund.failed", {
     id: aId,
@@ -1332,11 +1348,11 @@ async function testStaleFailedWithoutIdDoesNotStealPendingB() {
   const fetchMock = installFetchMock((url, method) => {
     if (url.includes("/refund") && method === "POST") {
       const id = fetchMock.calls.filter((c) => c.method === "POST").length <= 1 ? 801 : 802;
-      const amount = id === 801 ? 9300 : 700;
+      const amount = id === 801 ? 5000 : 700;
       return jsonResponse({ status: true, data: { id, status: "pending", amount, currency: "ZAR" } });
     }
     if (url.includes("/refund/801") && method === "GET") {
-      return jsonResponse({ status: true, data: { id: 801, status: "failed", amount: 9300, currency: "ZAR" } });
+      return jsonResponse({ status: true, data: { id: 801, status: "failed", amount: 5000, currency: "ZAR" } });
     }
     if (url.includes("/refund/802") && method === "GET") {
       throw new Error("must not verify pending B for stale A failed retry");
@@ -1351,7 +1367,7 @@ async function testStaleFailedWithoutIdDoesNotStealPendingB() {
       const stale = await postRefundEvent("refund.failed", {
         refund_reference: null,
         status: "failed",
-        amount: 9300,
+        amount: 5000,
         currency: "ZAR",
         transaction_reference: fix.intent.merchantReference,
       });
@@ -1380,11 +1396,11 @@ async function testExplicitOldFailedIdIsStaleNot400() {
   const fetchMock = installFetchMock((url, method) => {
     if (url.includes("/refund") && method === "POST") {
       const id = url.includes("never") ? 0 : fetchMock.calls.filter((c) => c.method === "POST").length <= 1 ? 811 : 812;
-      const amount = id === 811 ? 9300 : 700;
+      const amount = id === 811 ? 5000 : 700;
       return jsonResponse({ status: true, data: { id, status: "pending", amount, currency: "ZAR" } });
     }
     if (url.includes("/refund/811") && method === "GET") {
-      return jsonResponse({ status: true, data: { id: 811, status: "failed", amount: 9300, currency: "ZAR" } });
+      return jsonResponse({ status: true, data: { id: 811, status: "failed", amount: 5000, currency: "ZAR" } });
     }
     if (url.includes("/refund/812") && method === "GET") {
       throw new Error("must not verify pending B for explicit stale A id");
@@ -1397,7 +1413,7 @@ async function testExplicitOldFailedIdIsStaleNot400() {
       const stale = await postRefundEvent("refund.failed", {
         id: 811,
         status: "failed",
-        amount: 9300,
+        amount: 5000,
         currency: "ZAR",
         transaction_reference: fix.intent.merchantReference,
       });
