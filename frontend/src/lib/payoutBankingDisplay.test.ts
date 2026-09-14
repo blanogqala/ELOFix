@@ -4,6 +4,7 @@ import {
   isPaystackDestinationConnected,
   needsPayoutGatewayConnect,
   payoutVerificationLabel,
+  payoutVerifiedMessage,
   postSaveVerificationMessage,
   removeBlockedMessage,
 } from '@/lib/payoutBankingDisplay';
@@ -65,5 +66,19 @@ describe('payoutBankingDisplay', () => {
     expect(removeBlockedMessage('Pending settlements')).toBe('Pending settlements');
     expect(removeBlockedMessage()).toContain('cannot be removed');
     expect(postSaveVerificationMessage()).toMatch(/verification pending/i);
+  });
+
+  it('describes Paystack verification without claiming bank settlement completed', () => {
+    expect(
+      payoutVerifiedMessage({
+        recipientConfigured: true,
+        provider: 'PAYSTACK',
+        status: 'VERIFIED',
+      })
+    ).toBe('Paystack payout destination verified');
+    expect(payoutVerifiedMessage({ recipientConfigured: false })).toMatch(/Gateway confirmed/i);
+    expect(payoutVerifiedMessage({ recipientConfigured: true, provider: 'PAYSTACK' })).not.toMatch(
+      /paid to bank/i
+    );
   });
 });

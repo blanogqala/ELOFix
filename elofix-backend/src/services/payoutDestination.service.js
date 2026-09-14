@@ -69,12 +69,91 @@ function detectMaterialBankChange(existing, incomingPlain) {
 
 function mapGatewayVerificationStatus(result) {
   if (!result?.supported) return "PENDING_VERIFICATION";
-  const raw = String(result.status || "").toUpperCase();
+  const mapped = mapRefreshedGatewayStatus(result.status);
+  return mapped.verificationStatus || "PENDING_VERIFICATION";
+}
+
+/**
+ * Central Paystack/gateway status mapping for payout-destination refresh.
+ * Only an authoritative gateway VERIFIED response may promote local VERIFIED.
+ */
+function mapRefreshedGatewayStatus(gatewayStatus) {
+  const raw = String(gatewayStatus || "").toUpperCase();
   if (raw === "VERIFIED" || raw === "SETTLED" || raw === "COMPLETE" || raw === "COMPLETED") {
-    return "VERIFIED";
+    return { verificationStatus: "VERIFIED", gatewayProfileStatus: "VERIFIED" };
   }
-  if (raw === "FAILED" || raw === "REJECTED") return "REJECTED";
-  return "PENDING_VERIFICATION";
+  if (raw === "DEACTIVATED") {
+    return {
+      verificationStatus: null,
+      gatewayProfileStatus: "DEACTIVATED",
+      preserveVerification: true,
+      claimVerified: false,
+    };
+  }
+  if (raw === "FAILED" || raw === "REJECTED") {
+    return { verificationStatus: "REJECTED", gatewayProfileStatus: "REJECTED" };
+  }
+  return { verificationStatus: "PENDING_VERIFICATION", gatewayProfileStatus: "PENDING" };
+}
+
+const SAFE_GATEWAY_PAYLOAD_KEYS = [
+  "subaccount_code",
+  "percentage_charge",
+  "active",
+  "is_verified",
+  "paystackBankCode",
+  "bank_code",
+];
+const UNSAFE_GATEWAY_PAYLOAD_KEY =
+  /^(account_number|accountNumber|authorization|authorization_code|secret|secret_key)$/i;
+
+function isPresentPayloadValue(value) {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function stripUnsafeGatewayPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (UNSAFE_GATEWAY_PAYLOAD_KEY.test(String(key || ""))) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Merge status-lookup metadata into the stored payload.
+ * Never erase existing safe fields because GET returned a smaller body.
+ * Never relabel stored domain=test to domain=live (or the reverse).
+ */
+function mergeSafeGatewayProfilePayload(existing, incoming) {
+  const prev = stripUnsafeGatewayPayload(existing);
+  const next = stripUnsafeGatewayPayload(incoming);
+  const merged = { ...prev };
+  for (const key of SAFE_GATEWAY_PAYLOAD_KEYS) {
+    if (isPresentPayloadValue(next[key])) merged[key] = next[key];
+  }
+  const storedDomain = String(prev.domain || "").trim().toLowerCase();
+  const incomingDomain = String(next.domain || "").trim().toLowerCase();
+  if (storedDomain === "test" || storedDomain === "live") {
+    merged.domain = storedDomain;
+  } else if (incomingDomain === "test" || incomingDomain === "live") {
+    merged.domain = incomingDomain;
+  }
+  return merged;
+}
+
+function paystackStatusLookupAllowed(profile) {
+  if (normalizeProvider(profile?.gatewayProvider) !== "PAYSTACK") {
+    return { ok: true };
+  }
+  if (!isPaystackSubaccountCode(profile?.gatewayRecipientId)) {
+    return { ok: false, message: "invalid_subaccount_code" };
+  }
+  if (!isPaystackRecipientUsableInCurrentMode(profile)) {
+    return { ok: false, message: "paystack_recipient_not_usable_in_current_mode" };
+  }
+  return { ok: true };
 }
 
 function gatewayNotConfiguredStatus() {
@@ -410,15 +489,105 @@ async function assertPaystackSplitBookkeepingReady({ scope, entityId, intent }) 
   return { ready: true, profile };
 }
 
+function refreshFailureResult(profile, message) {
+  return {
+    verificationStatus: profile?.verificationStatus || "NOT_CONFIGURED",
+    gatewayProfileStatus: profile?.gatewayProfileStatus || null,
+    gatewayRecipientId: profile?.gatewayRecipientId || null,
+    refreshed: false,
+    queried: false,
+    refreshError: message || "payout_status_lookup_failed",
+    profile: profile || null,
+  };
+}
+
 async function getPayoutDestinationStatus({ scope, entityId }) {
   if (!SCOPES.has(scope)) throw new AppError("Invalid payout scope", 400);
   const profile = await loadProfile(scope, entityId);
-  if (!profile?.gatewayRecipientId) return { supported: false, status: null };
+  if (!profile?.gatewayRecipientId) return { supported: false, status: null, queried: false };
   const gw = gatewayOwningStoredRecipient(profile);
   if (!gw || typeof gw.getPayoutDestinationStatus !== "function") {
-    return { supported: false, status: null, message: "owning_gateway_unavailable" };
+    return { supported: false, status: null, message: "owning_gateway_unavailable", queried: false };
   }
-  return gw.getPayoutDestinationStatus(profile.gatewayRecipientId);
+  const allowed = paystackStatusLookupAllowed(profile);
+  if (!allowed.ok) {
+    return { supported: false, status: null, message: allowed.message, queried: false };
+  }
+  const result = await gw.getPayoutDestinationStatus(profile.gatewayRecipientId);
+  return { ...result, queried: true };
+}
+
+/**
+ * Server-authoritative payout destination status reconciliation.
+ * GET-only for Paystack. Never creates or updates a subaccount.
+ */
+async function refreshPayoutDestinationStatus({ scope, entityId }) {
+  if (!SCOPES.has(scope)) throw new AppError("Invalid payout scope", 400);
+  const profile = await loadProfile(scope, entityId);
+  if (!profile || profile.isActive === false) {
+    return refreshFailureResult(profile, profile ? "profile_inactive" : "profile_missing");
+  }
+  if (!profile.gatewayRecipientId) {
+    return refreshFailureResult(profile, "missing_recipient");
+  }
+  const gw = gatewayOwningStoredRecipient(profile);
+  if (!gw || typeof gw.getPayoutDestinationStatus !== "function") {
+    return refreshFailureResult(profile, "owning_gateway_unavailable");
+  }
+  const allowed = paystackStatusLookupAllowed(profile);
+  if (!allowed.ok) {
+    return refreshFailureResult(profile, allowed.message);
+  }
+
+  let result;
+  try {
+    result = await gw.getPayoutDestinationStatus(profile.gatewayRecipientId);
+  } catch (err) {
+    return {
+      ...refreshFailureResult(profile, err.message || "payout_status_lookup_failed"),
+      queried: true,
+    };
+  }
+
+  if (!result?.supported || !result.status) {
+    return {
+      ...refreshFailureResult(profile, result?.message || "payout_status_lookup_failed"),
+      queried: true,
+    };
+  }
+
+  const mapped = mapRefreshedGatewayStatus(result.status);
+  let verificationStatus = mapped.verificationStatus;
+  if (mapped.preserveVerification) {
+    verificationStatus =
+      String(profile.verificationStatus) === "VERIFIED"
+        ? "PENDING_VERIFICATION"
+        : profile.verificationStatus || "PENDING_VERIFICATION";
+  }
+  const gatewayProfileStatus = mapped.gatewayProfileStatus;
+  const mergedPayload = mergeSafeGatewayProfilePayload(profile.gatewayProfilePayload, result.data);
+  const unchanged =
+    String(profile.verificationStatus) === String(verificationStatus) &&
+    String(profile.gatewayProfileStatus || "") === String(gatewayProfileStatus || "") &&
+    JSON.stringify(profile.gatewayProfilePayload || null) === JSON.stringify(mergedPayload || null);
+
+  const updated = unchanged
+    ? profile
+    : await updateProfile(scope, entityId, {
+        verificationStatus,
+        gatewayProfileStatus,
+        gatewayProfilePayload: mergedPayload,
+      });
+
+  return {
+    verificationStatus,
+    gatewayProfileStatus,
+    gatewayRecipientId: profile.gatewayRecipientId,
+    refreshed: true,
+    queried: true,
+    unchanged: Boolean(unchanged),
+    profile: updated,
+  };
 }
 
 function toMaskedAdminProfile(profile, scope, entityId) {
@@ -491,6 +660,10 @@ module.exports = {
   registerPayoutDestination,
   deactivatePayoutDestination,
   getPayoutDestinationStatus,
+  refreshPayoutDestinationStatus,
+  mapRefreshedGatewayStatus,
+  mergeSafeGatewayProfilePayload,
+  paystackStatusLookupAllowed,
   canDeactivatePayoutProfile,
   assertSettlementDestinationReady,
   assertPaystackSplitBookkeepingReady,

@@ -56,10 +56,18 @@ async function resolveBankCodeForProfile(profile) {
   return bankCode;
 }
 
+function resolveSafeBankCode(data, bankCode) {
+  const explicit = String(bankCode || "").trim();
+  if (explicit) return explicit;
+  const fromData = String(data?.paystackBankCode || data?.bank_code || "").trim();
+  return fromData || null;
+}
+
 function destinationResult(data, bankCode) {
   const code = safePaystackSubaccountCode(data?.subaccount_code || data?.subaccount);
   const verified = Boolean(data?.is_verified);
   const active = data?.active !== false;
+  const resolvedBank = resolveSafeBankCode(data, bankCode);
   if (!code) {
     return {
       supported: false,
@@ -70,8 +78,8 @@ function destinationResult(data, bankCode) {
         is_verified: verified,
         active,
         domain: data?.domain || null,
-        paystackBankCode: bankCode || null,
-        bank_code: bankCode || null,
+        paystackBankCode: resolvedBank,
+        bank_code: resolvedBank,
       },
     };
   }
@@ -88,8 +96,8 @@ function destinationResult(data, bankCode) {
       active,
       is_verified: verified,
       domain: data?.domain || null,
-      paystackBankCode: bankCode || null,
-      bank_code: bankCode || null,
+      paystackBankCode: resolvedBank,
+      bank_code: resolvedBank,
     },
   };
 }
@@ -365,7 +373,13 @@ async function getPayoutDestinationStatus(recipientId) {
   try {
     const { json } = await paystackRequest("GET", `/subaccount/${encodeURIComponent(code)}`);
     const mapped = destinationResult(json?.data || { subaccount_code: code });
-    return { supported: true, status: mapped.status, recipientId: mapped.recipientId };
+    return {
+      supported: mapped.supported !== false,
+      status: mapped.status,
+      recipientId: mapped.recipientId || code,
+      data: mapped.data || null,
+      message: mapped.message,
+    };
   } catch (err) {
     return { supported: false, status: null, message: err.message };
   }

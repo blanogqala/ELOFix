@@ -189,7 +189,7 @@ async function getBranchBalance(reqUser, branchId) {
 async function getWithdrawalProfile(reqUser, branchId) {
   const actor = await resolveBranchPortalActor(reqUser);
   await requireBranchAccess(actor, branchId);
-  const profile = await prisma.branchWithdrawalProfile.findUnique({
+  let profile = await prisma.branchWithdrawalProfile.findUnique({
     where: { branchId: String(branchId) },
   });
   if (!profile || profile.isActive === false) {
@@ -200,6 +200,15 @@ async function getWithdrawalProfile(reqUser, branchId) {
       bankProfileComplete: false,
       canRemove: false,
     };
+  }
+  try {
+    const refresh = await payoutDestinationService.refreshPayoutDestinationStatus({
+      scope: "branch",
+      entityId: String(branchId),
+    });
+    if (refresh?.profile) profile = refresh.profile;
+  } catch {
+    // Fail safe: return persisted status if Paystack refresh throws.
   }
   const verificationStatus = deriveVerificationStatus(profile);
   return branchProfileResponse(branchId, profile, verificationStatus);

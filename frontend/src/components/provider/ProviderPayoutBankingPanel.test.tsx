@@ -100,4 +100,38 @@ describe('ProviderPayoutBankingPanel connect action', () => {
     expect(screen.getByText('Pending verification')).toBeInTheDocument();
     expect(screen.queryByText(/ACCT_/)).not.toBeInTheDocument();
   });
+
+  it('shows Verified after authoritative backend refresh without claiming bank payout', async () => {
+    getWithdrawalProfile.mockResolvedValue({
+      success: true,
+      profile: {
+        id: 'prof-1',
+        providerId: 'prov-1',
+        bankName: 'FNB',
+        accountHolder: 'Ada',
+        accountNumberMasked: '****7890',
+        branchCodeMasked: '2****5',
+        accountType: 'CHEQUE',
+        gatewaySettlementProfile: {
+          provider: 'PAYSTACK',
+          recipientConfigured: true,
+          status: 'VERIFIED',
+        },
+        updatedAt: new Date().toISOString(),
+      },
+      verificationStatus: 'VERIFIED',
+      gatewaySettlementSupported: true,
+      canRemove: true,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText('Verified')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Paystack payout destination verified')).toBeInTheDocument();
+    expect(screen.queryByText('Pending verification')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Paid to bank/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ACCT_/)).not.toBeInTheDocument();
+  });
 });

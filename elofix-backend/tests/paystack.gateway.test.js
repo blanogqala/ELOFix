@@ -719,6 +719,38 @@ function testInvalidSubaccountCodesRejected() {
   });
 }
 
+async function testGetPayoutDestinationStatusIsGetOnly() {
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/subaccount/ACCT_STATUS") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: {
+          subaccount_code: "ACCT_STATUS",
+          percentage_charge: 7,
+          active: true,
+          is_verified: true,
+          domain: "test",
+        },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv({ ...validTestEnv() }, async () => {
+      const result = await paystack.getPayoutDestinationStatus("ACCT_STATUS");
+      assert.strictEqual(result.supported, true);
+      assert.strictEqual(result.status, "VERIFIED");
+      assert.strictEqual(result.recipientId, "ACCT_STATUS");
+      assert.strictEqual(result.data.is_verified, true);
+      assert.ok(fetchMock.calls.every((c) => c.method === "GET"));
+      assert.ok(fetchMock.calls.every((c) => c.method !== "POST"));
+      assert.ok(fetchMock.calls.every((c) => c.method !== "PUT"));
+    });
+  } finally {
+    fetchMock.restore();
+  }
+}
+
 async function testValidSubaccountCodeAcceptedForUpdate() {
   const fetchMock = installFetchMock((url, method) => {
     if (url.includes("/bank") && method === "GET") {
@@ -1002,6 +1034,7 @@ async function main() {
   testSanitizeWebhookRaw();
   testSanitizeWebhookRawSubaccountObject();
   await testInvalidSubaccountCodesRejected();
+  await testGetPayoutDestinationStatusIsGetOnly();
   await testValidSubaccountCodeAcceptedForUpdate();
   await testCreateCheckoutHttpMocked();
   await testRepaymentCheckoutHasNoSplit();

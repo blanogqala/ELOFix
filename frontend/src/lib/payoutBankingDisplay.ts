@@ -90,3 +90,10 @@ export function removeBlockedMessage(reason?: string | null): string {
 export function postSaveVerificationMessage(): string {
   return 'Saved — verification pending until the payment gateway confirms your account.';
 }
+
+export function payoutVerifiedMessage(gatewayProfile?: GatewaySettlementProfile | null): string {
+  if (isPaystackDestinationConnected(gatewayProfile)) {
+    return 'Paystack payout destination verified';
+  }
+  return 'Gateway confirmed this account for settlements.';
+}

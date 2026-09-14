@@ -37,6 +37,7 @@ import {
   gatewaySettlementLabel,
   needsPayoutGatewayConnect,
   payoutStatusBadgeClass,
+  payoutVerifiedMessage,
   payoutVerificationLabel,
   postSaveVerificationMessage,
   removeBlockedMessage,
@@ -261,7 +262,7 @@ export function ProviderPayoutBankingPanel({
         {verificationStatus === 'VERIFIED' ? (
           <p className="inline-flex items-center gap-1.5 text-sm text-success">
             <CheckCircle2 className="h-4 w-4" aria-hidden />
-            Gateway confirmed this account for settlements.
+            {payoutVerifiedMessage(profile?.gatewaySettlementProfile)}
           </p>
         ) : verificationStatus === 'ACTION_REQUIRED' ? (
           <p className="inline-flex items-center gap-1.5 text-sm text-destructive">

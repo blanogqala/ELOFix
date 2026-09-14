@@ -603,7 +603,7 @@ async function persistProviderWithdrawalProfile(userId, body, { mode = "upsert",
 
 async function getWithdrawalProfile(userId) {
   const provider = await requireProviderByUserId(userId);
-  const profile = await prisma.providerWithdrawalProfile.findUnique({
+  let profile = await prisma.providerWithdrawalProfile.findUnique({
     where: { providerId: provider.id },
   });
   if (!profile || profile.isActive === false) {
@@ -613,6 +613,15 @@ async function getWithdrawalProfile(userId) {
       gatewaySettlementSupported: payoutDestinationService.gatewaySettlementSupported(),
       canRemove: false,
     };
+  }
+  try {
+    const refresh = await payoutDestinationService.refreshPayoutDestinationStatus({
+      scope: "provider",
+      entityId: provider.id,
+    });
+    if (refresh?.profile) profile = refresh.profile;
+  } catch {
+    // Fail safe: return persisted status if Paystack refresh throws.
   }
   const verificationStatus = deriveVerificationStatus(profile);
   const removeMeta = await payoutDestinationService.canDeactivatePayoutProfile({
