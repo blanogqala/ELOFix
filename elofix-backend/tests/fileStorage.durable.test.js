@@ -218,9 +218,16 @@ async function testReadinessRequiresStorageInProduction() {
   const localOk = objectStorage.getDurableStorageReadiness({ NODE_ENV: "development" });
   assert.strictEqual(localOk.ok, true);
 
+  const diskIncomplete = objectStorage.getDurableStorageReadiness({
+    NODE_ENV: "production",
+    ELOFIX_ALLOW_LOCAL_UPLOADS: "true",
+  });
+  assert.strictEqual(diskIncomplete.ok, false);
+
   const diskOk = objectStorage.getDurableStorageReadiness({
     NODE_ENV: "production",
     ELOFIX_ALLOW_LOCAL_UPLOADS: "true",
+    UPLOAD_ROOT: "/opt/render/project/src/uploads",
   });
   assert.strictEqual(diskOk.ok, true);
 

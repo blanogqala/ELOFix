@@ -197,6 +197,11 @@ async function runDbTestsIfPossible() {
   console.error(err);
   process.exitCode = 1;
 }).finally(async () => {
-  const { shutdownTestResources } = require("./helpers/shutdown");
-  await shutdownTestResources();
+  try {
+    const { shutdownTestResources } = require("./helpers/shutdown");
+    await shutdownTestResources();
+  } catch {
+    /* pool-close races on Windows must not fail a passed test */
+  }
+  process.exit(process.exitCode || 0);
 });

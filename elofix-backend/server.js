@@ -73,8 +73,6 @@ const { isTestingDeployment } = require("./src/utils/secretKey.util");
 })();
 
 const http = require("http");
-const jwt = require("jsonwebtoken");
-const { Server } = require("socket.io");
 const app = require("./src/app");
 const prisma = require("./src/config/prisma");
 const { startStuckWithdrawalRecovery } = require("./src/jobs/stuckWithdrawalRecovery");
@@ -86,8 +84,9 @@ const { startCustomerPaymentObligationJob } = require("./src/jobs/customerPaymen
 const trackingService = require("./src/services/tracking.service");
 const materialOrderService = require("./src/services/materialOrder.service");
 const { ensureProviderTotalReviewsColumn } = require("./src/utils/ensureDbSchemaPatches");
-const { getAllowedOrigins, isOriginAllowed } = require("./src/utils/corsOrigins.util");
-const { canJoinUserRoom } = require("./src/utils/socketAuth.util");
+const { getAllowedOrigins, getCorsConfigReadiness } = require("./src/utils/corsOrigins.util");
+const { attachSocketIo } = require("./src/socket/attachSocketIo");
+const { setRealtimeInitialized } = require("./src/utils/realtimeState.util");
 
 const PORT = Number(process.env.PORT) || 5000;
 
@@ -110,112 +109,28 @@ process.on("uncaughtException", (err) => {
 });
 
 const server = http.createServer(app);
-const socketAllowedOrigins = getAllowedOrigins();
-const io = new Server(server, {
-  cors: {
-    origin: (origin, callback) => {
-      if (isOriginAllowed(origin, socketAllowedOrigins)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("Not allowed by CORS"));
-    },
-  },
-});
-global.io = io;
 
-io.use((socket, next) => {
-  try {
-    const raw = socket.handshake.auth?.token;
-    if (!raw) {
-      return next();
-    }
-    const token = String(raw).replace(/^Bearer\s+/i, "");
-    if (!token || !process.env.JWT_SECRET) {
-      return next();
-    }
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    socket.userId = payload.sub;
-    socket.userRole = payload.role;
-    socket.branchId = payload.branchId || null;
-  } catch {
-    /* optional auth: join_order / update_location will require socket.userId */
+const corsReadiness = getCorsConfigReadiness();
+if (!corsReadiness.ok) {
+  console.error(
+    `[FATAL] production CORS frontend origins are missing or invalid (${corsReadiness.reason}). Set FRONTEND_URL / FRONTEND_BASE_URL / CORS_ALLOWED_ORIGINS to exact https origins. GET /ready will return 503.`
+  );
+} else {
+  const allowed = getAllowedOrigins();
+  console.log("[socket] cors origins configured", { count: allowed.length, origins: allowed });
+}
+
+let io;
+try {
+  ({ io } = attachSocketIo(server));
+  global.io = io;
+} catch (socketInitErr) {
+  setRealtimeInitialized(false);
+  console.error("[FATAL] Socket.IO initialization failed", socketInitErr?.message || socketInitErr);
+  if (process.env.NODE_ENV === "production") {
+    process.exit(1);
   }
-  next();
-});
-
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-
-  socket.on("join", (userId) => {
-    if (!canJoinUserRoom(socket.userId, userId)) return;
-    socket.join(String(userId));
-    if (String(socket.userRole || "") === "BRANCH_STAFF" && socket.branchId) {
-      socket.join(`branch:${String(socket.branchId)}`);
-    }
-    // Admin room: only sockets authenticated as ADMIN (role from JWT, not client-supplied)
-    if (String(socket.userRole || "").toUpperCase() === "ADMIN") {
-      socket.join("admin");
-    }
-  });
-
-  async function handleOrderJoin(orderId) {
-    if (!socket.userId || !orderId) return;
-    try {
-      const ok = await trackingService.canUserAccessOrderRoom(socket.userId, socket.userRole, orderId);
-      if (!ok) return;
-      socket.join(String(orderId));
-    } catch (e) {
-      console.error("order:join", e);
-    }
-  }
-
-  socket.on("join_order", (orderId) => {
-    void handleOrderJoin(orderId);
-  });
-
-  socket.on("order:join", (orderId) => {
-    void handleOrderJoin(orderId);
-  });
-
-  socket.on("update_location", async (data) => {
-    try {
-      const orderId = data?.orderId;
-      const lat = data?.lat;
-      const lng = data?.lng;
-      if (!socket.userId || !orderId) return;
-      const role = String(socket.userRole || "").toUpperCase();
-      const canMaterial = await trackingService.canUserPostDriverLocation(
-        socket.userId,
-        socket.userRole,
-        orderId
-      );
-      if (canMaterial) {
-        let source = null;
-        if (role === "PROVIDER") source = "provider";
-        else if (role === "SUPPLIER" || role === "BRANCH_STAFF") source = "supplier";
-        else return;
-        await trackingService.persistAndEmitDriverLocation(orderId, lat, lng, { source });
-        return;
-      }
-      const canDelivery = await trackingService.canUserPostDeliveryRequestLocation(
-        socket.userId,
-        orderId
-      );
-      if (canDelivery) {
-        await trackingService.persistAndEmitDeliveryRequestLocation(orderId, lat, lng, {
-          source: "provider",
-        });
-      }
-    } catch (e) {
-      console.error("update_location", e);
-    }
-  });
-
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-  });
-});
+}
 
 function startIntervalsAfterListen() {
   startStuckWithdrawalRecovery();
@@ -284,7 +199,7 @@ function closeHttpServer() {
     timer.unref();
 
     try {
-      if (typeof io.disconnectSockets === "function") {
+      if (io && typeof io.disconnectSockets === "function") {
         io.disconnectSockets(true);
       }
       if (typeof server.closeAllConnections === "function") {
@@ -295,10 +210,12 @@ function closeHttpServer() {
     }
 
     try {
-      io.close();
+      if (io) io.close();
     } catch (_) {
       /* ignore */
     }
+
+    setRealtimeInitialized(false);
 
     server.close((closeErr) => {
       clearTimeout(timer);

@@ -203,6 +203,68 @@ async function runDbIntegrationTests() {
 
     const deadRow = await prisma.notificationDeliveryOutbox.findUnique({ where: { id: outbox.id } });
     assert.strictEqual(deadRow.status, "DEAD", "socket without io should end DEAD after max attempts");
+
+    const emitted = [];
+    const prevIo = global.io;
+    global.io = {
+      to(room) {
+        return {
+          emit(event, data) {
+            emitted.push({ room, event, data });
+          },
+        };
+      },
+    };
+    try {
+      const live = await outboxService.enqueueSocketDelivery({
+        notificationId: quote.id,
+        userId,
+        event: "notification:new",
+        payload: { id: quote.id },
+      });
+      outboxIds.push(live.id);
+      await prisma.notificationDeliveryOutbox.updateMany({
+        where: { status: "PENDING", id: { not: live.id } },
+        data: { nextAttemptAt: new Date(Date.now() + 86_400_000) },
+      });
+      const liveStats = await outboxService.processOutboxBatch(10);
+      assert.ok(liveStats.sent >= 1);
+      const liveRow = await prisma.notificationDeliveryOutbox.findUnique({ where: { id: live.id } });
+      assert.strictEqual(liveRow.status, "SENT", "socket outbox should send when io is present");
+      assert.ok(emitted.some((e) => String(e.room) === String(userId) && e.event === "notification:new"));
+    } finally {
+      global.io = prevIo;
+    }
+
+    const emailRow = await outboxService.enqueueEmailDelivery({
+      to: `outbox-concurrency-${suffix}@example.com`,
+      subject: "concurrency",
+      body: "probe",
+    });
+    outboxIds.push(emailRow.id);
+    await prisma.notificationDeliveryOutbox.updateMany({
+      where: { status: "PENDING", id: { not: emailRow.id } },
+      data: { nextAttemptAt: new Date(Date.now() + 86_400_000) },
+    });
+    const emailService = require("../src/services/email.service");
+    const origSend = emailService.sendTransactionalEmail;
+    let sendCount = 0;
+    emailService.sendTransactionalEmail = async () => {
+      sendCount += 1;
+      await new Promise((r) => setTimeout(r, 40));
+      return { sent: true };
+    };
+    try {
+      await Promise.all([
+        outboxService.processOutboxBatch(10),
+        outboxService.processOutboxBatch(10),
+      ]);
+    } finally {
+      emailService.sendTransactionalEmail = origSend;
+    }
+    assert.strictEqual(sendCount, 1, "overlapping ticks must not double-send email");
+    const sentRow = await prisma.notificationDeliveryOutbox.findUnique({ where: { id: emailRow.id } });
+    assert.strictEqual(sentRow.status, "SENT");
   } finally {
     if (outboxIds.length) {
       await prisma.notificationDeliveryOutbox.deleteMany({ where: { id: { in: outboxIds } } }).catch(() => {});

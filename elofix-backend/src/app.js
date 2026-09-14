@@ -6,7 +6,7 @@ const errorMiddleware = require("./middleware/error.middleware");
 const asyncHandler = require("./middleware/asyncHandler");
 const paymentController = require("./controllers/payment.controller");
 const uploadsStaticMiddleware = require("./middleware/uploadsStatic.middleware");
-const { getAllowedOrigins, createCorsOriginChecker } = require("./utils/corsOrigins.util");
+const { corsOriginCallback } = require("./utils/corsOrigins.util");
 const { redactRequestUrl } = require("./utils/logRedaction.util");
 const { getReadiness } = require("./services/readiness.service");
 const { applyTrustProxy } = require("./middleware/ipRateLimit.middleware");
@@ -14,8 +14,6 @@ const { applyTrustProxy } = require("./middleware/ipRateLimit.middleware");
 const app = express();
 
 applyTrustProxy(app);
-
-const allowedOrigins = getAllowedOrigins();
 
 app.use(
   helmet({
@@ -27,7 +25,7 @@ app.use(
 
 app.use(
   cors({
-    origin: createCorsOriginChecker(allowedOrigins),
+    origin: corsOriginCallback,
     allowedHeaders: [
       "Content-Type",
       "Authorization",
@@ -99,6 +97,9 @@ app.get("/health", (req, res) => {
 
 app.get("/ready", asyncHandler(async (req, res) => {
   const result = await getReadiness();
+  if (!result.ok) {
+    console.warn("[ready] unavailable", { checks: result.body.checks });
+  }
   res.status(result.httpStatus).json(result.body);
 }));
 

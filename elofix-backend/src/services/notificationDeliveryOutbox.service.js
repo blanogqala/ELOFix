@@ -6,6 +6,7 @@ const emailService = require("./email.service");
 
 /** Backoff schedule: 30s, 2m, 10m, 30m, 2h */
 const BACKOFF_MS = [30_000, 120_000, 600_000, 1_800_000, 7_200_000];
+const CLAIM_LEASE_MS = 10 * 60 * 1000;
 
 function nextBackoffDate(attempts) {
   const idx = Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1);
@@ -82,8 +83,80 @@ async function deliverOutboxRow(row) {
   return { ok: false, error: `Unknown channel: ${row.channel}` };
 }
 
+/**
+ * Compare-and-swap claim so overlapping ticks cannot deliver the same row twice.
+ * Attempts is the CAS token; the winner increments it and takes a processing lease.
+ */
+async function claimOutboxRow(row) {
+  const claimed = await prisma.notificationDeliveryOutbox.updateMany({
+    where: {
+      id: row.id,
+      status: "PENDING",
+      attempts: row.attempts,
+    },
+    data: {
+      attempts: row.attempts + 1,
+      nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS),
+    },
+  });
+  return claimed.count === 1;
+}
+
+async function markOutboxSent(row) {
+  await prisma.notificationDeliveryOutbox.update({
+    where: { id: row.id },
+    data: {
+      status: "SENT",
+      sentAt: new Date(),
+      attempts: row.attempts + 1,
+      lastError: null,
+    },
+  });
+}
+
+async function markOutboxFailure(row, errMsg) {
+  const nextAttempts = row.attempts + 1;
+  if (nextAttempts >= row.maxAttempts) {
+    await prisma.notificationDeliveryOutbox.update({
+      where: { id: row.id },
+      data: {
+        status: "DEAD",
+        attempts: nextAttempts,
+        lastError: errMsg,
+      },
+    });
+    console.warn("[notificationOutbox] DEAD", {
+      outboxId: row.id,
+      channel: row.channel,
+      attempts: nextAttempts,
+    });
+    void logAudit(AUDIT_ACTIONS.NOTIFICATION_DELIVERY_FAILED, {
+      entityType: ENTITY_TYPES.NOTIFICATION,
+      entityId: row.notificationId || row.id,
+      newValue: {
+        outboxId: row.id,
+        channel: row.channel,
+        attempts: nextAttempts,
+        lastError: errMsg,
+        final: true,
+      },
+    });
+    return "dead";
+  }
+  await prisma.notificationDeliveryOutbox.update({
+    where: { id: row.id },
+    data: {
+      status: "PENDING",
+      attempts: nextAttempts,
+      lastError: errMsg,
+      nextAttemptAt: nextBackoffDate(nextAttempts),
+    },
+  });
+  return "retried";
+}
+
 async function processOutboxBatch(limit = 50) {
-  const stats = { processed: 0, sent: 0, retried: 0, dead: 0, errors: 0 };
+  const stats = { processed: 0, sent: 0, retried: 0, dead: 0, errors: 0, skipped: 0 };
   const now = new Date();
 
   const rows = await prisma.notificationDeliveryOutbox.findMany({
@@ -97,18 +170,16 @@ async function processOutboxBatch(limit = 50) {
 
   for (const row of rows) {
     stats.processed++;
+    let claimed = false;
     try {
+      claimed = await claimOutboxRow(row);
+      if (!claimed) {
+        stats.skipped++;
+        continue;
+      }
       const result = await deliverOutboxRow(row);
       if (result.ok) {
-        await prisma.notificationDeliveryOutbox.update({
-          where: { id: row.id },
-          data: {
-            status: "SENT",
-            sentAt: new Date(),
-            attempts: row.attempts + 1,
-            lastError: null,
-          },
-        });
+        await markOutboxSent(row);
         stats.sent++;
         const auditAction =
           row.channel === "EMAIL"
@@ -126,77 +197,16 @@ async function processOutboxBatch(limit = 50) {
         continue;
       }
 
-      const nextAttempts = row.attempts + 1;
-      const errMsg = String(result.error || "Delivery failed");
-      if (nextAttempts >= row.maxAttempts) {
-        await prisma.notificationDeliveryOutbox.update({
-          where: { id: row.id },
-          data: {
-            status: "DEAD",
-            attempts: nextAttempts,
-            lastError: errMsg,
-          },
-        });
-        stats.dead++;
-        void logAudit(AUDIT_ACTIONS.NOTIFICATION_DELIVERY_FAILED, {
-          entityType: ENTITY_TYPES.NOTIFICATION,
-          entityId: row.notificationId || row.id,
-          newValue: {
-            outboxId: row.id,
-            channel: row.channel,
-            attempts: nextAttempts,
-            lastError: errMsg,
-            final: true,
-          },
-        });
-      } else {
-        await prisma.notificationDeliveryOutbox.update({
-          where: { id: row.id },
-          data: {
-            status: "PENDING",
-            attempts: nextAttempts,
-            lastError: errMsg,
-            nextAttemptAt: nextBackoffDate(nextAttempts),
-          },
-        });
-        stats.retried++;
-      }
+      const outcome = await markOutboxFailure(row, String(result.error || "Delivery failed"));
+      if (outcome === "dead") stats.dead++;
+      else stats.retried++;
     } catch (err) {
       stats.errors++;
-      const nextAttempts = row.attempts + 1;
       const errMsg = String(err?.message || err);
-      if (nextAttempts >= row.maxAttempts) {
-        await prisma.notificationDeliveryOutbox.update({
-          where: { id: row.id },
-          data: {
-            status: "DEAD",
-            attempts: nextAttempts,
-            lastError: errMsg,
-          },
-        });
-        stats.dead++;
-        void logAudit(AUDIT_ACTIONS.NOTIFICATION_DELIVERY_FAILED, {
-          entityType: ENTITY_TYPES.NOTIFICATION,
-          entityId: row.notificationId || row.id,
-          newValue: {
-            outboxId: row.id,
-            channel: row.channel,
-            attempts: nextAttempts,
-            lastError: errMsg,
-            final: true,
-          },
-        });
-      } else {
-        await prisma.notificationDeliveryOutbox.update({
-          where: { id: row.id },
-          data: {
-            status: "PENDING",
-            attempts: nextAttempts,
-            lastError: errMsg,
-            nextAttemptAt: nextBackoffDate(nextAttempts),
-          },
-        });
-        stats.retried++;
+      if (claimed) {
+        const outcome = await markOutboxFailure(row, errMsg);
+        if (outcome === "dead") stats.dead++;
+        else stats.retried++;
       }
     }
   }
@@ -209,5 +219,6 @@ module.exports = {
   enqueueEmailDelivery,
   processOutboxBatch,
   trySocketEmit,
+  claimOutboxRow,
   BACKOFF_MS,
 };

@@ -4,7 +4,7 @@ This document describes how to run EloFix in **development**, **staging**, and *
 
 Full stack: React/Vite frontend (Netlify) + Express/Prisma API (Render) + PostgreSQL + S3-compatible object storage.
 
-See also: [elofix-backend/docs/PAYMENTS_DEPLOYMENT.md](../elofix-backend/docs/PAYMENTS_DEPLOYMENT.md), [elofix-backend/docs/IMAGE_STORAGE_DEPLOY.md](../elofix-backend/docs/IMAGE_STORAGE_DEPLOY.md), [docs/maps/Deployment.md](maps/Deployment.md).
+See also: [elofix-backend/docs/PAYMENTS_DEPLOYMENT.md](../elofix-backend/docs/PAYMENTS_DEPLOYMENT.md), [elofix-backend/docs/IMAGE_STORAGE_DEPLOY.md](../elofix-backend/docs/IMAGE_STORAGE_DEPLOY.md), [docs/maps/Deployment.md](maps/Deployment.md), [PHASE_E2_PRODUCTION_OPERATIONS.md](PHASE_E2_PRODUCTION_OPERATIONS.md).
 
 ---
 
@@ -58,7 +58,7 @@ cd frontend
 npm run dev
 ```
 
-Probes: `GET http://localhost:5000/health` (process up), `GET http://localhost:5000/ready` (database + config).
+Probes: `GET http://localhost:5000/health` (process up), `GET http://localhost:5000/ready` (database + config + storage + Socket.IO initialized).
 
 ---
 
@@ -98,7 +98,7 @@ Must set (otherwise the production build **fails closed** — localhost is rejec
 
 - `VITE_API_BASE_URL` — public API including `/api`
 - `VITE_API_ORIGIN` — same host without `/api`
-- `VITE_SOCKET_URL` — public API origin
+- `VITE_SOCKET_URL` — optional explicit Render API origin. Not required when `VITE_API_BASE_URL` already points at Render. Do **not** set this to the Netlify/frontend host unless `/socket.io` is actually proxied.
 - `VITE_FRONTEND_URL` — this Netlify URL
 
 Optional: Firebase / MapTiler keys (public browser keys only; restrict by HTTP referrer).
@@ -130,13 +130,15 @@ Same variable **names** as staging. Additional production-only expectations:
   - `{PAYMENT_BASE_URL}/api/payments/webhooks/paystack` (when Paystack is enabled)
 - If `paystack` is listed in `ENABLED_PAYMENT_PROVIDERS`, production startup/`/ready` requires matching `PAYSTACK_MODE` + `sk_test_`/`sk_live_` (and `pk_*` if set). Phase E1 does **not** switch Render to live Paystack credentials.
 
-Liveness: `GET /health` (Render `healthCheckPath` may stay `/health`). Readiness: `GET /ready` (Postgres `SELECT 1` + production payment safety) — use this for staging probes.
+Liveness: `GET /health` (Render `healthCheckPath` may stay `/health`). Readiness: `GET /ready` (Postgres `SELECT 1` + production payment safety + CORS frontend origins + durable storage + Socket.IO initialized) — use this for staging probes.
 
 Auth/contact IP rate limits (login 5 / 15 min, register 10 / 15 min) are always enforced in production. Local and CI e2e may bypass them on loopback or when `ELOFIX_E2E_FULL_STACK=1`. `ELOFIX_AUTH_RATE_LIMIT_DISABLED` is ignored when `NODE_ENV=production`.
 
 Client IP for rate limits is Express `req.ip`. Production sets `trust proxy` to **1** (Render’s reverse proxy) unless `TRUST_PROXY` overrides it. The API does **not** read raw `X-Forwarded-For` for rate limiting; spoofed headers are ignored unless they pass through the configured trusted proxy hop.
 
-Production `/ready` requires object storage (`S3_BUCKET` + access keys) unless `ELOFIX_ALLOW_LOCAL_UPLOADS=true` (persistent disk only). Critical private uploads fail closed if the remote put fails.
+Production `/ready` requires object storage (`S3_BUCKET` + access keys) unless `ELOFIX_ALLOW_LOCAL_UPLOADS=true` **and** `UPLOAD_ROOT` is an explicit absolute path (persistent disk only). Critical private uploads fail closed if the remote put fails. The process cannot prove a Render Disk is mounted — confirm the disk in the Render UI.
+
+See [PHASE_E2_PRODUCTION_OPERATIONS.md](PHASE_E2_PRODUCTION_OPERATIONS.md) for realtime diagnostics, backup checklist, and hosted Socket.IO smoke commands.
 
 ---
 
@@ -149,6 +151,7 @@ Production `/ready` requires object storage (`S3_BUCKET` + access keys) unless `
 | `customer.provider.lifecycle.spec.ts` | `ELOFIX_E2E_FULL_STACK=1` (CI e2e job sets this) |
 | `realtime-cross-user.spec.ts` (4 tests) | `E2E_PROVIDER_EMAIL`, `E2E_PROVIDER_PASSWORD`, `E2E_CUSTOMER_EMAIL`, `E2E_CUSTOMER_PASSWORD`, and `E2E_REALTIME_JOB_ID` |
 | `hosted-smoke.spec.ts` | `ELOFIX_HOSTED_SMOKE=1` plus staging account env vars. Set `PLAYWRIGHT_BASE_URL` to the Netlify HTTPS origin (do not hardcode). Remote HTTPS base URLs skip Playwright `webServer`. |
+| `hosted-realtime-two-browser.spec.ts` | Same `ELOFIX_HOSTED_SMOKE=1` plus `E2E_REALTIME_JOB_ID`, staging passwords, and `ELOFIX_SOCKET_BASE_URL` / `VITE_API_ORIGIN`. Run `npm run e2e:hosted-realtime`. Non-destructive. |
 
 CI e2e does **not** skip the customer↔provider lifecycle. The realtime suite stays skipped in default CI because it needs two pre-seeded live accounts and a specific job id.
 

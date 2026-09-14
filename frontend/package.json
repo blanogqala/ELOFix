@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "e2e:hosted": "playwright test e2e/hosted-smoke.spec.ts"
+    "e2e:hosted": "playwright test e2e/hosted-smoke.spec.ts",
+    "e2e:hosted-realtime": "playwright test e2e/hosted-realtime-two-browser.spec.ts"
   },
   "dependencies": {
     "@fingerprintjs/fingerprintjs": "^5.2.0",
