@@ -1,12 +1,8 @@
-const { isPaystackSubaccountCode, isMarketplaceSplitKind, isRepaymentKind } = require("./paystack.payload");
+const { isMarketplaceSplitKind, isRepaymentKind, isPaystackRecipientUsableInCurrentMode } = require("./paystack.payload");
 
-function extractSubaccount(profile) {
-  if (!profile || profile.isActive === false) return null;
-  const provider = String(profile.gatewayProvider || "").trim().toUpperCase();
-  if (provider && provider !== "PAYSTACK") return null;
-  const code = String(profile.gatewayRecipientId || "").trim();
-  if (!isPaystackSubaccountCode(code)) return null;
-  return code;
+function extractSubaccount(profile, env = process.env) {
+  if (!isPaystackRecipientUsableInCurrentMode(profile, env)) return null;
+  return String(profile.gatewayRecipientId || "").trim();
 }
 
 function checkoutMetaFromIntent(intent) {
@@ -28,6 +24,7 @@ function profileSelect() {
     gatewayRecipientId: true,
     gatewayProvider: true,
     isActive: true,
+    gatewayProfilePayload: true,
   };
 }
 

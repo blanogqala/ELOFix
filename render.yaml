@@ -62,8 +62,18 @@ services:
         sync: false
       - key: FRONTEND_BASE_URL
         sync: false
+      # Dashboard-owned so a blueprint redeploy cannot force PayFast-only after
+      # Paystack is enabled. Never put sk_live_ / pk_live_ / bank details here.
       - key: ENABLED_PAYMENT_PROVIDERS
-        value: payfast
+        sync: false
+      - key: MARKETPLACE_SETTLEMENT_ENABLED
+        sync: false
+      - key: PAYSTACK_MODE
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
       - key: PAYFAST_MERCHANT_ID
         sync: false
       - key: PAYFAST_MERCHANT_KEY
@@ -75,3 +85,4 @@ services:
       # Do not set PAYFAST_SKIP_IP_CHECK or PAYFAST_SETTLE_ON_RETURN here.
       # NODE_ENV=production rejects those flags at API startup. Hosted sandbox
       # must use PayFast ITN webhooks and IP verification.
+      # Phase E1 does not switch Render to Paystack live credentials.

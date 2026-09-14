@@ -164,6 +164,7 @@ async function main() {
             gatewayProvider: "PAYSTACK",
             gatewayRecipientId: "ACCT_BRANCH",
             gatewayProfileStatus: "VERIFIED",
+            gatewayProfilePayload: { domain: "test" },
             isActive: true,
           },
         });

@@ -432,7 +432,7 @@ async function testSameGatewayUpdateRemainsSupported() {
   try {
     await prisma.providerWithdrawalProfile.update({
       where: { id: fix.profile.id },
-      data: { gatewayProvider: "PAYSTACK", gatewayRecipientId: "ACCT_EXISTING" },
+      data: { gatewayProvider: "PAYSTACK", gatewayRecipientId: "ACCT_EXISTING", gatewayProfilePayload: { domain: "test" } },
     });
     await withEnv(paystackEnv(), async () => {
       const out = await providerAccountService.registerExistingPayoutGateway(fix.user.id);

@@ -48,6 +48,45 @@ function run() {
     })
   );
 
+  assert.throws(
+    () =>
+      assertProductionPaymentSafety({
+        NODE_ENV: "production",
+        ENABLED_PAYMENT_PROVIDERS: "paystack",
+        PAYSTACK_MODE: "live",
+        PAYSTACK_SECRET_KEY: "sk_test_must_fail_closed",
+      }),
+    (err) => err.code === "PAYSTACK_KEY_MODE_MISMATCH"
+  );
+  assert.throws(
+    () =>
+      assertProductionPaymentSafety({
+        NODE_ENV: "production",
+        ENABLED_PAYMENT_PROVIDERS: "paystack",
+        PAYSTACK_MODE: "test",
+        PAYSTACK_SECRET_KEY: "sk_live_must_fail_closed",
+      }),
+    (err) => err.code === "PAYSTACK_KEY_MODE_MISMATCH"
+  );
+  assert.doesNotThrow(() =>
+    assertProductionPaymentSafety({
+      NODE_ENV: "production",
+      ENABLED_PAYMENT_PROVIDERS: "payfast",
+      PAYSTACK_MODE: "live",
+      PAYSTACK_SECRET_KEY: "sk_test_ignored_when_disabled",
+      PAYFAST_MODE: "sandbox",
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertProductionPaymentSafety({
+      NODE_ENV: "production",
+      ENABLED_PAYMENT_PROVIDERS: "paystack",
+      PAYSTACK_MODE: "test",
+      PAYSTACK_SECRET_KEY: "sk_test_ok",
+      PAYSTACK_PUBLIC_KEY: "pk_test_ok",
+    })
+  );
+
   assert.strictEqual(
     payfastSettleOnReturn({ NODE_ENV: "development", PAYFAST_MODE: "sandbox" }),
     true

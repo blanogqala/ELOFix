@@ -21,6 +21,48 @@ function isPaystackSubaccountCode(code) {
 }
 
 /**
+ * Required Paystack API domain from PAYSTACK_MODE only. Never inferred from NODE_ENV.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {"test"|"live"|null}
+ */
+function requiredPaystackDomain(env = process.env) {
+  const mode = String(env.PAYSTACK_MODE || "").trim().toLowerCase();
+  if (mode === "live") return "live";
+  if (mode === "test") return "test";
+  return null;
+}
+
+/**
+ * Stored recipient domain from gatewayProfilePayload. Never guessed from ACCT_ codes.
+ * @returns {"test"|"live"|null}
+ */
+function storedPaystackRecipientDomain(profile) {
+  const payload = profile?.gatewayProfilePayload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const domain = String(payload.domain || "").trim().toLowerCase();
+  if (domain === "test" || domain === "live") return domain;
+  return null;
+}
+
+/**
+ * Fail-closed: a stored Paystack recipient is usable only in the current PAYSTACK_MODE domain.
+ * Missing/unknown domain requires re-registration — never treat a legacy ACCT_ code as safe.
+ */
+function isPaystackRecipientUsableInCurrentMode(profile, env = process.env) {
+  if (!profile || profile.isActive === false) return false;
+  const provider = String(profile.gatewayProvider || "").trim().toUpperCase();
+  if (provider !== "PAYSTACK") return false;
+  if (!isPaystackSubaccountCode(profile.gatewayRecipientId)) return false;
+  if (!profile.gatewayProfilePayload || typeof profile.gatewayProfilePayload !== "object" || Array.isArray(profile.gatewayProfilePayload)) {
+    return false;
+  }
+  const stored = storedPaystackRecipientDomain(profile);
+  const required = requiredPaystackDomain(env);
+  if (!stored || !required) return false;
+  return stored === required;
+}
+
+/**
  * Persist only a safe ACCT_ code. Paystack may send subaccount as an object
  * containing account_number / settlement_bank — never store that object.
  */
@@ -143,12 +185,138 @@ function assertInitializeRepaymentPayload(payload) {
   return true;
 }
 
+/**
+ * Server-authoritative Paystack dashboard/API labels from PaymentIntent only.
+ * Never accept paymentLabel / paymentCategory / paymentStage from the browser.
+ *
+ * Paystack custom_fields show on the dashboard transaction detail and in
+ * customized CSV exports. Paystack's standard Transactions list filter does
+ * not provide a native Payment Type dropdown over custom metadata. EloFix
+ * does not change merchantReference to simulate that filter.
+ */
+function buildPaystackPaymentDescriptor(intent) {
+  const kind = String(intent?.kind || "").trim().toUpperCase();
+  const paymentType = String(intent?.paymentType || "").trim().toUpperCase();
+
+  if (kind === "LABOR") {
+    if (paymentType === "DEPOSIT") {
+      return {
+        paymentType: "DEPOSIT",
+        paymentCategory: "SERVICE",
+        paymentStage: "DEPOSIT",
+        paymentLabel: "Service Deposit - First 50%",
+      };
+    }
+    if (paymentType === "COMPLETION") {
+      return {
+        paymentType: "COMPLETION",
+        paymentCategory: "SERVICE",
+        paymentStage: "COMPLETION",
+        paymentLabel: "Service Completion - Final 50%",
+      };
+    }
+    if (paymentType === "FULL_UPFRONT") {
+      return {
+        paymentType: "FULL_UPFRONT",
+        paymentCategory: "SERVICE",
+        paymentStage: "FULL_UPFRONT",
+        paymentLabel: "Service Payment - Full Upfront",
+      };
+    }
+    if (paymentType === "FULL_COMPLETION") {
+      return {
+        paymentType: "FULL_COMPLETION",
+        paymentCategory: "SERVICE",
+        paymentStage: "FULL_COMPLETION",
+        paymentLabel: "Service Payment - Pay on Completion",
+      };
+    }
+    return {
+      paymentType: paymentType || "LABOR",
+      paymentCategory: "SERVICE",
+      paymentStage: paymentType || "LABOR",
+      paymentLabel: "Service Payment",
+    };
+  }
+
+  if (kind === "MATERIAL_ORDER") {
+    return {
+      paymentType: paymentType || "MATERIAL_ORDER",
+      paymentCategory: "MATERIALS",
+      paymentStage: "MATERIAL_ORDER",
+      paymentLabel: "Materials Payment",
+    };
+  }
+
+  if (kind === "JOB_STORE_ORDER") {
+    return {
+      paymentType: paymentType || "JOB_STORE_ORDER",
+      paymentCategory: "MATERIALS",
+      paymentStage: "JOB_STORE_ORDER",
+      paymentLabel: "Job Materials Payment",
+    };
+  }
+
+  if (kind === "DELIVERY_FEE") {
+    return {
+      paymentType: paymentType || "DELIVERY_FEE",
+      paymentCategory: "DELIVERY",
+      paymentStage: "DELIVERY_FEE",
+      paymentLabel: "Delivery Fee",
+    };
+  }
+
+  if (kind === REPAYMENT_KIND || isRepaymentKind(kind)) {
+    return {
+      paymentType: paymentType || REPAYMENT_KIND,
+      paymentCategory: "REFUND_RECOVERY",
+      paymentStage: REPAYMENT_KIND,
+      paymentLabel: "Provider Refund Repayment",
+    };
+  }
+
+  return {
+    paymentType: paymentType || kind || null,
+    paymentCategory: kind || null,
+    paymentStage: paymentType || kind || null,
+    paymentLabel: kind || "EloFix Payment",
+  };
+}
+
+function buildPaystackCustomFields(descriptor) {
+  const fields = [
+    {
+      display_name: "EloFix Payment",
+      variable_name: "elofix_payment",
+      value: descriptor?.paymentLabel,
+    },
+    {
+      display_name: "Payment Category",
+      variable_name: "elofix_payment_category",
+      value: descriptor?.paymentCategory,
+    },
+    {
+      display_name: "Payment Stage",
+      variable_name: "elofix_payment_stage",
+      value: descriptor?.paymentStage,
+    },
+  ];
+  return fields
+    .filter((field) => field.value != null && String(field.value).trim() !== "")
+    .map((field) => ({
+      display_name: field.display_name,
+      variable_name: field.variable_name,
+      value: String(field.value),
+    }));
+}
+
 function buildBaseInitializePayload(intent, customer) {
   const amount = toCents(intent?.amount);
   const currency = String(intent?.currency || "ZAR").trim().toUpperCase() || "ZAR";
   const reference = String(intent?.merchantReference || "").trim();
   const email = String(customer?.email || "").trim();
   const kind = String(intent?.kind || "").trim().toUpperCase();
+  const descriptor = buildPaystackPaymentDescriptor(intent);
   const payload = {
     email,
     amount,
@@ -157,8 +325,13 @@ function buildBaseInitializePayload(intent, customer) {
     metadata: {
       intentId: intent?.id || null,
       kind: kind || null,
+      paymentType: descriptor.paymentType,
+      paymentCategory: descriptor.paymentCategory,
+      paymentStage: descriptor.paymentStage,
+      paymentLabel: descriptor.paymentLabel,
       jobId: intent?.jobId || null,
       materialOrderId: intent?.materialOrderId || null,
+      custom_fields: buildPaystackCustomFields(descriptor),
     },
   };
   const callbackUrl = String(intent?.returnUrl || "").trim();
@@ -425,7 +598,12 @@ module.exports = {
   PAYSTACK_REFUND_EVENTS,
   ACTIVE_PENDING_REFUND_STATUSES,
   isPaystackSubaccountCode,
+  requiredPaystackDomain,
+  storedPaystackRecipientDomain,
+  isPaystackRecipientUsableInCurrentMode,
   safePaystackSubaccountCode,
+  buildPaystackPaymentDescriptor,
+  buildPaystackCustomFields,
   isMarketplaceSplitKind,
   isRepaymentKind,
   isNoSplitKind,

@@ -181,6 +181,7 @@ async function seedMaterialIntent(suffix) {
       gatewayProvider: "PAYSTACK",
       gatewayRecipientId: "ACCT_BRANCH",
       gatewayProfileStatus: "VERIFIED",
+      gatewayProfilePayload: { domain: "test" },
       isActive: true,
     },
   });
@@ -413,6 +414,7 @@ async function seedKindIntent(kind, suffix, extra = {}) {
       gatewayProvider: "PAYSTACK",
       gatewayRecipientId: extra.subaccount || "ACCT_PROV",
       gatewayProfileStatus: "VERIFIED",
+      gatewayProfilePayload: { domain: "test" },
       isActive: true,
     },
   });

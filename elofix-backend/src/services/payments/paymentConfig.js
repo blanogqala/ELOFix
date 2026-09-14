@@ -146,6 +146,15 @@ function payfastSettleOnReturn(env = process.env) {
   return String(env.PAYFAST_MODE || "sandbox").toLowerCase() !== "live";
 }
 
+function isPaystackListedInEnabledProviders(env = process.env) {
+  const raw = String(env.ENABLED_PAYMENT_PROVIDERS || "payfast,payflex,payjustnow").toLowerCase();
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes("paystack");
+}
+
 /**
  * Fail closed when a hosted/production process is given sandbox settlement shortcuts.
  * Does not print secret values.
@@ -155,18 +164,38 @@ function assertProductionPaymentSafety(env = process.env) {
 
   const skipIp = envFlagTrue("PAYFAST_SKIP_IP_CHECK", env);
   const settleOnReturn = envFlagTrue("PAYFAST_SETTLE_ON_RETURN", env);
-  if (!skipIp && !settleOnReturn) {
-    return { ok: true };
+  if (skipIp || settleOnReturn) {
+    const flags = [];
+    if (skipIp) flags.push("PAYFAST_SKIP_IP_CHECK=true");
+    if (settleOnReturn) flags.push("PAYFAST_SETTLE_ON_RETURN=true");
+    const err = new Error(
+      `Unsafe PayFast configuration in production: ${flags.join(", ")}. Unset these flags; hosted environments must use ITN webhooks and IP verification.`
+    );
+    err.code = "UNSAFE_PAYFAST_PRODUCTION_CONFIG";
+    throw err;
   }
 
-  const flags = [];
-  if (skipIp) flags.push("PAYFAST_SKIP_IP_CHECK=true");
-  if (settleOnReturn) flags.push("PAYFAST_SETTLE_ON_RETURN=true");
-  const err = new Error(
-    `Unsafe PayFast configuration in production: ${flags.join(", ")}. Unset these flags; hosted environments must use ITN webhooks and IP verification.`
-  );
-  err.code = "UNSAFE_PAYFAST_PRODUCTION_CONFIG";
-  throw err;
+  assertProductionPaystackSafety(env);
+  return { ok: true };
+}
+
+/**
+ * When paystack is listed in ENABLED_PAYMENT_PROVIDERS, production must have
+ * PAYSTACK_MODE + matching secret/public key prefixes. Invalid credentials
+ * must not let the app advertise Paystack. Does not log keys.
+ * If Paystack is not enabled, invalid/missing Paystack env must not fail startup.
+ */
+function assertProductionPaystackSafety(env = process.env) {
+  if (!isProductionEnv(env.NODE_ENV)) return { ok: true };
+  if (!isPaystackListedInEnabledProviders(env)) return { ok: true };
+  try {
+    assertPaystackCredentials(env);
+  } catch (err) {
+    const wrapped = new Error(`Unsafe Paystack configuration in production: ${err.message}`);
+    wrapped.code = err.code || "UNSAFE_PAYSTACK_PRODUCTION_CONFIG";
+    throw wrapped;
+  }
+  return { ok: true };
 }
 
 /** When true, attempt marketplace branch settlement via a capable gateway adapter. */
@@ -233,6 +262,8 @@ module.exports = {
   payfastSkipIpCheckAllowed,
   payfastSettleOnReturn,
   assertProductionPaymentSafety,
+  assertProductionPaystackSafety,
+  isPaystackListedInEnabledProviders,
   marketplaceSettlementEnabled,
   settlementCapableGateway,
   settlementGatewayForIntent,

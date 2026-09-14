@@ -84,6 +84,7 @@ async function seedFixture(suffix, { provider, verificationStatus, recipientId, 
       gatewayProvider: "PAYSTACK",
       gatewayRecipientId: recipientId,
       gatewayProfileStatus: "PENDING",
+      gatewayProfilePayload: { domain: "test" },
       isActive: true,
     },
   });

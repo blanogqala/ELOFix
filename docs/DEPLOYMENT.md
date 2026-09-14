@@ -40,6 +40,7 @@ Typical setup:
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `FRONTEND_URL`
 - `RESEND_API_KEY`, `EMAIL_FROM`, `CONTACT_FORM_TO_EMAIL`
 - `PAYMENT_CURRENCY`, `PAYMENT_BASE_URL`, `FRONTEND_BASE_URL`, `ENABLED_PAYMENT_PROVIDERS`
+- `MARKETPLACE_SETTLEMENT_ENABLED`, `PAYSTACK_MODE`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY` (Paystack opt-in; never commit live keys; E1 does not switch Render to live)
 - `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE`, `PAYFAST_MODE`
 - Optional local-only: `PAYFAST_SETTLE_ON_RETURN`, `PAYFAST_SKIP_IP_CHECK`
 - Optional local/CI-only: `ELOFIX_AUTH_RATE_LIMIT_DISABLED` (ignored when `NODE_ENV=production`)
@@ -79,6 +80,8 @@ Typical setup:
 - `FRONTEND_URL`, `FRONTEND_BASE_URL`, `CORS_ALLOWED_ORIGINS` (exact HTTPS origins — no `*`). Include every public frontend host (apex, `www`, and the Netlify site) as a comma-separated list.
 - `PAYMENT_BASE_URL`
 - `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE`
+- `ENABLED_PAYMENT_PROVIDERS`, `MARKETPLACE_SETTLEMENT_ENABLED`
+- `PAYSTACK_MODE`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY` (only when Paystack is enabled; never commit `sk_live_` / `pk_live_`. Phase E1 does not switch production to live credentials.)
 - `S3_BUCKET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (omit when using persistent disk)
 - `UPLOAD_ROOT` (required for persistent disk; mount path e.g. `/opt/render/project/src/uploads`)
 - `ELOFIX_ALLOW_LOCAL_UPLOADS` (`true` only when using a persistent Render Disk, not ephemeral disk)
@@ -87,7 +90,7 @@ Typical setup:
 - `RESEND_API_KEY` / `EMAIL_FROM` if password-reset email is required
 - Staging accounts: `STAGING_SEED_PASSWORD` (and optional `STAGING_*_EMAIL` / `STAGING_*_PASSWORD`) when running `npm run prisma:seed-staging`
 
-`DATABASE_URL` comes from the Render database. `PAYFAST_MODE=sandbox` is set in [`render.yaml`](../render.yaml).
+`DATABASE_URL` comes from the Render database. `PAYFAST_MODE=sandbox` is set in [`render.yaml`](../render.yaml). `ENABLED_PAYMENT_PROVIDERS`, `MARKETPLACE_SETTLEMENT_ENABLED`, and Paystack keys are dashboard-owned (`sync: false`) so a blueprint redeploy cannot force PayFast-only.
 
 ### Netlify build environment
 
@@ -124,6 +127,8 @@ Same variable **names** as staging. Additional production-only expectations:
 - Strong unique `JWT_SECRET`, `SECRET_KEY`, `BANK_KDF_SALT`, `FILE_ACCESS_SECRET`
 - Webhook URLs registered at the PSP:
   - `{PAYMENT_BASE_URL}/api/payments/webhooks/payfast`
+  - `{PAYMENT_BASE_URL}/api/payments/webhooks/paystack` (when Paystack is enabled)
+- If `paystack` is listed in `ENABLED_PAYMENT_PROVIDERS`, production startup/`/ready` requires matching `PAYSTACK_MODE` + `sk_test_`/`sk_live_` (and `pk_*` if set). Phase E1 does **not** switch Render to live Paystack credentials.
 
 Liveness: `GET /health` (Render `healthCheckPath` may stay `/health`). Readiness: `GET /ready` (Postgres `SELECT 1` + production payment safety) — use this for staging probes.
 

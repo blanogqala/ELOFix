@@ -6,7 +6,11 @@ const {
   settlementCapableGateway,
 } = require("./payments/paymentConfig");
 const { normalizeProvider, GATEWAYS } = require("./payments/gatewayRegistry");
-const { isPaystackSubaccountCode, safePaystackSubaccountCode } = require("./payments/paystack.payload");
+const {
+  isPaystackSubaccountCode,
+  safePaystackSubaccountCode,
+  isPaystackRecipientUsableInCurrentMode,
+} = require("./payments/paystack.payload");
 
 const SCOPES = new Set(["provider", "branch"]);
 const MATERIAL_FIELDS = ["bankName", "accountHolder", "accountNumber", "branchCode", "accountType"];
@@ -110,6 +114,19 @@ function profileRecipientOwnedByGateway(profile, gw) {
   return Boolean(stored && selected && stored === selected);
 }
 
+/**
+ * Same-gateway Paystack updates are only safe when the stored recipient domain
+ * matches the current PAYSTACK_MODE. Cross-domain ACCT_ codes must be created
+ * as new subaccounts — never PUT with the other environment's secret.
+ */
+function shouldUpdateExistingRecipient(profile, gw) {
+  if (!profileRecipientOwnedByGateway(profile, gw)) return false;
+  if (normalizeProvider(gw?.name) === "PAYSTACK") {
+    return isPaystackRecipientUsableInCurrentMode(profile);
+  }
+  return true;
+}
+
 function gatewayOwningStoredRecipient(profile) {
   if (!profile?.gatewayProvider || !profile?.gatewayRecipientId) return null;
   const key = normalizeProvider(profile.gatewayProvider);
@@ -147,11 +164,10 @@ function isRecipientValidForGateway(gw, recipientId) {
  */
 function recipientIdToPersist(gw, result, profile) {
   const incoming = String(result?.recipientId || "").trim();
-  const sameOwner = profileRecipientOwnedByGateway(profile, gw);
   if (incoming) {
     return isRecipientValidForGateway(gw, incoming) ? incoming : null;
   }
-  if (sameOwner && isRecipientValidForGateway(gw, profile.gatewayRecipientId)) {
+  if (shouldUpdateExistingRecipient(profile, gw) && isRecipientValidForGateway(gw, profile.gatewayRecipientId)) {
     return profile.gatewayRecipientId;
   }
   return null;
@@ -159,7 +175,7 @@ function recipientIdToPersist(gw, result, profile) {
 
 async function callGatewayRegister(gw, profile, scope, entityId) {
   const payload = buildDestinationPayload(profile, scope, entityId);
-  if (profileRecipientOwnedByGateway(profile, gw) && typeof gw.updatePayoutDestination === "function") {
+  if (shouldUpdateExistingRecipient(profile, gw) && typeof gw.updatePayoutDestination === "function") {
     return gw.updatePayoutDestination(profile.gatewayRecipientId, payload);
   }
   if (typeof gw.createPayoutDestination === "function") {
@@ -173,6 +189,14 @@ async function callGatewayRegister(gw, profile, scope, entityId) {
 
 async function callGatewayDeactivate(gw, profile) {
   if (!profile?.gatewayRecipientId) return { supported: true, ok: true };
+  if (normalizeProvider(gw?.name) === "PAYSTACK" && !isPaystackRecipientUsableInCurrentMode(profile)) {
+    return {
+      supported: true,
+      ok: true,
+      skipped: true,
+      message: "cross_domain_recipient_not_deactivated",
+    };
+  }
   if (typeof gw.deactivatePayoutDestination === "function") {
     return gw.deactivatePayoutDestination(profile.gatewayRecipientId);
   }
@@ -372,6 +396,9 @@ async function assertPaystackSplitBookkeepingReady({ scope, entityId, intent }) 
   if (!isPaystackSubaccountCode(profile.gatewayRecipientId)) {
     return { ready: false, reason: "Paystack recipient is not configured" };
   }
+  if (!isPaystackRecipientUsableInCurrentMode(profile)) {
+    return { ready: false, reason: "Paystack recipient domain does not match PAYSTACK_MODE" };
+  }
   const payload =
     intent?.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
       ? intent.gatewayPayload
@@ -459,6 +486,7 @@ module.exports = {
   detectMaterialBankChange,
   profilePlainFields,
   profileRecipientOwnedByGateway,
+  shouldUpdateExistingRecipient,
   gatewayOwningStoredRecipient,
   registerPayoutDestination,
   deactivatePayoutDestination,

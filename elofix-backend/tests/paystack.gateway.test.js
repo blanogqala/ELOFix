@@ -348,6 +348,7 @@ async function testCreateCheckoutHttpMocked() {
           id: "intent-1",
           merchantReference: "EF-MERCHANTREF1234567",
           kind: "LABOR",
+          paymentType: "DEPOSIT",
           amount: 100,
           currency: "ZAR",
           jobId: "job-1",
@@ -364,6 +365,7 @@ async function testCreateCheckoutHttpMocked() {
       assert.strictEqual(body.currency, "ZAR");
       assert.strictEqual(body.subaccount, "ACCT_TESTCODE");
       assert.strictEqual(body.bearer, "subaccount");
+      assert.strictEqual(body.metadata.paymentLabel, "Service Deposit - First 50%");
       assert.ok(!Object.prototype.hasOwnProperty.call(body, "transaction_charge"));
     });
   } finally {
@@ -786,14 +788,17 @@ async function testCourierDeliveryLookupUsesProviderSubaccount() {
         gatewayRecipientId: "ACCT_COURIER",
         gatewayProvider: "PAYSTACK",
         isActive: true,
+        gatewayProfilePayload: { domain: "test" },
       }),
     },
   };
-  const code = await recipient.lookupMarketplaceSubaccount(
-    { kind: "DELIVERY_FEE", gatewayPayload: { deliveryRequestId: "dr-1" } },
-    fakePrisma
-  );
-  assert.strictEqual(code, "ACCT_COURIER");
+  await withEnv(validTestEnv(), async () => {
+    const code = await recipient.lookupMarketplaceSubaccount(
+      { kind: "DELIVERY_FEE", gatewayPayload: { deliveryRequestId: "dr-1" } },
+      fakePrisma
+    );
+    assert.strictEqual(code, "ACCT_COURIER");
+  });
 }
 
 async function testUnresolvedDeliveryFailsClosed() {
@@ -820,17 +825,20 @@ async function testJobStoreLookupResolvableWithoutMaterialOrderId() {
           gatewayRecipientId: "ACCT_STORE",
           gatewayProvider: "PAYSTACK",
           isActive: true,
+          gatewayProfilePayload: { domain: "test" },
         };
       },
     },
   };
-  const code = await recipient.lookupMarketplaceSubaccount(
-    {
-      kind: "JOB_STORE_ORDER",
-      jobId: "job-1",
-      gatewayPayload: { orderId: "ord-1" },
-    },
-    fakePrisma
+  const code = await withEnv(validTestEnv(), async () =>
+    recipient.lookupMarketplaceSubaccount(
+      {
+        kind: "JOB_STORE_ORDER",
+        jobId: "job-1",
+        gatewayPayload: { orderId: "ord-1" },
+      },
+      fakePrisma
+    )
   );
   assert.strictEqual(code, "ACCT_STORE");
 }
@@ -885,22 +893,34 @@ function testSettlementCapableGatewaySeesPaystack() {
 }
 
 function testExtractSubaccountReuse() {
-  assert.strictEqual(
-    recipient.extractSubaccount({
-      gatewayRecipientId: "ACCT_EXISTING",
-      gatewayProvider: "PAYSTACK",
-      isActive: true,
-    }),
-    "ACCT_EXISTING"
-  );
-  assert.strictEqual(
-    recipient.extractSubaccount({
-      gatewayRecipientId: "ACCT_EXISTING",
-      gatewayProvider: "PAYFAST",
-      isActive: true,
-    }),
-    null
-  );
+  withEnv(validTestEnv(), () => {
+    assert.strictEqual(
+      recipient.extractSubaccount({
+        gatewayRecipientId: "ACCT_EXISTING",
+        gatewayProvider: "PAYSTACK",
+        isActive: true,
+        gatewayProfilePayload: { domain: "test" },
+      }),
+      "ACCT_EXISTING"
+    );
+    assert.strictEqual(
+      recipient.extractSubaccount({
+        gatewayRecipientId: "ACCT_EXISTING",
+        gatewayProvider: "PAYFAST",
+        isActive: true,
+        gatewayProfilePayload: { domain: "test" },
+      }),
+      null
+    );
+    assert.strictEqual(
+      recipient.extractSubaccount({
+        gatewayRecipientId: "ACCT_EXISTING",
+        gatewayProvider: "PAYSTACK",
+        isActive: true,
+      }),
+      null
+    );
+  });
 }
 
 async function testDestinationResultRequiresAcctCode() {

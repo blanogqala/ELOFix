@@ -120,6 +120,22 @@ function testOwnershipHelpers() {
   });
   assert.ok(owner);
   assert.strictEqual(owner.name, "PAYSTACK");
+  const matching = {
+    gatewayRecipientId: "ACCT_TEST",
+    gatewayProvider: "PAYSTACK",
+    isActive: true,
+    gatewayProfilePayload: { domain: "test" },
+  };
+  return withEnv({ PAYSTACK_MODE: "test" }, () => {
+    assert.strictEqual(payoutDestinationService.shouldUpdateExistingRecipient(matching, { name: "PAYSTACK" }), true);
+  }).then(() =>
+    withEnv({ PAYSTACK_MODE: "live" }, () => {
+      assert.strictEqual(
+        payoutDestinationService.shouldUpdateExistingRecipient(matching, { name: "PAYSTACK" }),
+        false
+      );
+    })
+  );
 }
 
 async function testForeignRecipientCreatesInsteadOfUpdate() {
@@ -179,7 +195,7 @@ async function testSameGatewayUpdates() {
   try {
     await prisma.branchWithdrawalProfile.update({
       where: { id: fix.profile.id },
-      data: { gatewayProvider: "PAYSTACK", gatewayRecipientId: "ACCT_EXISTING" },
+      data: { gatewayProvider: "PAYSTACK", gatewayRecipientId: "ACCT_EXISTING", gatewayProfilePayload: { domain: "test" } },
     });
     await withEnv(paystackEnv(), async () => {
       const out = await payoutDestinationService.registerPayoutDestination({
@@ -230,14 +246,70 @@ async function testDeactivateUsesOwningGateway() {
   }
 }
 
+async function testDomainMismatchCreatesInsteadOfUpdate() {
+  const creates = [];
+  const updates = [];
+  const originalCreate = paystack.createPayoutDestination;
+  const originalUpdate = paystack.updatePayoutDestination;
+  paystack.createPayoutDestination = async (payload) => {
+    creates.push(payload);
+    return {
+      supported: true,
+      recipientId: "ACCT_NEW_LIVE",
+      status: "VERIFIED",
+      data: { subaccount_code: "ACCT_NEW_LIVE", domain: "live" },
+    };
+  };
+  paystack.updatePayoutDestination = async (id) => {
+    updates.push(id);
+    throw new Error("must not PUT test ACCT with live credentials");
+  };
+  const fix = await seedBranch(`${randomUUID().slice(0, 8)}dm`);
+  try {
+    await prisma.branchWithdrawalProfile.update({
+      where: { id: fix.profile.id },
+      data: {
+        gatewayProvider: "PAYSTACK",
+        gatewayRecipientId: "ACCT_TEST",
+        gatewayProfilePayload: { domain: "test" },
+      },
+    });
+    await withEnv(
+      {
+        ...paystackEnv(),
+        PAYSTACK_MODE: "live",
+        PAYSTACK_SECRET_KEY: "sk_live_unit_not_a_real_key",
+        PAYSTACK_PUBLIC_KEY: "pk_live_unit_not_a_real_key",
+      },
+      async () => {
+        const out = await payoutDestinationService.registerPayoutDestination({
+          scope: "branch",
+          entityId: fix.branch.id,
+        });
+        assert.strictEqual(out.recipientId, "ACCT_NEW_LIVE");
+        assert.strictEqual(creates.length, 1);
+        assert.strictEqual(updates.length, 0);
+      }
+    );
+    const fresh = await prisma.branchWithdrawalProfile.findUnique({ where: { id: fix.profile.id } });
+    assert.strictEqual(fresh.gatewayRecipientId, "ACCT_NEW_LIVE");
+    assert.strictEqual(fresh.gatewayProfilePayload?.domain, "live");
+  } finally {
+    paystack.createPayoutDestination = originalCreate;
+    paystack.updatePayoutDestination = originalUpdate;
+    await cleanup(fix);
+  }
+}
+
 async function main() {
-  testOwnershipHelpers();
+  await testOwnershipHelpers();
   if (!process.env.DATABASE_URL) {
     console.log("payoutDestination.ownership.test.js: helpers OK (skip DB)");
     return;
   }
   await testForeignRecipientCreatesInsteadOfUpdate();
   await testSameGatewayUpdates();
+  await testDomainMismatchCreatesInsteadOfUpdate();
   await testDeactivateUsesOwningGateway();
   console.log("payoutDestination.ownership.test.js: all passed");
 }
