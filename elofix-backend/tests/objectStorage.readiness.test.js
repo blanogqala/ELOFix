@@ -1,5 +1,6 @@
 /**
- * Durable storage readiness: production requires S3 unless ELOFIX_ALLOW_LOCAL_UPLOADS.
+ * Durable storage readiness: production requires S3 unless ELOFIX_ALLOW_LOCAL_UPLOADS
+ * with an explicit absolute UPLOAD_ROOT.
  * Run: node tests/objectStorage.readiness.test.js
  */
 const assert = require("assert");
@@ -12,12 +13,27 @@ function run() {
   assert.strictEqual(prodNoS3.ok, false);
   assert.strictEqual(prodNoS3.storage, "invalid");
 
-  const prodDisk = objectStorage.getDurableStorageReadiness({
+  const prodDiskIncomplete = objectStorage.getDurableStorageReadiness({
     NODE_ENV: "production",
     ELOFIX_ALLOW_LOCAL_UPLOADS: "true",
   });
-  assert.strictEqual(prodDisk.ok, true);
-  assert.strictEqual(prodDisk.storage, "ok");
+  assert.strictEqual(prodDiskIncomplete.ok, false);
+  assert.strictEqual(prodDiskIncomplete.storage, "invalid");
+
+  const prodDiskRelative = objectStorage.getDurableStorageReadiness({
+    NODE_ENV: "production",
+    ELOFIX_ALLOW_LOCAL_UPLOADS: "true",
+    UPLOAD_ROOT: "uploads",
+  });
+  assert.strictEqual(prodDiskRelative.ok, false);
+
+  const prodDiskOk = objectStorage.getDurableStorageReadiness({
+    NODE_ENV: "production",
+    ELOFIX_ALLOW_LOCAL_UPLOADS: "true",
+    UPLOAD_ROOT: "/opt/render/project/src/uploads",
+  });
+  assert.strictEqual(prodDiskOk.ok, true);
+  assert.strictEqual(prodDiskOk.storage, "ok");
 
   const prodS3 = objectStorage.getDurableStorageReadiness({
     NODE_ENV: "production",

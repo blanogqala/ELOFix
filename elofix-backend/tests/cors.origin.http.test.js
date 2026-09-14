@@ -37,6 +37,14 @@ async function run() {
     assert.strictEqual(denied.status, 200);
     assert.strictEqual(denied.headers.get("access-control-allow-origin"), null);
 
+    const www = await fetch(`${h.baseUrl}/health`, {
+      headers: { Origin: "https://www.elofix.co.za" },
+    });
+    assert.strictEqual(www.headers.get("access-control-allow-origin"), null);
+
+    const noOrigin = await fetch(`${h.baseUrl}/health`);
+    assert.strictEqual(noOrigin.status, 200);
+
     const preflight = await fetch(`${h.baseUrl}/health`, {
       method: "OPTIONS",
       headers: {

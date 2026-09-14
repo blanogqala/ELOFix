@@ -19,6 +19,7 @@
     "backfill:earnings": "node scripts/backfill-earnings.js",
     "migrate:bank-encrypt": "node scripts/migrate-bank-encrypt.js",
     "test": "node tests/run-all.js",
+    "smoke:socket": "node scripts/socket-handshake-smoke.js",
     "test:payments": "node tests/payments.intent.test.js && node tests/payments.deliveryFee.test.js && node tests/paymentModes.test.js && node tests/paymentMigration.stabilization.test.js && node tests/paymentSnapshot.failClosed.test.js && node tests/paymentAmountSecurity.test.js && node tests/paymentCompletion.secondTranche.test.js && node tests/checkoutLegalAcceptance.test.js",
     "test:delivery-fee": "node tests/payments.deliveryFee.test.js",
     "test:financial": "node tests/financial.refund.test.js",
@@ -53,6 +54,7 @@
     "prisma": "^7.7.0",
     "resend": "^4.8.0",
     "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "zod": "^4.4.3"
   },
   "overrides": {

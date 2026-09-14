@@ -7,7 +7,7 @@ import { reportDeviceContext } from '@/lib/api/fraud';
 import type { LegalAcceptancePayload } from '@/lib/legal/versions';
 import { queryKeys } from '@/lib/queryKeys';
 import { firebaseEnabled, firebaseOnAuthStateChanged, auth as firebaseAuth } from '@/lib/firebase';
-import { socket } from '@/lib/socket';
+import { socket, ensureSocketAuthAndConnect, clearSocketAuthAndDisconnect } from '@/lib/socket';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -103,19 +103,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user?.id) {
-      socket.disconnect();
+      clearSocketAuthAndDisconnect();
       return;
     }
 
-    const session = authApi.getCurrentSession();
-    if (session?.token) {
-      socket.auth = { token: session.token };
+    const joinOwnRoom = () => {
+      ensureSocketAuthAndConnect();
+      socket.emit('join', user.id);
+    };
+
+    ensureSocketAuthAndConnect();
+    socket.on('connect', joinOwnRoom);
+    if (socket.connected) {
+      joinOwnRoom();
     }
-    socket.connect();
-    socket.emit('join', user.id);
 
     return () => {
-      socket.disconnect();
+      socket.off('connect', joinOwnRoom);
     };
   }, [user?.id]);
 

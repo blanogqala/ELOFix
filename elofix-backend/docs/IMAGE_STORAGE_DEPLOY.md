@@ -60,7 +60,7 @@ Providers, suppliers, and customers must **upload photos again**. New uploads wi
    UPLOAD_ROOT=/opt/render/project/src/uploads
    ELOFIX_ALLOW_LOCAL_UPLOADS=true
    ```
-   `ELOFIX_ALLOW_LOCAL_UPLOADS=true` is required so production `/ready` does not demand S3. Only set this with a persistent disk — never on the ephemeral Free filesystem.
+   `ELOFIX_ALLOW_LOCAL_UPLOADS=true` is required so production `/ready` does not demand S3. `UPLOAD_ROOT` must be that **absolute** mount path — production readiness fails if the flag is set without an explicit absolute root. Only set this with a persistent disk — never on the ephemeral Free filesystem. Confirm the disk is attached in the Render UI; the app cannot prove the mount exists.
 4. Redeploy, then re-upload all images
 
 ---

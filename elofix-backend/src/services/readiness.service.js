@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const { assertProductionPaymentSafety } = require("./payments/paymentConfig");
 const objectStorage = require("./objectStorage.service");
+const { getCorsConfigReadiness } = require("../utils/corsOrigins.util");
+const { isRealtimeInitialized } = require("../utils/realtimeState.util");
 
 let appInitialized = true;
 
@@ -14,11 +16,17 @@ async function getReadiness() {
     database: "unknown",
     config: "ok",
     storage: "ok",
+    realtime: isRealtimeInitialized() ? "ok" : "not_ready",
   };
 
   try {
     assertProductionPaymentSafety();
   } catch {
+    checks.config = "invalid";
+  }
+
+  const corsReady = getCorsConfigReadiness();
+  if (!corsReady.ok) {
     checks.config = "invalid";
   }
 
@@ -38,7 +46,8 @@ async function getReadiness() {
     checks.app === "ok" &&
     checks.database === "ok" &&
     checks.config === "ok" &&
-    checks.storage === "ok";
+    checks.storage === "ok" &&
+    checks.realtime === "ok";
   return {
     ok,
     httpStatus: ok ? 200 : 503,

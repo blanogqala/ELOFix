@@ -34,6 +34,16 @@ function allowLocalOnlyUploads(envObj = process.env) {
   return String(envObj.ELOFIX_ALLOW_LOCAL_UPLOADS || "").toLowerCase() === "true";
 }
 
+function getConfiguredUploadRoot(envObj = process.env) {
+  return String(envObj.UPLOAD_ROOT || "").trim();
+}
+
+function isExplicitAbsoluteUploadRoot(envObj = process.env) {
+  const root = getConfiguredUploadRoot(envObj);
+  if (!root) return false;
+  return path.isAbsolute(root);
+}
+
 /**
  * Production/staging with ephemeral disk must use object storage unless an operator
  * explicitly opts into local-only uploads (persistent disk).
@@ -45,6 +55,13 @@ function isDurableStorageRequired(envObj = process.env) {
 }
 
 function getDurableStorageReadiness(envObj = process.env) {
+  const nodeEnv = String(envObj.NODE_ENV || "").toLowerCase();
+  if (nodeEnv === "production" && allowLocalOnlyUploads(envObj)) {
+    if (!isExplicitAbsoluteUploadRoot(envObj)) {
+      return { ok: false, storage: "invalid" };
+    }
+    return { ok: true, storage: "ok" };
+  }
   if (!isDurableStorageRequired(envObj)) {
     return { ok: true, storage: "ok" };
   }
@@ -206,6 +223,8 @@ module.exports = {
   isEnabled,
   isDurableStorageRequired,
   getDurableStorageReadiness,
+  getConfiguredUploadRoot,
+  isExplicitAbsoluteUploadRoot,
   setTestMemoryStore,
   putLocalFile,
   existsObject,
