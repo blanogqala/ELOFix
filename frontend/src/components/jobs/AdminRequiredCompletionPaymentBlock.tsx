@@ -9,6 +9,7 @@ import { laborPayButtonLabel } from '@/lib/paymentSchedule';
 import {
   isCompletionPaymentOverdue,
 } from '@/lib/completionPaymentDue';
+import { LEGAL_ROUTES } from '@/lib/legal/versions';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -130,7 +131,7 @@ export function AdminRequiredCompletionPaymentBlock({
       ) : null}
 
       <p>
-        <Link to="/escrow-policy" className="text-xs font-medium text-primary hover:underline">
+        <Link to={LEGAL_ROUTES['escrow-policy']} className="text-xs font-medium text-primary hover:underline">
           View payment terms
         </Link>
       </p>

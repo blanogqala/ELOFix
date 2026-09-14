@@ -29,6 +29,7 @@ function isExemptPath(pathname: string): boolean {
     pathname.startsWith('/dispute') ||
     pathname.startsWith('/provider-agreement') ||
     pathname.startsWith('/escrow-policy') ||
+    pathname.startsWith('/payment-schedule') ||
     pathname.startsWith('/contact') ||
     pathname.includes('/refund') ||
     pathname.includes('/disputes') ||

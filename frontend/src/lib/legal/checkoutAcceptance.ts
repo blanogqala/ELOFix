@@ -1,5 +1,5 @@
 import { LEGAL_VERSIONS } from '@/lib/legal/versions';
-import type { PaymentIntentKind } from '@/lib/api/payments';
+import type { PaymentIntentKind, PaymentProvider } from '@/lib/api/payments';
 
 /** Kinds that require Delivery & Collection Policy acknowledgement at checkout. */
 export function checkoutRequiresDeliveryPolicy(kind: PaymentIntentKind | string): boolean {
@@ -25,4 +25,18 @@ export function buildCheckoutLegalAcceptance(
     deliveryPolicyAcknowledged: requiresDelivery,
     deliveryPolicyVersion: requiresDelivery ? LEGAL_VERSIONS.deliveryPolicy : null,
   };
+}
+
+export function checkoutProcessorDisplayName(provider: PaymentProvider | '' | null | undefined): string {
+  const p = String(provider || '').toUpperCase();
+  if (p === 'PAYSTACK') return 'Paystack';
+  if (p === 'PAYFAST') return 'PayFast';
+  if (p === 'PAYFLEX') return 'Payflex';
+  if (p === 'PAYJUSTNOW') return 'PayJustNow';
+  return 'an approved payment service provider';
+}
+
+/** Non-checkbox checkout disclosure near the payment CTA. Does not change legalAcceptance payload. */
+export function checkoutProcessorDisclosure(provider: PaymentProvider | '' | null | undefined): string {
+  return `Payments are securely processed by ${checkoutProcessorDisplayName(provider)}. EloFix does not store your full card number or CVV. Refund and cancellation rules apply.`;
 }

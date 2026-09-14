@@ -330,6 +330,17 @@ describe('PaymentModal hosted checkout (no EloFix card/CVC)', () => {
     expect(createPaymentIntent).not.toHaveBeenCalled();
   });
 
+  it('shows Paystack checkout disclosure when Paystack is selected', async () => {
+    getPaymentProviders.mockResolvedValue(['PAYSTACK']);
+    renderModal();
+    await waitFor(() => {
+      expect(screen.getByText(/Payments are securely processed by Paystack/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/EloFix does not store your full card number or CVV/i)).toBeInTheDocument();
+    expect(screen.getByText(/Refund and cancellation rules apply/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+  });
+
   it('selecting PAYSTACK uses generic checkout redirect', async () => {
     getPaymentProviders.mockResolvedValue(['PAYSTACK']);
     const user = setupUser();

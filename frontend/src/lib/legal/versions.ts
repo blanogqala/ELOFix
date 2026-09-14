@@ -1,26 +1,26 @@
 /** Legal document versions — must match elofix-backend/src/config/legalVersions.js */
 export const LEGAL_VERSIONS = {
-  terms: '2026-08-18-r2',
-  privacy: '2026-08-18',
-  providerAgreement: '2026-08-18-r2',
-  refundPolicy: '2026-08-18-r2',
+  terms: '2026-09-14',
+  privacy: '2026-09-14',
+  providerAgreement: '2026-09-14',
+  refundPolicy: '2026-09-14',
   jobCompletionVerification: '2026-08-18',
-  escrowPolicy: '2026-08-18-r2',
-  disputeResolution: '2026-08-18-r2',
+  escrowPolicy: '2026-09-14',
+  disputeResolution: '2026-09-14',
   adminInvestigation: '2026-08-18-r2',
   correctiveWork: '2026-08-18',
   portfolioContentRights: '2026-08-18',
-  providerVerification: '2026-08-18',
+  providerVerification: '2026-09-14',
   fraudPrevention: '2026-08-18',
   deviceSecurity: '2026-08-18',
   providerReputation: '2026-08-18',
-  supplierAgreement: '2026-08-18',
+  supplierAgreement: '2026-09-14',
   supplierParticipation: '2026-08-18',
-  dataProcessing: '2026-08-18',
+  dataProcessing: '2026-09-14',
   communityStandards: '2026-08-18',
   cookiePolicy: '2026-08-18',
   platformActivityRecords: '2026-08-18',
-  deliveryPolicy: '2026-08-18-r2',
+  deliveryPolicy: '2026-09-14',
 } as const;
 
 export type LegalDocumentId =
@@ -52,7 +52,7 @@ export const LEGAL_ROUTES: Record<LegalDocumentId, string> = {
   'provider-agreement': '/provider-agreement',
   'refund-policy': '/refund-policy',
   'job-completion-verification': '/job-completion-verification',
-  'escrow-policy': '/escrow-policy',
+  'escrow-policy': '/payment-schedule',
   'dispute-resolution': '/dispute-resolution',
   'admin-investigation': '/admin-investigation',
   'corrective-work': '/corrective-work',
@@ -68,6 +68,11 @@ export const LEGAL_ROUTES: Record<LegalDocumentId, string> = {
   'cookie-policy': '/cookie-policy',
   'platform-activity-records': '/platform-activity-records',
   'delivery-policy': '/delivery-policy',
+};
+
+/** Legacy public paths that must keep working after canonical-route changes. */
+export const LEGAL_LEGACY_REDIRECTS: Record<string, string> = {
+  '/escrow-policy': '/payment-schedule',
 };
 
 export const LEGAL_LABELS: Record<LegalDocumentId, string> = {

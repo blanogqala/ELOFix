@@ -2,7 +2,7 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE = 'September 14, 2026';
 
 export const providerAgreement: LegalDocument = {
   id: 'provider-agreement',
@@ -28,7 +28,7 @@ export const providerAgreement: LegalDocument = {
       content: [
         'You must complete profile setup, submit required verification documents, and receive approval before accepting paid Jobs, as described in the Provider Verification Policy.',
         'Required documents may include South African ID, business registration, proof of address, banking information for a settlement destination profile, and optional certifications.',
-        'Saving banking details does not mean settlement is enabled, that a payout destination is verified with a payment service provider, or that EloFix may debit your bank account.',
+        'Saving banking details does not mean settlement is enabled, that a Paystack payout destination has been created or verified, or that EloFix may debit your bank account. Paystack verification of a payout destination is not the same as completed bank settlement.',
         'EloFix may reject, suspend, revoke verification, or request updated documentation at any time based on verification results, fraud review status, or policy violations.',
         'You represent that all submitted information and documents are accurate, current, and belong to you or your business.',
       ],
@@ -56,13 +56,16 @@ export const providerAgreement: LegalDocument = {
       id: 'payments-payouts',
       title: '5. Payments and Settlement',
       content: [
-        'Customer labor payments are processed through EloFix\'s applicable third-party payment service providers. EloFix records the current contractual platform commission of 7% of each collected customer labor payment tranche and your provider share (93% of that collected tranche) according to the Payment Schedule and Transparency Policy.',
-        'Recording your share in EloFix\'s ledger is not the same as depositing cash into your bank account. Customer payment timing is not the same as provider settlement timing. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible provider funds may be settled to your nominated verified bank account.',
+        'Customer labor payments are processed through EloFix\'s applicable third-party payment service providers. Paystack is currently EloFix\'s primary live payment processor. EloFix may introduce, replace, or use another approved payment service provider in the future, subject to applicable notice requirements.',
+        'EloFix records the current contractual platform commission of 7% of each collected customer labor payment tranche and your Provider gross marketplace share (93% of that collected tranche) according to the Payment Schedule and Transparency Policy.',
+        'Your recorded 93% marketplace share is a GROSS share. It is not necessarily the exact net amount credited to your bank account, because payment-processor fees may be charged according to the payment-provider settlement configuration where that configuration assigns fees to the Provider or subaccount.',
+        'Recording your share in EloFix\'s ledger is not the same as money being credited to your bank account. Successful Customer payment is not immediate bank settlement. Where Paystack marketplace split-at-charge is used, eligible Provider funds may be routed to your verified Paystack subaccount. EloFix does not normally send a second manual transfer of the ordinary 93% share after that settlement.',
+        'Paystack\'s current standard South African settlement schedule is generally T+2 working days from the relevant transaction date for eligible transactions. Actual timing may be affected by payout-destination verification, transaction type, weekends, public holidays, bank processing, payment-network processing, compliance or fraud reviews, Paystack operating rules, and other circumstances outside EloFix\'s control. This schedule may change. EloFix does not guarantee a particular settlement date.',
         'The Platform supports three live labor payment modes, as shown on the Job:',
         'TWO_PAYMENT_50_50 — the Customer pays an approximately 50% first tranche, then a remaining completion tranche according to the Job workflow. Commission of 7% applies to each collected customer payment tranche.',
         'SINGLE_PAYMENT_UPFRONT — the Customer pays the full service amount before work progresses.',
         'SINGLE_PAYMENT_ON_COMPLETION — the Customer does not pay labor upfront. Payment becomes due after the configured completion or confirmation flow.',
-        'Not all Jobs use escrow. EloFix does not hold all provider shares as deposits.',
+        'EloFix is not a bank, deposit-taker, wallet provider, or escrow agent and does not hold Provider settlement funds as customer deposits.',
         'Settlement timing and eligibility may be delayed or paused for fraud review, open disputes, chargebacks, policy violations, incomplete verification, overdue refund repayment, or legal compliance, subject to payment-service-provider capabilities.',
         'You authorize EloFix to deduct applicable platform fees, refunds, clawbacks, adjustments, and chargebacks from amounts otherwise recorded as payable to you.',
         'If a Customer refund requires recovery from you after amounts attributable to you have already been accounted for or paid out, you must complete provider repayment within 30 calendar days through the supported mechanisms (gateway repayment checkout where available, and/or bank transfer / EFT using the reference EloFix provides). Failure to settle an approved refund repayment or other recoverable amount within 30 calendar days may result in restrictions on new work, settlement restrictions, account blocking, referral for lawful debt recovery, and further legal action where appropriate. You may still log in, view Jobs and earnings, access the repayment page, submit repayment, and contact EloFix. Entering banking details does not authorize EloFix to debit your bank account automatically unless a payment service provider expressly supports that capability and you are notified of such terms.',
@@ -155,7 +158,7 @@ export const refundPolicy: LegalDocument = {
       content: [
         'Customers may cancel a Job before a Provider begins work subject to any displayed cancellation terms at checkout or quote acceptance.',
         'If labor has not been paid, cancellation typically results in no labor charge.',
-        'If labor has been paid and amounts attributable to the Provider have not yet been treated as payable or settled under the applicable payment schedule, the Customer may receive a labor refund calculated on the eligible paid amount, net of the platform commission (93% of gross labor paid). The 7% platform fee is not refunded.',
+        'If labor has been paid and amounts attributable to the Provider have not yet been treated as payable or settled under the applicable payment schedule, the Customer may receive a labor refund calculated on the eligible paid amount, ordinarily up to the Provider share (93% of eligible gross labor paid). The EloFix platform commission is ordinarily retained on approved service refunds under the Platform\'s current commercial model, except where applicable law, card-scheme rules, payment-service-provider requirements or a binding determination requires otherwise.',
         'If a mobilisation or other provider tranche has already become payable or been accounted for under the payment schedule, cancellation refunds are limited to remaining eligible unpaid or recoverable amounts — not necessarily the full original quotation or total paid amount.',
       ],
     },
@@ -228,7 +231,7 @@ export const refundPolicy: LegalDocument = {
         'Customer cancellation is generally not available after the order has been dispatched or is out for delivery.',
         'Custom, special-order, cut-to-size, delivered, or installed materials may not be refundable once fulfilment has progressed.',
         'If a supplier cancels an order, refund treatment follows Platform accounting for that cancellation type, including commission reversals where the Platform applies them.',
-        'Material payments are processed through the applicable payment service provider. Supplier share is recorded after commission accounting and is not subject to job-completion staged payment holds. Actual bank settlement to a Supplier or branch depends on supported marketplace settlement configuration.',
+        'Material payments are processed through the applicable payment service provider. Paystack is currently EloFix\'s primary live payment processor. Supplier share is recorded after commission accounting and is not subject to job-completion staged payment holds. A recorded Supplier earning is not the same as completed bank settlement. Actual bank settlement to a Supplier or branch depends on supported marketplace settlement configuration, payout-destination verification, and payment-processor timing.',
       ],
     },
     {
@@ -267,14 +270,17 @@ export const refundPolicy: LegalDocument = {
       id: 'refund-process',
       title: '12. Refund Processing',
       content: [
-        'Refunds follow Platform status steps. Typical statuses include: refund approved; refund processing; refund completed; refund requires manual processing; or refund could not be completed.',
+        'Refunds follow Platform status steps. Typical statuses include: Approved; Processing; Completed. The Platform may also display that a refund requires manual processing or could not be completed.',
+        'A refund shown as Approved does not mean money has already been returned to the Customer. A refund shown as Processing means EloFix or Paystack is still processing it. A refund shown as Completed after payment-provider confirmation does not necessarily mean the Customer\'s bank or card statement has updated immediately.',
         'Where provider repayment is required after an admin resolution, the Provider must complete repayment through a supported mechanism. After repayment is verified where required, the Customer refund may become ready for processing. An administrator then explicitly processes the Customer refund through the applicable payment service provider.',
+        'Typical sequence: (1) refund eligibility or administrator determination; (2) Provider repayment or recovery where required; (3) payment-service-provider refund initiation; (4) refund pending or processing; (5) payment-service-provider confirmation; (6) Customer bank or card reflection.',
         'A refund is described as returned to the original payment method only after the applicable payment service provider confirms the refund. Before confirmation, EloFix will show accurate processing status, including where manual processing by the payment service provider is required.',
-        'Processing times vary by payment service provider and bank. EloFix does not promise instant or automatic refunds to a Customer\'s card or bank account.',
-        'Customer labor refunds are calculated on eligible paid labor amounts, net of the platform commission (93% of gross labor paid). The 7% platform fee is not refunded.',
+        'Paystack refunds are asynchronous. Processing times vary by payment service provider and bank. EloFix does not promise instant or automatic refunds to a Customer\'s card or bank account.',
+        'Paystack\'s current guidance indicates that after a refund is processed, the Customer\'s financial institution may still take several business days, and in some cases up to approximately 10 business days, to reflect the refund. This timing is controlled by Paystack and the Customer\'s bank and may change.',
+        'Customer labor refunds are calculated on eligible paid labor amounts only. An unpaid remaining transaction is not refunded. The current normal service-labor refund ceiling uses the eligible Provider share (93% of eligible gross labor paid). The EloFix platform commission is ordinarily retained on approved service refunds under the Platform\'s current commercial model, except where applicable law, card-scheme rules, payment-service-provider requirements or a binding determination requires otherwise.',
         'When part of an approved refund depends on recovering amounts from a Provider, that portion is not guaranteed instantly. EloFix processes the Customer refund as recovery and admin processing complete, within approximately 30 calendar days for the Provider repayment obligation where applicable.',
         'EloFix does not operate an account-credit, store-credit, wallet-credit, or EloFix-credit product. Supported refund outcomes are a refund to the original payment method where the payment service provider confirms it, manual processing where required, provider repayment or recovery, administrator review, and failed or manual statuses.',
-        'Platform commission on labor is not refunded to Providers on labor refunds processed through admin dispute resolution.',
+        'Platform commission on labor is ordinarily not refunded to Providers on labor refunds processed through admin dispute resolution, except where applicable law, card-scheme rules, payment-service-provider requirements or a binding determination requires otherwise.',
       ],
     },
     {

@@ -105,9 +105,9 @@ function testDeriveDisplayStatus() {
 }
 
 function testLegalVersionsBumped() {
-  assert.strictEqual(LEGAL_VERSIONS.terms, process.env.LEGAL_TERMS_VERSION || "2026-08-18-r2");
-  assert.strictEqual(LEGAL_VERSIONS.refundPolicy, process.env.LEGAL_REFUND_POLICY_VERSION || "2026-08-18-r2");
-  assert.strictEqual(LEGAL_VERSIONS.privacy, process.env.LEGAL_PRIVACY_VERSION || "2026-08-18");
+  assert.strictEqual(LEGAL_VERSIONS.terms, process.env.LEGAL_TERMS_VERSION || "2026-09-14");
+  assert.strictEqual(LEGAL_VERSIONS.refundPolicy, process.env.LEGAL_REFUND_POLICY_VERSION || "2026-09-14");
+  assert.strictEqual(LEGAL_VERSIONS.privacy, process.env.LEGAL_PRIVACY_VERSION || "2026-09-14");
 }
 
 async function runDbTestsIfPossible() {

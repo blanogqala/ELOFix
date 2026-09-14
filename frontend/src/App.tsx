@@ -11,6 +11,7 @@ import { ScrollToTop } from "@/components/common/ScrollToTop";
 import { RouteSuspense } from "@/components/routing/RouteSuspense";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import * as Pages from "@/routes/lazyPages";
+import { LEGAL_LEGACY_REDIRECTS, LEGAL_ROUTES } from "@/lib/legal/versions";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -52,7 +53,10 @@ const App = () => (
             <Route path="/returns-policy" element={<RouteSuspense><Pages.RefundPolicyPage /></RouteSuspense>} />
             <Route path="/delivery-policy" element={<RouteSuspense><Pages.DeliveryPolicyPage /></RouteSuspense>} />
             <Route path="/job-completion-verification" element={<RouteSuspense><Pages.JobCompletionVerificationPage /></RouteSuspense>} />
-            <Route path="/escrow-policy" element={<RouteSuspense><Pages.EscrowPolicyPage /></RouteSuspense>} />
+            <Route path={LEGAL_ROUTES['escrow-policy']} element={<RouteSuspense><Pages.EscrowPolicyPage /></RouteSuspense>} />
+            {Object.entries(LEGAL_LEGACY_REDIRECTS).map(([from, to]) => (
+              <Route key={from} path={from} element={<Navigate to={to} replace />} />
+            ))}
             <Route path="/dispute-resolution" element={<RouteSuspense><Pages.DisputeResolutionPage /></RouteSuspense>} />
             <Route path="/admin-investigation" element={<RouteSuspense><Pages.AdminInvestigationPage /></RouteSuspense>} />
             <Route path="/corrective-work" element={<RouteSuspense><Pages.CorrectiveWorkPage /></RouteSuspense>} />

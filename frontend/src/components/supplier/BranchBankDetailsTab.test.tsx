@@ -91,5 +91,6 @@ describe('BranchBankDetailsTab connect action', () => {
     });
     expect(screen.getByText('Pending verification')).toBeInTheDocument();
     expect(screen.queryByText(/ACCT_/)).not.toBeInTheDocument();
+    expect(screen.getByText(/generally T\+2 working days/i)).toBeInTheDocument();
   });
 });

@@ -262,7 +262,8 @@ export default function UserPayments() {
                   </p>
                   <p className="text-sm text-muted-foreground">
                     Sensitive card information is entered and processed through the applicable payment
-                    service provider. EloFix does not store CVV/CVC or full card numbers.
+                    service provider. Paystack is currently EloFix's primary live payment processor.
+                    EloFix does not store CVV/CVC or full card numbers.
                   </p>
                 </div>
               </div>

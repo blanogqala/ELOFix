@@ -2,13 +2,14 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE_DATA_PROCESSING = 'September 14, 2026';
+const EFFECTIVE_UNCHANGED = 'August 18, 2026';
 
 export const dataProcessing: LegalDocument = {
   id: 'data-processing',
   title: 'Data Processing Policy',
   subtitle: 'How EloFix processes personal information as operator and uses subprocessors.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_DATA_PROCESSING,
   version: LEGAL_VERSIONS.dataProcessing,
   sections: [
     {
@@ -25,7 +26,7 @@ export const dataProcessing: LegalDocument = {
       title: '2. Roles',
       content: [
         'EloFix acts as the responsible party for personal information collected through the Platform. Whether EloFix or a third party also acts as an operator for specific processing activities depends on the contractual arrangement and requires appropriate legal review.',
-        'Payment service providers, hosting providers, and device intelligence services process payment or technical data according to their roles and EloFix\'s instructions where applicable.',
+        'Payment service providers (currently Paystack, and any replacement or additional approved payment service providers used by EloFix), hosting providers, and device intelligence services process payment or technical data according to their roles and EloFix\'s instructions where applicable.',
         'Providers and Suppliers who receive Customer data through Jobs or orders must process that data in compliance with POPIA for their own purposes.',
       ],
     },
@@ -34,7 +35,7 @@ export const dataProcessing: LegalDocument = {
       title: '3. Subprocessors',
       content: [
         'EloFix uses the following categories of subprocessors:',
-        'Third-party payment service providers that process Customer payments, refunds, and related payment events.',
+        'Paystack and any replacement or additional approved payment service providers used by EloFix, which process Customer payments, refunds, payout-destination or subaccount information, and related payment events. EloFix does not claim any particular regulatory licence for Paystack in this policy.',
         'Cloud hosting and database infrastructure providers.',
         'Device intelligence: FingerprintJS or equivalent fingerprinting technology.',
         'Email and notification delivery services.',
@@ -52,7 +53,7 @@ export const dataProcessing: LegalDocument = {
         'Audit logging of sensitive operations.',
         'Hashing of identity and bank account numbers for duplicate detection.',
         'Regular security reviews of Platform infrastructure.',
-        'EloFix does not store CVV/CVC or full card numbers. Sensitive card information is entered and processed through the applicable payment service provider.',
+        'EloFix does not store CVV/CVC or full card numbers. Sensitive card information is entered and processed through the applicable payment service provider. EloFix stores payment records necessary for accounting, commission calculation, reconciliation, refunds, dispute handling, audit, fraud prevention, and legal compliance.',
       ],
     },
     {
@@ -85,7 +86,7 @@ export const communityStandards: LegalDocument = {
   id: 'community-standards',
   title: 'Community Standards',
   subtitle: 'Expected behaviour and content standards for all EloFix users.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.communityStandards,
   sections: [
     {
@@ -162,7 +163,7 @@ export const cookiePolicy: LegalDocument = {
   id: 'cookie-policy',
   title: 'Cookie Policy',
   subtitle: 'How EloFix uses cookies and similar technologies.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.cookiePolicy,
   sections: [
     {

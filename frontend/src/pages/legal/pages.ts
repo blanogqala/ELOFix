@@ -6,6 +6,7 @@ export const ProviderAgreementPage = createLegalPage('provider-agreement');
 export const RefundPolicyPage = createLegalPage('refund-policy');
 export const JobCompletionVerificationPage = createLegalPage('job-completion-verification');
 export const EscrowPolicyPage = createLegalPage('escrow-policy');
+export const PaymentSchedulePage = EscrowPolicyPage;
 export const DisputeResolutionPage = createLegalPage('dispute-resolution');
 export const AdminInvestigationPage = createLegalPage('admin-investigation');
 export const CorrectiveWorkPage = createLegalPage('corrective-work');

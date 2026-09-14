@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ChevronRight, FileText } from 'lucide-react';
 import type { LegalDocument } from '@/lib/legal/content';
+import { LEGAL_ROUTES } from '@/lib/legal/versions';
 import { cn } from '@/lib/utils';
 
 interface LegalPageLayoutProps {
@@ -161,7 +162,7 @@ export function LegalPageLayout({ document }: LegalPageLayoutProps) {
               <Link to="/privacy" className="text-primary hover:underline">
                 Privacy
               </Link>
-              <Link to="/escrow-policy" className="text-primary hover:underline">
+              <Link to={LEGAL_ROUTES['escrow-policy']} className="text-primary hover:underline">
                 Payment Schedule
               </Link>
               <Link to="/dispute-resolution" className="text-primary hover:underline">

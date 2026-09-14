@@ -14,6 +14,8 @@ import {
   payoutVerificationLabel,
   postSaveVerificationMessage,
   removeBlockedMessage,
+  shouldShowPaystackSettlementTiming,
+  PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE,
   type PayoutVerificationStatus,
 } from '@/lib/payoutBankingDisplay';
 import { Button } from '@/components/ui/button';
@@ -229,6 +231,9 @@ export function BranchBankDetailsTab({
           Complete your branch banking details to receive payments for material orders. Verification is
           confirmed by the payment gateway — saving does not mark the account verified.
         </p>
+        {shouldShowPaystackSettlementTiming(gatewaySettlementSupported, gatewayProfile) ? (
+          <p className="text-xs text-muted-foreground">{PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE}</p>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm">

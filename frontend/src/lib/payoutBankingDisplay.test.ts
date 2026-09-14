@@ -7,6 +7,8 @@ import {
   payoutVerifiedMessage,
   postSaveVerificationMessage,
   removeBlockedMessage,
+  PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE,
+  shouldShowPaystackSettlementTiming,
 } from '@/lib/payoutBankingDisplay';
 
 describe('payoutBankingDisplay', () => {
@@ -80,5 +82,15 @@ describe('payoutBankingDisplay', () => {
     expect(payoutVerifiedMessage({ recipientConfigured: true, provider: 'PAYSTACK' })).not.toMatch(
       /paid to bank/i
     );
+  });
+
+  it('exposes qualified T+2 settlement timing without promising a fixed date', () => {
+    expect(PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE).toMatch(/not instant/i);
+    expect(PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE).toMatch(/generally T\+2 working days/i);
+    expect(PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE).not.toMatch(/paid to bank/i);
+    expect(shouldShowPaystackSettlementTiming(true, { recipientConfigured: true, provider: 'PAYSTACK' })).toBe(
+      true
+    );
+    expect(shouldShowPaystackSettlementTiming(false, { recipientConfigured: false })).toBe(false);
   });
 });

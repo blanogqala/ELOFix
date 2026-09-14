@@ -13,9 +13,9 @@ describe('legal/workflow correspondence', () => {
     expect(text).toContain('TWO_PAYMENT_50_50');
     expect(text).toContain('SINGLE_PAYMENT_UPFRONT');
     expect(text).toContain('SINGLE_PAYMENT_ON_COMPLETION');
-    expect(text).toMatch(/Not all Jobs use escrow/i);
-    expect(text).toMatch(/Customer payment timing is not the same as provider settlement timing/i);
-    expect(LEGAL_VERSIONS.escrowPolicy).toBe('2026-08-18-r2');
+    expect(text).toMatch(/not a bank, deposit-taker, wallet provider, insurer, or escrow agent/i);
+    expect(text).toMatch(/Successful Customer payment does not mean immediate bank credit/i);
+    expect(LEGAL_VERSIONS.escrowPolicy).toBe('2026-09-14');
   });
 
   it('does not promise automatic R0 forfeiture for ordinary paid service cancellation', () => {

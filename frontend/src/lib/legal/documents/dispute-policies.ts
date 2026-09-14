@@ -2,13 +2,14 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE_DISPUTE = 'September 14, 2026';
+const EFFECTIVE_UNCHANGED = 'August 18, 2026';
 
 export const disputeResolution: LegalDocument = {
   id: 'dispute-resolution',
   title: 'Dispute Resolution Policy',
   subtitle: 'How EloFix handles disagreements about completed Jobs and payments.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_DISPUTE,
   version: LEGAL_VERSIONS.disputeResolution,
   sections: [
     {
@@ -78,7 +79,9 @@ export const disputeResolution: LegalDocument = {
       title: '7. Refund Processing',
       content: [
         'Approved refunds follow the Refund, Returns & Cancellation Policy sequence, including provider repayment where required, admin verification, and payment-service-provider processing.',
-        'Customer refunds are calculated on eligible paid labor (93% of gross labor paid; platform commission is retained). Provider clawback is calculated on the provider share.',
+        'Typical refund display states are Approved, then Processing, then Completed. The Platform may display a refund as processing while Paystack is still processing it.',
+        'EloFix does not claim to have returned money to the Customer until authoritative payment-provider confirmation exists. A processed or completed refund in EloFix does not necessarily mean the Customer\'s bank or card statement has already updated. The Customer\'s bank may reflect the refund later than EloFix\'s system records payment-provider completion.',
+        'Customer refunds are calculated on eligible paid labor (ordinarily up to 93% of eligible gross labor paid). The EloFix platform commission is ordinarily retained, except where applicable law, card-scheme rules, payment-service-provider requirements or a binding determination requires otherwise. Provider clawback is calculated on the provider share.',
         'Refund statuses may include approved, processing, completed, requires manual processing, or could not be completed. A refund is described as returned to the original payment method only after payment-service-provider confirmation.',
         'When recovery from a Provider is required, that portion is not guaranteed instantly. Providers must complete repayment within 30 calendar days through supported gateway repayment and/or bank transfer / EFT (and/or recovery from future earnings where applicable).',
         'Failure to settle an approved refund repayment or other recoverable amount within 30 calendar days may result in restrictions on new work, settlement restrictions, account blocking, referral for lawful debt recovery, and further legal action where appropriate.',
@@ -107,7 +110,7 @@ export const adminInvestigation: LegalDocument = {
   id: 'admin-investigation',
   title: 'Admin Review and Investigation Policy',
   subtitle: 'How EloFix administrators review Platform activity and make decisions.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.adminInvestigation,
   sections: [
     {
@@ -177,7 +180,7 @@ export const correctiveWork: LegalDocument = {
   id: 'corrective-work',
   title: 'Corrective Work Policy',
   subtitle: 'How Providers return to complete remedial work after a dispute.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.correctiveWork,
   sections: [
     {

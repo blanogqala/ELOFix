@@ -7,7 +7,7 @@ import {
   formatRegistrationNumber,
 } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE = 'September 14, 2026';
 
 export const privacyPolicy: LegalDocument = {
   id: 'privacy',
@@ -46,8 +46,9 @@ export const privacyPolicy: LegalDocument = {
         'Provider verification data: South African ID number, business registration, proof of address, certifications, banking information, and uploaded document files.',
         'Supplier data: business details, branch information, inventory, pricing, staff accounts, and order fulfilment records.',
         'Transaction data: Jobs, quotations, material orders, payment intents, invoices, payment schedule and payment status, refunds, commissions, recipient shares, and delivery tracking.',
-        'Payment-related data processed by EloFix may include transaction identifiers, amounts, payment status, refund status, and ledger/accounting records. Sensitive card information is entered and processed through the applicable payment service provider. EloFix does not store CVV/CVC or full card numbers.',
-        'Banking details provided for provider or supplier settlement destinations (which may remain pending verification until settlement is supported).',
+        'Payment-related data processed by EloFix may include transaction identifiers, amounts, currency, payment status, refund status, commissions, recipient shares, and ledger or accounting records. Paystack is currently EloFix\'s primary live payment processor. Payment information that may be transmitted to or received from Paystack may include, where applicable: Customer identity or contact information required for processing; transaction reference; amount and currency; payment status; refund information; Provider or Supplier payout-destination information; bank details needed for payout or subaccount verification; and processor transaction or subaccount identifiers.',
+        'Sensitive card information is entered and processed through the applicable payment service provider. EloFix does not store full card numbers or CVV/CVC. EloFix does store payment records necessary for accounting, commission calculation, reconciliation, refunds, dispute handling, audit, fraud prevention, and legal compliance.',
+        'Banking details provided for provider or supplier settlement destinations. Saving those details, creating a payout destination with Paystack, Paystack verification, and completed bank settlement are distinct states.',
         'Dispute and evidence data: comments, images, videos, messages, and admin resolution records.',
         'Device and security data: device fingerprints, browser fingerprints, IP addresses, user agents, session activity, and login records (see Device Security Policy).',
         'Fraud and trust data: duplicate identity signals, fraud alerts, trust score history, and investigation notes.',
@@ -60,7 +61,7 @@ export const privacyPolicy: LegalDocument = {
       title: '4. How We Use Information',
       content: [
         'To create and manage accounts, authenticate users, and provide Platform features.',
-        'To match Customers with Providers, process payments through payment service providers, record commissions and payment status, deliver notifications, and support Jobs and material orders.',
+        'To match Customers with Providers, process payments through payment service providers (currently Paystack as the primary live processor), record commissions and payment status, deliver notifications, and support Jobs and material orders.',
         'To verify Provider identity, prevent fraud, enforce policies, calculate trust scores, and maintain marketplace safety.',
         'To investigate disputes, process refunds, and support admin review decisions.',
         'To improve the Platform, analyze performance, and develop new features.',
@@ -72,7 +73,7 @@ export const privacyPolicy: LegalDocument = {
       title: '5. How We Share Information',
       content: [
         'With other users when necessary to complete a Job or order, such as sharing contact or location details relevant to service or delivery.',
-        'With third-party payment service providers, hosting providers, identity verification tools, device intelligence services (including FingerprintJS), analytics tools, and other subprocessors under contractual safeguards (see Data Processing Policy). Payment card and certain payment-instrument data may be processed directly by the payment service provider.',
+        'With third-party payment service providers (currently including Paystack, and any replacement or additional approved payment service providers used by EloFix), hosting providers, identity verification tools, device intelligence services (including FingerprintJS), analytics tools, and other subprocessors under contractual safeguards (see Data Processing Policy). Payment card and certain payment-instrument data may be processed directly by the payment service provider.',
         'With regulators, law enforcement, or other parties when required by law or to protect rights, safety, and Platform integrity.',
         'In connection with a merger, acquisition, financing, or sale of assets, subject to appropriate confidentiality protections.',
         'We do not sell personal information.',

@@ -41,6 +41,8 @@ import {
   payoutVerificationLabel,
   postSaveVerificationMessage,
   removeBlockedMessage,
+  shouldShowPaystackSettlementTiming,
+  PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE,
 } from '@/lib/payoutBankingDisplay';
 import { cn } from '@/lib/utils';
 
@@ -234,6 +236,9 @@ export function ProviderPayoutBankingPanel({
           account. Verification is confirmed by the payment gateway — saving details does not mark your
           account verified.
         </p>
+        {shouldShowPaystackSettlementTiming(gatewaySettlementSupported, profile?.gatewaySettlementProfile) ? (
+          <p className="text-xs text-muted-foreground max-w-2xl">{PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE}</p>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-border p-4 space-y-3">

@@ -18,7 +18,7 @@ import {
 } from '@/lib/api/payments';
 import { PaymentMethodSelector } from '@/components/payments/PaymentMethodSelector';
 import { CheckoutLegalAcceptanceCheckbox } from '@/components/payments/CheckoutLegalAcceptanceCheckbox';
-import { buildCheckoutLegalAcceptance } from '@/lib/legal/checkoutAcceptance';
+import { buildCheckoutLegalAcceptance, checkoutProcessorDisclosure } from '@/lib/legal/checkoutAcceptance';
 import { submitCheckout } from '@/lib/paymentCheckout';
 import { LoadingOverlay } from '@/components/common/loading';
 import { Lock, AlertCircle, Loader2 } from 'lucide-react';
@@ -50,10 +50,10 @@ interface PaymentModalProps {
   onCancel?: () => void;
 }
 
-function laborSecurePaymentHint(
+function laborScheduleHint(
   paymentType?: LaborPaymentType | null,
   paymentMode?: CategoryPaymentMode | string | null
-): string {
+): string | null {
   const type = String(paymentType || '');
   const mode = String(paymentMode || '');
   const isDepositFlow =
@@ -61,9 +61,9 @@ function laborSecurePaymentHint(
     type === 'COMPLETION' ||
     mode === 'TWO_PAYMENT_50_50';
   if (isDepositFlow) {
-    return 'Secure payment is completed with our payment service provider. This service uses two separate transactions: a deposit and a completion payment.';
+    return 'This service uses two separate transactions: a deposit and a completion payment.';
   }
-  return 'Secure payment is completed with our payment service provider.';
+  return null;
 }
 
 function checkoutLegalErrorMessage(err: unknown): string | null {
@@ -200,6 +200,20 @@ export function PaymentModal({
     onOpenChange(false);
   };
 
+  const laborHint =
+    kind === 'LABOR'
+      ? laborScheduleHint(
+          paymentType ??
+            (typeof metadata?.paymentType === 'string'
+              ? (metadata.paymentType as LaborPaymentType)
+              : null),
+          paymentMode ??
+            (typeof metadata?.paymentMode === 'string'
+              ? (metadata.paymentMode as CategoryPaymentMode)
+              : null)
+        )
+      : null;
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -265,19 +279,9 @@ export function PaymentModal({
             />
 
             <p className="text-xs text-muted-foreground">
-              {kind === 'LABOR'
-                ? laborSecurePaymentHint(
-                    paymentType ??
-                      (typeof metadata?.paymentType === 'string'
-                        ? (metadata.paymentType as LaborPaymentType)
-                        : null),
-                    paymentMode ??
-                      (typeof metadata?.paymentMode === 'string'
-                        ? (metadata.paymentMode as CategoryPaymentMode)
-                        : null)
-                  )
-                : 'Secure payment is completed with our payment service provider. Card details are entered only on the provider checkout page.'}
+              {checkoutProcessorDisclosure(selectedProvider)}
             </p>
+            {laborHint ? <p className="text-xs text-muted-foreground">{laborHint}</p> : null}
 
             {error && (
               <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-sm text-destructive">

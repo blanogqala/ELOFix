@@ -2,7 +2,7 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE = 'September 14, 2026';
 
 export const deliveryPolicy: LegalDocument = {
   id: 'delivery-policy',
@@ -18,7 +18,7 @@ export const deliveryPolicy: LegalDocument = {
         LEGAL_OPERATOR_INTRO,
         'This Delivery & Collection Policy describes how materials and courier jobs are collected or delivered when arranged through the EloFix Platform.',
         `${COMPANY.brandName} is a marketplace. Independent suppliers fulfil material orders. Independent delivery providers (couriers) may transport goods or complete standalone delivery and moving jobs. ${COMPANY.legalName} does not itself operate a courier fleet or warehouse.`,
-        'Payment processing for materials and delivery fees is handled through applicable third-party payment service provider(s). Delivery fees, where charged, are typically processed as a separate payment from the materials payment.',
+        'Payment processing for materials and delivery fees is handled through applicable third-party payment service provider(s). Paystack is currently EloFix\'s primary live payment processor and may be used for marketplace processing of those payments. Delivery fees, where charged, are typically processed as a separate payment from the materials payment. Successful payment confirmation is not the same as Provider or Supplier bank settlement.',
       ],
     },
     {
@@ -46,7 +46,7 @@ export const deliveryPolicy: LegalDocument = {
       content: [
         'Some supplier branches offer store delivery. This option is available only where the branch has enabled delivery on the Platform.',
         'The branch quotes a delivery fee after the Customer requests store delivery. The quoted fee is not automatically calculated at checkout and is not a guaranteed tariff.',
-        'After the Customer accepts the quoted delivery fee, the delivery fee is paid as a separate payment through the applicable payment service provider.',
+        'After the Customer accepts the quoted delivery fee, the delivery fee is paid as a separate payment through the applicable payment service provider. Paystack may process that payment where it is the selected live processor.',
         'The supplier is responsible for fulfilling store delivery, including packing, transport, and customer communication for that mode, subject to this policy and the Supplier Agreement.',
         'Where the Platform enables live location sharing for store delivery, that tracking is supplier-led while the order is out for delivery.',
       ],
@@ -57,7 +57,7 @@ export const deliveryPolicy: LegalDocument = {
       content: [
         'A Customer may request a delivery provider (courier) to collect materials from a supplier and deliver them to a destination address, where that option is offered on the order.',
         'The selected delivery provider quotes a delivery fee. Displayed profile rates or estimated times, if shown, are indicative only and are not the charged amount unless the Customer accepts a quote.',
-        'After the Customer accepts the quote, the delivery fee is paid as a separate payment through the applicable payment service provider.',
+        'After the Customer accepts the quote, the delivery fee is paid as a separate payment through the applicable payment service provider. Paystack may process that payment where it is the selected live processor.',
         'The delivery provider is an independent service provider, not an employee of EloFix or of LITI Holdings (Pty) Ltd. The courier is responsible for collection, transport, and delivery of the assigned order, subject to the Provider Agreement and this policy.',
         'Where the Platform enables live location sharing for courier delivery, that tracking is provider-led while the courier is collecting or out for delivery.',
       ],

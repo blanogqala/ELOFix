@@ -133,5 +133,6 @@ describe('ProviderPayoutBankingPanel connect action', () => {
     expect(screen.queryByText('Pending verification')).not.toBeInTheDocument();
     expect(screen.queryByText(/Paid to bank/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/ACCT_/)).not.toBeInTheDocument();
+    expect(screen.getByText(/generally T\+2 working days/i)).toBeInTheDocument();
   });
 });

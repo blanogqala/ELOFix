@@ -2,13 +2,14 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE_SUPPLIER_AGREEMENT = 'September 14, 2026';
+const EFFECTIVE_SUPPLIER_PARTICIPATION = 'August 18, 2026';
 
 export const supplierAgreement: LegalDocument = {
   id: 'supplier-agreement',
   title: 'Supplier Agreement',
   subtitle: 'Terms for businesses supplying materials through the EloFix marketplace.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_SUPPLIER_AGREEMENT,
   version: LEGAL_VERSIONS.supplierAgreement,
   sections: [
     {
@@ -35,9 +36,10 @@ export const supplierAgreement: LegalDocument = {
       title: '3. Commission and Payments',
       content: [
         'EloFix charges a platform commission of 7% on the materials subtotal for orders fulfilled through the Platform.',
-        'Your earning is the materials subtotal minus the platform commission and is recorded after Customer payment confirmation through the applicable payment service provider.',
-        'Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible Supplier or branch funds may be settled to a nominated verified bank account. EloFix does not promise automatic bank settlement where marketplace settlement is not supported. Banking details must be accurate and may require verification; saving bank details is not the same as verified settlement or completed settlement.',
-        'Material payments are not subject to job-completion staged payment holds.',
+        'Your recorded earning is the materials subtotal minus the platform commission after Customer payment confirmation through the applicable payment service provider. That recorded earning is a gross Supplier marketplace share and is not necessarily the exact net bank credit after payment-processor fees where the settlement configuration assigns those fees to the Supplier or branch payout destination.',
+        'Paystack is currently EloFix\'s primary live payment processor. Where Paystack marketplace settlement is used, eligible Supplier or branch funds may be routed to a nominated verified Paystack subaccount. Saving banking details, creating a payout destination, verifying that destination, payment confirmation, settlement processing, and final bank credit are distinct states and are not equivalent.',
+        'Successful Customer payment is not immediate Supplier bank settlement. Paystack\'s current standard South African settlement schedule is generally T+2 working days from the relevant transaction date for eligible transactions. Actual timing may be affected by payout-destination verification, weekends, public holidays, bank processing, payment-network processing, compliance or fraud reviews, Paystack operating rules, and other circumstances outside EloFix\'s control. This schedule may change. EloFix does not guarantee a particular settlement date and does not promise instant Supplier settlement.',
+        'Material payments are not subject to job-completion staged payment holds. EloFix does not normally send a second manual transfer of the ordinary Supplier marketplace share after a supported Paystack split-at-charge settlement.',
         'EloFix may deduct refunds, chargebacks, and adjustments from amounts recorded as payable to you through supported Platform accounting and repayment mechanisms.',
       ],
     },
@@ -96,7 +98,7 @@ export const supplierParticipation: LegalDocument = {
   id: 'supplier-participation',
   title: 'Supplier Participation Policy',
   subtitle: 'Operational standards for listing and fulfilling products on EloFix.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_SUPPLIER_PARTICIPATION,
   version: LEGAL_VERSIONS.supplierParticipation,
   sections: [
     {

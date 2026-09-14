@@ -2,13 +2,14 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE_UNCHANGED = 'August 18, 2026';
+const EFFECTIVE_PROVIDER_VERIFICATION = 'September 14, 2026';
 
 export const portfolioContentRights: LegalDocument = {
   id: 'portfolio-content-rights',
   title: 'Portfolio Content Rights',
   subtitle: 'How completion evidence, reviews, and ratings may be displayed on EloFix.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.portfolioContentRights,
   sections: [
     {
@@ -67,7 +68,7 @@ export const providerVerification: LegalDocument = {
   id: 'provider-verification',
   title: 'Provider Verification Policy',
   subtitle: 'Identity and business verification requirements for EloFix Providers.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_PROVIDER_VERIFICATION,
   version: LEGAL_VERSIONS.providerVerification,
   sections: [
     {
@@ -86,7 +87,7 @@ export const providerVerification: LegalDocument = {
         'South African identity document (ID book or smart card).',
         'Business registration documents (company registration certificate or equivalent for registered businesses).',
         'Proof of address (not older than 3 months where applicable).',
-        'Banking information for a settlement destination profile. Bank details saved is not the same as bank account verification pending, gateway payout destination verified, settlement supported, or settlement completed.',
+        'Banking information for a settlement destination profile. Bank details saved is not the same as a Paystack payout destination or subaccount being created, Paystack payout destination verified, or bank settlement completed.',
         'Optional: proof of skill, trade certifications, or professional qualifications.',
         'EloFix may request additional documentation at any time.',
       ],
@@ -98,12 +99,25 @@ export const providerVerification: LegalDocument = {
         'Providers upload documents through the Platform. Documents are reviewed by EloFix administrators.',
         'Each document may be individually approved or rejected with feedback.',
         'Provider account approval requires all mandatory documents to be approved, profile completion, and clearance of fraud review.',
-        'Banking details may remain pending verification. Adding banking details does not authorize EloFix to debit the account and does not guarantee that automatic bank settlement is available.',
+        'Banking details may remain pending verification. Adding banking details does not authorize EloFix to debit the account and does not guarantee that automatic bank settlement is available. EloFix does not itself perform bank-account verification where Paystack performs payout-destination verification.',
+      ],
+    },
+    {
+      id: 'payout-destination-states',
+      title: '4. Payout Destination and Settlement States',
+      content: [
+        'The following states are distinct and are not equivalent:',
+        '1. Banking information saved in EloFix — the Provider has submitted nominated bank details to the Platform.',
+        '2. Paystack payout destination or subaccount created — a payout destination has been connected with Paystack.',
+        '3. Paystack payout destination verified — Paystack has verified the payout destination. Verified means the destination is verified, not that a bank payment has been completed.',
+        '4. Bank settlement completed — funds have been credited according to Paystack and the banking system.',
+        'Paystack may require payout-destination verification before settlement. Saving banking details in EloFix is not the same as Paystack verification. Paystack verification is not the same as completed bank settlement.',
+        'Successful Customer payment is not immediate bank credit. Paystack\'s current standard South African settlement schedule is generally T+2 working days for eligible transactions, subject to verification, weekends, public holidays, bank processing, compliance reviews, and Paystack\'s current terms, which may change. EloFix does not guarantee a specific bank-credit date.',
       ],
     },
     {
       id: 'denial-revocation',
-      title: '4. Denial and Revocation',
+      title: '5. Denial and Revocation',
       content: [
         'Verification may be denied if documents are incomplete, invalid, fraudulent, or do not match account information.',
         'Verification may be revoked if documents expire, fraud is detected, duplicate identities are found, or policy violations occur.',
@@ -112,7 +126,7 @@ export const providerVerification: LegalDocument = {
     },
     {
       id: 'duplicate-checks',
-      title: '5. Duplicate Identity Checks',
+      title: '6. Duplicate Identity Checks',
       content: [
         'EloFix checks for duplicate South African ID numbers, company registration numbers, bank accounts, and document file hashes across the Platform.',
         'Duplicate matches trigger fraud alerts and may block verification approval. See the Fraud Prevention Policy.',
@@ -120,7 +134,7 @@ export const providerVerification: LegalDocument = {
     },
     {
       id: 'popia',
-      title: '6. POPIA and Special Personal Information',
+      title: '7. POPIA and Special Personal Information',
       content: [
         'Identity documents and banking details constitute special personal information under POPIA Section 26.',
         'EloFix processes this information based on contractual necessity for Provider onboarding and legitimate interest for fraud prevention and settlement-destination integrity.',
@@ -129,7 +143,7 @@ export const providerVerification: LegalDocument = {
     },
     {
       id: 'contact',
-      title: '7. Contact',
+      title: '8. Contact',
       content: [
         `Verification questions: ${COMPANY.email}.`,
       ],
@@ -141,7 +155,7 @@ export const fraudPrevention: LegalDocument = {
   id: 'fraud-prevention',
   title: 'Fraud Prevention Policy',
   subtitle: 'How EloFix detects and responds to fraudulent activity.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.fraudPrevention,
   sections: [
     {
@@ -210,7 +224,7 @@ export const deviceSecurity: LegalDocument = {
   id: 'device-security',
   title: 'Device Security Policy',
   subtitle: 'How EloFix collects and uses device information for security and fraud prevention.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.deviceSecurity,
   sections: [
     {
@@ -284,7 +298,7 @@ export const providerReputation: LegalDocument = {
   id: 'provider-reputation',
   title: 'Provider Reputation Policy',
   subtitle: 'How EloFix calculates and uses Provider trust scores.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.providerReputation,
   sections: [
     {
@@ -355,7 +369,7 @@ export const platformActivityRecords: LegalDocument = {
   id: 'platform-activity-records',
   title: 'Platform Activity Records Policy',
   subtitle: 'How EloFix stores activity records for security, compliance, and legal defence.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_UNCHANGED,
   version: LEGAL_VERSIONS.platformActivityRecords,
   sections: [
     {

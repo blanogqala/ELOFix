@@ -2,13 +2,14 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'August 18, 2026';
+const EFFECTIVE_JOB_COMPLETION = 'August 18, 2026';
+const EFFECTIVE_PAYMENT_SCHEDULE = 'September 14, 2026';
 
 export const jobCompletionVerification: LegalDocument = {
   id: 'job-completion-verification',
   title: 'Job Completion Verification Policy',
   subtitle: 'How Customers verify completed work and how Jobs are closed on EloFix.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_JOB_COMPLETION,
   version: LEGAL_VERSIONS.jobCompletionVerification,
   sections: [
     {
@@ -90,7 +91,7 @@ export const escrowPolicy: LegalDocument = {
   id: 'escrow-policy',
   title: 'Payment Schedule and Transparency Policy',
   subtitle: 'How payment schedules, staging, and settlement work for Jobs and orders on EloFix.',
-  effectiveDate: EFFECTIVE,
+  effectiveDate: EFFECTIVE_PAYMENT_SCHEDULE,
   version: LEGAL_VERSIONS.escrowPolicy,
   sections: [
     {
@@ -99,37 +100,50 @@ export const escrowPolicy: LegalDocument = {
       content: [
         `This policy describes how ${COMPANY.legalName}, operating the EloFix Platform, facilitates Customer payments to Providers and Suppliers according to transparent payment schedules for each service or order type.`,
         LEGAL_OPERATOR_INTRO,
-        'EloFix is a marketplace facilitator, not a bank, deposit-taker, or escrow agent. EloFix does not hold Customer funds as deposits and does not guarantee Provider or Supplier earnings.',
-        'Customer payments are processed through third-party payment service providers. EloFix records applicable transaction information, platform commissions, and recipient shares. Actual settlement to a Provider or Supplier bank account depends on the supported payment service provider and settlement configuration. Whether any arrangement is treated as escrow or another regulated payment activity under South African law depends on the licensed provider\'s product and requires appropriate legal advice. This document is informational platform policy only and is not legal advice or a claim of regulatory approval.',
+        'Customer payment processing and supported marketplace settlement are performed through third-party payment service providers. Paystack is currently EloFix\'s primary live payment processor. EloFix may introduce, replace, or use another approved payment service provider in the future, subject to applicable notice requirements.',
+        'EloFix is a marketplace technology platform, not a bank, deposit-taker, wallet provider, insurer, or escrow agent. EloFix does not hold Provider or Supplier settlement funds as customer deposits and does not guarantee Provider or Supplier earnings.',
+        'EloFix records PaymentIntents, commissions, recipient shares, disputes, refunds, and accounting records. EloFix may receive its platform commission and may receive Provider refund repayments. EloFix does not itself perform a second manual transfer of the ordinary Provider or Supplier marketplace share after a supported Paystack split-at-charge settlement.',
+        'Whether any arrangement is treated as escrow or another regulated payment activity under South African law depends on the licensed provider\'s product and requires appropriate legal advice. This document is informational platform policy only and is not a claim of regulatory approval.',
+      ],
+    },
+    {
+      id: 'live-marketplace-flow',
+      title: '2. Live Marketplace Payment Flow',
+      content: [
+        'For eligible service labor, the current live marketplace flow is:',
+        'The Customer pays a transaction tranche. Paystack processes the payment. The current EloFix platform commission is 7% of that collected tranche. The current Provider gross marketplace share is 93% of that collected tranche. Where supported, marketplace settlement may be routed through the Provider\'s verified Paystack subaccount. Paystack and the banking system determine when funds actually appear in the Provider\'s bank account.',
+        'Paystack may split an eligible marketplace transaction between EloFix\'s platform commission and the Provider or Supplier\'s verified Paystack subaccount. Recording that split in EloFix is not the same as a completed bank credit.',
+        'Successful Customer payment does not mean immediate bank credit. EloFix does not guarantee a specific bank-credit date.',
       ],
     },
     {
       id: 'labor-payment-schedule',
-      title: '2. Labor Payment Schedules',
+      title: '3. Labor Payment Schedules',
       content: [
-        'When a Customer pays for labor on a Job, the gross labor amount for that collected tranche is processed through the applicable payment service provider.',
-        'The current contractual EloFix platform commission is 7% of each collected customer labor payment tranche. The Provider share is 93% of that collected tranche and is recorded in EloFix\'s financial ledger.',
-        'Customer payment timing is not the same as provider settlement timing. A recorded or payable share is not automatically a cash deposit into the Provider\'s bank account.',
-        'Not all Jobs use escrow. EloFix does not hold all provider shares, and EloFix is not a deposit-taking escrow agent.',
+        'When a Customer pays for labor on a Job, the gross labor amount for that collected tranche is processed through the applicable payment service provider. Paystack is currently the primary live processor for that collection.',
+        'The current contractual EloFix platform commission is 7% of each collected customer labor payment tranche. The Provider\'s 93% share is a GROSS marketplace share recorded in EloFix\'s financial ledger. A Provider\'s recorded 93% marketplace share is the gross Provider share before any payment-processing fees that the payment service provider may lawfully deduct from that recipient under the applicable settlement configuration. It is not necessarily the exact net amount credited to the Provider\'s bank account.',
+        'Customer payment confirmation is not the same as Provider bank settlement. A recorded or payable share is not automatically a cash deposit into the Provider\'s bank account.',
+        'EloFix is not a deposit-taking escrow agent and does not hold Provider settlement money as customer deposits.',
         'The Platform supports three live labor payment modes. The applicable mode is shown at checkout and in the Job details:',
-        'TWO_PAYMENT_50_50 — the Customer pays a first payment of approximately 50% of the service amount, then a remaining completion payment according to the Job workflow. Commission of 7% applies to each collected customer payment tranche.',
+        'TWO_PAYMENT_50_50 — first transaction: approximately 50% of the quoted labor amount. Second transaction: the remaining approximately 50% once it becomes due under the Job workflow. Each successful transaction is separately subject to the current 7% EloFix commission.',
         'SINGLE_PAYMENT_UPFRONT — the Customer pays the full service amount upfront before work progresses. Commission of 7% applies to that collected payment.',
         'SINGLE_PAYMENT_ON_COMPLETION — the Customer does not pay labor upfront. Payment becomes due after the configured completion or confirmation flow. Commission of 7% applies when that payment is collected.',
-        'Provider workflow: receive requests → quote → receive the applicable customer payment for that category model where due → perform work → request completion → receive any remaining recorded share where applicable.',
+        'Provider workflow: receive requests → quote → receive the applicable customer payment for that category model where due → perform work → request completion → receive any remaining recorded share where applicable, subject to payment-processor settlement timing.',
       ],
     },
     {
       id: 'material-payments',
-      title: '3. Material and Supplier Payments',
+      title: '4. Material and Supplier Payments',
       content: [
-        'Material order payments are subject to a 7% platform commission on the materials subtotal. The supplier earning is the subtotal minus commission and is recorded after payment confirmation.',
-        'Material payments are not subject to job-completion staged payment holds. Where supported by EloFix\'s payment service provider and applicable settlement configuration, eligible Supplier or branch funds may be settled to a nominated verified bank account. EloFix does not promise automatic bank settlement where marketplace settlement is not supported.',
-        'Delivery fees are processed as separate payment intents and follow their own timing with the payment service provider.',
+        'Material order payments are subject to a 7% platform commission on the materials subtotal. The recorded Supplier earning is the subtotal minus commission after payment confirmation. That recorded earning is a gross marketplace share and is not necessarily the exact net bank credit after payment-processor fees.',
+        'Material payments are not subject to job-completion staged payment holds. Where Paystack marketplace settlement is used, eligible Supplier or branch funds may be routed to a nominated verified Paystack subaccount or other payout destination. Saving banking details, creating a payout destination, verifying that destination, and completed bank settlement are distinct states.',
+        'EloFix does not promise automatic or instant Supplier bank settlement where marketplace settlement is not supported, or where verification, banking, or compliance delays apply.',
+        'Delivery fees are processed as separate payment intents through the applicable payment service provider and follow their own collection and settlement timing.',
       ],
     },
     {
       id: 'customer-transparency',
-      title: '4. Customer Transparency',
+      title: '5. Customer Transparency',
       content: [
         'Customers see the applicable payment model (TWO_PAYMENT_50_50, SINGLE_PAYMENT_UPFRONT, or SINGLE_PAYMENT_ON_COMPLETION) before confirming payment for a Job.',
         'For TWO_PAYMENT_50_50 Jobs, Customers may dispute completed work within the 7-day verification window, which may pause the remaining customer payment pending investigation.',
@@ -139,36 +153,46 @@ export const escrowPolicy: LegalDocument = {
     },
     {
       id: 'provider-transparency',
-      title: '5. Provider Transparency',
+      title: '6. Provider Transparency',
       content: [
         'Providers see the mobilisation tranche (where applicable) become payable upon confirmed labor payment, according to the category payment model shown on the Job.',
-        'Any remaining tranche becomes payable upon Customer acceptance, automatic acceptance, or admin resolution in the Provider\'s favour.',
-        'EloFix does not promise to hold, safeguard, or guarantee Provider money as deposits. Timing of any bank settlement depends on the payment service provider and Platform status rules (including open disputes).',
+        'Any remaining tranche becomes payable upon Customer acceptance, automatic acceptance, or admin resolution in the Provider\'s favour. Payable status in EloFix is not the same as completed bank settlement.',
+        'Where Paystack split-at-charge marketplace settlement is used for an eligible transaction, EloFix does not normally send a second manual transfer of the Provider\'s 93% gross share after that settlement.',
         'Final staged tranches generally do not become payable for settlement while an open dispute exists, except by administrator decision.',
       ],
     },
     {
-      id: 'elofix-rights',
-      title: '6. EloFix Rights and Commission',
+      id: 'settlement-timing',
+      title: '7. Settlement Timing',
       content: [
-        'EloFix retains the current contractual 7% platform commission on confirmed labor and material transactions.',
+        'Successful Customer payment does not mean immediate bank credit.',
+        'Paystack\'s current standard South African settlement schedule is generally T+2 working days from the relevant transaction date for eligible transactions. Actual timing may be affected by payout-destination verification, transaction type, weekends, public holidays, bank processing, payment-network processing, compliance or fraud reviews, Paystack operating rules, and other circumstances outside EloFix\'s control.',
+        'This timing is based on the payment provider\'s current settlement schedule, which may change. EloFix does not guarantee a specific bank-credit date.',
+        'Paystack may require payout-destination verification before settlement. Saving banking details in EloFix is not the same as Paystack verification. Paystack verification is not the same as completed bank settlement.',
+      ],
+    },
+    {
+      id: 'elofix-rights',
+      title: '8. EloFix Rights and Commission',
+      content: [
+        'EloFix retains the current contractual 7% platform commission on confirmed labor and material transactions, except where applicable law, card-scheme rules, payment-service-provider requirements, or a binding determination requires otherwise.',
         'EloFix may delay, withhold instructions for, or reverse settlement steps for fraud review, chargebacks, policy violations, open disputes, or legal compliance, subject to payment-service-provider capabilities.',
-        'Commission is not refunded to Providers on labor refunds processed through dispute resolution.',
+        'The EloFix platform commission is ordinarily retained on approved service refunds under the Platform\'s current commercial model, except where applicable law, card-scheme rules, payment-service-provider requirements or a binding determination requires otherwise.',
         'When refund recovery from a Provider is required, Customer refunds follow the Refund, Returns & Cancellation Policy: provider repayment where required, admin verification, then payment-service-provider refund processing (which may complete, require manual processing, or fail).',
       ],
     },
     {
       id: 'cancellation-refunds',
-      title: '7. Cancellation and Refund Impact on Payment Schedules',
+      title: '9. Cancellation and Refund Impact on Payment Schedules',
       content: [
-        'Before provider amounts become payable under the schedule: net labor refund to Customer (93% of eligible paid gross), subject to payment-service-provider processing and confirmation.',
+        'Before provider amounts become payable under the schedule: net labor refund to Customer is ordinarily calculated on the eligible Provider share (93% of eligible paid gross labor), subject to payment-service-provider processing and confirmation and to mandatory law.',
         'After a first tranche has become payable on a TWO_PAYMENT_50_50 Job: refund may be limited to any remaining unsettled balance plus recoverable provider amounts; any shortfall is recovered from the Provider over up to 30 calendar days.',
         'Admin partial or full refunds through dispute resolution may trigger provider clawback from unsettled balances, recorded earnings, or recorded refund debt as applicable.',
       ],
     },
     {
       id: 'disputes',
-      title: '8. Disputes and Payment Pause',
+      title: '10. Disputes and Payment Pause',
       content: [
         'When a Customer opens a dispute, the labor payment intent is marked as disputed and any remaining staged tranche does not become payable for settlement until the dispute is resolved.',
         'Administrator outcomes may include full refund, partial refund, release of remaining payment, return for corrective work, or case closure. See the Dispute Resolution Policy.',
@@ -176,17 +200,17 @@ export const escrowPolicy: LegalDocument = {
     },
     {
       id: 'limitation',
-      title: '9. Limitation of Liability',
+      title: '11. Limitation of Liability',
       content: [
         'EloFix is not liable for failures, delays, or errors of payment service providers, banks, or card networks.',
-        'EloFix does not guarantee that Providers or Suppliers will perform to Customer expectations, and does not guarantee that payments will settle on any particular date beyond what the payment service provider facilitates.',
+        'EloFix does not guarantee that Providers or Suppliers will perform to Customer expectations, and does not guarantee that payments will settle on any particular date. Bank settlement timing is controlled by the payment processor and banking system.',
         'To the maximum extent permitted by South African law, EloFix\'s aggregate liability for payment-schedule-related claims is limited to the greater of platform fees paid by you in the prior 12 months or R1,500, except where prohibited by the CPA, ECTA, or other mandatory law.',
         'Nothing in this policy limits mandatory consumer rights under South African law.',
       ],
     },
     {
       id: 'contact',
-      title: '10. Contact',
+      title: '12. Contact',
       content: [
         `Payment schedule questions: ${COMPANY.email}.`,
       ],

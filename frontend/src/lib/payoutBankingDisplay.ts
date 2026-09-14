@@ -97,3 +97,13 @@ export function payoutVerifiedMessage(gatewayProfile?: GatewaySettlementProfile 
   }
   return 'Gateway confirmed this account for settlements.';
 }
+
+export const PAYSTACK_SETTLEMENT_TIMING_DISCLOSURE =
+  'Customer payments are confirmed immediately after successful payment, but bank settlement is not instant. Paystack\'s current South African settlement schedule is generally T+2 working days for eligible transactions. Bank, verification, weekend, public-holiday or compliance delays may apply.';
+
+export function shouldShowPaystackSettlementTiming(
+  supported: boolean,
+  gatewayProfile?: GatewaySettlementProfile | null
+): boolean {
+  return Boolean(supported) || isPaystackDestinationConnected(gatewayProfile);
+}
