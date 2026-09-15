@@ -137,4 +137,6 @@ router.post(
   asyncHandler(adminController.processCustomerRefundFromRepayment)
 );
 
+router.post("/payout-settlements/reconcile", asyncHandler(adminController.reconcilePayoutSettlements));
+
 module.exports = router;

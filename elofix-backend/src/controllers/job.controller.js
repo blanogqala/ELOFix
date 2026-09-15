@@ -49,6 +49,11 @@ async function getJobById(req, res) {
     throw new AppError("Invalid job id", 400);
   }
   const job = await jobService.getJobByIdForActor(id, req.user.userId, req.user.role);
+  const role = String(req.user.role || "").toUpperCase();
+  if (role === "ADMIN" || role === "PROVIDER") {
+    const payoutTransparency = require("../services/payoutTransparency.service");
+    job.payoutReconciliations = await payoutTransparency.listPayoutReconciliationsForJob(id);
+  }
   res.json({ success: true, job });
 }
 

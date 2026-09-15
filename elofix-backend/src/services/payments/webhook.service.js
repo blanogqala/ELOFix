@@ -4,6 +4,7 @@ const prisma = require("../../config/prisma");
 const escrowSettlement = require("./escrowSettlement.service");
 const { getGateway, GATEWAYS } = require("./gatewayRegistry");
 const { toCents } = require("./money.util");
+const { payoutColumnsForPaidIntent } = require("./payoutTransparency.util");
 const {
   ELOFIX_GROSS_COMMISSION_PERCENT,
   isMarketplaceSplitKind,
@@ -275,6 +276,7 @@ async function processWebhookResult(providerKey, verifyResult) {
             ...(verifyResult.raw && typeof verifyResult.raw === "object" ? verifyResult.raw : {}),
           };
 
+          const payoutColumns = payoutColumnsForPaidIntent(intent, mergedPayload);
           await tx.paymentIntent.update({
             where: { id: intent.id },
             data: {
@@ -283,6 +285,9 @@ async function processWebhookResult(providerKey, verifyResult) {
               gatewayTransactionId: gwTxId,
               gatewayPayload: mergedPayload,
               escrowStatus: "NOT_APPLICABLE",
+              processorFeeAmount: payoutColumns.processorFeeAmount,
+              expectedBankSettlementAmount: payoutColumns.expectedBankSettlementAmount,
+              payoutSettlementStatus: payoutColumns.payoutSettlementStatus,
             },
           });
 
@@ -312,6 +317,7 @@ async function processWebhookResult(providerKey, verifyResult) {
             fullyProcessed: !paidFlags.needsPostSettlement,
             intentId: intent.id,
             state: "PAID",
+            notifyPayoutProcessing: true,
             ...paidFlags,
             settledAudit,
             notifyDepositPaid: Boolean(laborSettleExtra?.notifyDepositPaid),
@@ -442,6 +448,14 @@ async function processWebhookResult(providerKey, verifyResult) {
         await obligationService.afterObligationPaid(result.obligationPaidCustomerId);
       } catch (clearErr) {
         console.error("[processWebhookResult] obligation restriction clear failed", clearErr);
+      }
+    }
+    if (result?.notifyPayoutProcessing && result?.intentId && !result?.duplicate) {
+      try {
+        const rec = require("./paystack.settlementReconcile.service");
+        await rec.notifyChargeTimeProcessing(result.intentId);
+      } catch (payoutNotifyErr) {
+        console.error("[processWebhookResult] payout processing notify failed", payoutNotifyErr);
       }
     }
     return { httpStatus: 200, result };

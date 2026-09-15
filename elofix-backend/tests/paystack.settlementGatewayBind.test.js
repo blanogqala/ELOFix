@@ -180,8 +180,8 @@ async function main() {
             paystackFix.intent,
             order
           );
-          if (result.settlementStatus !== "SETTLED") {
-            throw new Error(`expected SETTLED for PAYSTACK split, got ${result.settlementStatus}`);
+          if (result.settlementStatus !== "PROCESSING") {
+            throw new Error(`expected PROCESSING for PAYSTACK split, got ${result.settlementStatus}`);
           }
           if (paystackCalls.length !== 1) {
             throw new Error("PAYSTACK intent must use Paystack createSupplierSettlement once");

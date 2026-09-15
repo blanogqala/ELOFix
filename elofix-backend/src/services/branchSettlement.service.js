@@ -40,14 +40,16 @@ function dateFilter({ from, to } = {}) {
 
 function mapGatewaySettlementStatus(raw) {
   const s = String(raw || "").toUpperCase();
-  if (s === "SETTLED" || s === "COMPLETE" || s === "COMPLETED") return "SETTLED";
+  if (s === "SETTLED") return "SETTLED";
+  if (s === "COMPLETE" || s === "COMPLETED") return "PROCESSING";
   if (s === "PROCESSING" || s === "IN_PROGRESS") return "PROCESSING";
   if (s === "FAILED") return "FAILED";
-  if (s === "REVERSED" || s === "REVERSED") return "REVERSED";
+  if (s === "REVERSED") return "REVERSED";
   return "PENDING";
 }
 
 function toPublicEvent(row, branchName) {
+  const intent = row.paymentIntent;
   return {
     id: row.id,
     branchId: row.branchId,
@@ -59,13 +61,35 @@ function toPublicEvent(row, branchName) {
     grossAmount: roundMoney2(row.grossAmount),
     commissionAmount: roundMoney2(row.commissionAmount),
     netAmount: roundMoney2(row.netAmount),
-    settlementStatus: row.settlementStatus,
+    settlementStatus: intent?.payoutSettlementStatus || row.settlementStatus,
+    payoutSettlementStatus: intent?.payoutSettlementStatus || row.settlementStatus,
+    processorFeeAmount:
+      intent?.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))
+        ? roundMoney2(intent.processorFeeAmount)
+        : null,
+    expectedBankSettlementAmount:
+      intent?.expectedBankSettlementAmount != null &&
+      Number.isFinite(Number(intent.expectedBankSettlementAmount))
+        ? roundMoney2(intent.expectedBankSettlementAmount)
+        : null,
     gatewayReference: row.gatewayReference || undefined,
-    gatewaySettlementId: row.gatewaySettlementId || undefined,
+    gatewaySettlementId:
+      intent?.payoutSettlement?.externalSettlementId || row.gatewaySettlementId || undefined,
     description: row.description || undefined,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
 }
+
+const payoutIntentInclude = {
+  paymentIntent: {
+    select: {
+      processorFeeAmount: true,
+      expectedBankSettlementAmount: true,
+      payoutSettlementStatus: true,
+      payoutSettlement: { select: { externalSettlementId: true } },
+    },
+  },
+};
 
 async function createSettlementEventTx(tx, data) {
   return tx.branchSettlementEvent.create({
@@ -319,6 +343,7 @@ async function listBranchSettlementHistory(branchId, { from, to } = {}) {
   const rows = await prisma.branchSettlementEvent.findMany({
     where: { branchId: String(branchId), ...dateFilter({ from, to }) },
     orderBy: { createdAt: "desc" },
+    include: payoutIntentInclude,
   });
   return { events: rows.map((r) => toPublicEvent(r)) };
 }
@@ -333,7 +358,7 @@ async function listSupplierSettlementHistory(supplierOrgId, { from, to, branchId
       ...dateFilter({ from, to }),
     },
     orderBy: { createdAt: "desc" },
-    include: { branch: { select: { id: true, name: true } } },
+    include: { branch: { select: { id: true, name: true } }, ...payoutIntentInclude },
   });
   return {
     events: rows.map((r) => toPublicEvent(r, r.branch?.name)),
@@ -431,7 +456,17 @@ async function handleSettlementWebhook(providerInput, payload, headers = {}) {
 
   const verified = await gw.verifySettlementWebhook(payload, headers);
   if (!verified?.valid) {
-    return { processed: false, reason: "invalid_signature" };
+    return { processed: false, reason: verified?.ignored ? "ignored" : "invalid_signature", event: verified?.event };
+  }
+
+  if (provider === "PAYSTACK") {
+    const rec = require("./payments/paystack.settlementReconcile.service");
+    const applied = await rec.reconcilePaystackSettlementById(verified.settlementId, {
+      source: "settlement_webhook",
+      status: verified.status,
+      notify: true,
+    });
+    return { processed: !applied.skipped, ...applied };
   }
 
   const settlementId = verified.settlementId || verified.gatewayReference;

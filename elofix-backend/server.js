@@ -81,6 +81,7 @@ const { startNotificationOutboxJob } = require("./src/jobs/notificationOutbox.jo
 const { startTrustScoreMonthlyBonusJob } = require("./src/jobs/trustScoreMonthlyBonus.job");
 const { startRefundDebtEnforcementJob } = require("./src/jobs/refundDebtEnforcement.job");
 const { startCustomerPaymentObligationJob } = require("./src/jobs/customerPaymentObligation.job");
+const { startPaystackSettlementReconcileJob } = require("./src/jobs/paystackSettlementReconcile.job");
 const trackingService = require("./src/services/tracking.service");
 const materialOrderService = require("./src/services/materialOrder.service");
 const { ensureProviderTotalReviewsColumn } = require("./src/utils/ensureDbSchemaPatches");
@@ -139,6 +140,7 @@ function startIntervalsAfterListen() {
   startTrustScoreMonthlyBonusJob();
   startRefundDebtEnforcementJob();
   startCustomerPaymentObligationJob();
+  startPaystackSettlementReconcileJob();
   void trackingService.expireOldSessions();
   setInterval(() => {
     void trackingService.expireOldSessions();

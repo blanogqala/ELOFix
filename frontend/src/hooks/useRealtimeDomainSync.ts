@@ -162,6 +162,8 @@ export function useRealtimeDomainSync() {
           if (jobId) {
             void queryClient.invalidateQueries({ queryKey: queryKeys.providerEarnings.job(jobId) });
           }
+          void queryClient.invalidateQueries({ queryKey: queryKeys.supplier.all });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.all });
           break;
         }
 

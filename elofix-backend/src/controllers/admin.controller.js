@@ -728,6 +728,16 @@ async function listPendingPayoutProfiles(req, res) {
   res.json({ success: true, ...data });
 }
 
+async function reconcilePayoutSettlements(req, res) {
+  const rec = require("../services/payments/paystack.settlementReconcile.service");
+  const result = await rec.reconcileRecentPaystackSettlements({
+    source: "admin",
+    notify: true,
+    lookbackDays: req.body?.lookbackDays,
+  });
+  res.json({ success: true, ...result });
+}
+
 module.exports = {
   listProviders,
   listProviderNetRevenues,
@@ -803,4 +813,5 @@ module.exports = {
   getBranchPayoutProfile,
   listPendingPayoutProfiles,
   listPaymentObligations,
+  reconcilePayoutSettlements,
 };

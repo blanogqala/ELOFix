@@ -487,7 +487,7 @@ async function testSettlementsDoNotTransfer() {
     });
     assert.strictEqual(provider.supported, true);
     assert.strictEqual(provider.alreadySplitAtCharge, true);
-    assert.strictEqual(provider.status, "COMPLETE");
+    assert.strictEqual(provider.status, "PROCESSING");
     assert.strictEqual(provider.message, "paystack_split_at_charge_no_transfer");
     assert.strictEqual(supplier.supported, true);
     assert.strictEqual(supplier.alreadySplitAtCharge, true);

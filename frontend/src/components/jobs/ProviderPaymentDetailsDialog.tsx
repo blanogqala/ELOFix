@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, Lock } from 'lucide-react';
+import { PayoutBreakdown } from '@/components/payments/PayoutBreakdown';
 import type { Job } from '@/types';
 import { formatZar } from '@/lib/paymentSchedule';
 import { cn } from '@/lib/utils';
@@ -158,9 +159,31 @@ export function ProviderPaymentDetailsDialog({ open, onOpenChange, job }: Props)
             <p className="text-xs text-muted-foreground">
               Customer paid {formatZar(model.customerTotalPaid)}. Your share is{' '}
               {formatZar(model.providerShareRecorded)} after EloFix commission — not the full
-              service price. Bank payout is handled outside EloFix.
+              service price. Paystack fees may reduce the amount that reaches your bank.
             </p>
           </section>
+
+          {Array.isArray(job.payoutReconciliations) && job.payoutReconciliations.length > 0 ? (
+            <section className="rounded-lg border border-border p-4 space-y-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Payout / settlement
+              </p>
+              {job.payoutReconciliations.map((row) => (
+                <div key={row.paymentIntentId} className="space-y-2">
+                  <p className="text-xs font-mono break-all text-muted-foreground">{row.merchantReference}</p>
+                  <PayoutBreakdown
+                    customerAmount={row.customerAmount}
+                    commissionAmount={row.commissionAmount}
+                    recipientGrossShare={row.recipientGrossShare}
+                    processorFeeAmount={row.processorFeeAmount}
+                    expectedBankSettlementAmount={row.expectedBankSettlementAmount}
+                    payoutSettlementStatus={row.payoutSettlementStatus}
+                    payoutSettledAt={row.payoutSettledAt}
+                  />
+                </div>
+              ))}
+            </section>
+          ) : null}
 
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

@@ -434,14 +434,64 @@ async function getSettlementStatus(settlementId) {
   return {
     supported: true,
     alreadySplitAtCharge: true,
-    status: "COMPLETE",
+    status: "PROCESSING",
     settlementId: settlementId || null,
     message: "paystack_split_at_charge_no_transfer",
   };
 }
 
-async function verifySettlementWebhook() {
-  return { valid: false };
+async function listSettlements({ from, to, subaccount, page = 1, perPage = 50 } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("perPage", String(perPage));
+  if (from) params.set("from", String(from));
+  if (to) params.set("to", String(to));
+  if (subaccount) params.set("subaccount", String(subaccount));
+  const { json } = await paystackRequest("GET", `/settlement?${params.toString()}`);
+  const data = Array.isArray(json?.data) ? json.data : [];
+  return {
+    settlements: data,
+    meta: json?.meta && typeof json.meta === "object" ? json.meta : null,
+  };
+}
+
+async function getSettlementTransactions(settlementId, { page = 1, perPage = 100 } = {}) {
+  const id = String(settlementId || "").trim();
+  if (!id) return { transactions: [] };
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("perPage", String(perPage));
+  const { json } = await paystackRequest(
+    "GET",
+    `/settlement/${encodeURIComponent(id)}/transactions?${params.toString()}`
+  );
+  const data = Array.isArray(json?.data) ? json.data : [];
+  return { transactions: data, meta: json?.meta && typeof json.meta === "object" ? json.meta : null };
+}
+
+async function verifySettlementWebhook(payload) {
+  const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const event = String(body.event || "").trim().toLowerCase();
+  if (event.startsWith("transfer.")) {
+    return { valid: false, ignored: true, event };
+  }
+  if (!event.startsWith("settlement.")) {
+    return { valid: false, ignored: true, event };
+  }
+  const data = body.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : {};
+  const settlementId = data.id != null ? String(data.id) : data.settlement_id != null ? String(data.settlement_id) : null;
+  if (!settlementId) {
+    return { valid: false, event };
+  }
+  return {
+    valid: true,
+    settlementId,
+    status: data.status || null,
+    gatewayReference: data.settlement_date || data.paid_at || null,
+    event,
+    externalEventId: `paystack:${event}:${settlementId}`,
+    subaccount: safePaystackSubaccountCode(data.subaccount || data.subaccount_code),
+  };
 }
 
 module.exports = {
@@ -463,5 +513,7 @@ module.exports = {
   createSupplierSettlement,
   getSettlementStatus,
   verifySettlementWebhook,
+  listSettlements,
+  getSettlementTransactions,
   assertPaystackCredentials,
 };

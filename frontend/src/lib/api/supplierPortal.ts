@@ -657,6 +657,9 @@ export interface BranchSettlementEventRow {
   commissionAmount: number;
   netAmount: number;
   settlementStatus: string;
+  payoutSettlementStatus?: string | null;
+  processorFeeAmount?: number | null;
+  expectedBankSettlementAmount?: number | null;
   gatewayReference?: string;
   gatewaySettlementId?: string;
   description?: string;

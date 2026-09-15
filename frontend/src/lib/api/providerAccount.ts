@@ -84,6 +84,14 @@ export interface ProviderSettlementRecord {
   providerShare: number;
   merchantReference: string;
   paidAt: string;
+  paymentState?: string | null;
+  gateway?: string | null;
+  processorFeeAmount?: number | null;
+  expectedBankSettlementAmount?: number | null;
+  payoutSettlementStatus?: string | null;
+  payoutSettlementId?: string | null;
+  payoutSettledAt?: string | null;
+  externalSettlementId?: string | null;
 }
 
 export interface ProviderEarningsResponse {

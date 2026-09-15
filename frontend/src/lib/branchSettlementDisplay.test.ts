@@ -10,8 +10,8 @@ describe('branchSettlementDisplay', () => {
   it('maps verification statuses without withdrawal language', () => {
     expect(payoutVerificationLabel('VERIFIED')).toBe('Verified');
     expect(payoutVerificationLabel('NOT_CONFIGURED')).toBe('Not configured');
-    expect(settlementStatusLabel('NOT_SUPPORTED')).toBe('Automatic settlement unavailable');
-    expect(settlementStatusLabel('SETTLED')).toBe('Settled');
+    expect(settlementStatusLabel('NOT_SUPPORTED')).toBe('Not available');
+    expect(settlementStatusLabel('SETTLED')).toBe('Settled by Paystack');
   });
 
   it('shows onboarding only when profile incomplete', () => {

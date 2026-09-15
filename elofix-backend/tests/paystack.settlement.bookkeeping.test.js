@@ -167,11 +167,11 @@ async function testPendingVerificationPaysplitIsSettled() {
   try {
     await withEnv(paystackEnv(), async () => {
       const result = await runSettlement(fix);
-      assert.strictEqual(result.settlementStatus, "SETTLED");
+      assert.strictEqual(result.settlementStatus, "PROCESSING");
       assert.strictEqual(createCalls, 1);
     });
     const order = await prisma.materialOrder.findUnique({ where: { id: fix.orderId } });
-    assert.strictEqual(order.settlementStatus, "SETTLED");
+    assert.strictEqual(order.settlementStatus, "PROCESSING");
     assert.strictEqual(Number(order.platformCommission), 7);
     assert.strictEqual(Number(order.supplierEarning), 93);
     const profile = await prisma.branchWithdrawalProfile.findUnique({ where: { id: fix.profile.id } });

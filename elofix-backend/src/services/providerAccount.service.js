@@ -280,6 +280,15 @@ async function getProviderEarnings(userId) {
             merchantReference: true,
             paidAt: true,
             createdAt: true,
+            state: true,
+            provider: true,
+            processorFeeAmount: true,
+            expectedBankSettlementAmount: true,
+            payoutSettlementStatus: true,
+            payoutSettlementId: true,
+            payoutSettlement: {
+              select: { id: true, settledAt: true, settlementDate: true, externalSettlementId: true },
+            },
           },
         });
 
@@ -300,6 +309,7 @@ async function getProviderEarnings(userId) {
 
   const settlementRecords = paidIntents.map((intent) => {
     const meta = intent.jobId ? jobMetaById.get(intent.jobId) : null;
+    const settledAt = intent.payoutSettlement?.settledAt || intent.payoutSettlement?.settlementDate || null;
     return {
       id: intent.id,
       jobId: intent.jobId,
@@ -318,6 +328,21 @@ async function getProviderEarnings(userId) {
         : intent.createdAt instanceof Date
           ? intent.createdAt.toISOString()
           : String(intent.createdAt),
+      paymentState: intent.state,
+      gateway: String(intent.provider || ""),
+      processorFeeAmount:
+        intent.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))
+          ? Number(intent.processorFeeAmount)
+          : null,
+      expectedBankSettlementAmount:
+        intent.expectedBankSettlementAmount != null &&
+        Number.isFinite(Number(intent.expectedBankSettlementAmount))
+          ? Number(intent.expectedBankSettlementAmount)
+          : null,
+      payoutSettlementStatus: intent.payoutSettlementStatus || "NOT_APPLICABLE",
+      payoutSettlementId: intent.payoutSettlementId || intent.payoutSettlement?.id || null,
+      payoutSettledAt: settledAt instanceof Date ? settledAt.toISOString() : settledAt ? String(settledAt) : null,
+      externalSettlementId: intent.payoutSettlement?.externalSettlementId || null,
     };
   });
 
