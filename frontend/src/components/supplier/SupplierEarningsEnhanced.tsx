@@ -5,7 +5,6 @@ import {
   getSupplierOrdersExport,
   getSupplierMe,
   getSupplierAnalyticsBranches,
-  getSupplierOrgSettlementHistory,
   EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY,
   type SupplierOrdersExportRow,
 } from '@/lib/api/supplierPortal';
@@ -36,8 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { SupplierSettlementHistoryPanel } from '@/components/supplier/SupplierSettlementHistoryPanel';
 
 export function toDateInputValue(d: Date): string {
   const yyyy = d.getFullYear();
@@ -692,41 +689,17 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
         </div>
       )}
 
-      <Tabs defaultValue="orders" className="w-full">
-        <TabsList className="grid w-full max-w-lg grid-cols-2">
-          <TabsTrigger value="orders">List of Orders</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="orders" className="mt-4">
-          <SupplierEarningsOrdersPanel
-            userId={userId}
-            heading="All orders (all branches)"
-            showOrdersCardHeader
-            controlledFrom={from}
-            controlledTo={to}
-            onControlledFromChange={setFrom}
-            onControlledToChange={setTo}
-            hideRangeInputs
-            omitSummaryCards
-          />
-        </TabsContent>
-
-        <TabsContent value="history" className="mt-4">
-          <SupplierSettlementHistoryPanel
-            queryKeyPrefix={`supplier-${userId}-earnings-hub`}
-            fetchEvents={getSupplierOrgSettlementHistory}
-            branches={profile?.branches}
-            initialFrom={from}
-            initialTo={to}
-            controlledFrom={from}
-            controlledTo={to}
-            onControlledFromChange={setFrom}
-            onControlledToChange={setTo}
-            exportFileTag="supplier-earnings-settlements"
-          />
-        </TabsContent>
-      </Tabs>
+      <SupplierEarningsOrdersPanel
+        userId={userId}
+        heading="All orders (all branches)"
+        showOrdersCardHeader
+        controlledFrom={from}
+        controlledTo={to}
+        onControlledFromChange={setFrom}
+        onControlledToChange={setTo}
+        hideRangeInputs
+        omitSummaryCards
+      />
     </div>
   );
 }

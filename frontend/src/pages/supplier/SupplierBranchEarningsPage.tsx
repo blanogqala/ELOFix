@@ -14,7 +14,6 @@ import {
   parseInitialDate,
 } from '@/components/supplier/SupplierEarningsEnhanced';
 import { BranchBankDetailsTab } from '@/components/supplier/BranchBankDetailsTab';
-import { BranchSettlementHistoryTab } from '@/components/supplier/BranchSettlementHistoryTab';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -153,10 +152,9 @@ export default function SupplierBranchEarningsPage() {
         </div>
 
         <Tabs defaultValue={defaultTab} className="w-full">
-          <TabsList className={`grid w-full max-w-2xl ${showBankDetailsTab ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          <TabsList className={`grid w-full max-w-2xl ${showBankDetailsTab ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <TabsTrigger value="orders">Orders</TabsTrigger>
             {showBankDetailsTab ? <TabsTrigger value="bank-details">Bank Details</TabsTrigger> : null}
-            <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="orders" className="mt-4">
@@ -183,15 +181,6 @@ export default function SupplierBranchEarningsPage() {
               />
             </TabsContent>
           ) : null}
-
-          <TabsContent value="history">
-            <BranchSettlementHistoryTab
-              branchId={branchId}
-              userId={user.id}
-              initialFrom={from}
-              initialTo={to}
-            />
-          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
