@@ -37,4 +37,14 @@ describe('resolveNavClearancePath', () => {
   it('resolves provider profile for provider role', () => {
     expect(resolveNavClearancePath('/provider/profile', 'provider')).toBe('/provider/profile');
   });
+
+  it('resolves supplier and branch staff orders and earnings', () => {
+    expect(resolveNavClearancePath('/supplier/orders', 'supplier')).toBe('/supplier/orders');
+    expect(resolveNavClearancePath('/supplier/earnings', 'supplier')).toBe('/supplier/earnings');
+    expect(resolveNavClearancePath('/supplier/earnings/branch/abc', 'branch_staff')).toBe(
+      '/supplier/earnings'
+    );
+    expect(resolveNavClearancePath('/supplier/orders', 'branch_staff')).toBe('/supplier/orders');
+    expect(resolveNavClearancePath('/provider/earnings', 'provider')).toBe('/provider/earnings');
+  });
 });

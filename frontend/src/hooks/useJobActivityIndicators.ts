@@ -7,6 +7,7 @@ import {
   countSection,
   hasJobsNavActivity,
   hasPaymentsNavActivity,
+  hasEarningsNavActivity,
   hasRequestsNavActivity,
   jobIdsWithActivity,
   requestHasActivity,
@@ -66,6 +67,7 @@ export function useJobActivityIndicators() {
     hasJobsNavActivity: hasJobsNavActivity(notifications, pendingRequestIds),
     hasRequestsNavActivity: hasRequestsNavActivity(notifications, pendingRequestIds),
     hasPaymentsNavActivity: hasPaymentsNavActivity(notifications),
+    hasEarningsNavActivity: hasEarningsNavActivity(notifications),
     activeJobIds,
     jobHasActivity: (jobId: string) => activeJobIds.has(jobId),
     requestHasActivity: (jobId: string) =>

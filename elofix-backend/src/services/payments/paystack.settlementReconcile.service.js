@@ -6,6 +6,7 @@ const { computeExpectedBankSettlement, fromCents, toCents } = require("./money.u
 const {
   mapPaystackSettlementApiStatus,
   recipientTypeFromIntent,
+  resolvePayoutStaffNotifyBranchId,
   processorFeeFromPaystackEvidence,
   majorOrNull,
 } = require("./payoutTransparency.util");
@@ -193,16 +194,16 @@ async function notifyPayoutTransition({ intent, fromStatus, toStatus, settlement
     message = "A Paystack payout was reversed. EloFix is checking the settlement.";
   }
 
+  let branchIdForRealtime = intent.branchId ? String(intent.branchId) : null;
   const recipientType = recipientTypeFromIntent(intent);
   if (recipientType === "SUPPLIER_BRANCH") {
-    let supplierId = intent.materialOrderId
-      ? (
-          await prisma.materialOrder.findUnique({
-            where: { id: intent.materialOrderId },
-            select: { supplierId: true },
-          })
-        )?.supplierId
+    const materialOrder = intent.materialOrderId
+      ? await prisma.materialOrder.findUnique({
+          where: { id: intent.materialOrderId },
+          select: { supplierId: true, branchId: true },
+        })
       : null;
+    const supplierId = materialOrder?.supplierId;
     if (supplierId) {
       await notificationService.notifySupplierOrgOwnerMaterialEvent(String(supplierId), {
         type: "payout_status",
@@ -210,6 +211,19 @@ async function notifyPayoutTransition({ intent, fromStatus, toStatus, settlement
         message,
         materialOrderId: intent.materialOrderId || undefined,
         jobId: intent.jobId || undefined,
+        dedupeKey,
+      });
+    }
+    const branchId = resolvePayoutStaffNotifyBranchId(intent, materialOrder);
+    if (branchId) {
+      branchIdForRealtime = branchId;
+      const branchStaffNotificationService = require("../branchStaffNotification.service");
+      await branchStaffNotificationService.createForBranchUsers(branchId, {
+        category: "SYSTEM",
+        type: "payout_status",
+        title,
+        message,
+        materialOrderId: intent.materialOrderId || undefined,
         dedupeKey,
       });
     }
@@ -233,7 +247,7 @@ async function notifyPayoutTransition({ intent, fromStatus, toStatus, settlement
     jobId: intent.jobId || undefined,
     orderId: intent.materialOrderId || undefined,
     userIds,
-    branchIds: intent.branchId ? [String(intent.branchId)] : [],
+    branchIds: branchIdForRealtime ? [branchIdForRealtime] : [],
     adminRoom: true,
     metadata: { payoutSettlementStatus: toStatus },
   });
@@ -242,7 +256,7 @@ async function notifyPayoutTransition({ intent, fromStatus, toStatus, settlement
     action: "payout-status-changed",
     entityId: settlementId || intent.id,
     orderId: intent.materialOrderId || undefined,
-    branchIds: intent.branchId ? [String(intent.branchId)] : [],
+    branchIds: branchIdForRealtime ? [branchIdForRealtime] : [],
     adminRoom: true,
   });
 }

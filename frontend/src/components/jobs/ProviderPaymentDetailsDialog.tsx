@@ -133,7 +133,7 @@ export function ProviderPaymentDetailsDialog({ open, onOpenChange, job }: Props)
             </p>
             <AmountRow label="EloFix commission (7%)" amount={model.commissionRecorded} />
             <AmountRow
-              label="Your provider share (93%)"
+              label="Your gross share (93%)"
               amount={model.providerShareRecorded}
               emphasize
               className="text-primary"
@@ -157,9 +157,9 @@ export function ProviderPaymentDetailsDialog({ open, onOpenChange, job }: Props)
               ) : null}
             </div>
             <p className="text-xs text-muted-foreground">
-              Customer paid {formatZar(model.customerTotalPaid)}. Your share is{' '}
-              {formatZar(model.providerShareRecorded)} after EloFix commission — not the full
-              service price. Paystack fees may reduce the amount that reaches your bank.
+              Customer paid {formatZar(model.customerTotalPaid)}. Your gross share is{' '}
+              {formatZar(model.providerShareRecorded)} after EloFix commission (93%) — not the final bank amount.
+              Paystack processing fee is confirmed after payment and may reduce the amount credited to your bank.
             </p>
           </section>
 

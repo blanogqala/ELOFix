@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getUnreadCount } from '@/lib/api/notifications';
 import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
+import { useSupplierActivityIndicators } from '@/hooks/useSupplierActivityIndicators';
 import { useAdminActivityIndicators } from '@/hooks/useAdminActivityIndicators';
 import { useNavNotificationClearance } from '@/hooks/useNavNotificationClearance';
 import { useNotificationSocketSync } from '@/hooks/useNotificationSocketSync';
@@ -201,8 +202,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     staleTime: 5_000,
   });
 
-  const { hasJobsNavActivity, hasRequestsNavActivity, hasPaymentsNavActivity } =
+  const { hasJobsNavActivity, hasRequestsNavActivity, hasPaymentsNavActivity, hasEarningsNavActivity } =
     useJobActivityIndicators();
+  const {
+    hasOrdersNavActivity,
+    hasEarningsNavActivity: hasSupplierEarningsNavActivity,
+  } = useSupplierActivityIndicators();
   const { hasNavActivity: hasAdminNavActivity, hasGroupActivity: hasAdminGroupActivity } =
     useAdminActivityIndicators();
   useNavNotificationClearance();
@@ -210,6 +215,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     user?.role === 'provider' ? '/provider/jobs' : user?.role === 'user' ? '/user/jobs' : null;
   const requestsNavPath = user?.role === 'provider' ? '/provider/requests' : null;
   const paymentsNavPath = user?.role === 'user' ? '/user/payments' : null;
+  const ordersNavPath =
+    user?.role === 'supplier' || user?.role === 'branch_staff' ? '/supplier/orders' : null;
+  const earningsNavPath =
+    user?.role === 'provider'
+      ? '/provider/earnings'
+      : user?.role === 'supplier' || user?.role === 'branch_staff'
+        ? '/supplier/earnings'
+        : null;
+  const hasEarningsDot =
+    user?.role === 'provider' ? hasEarningsNavActivity : hasSupplierEarningsNavActivity;
 
   const handleNotificationNew = useCallback((notification?: { type?: string }) => {
     if (!user?.id) return;
@@ -533,13 +548,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   {item.icon}
                   <span>{item.label}</span>
                   {jobsNavPath && item.path === jobsNavPath && hasJobsNavActivity && (
-                    <ActivityDot className="ml-1" aria-label="Job activity" />
+                    <ActivityDot className="ml-1 shrink-0" aria-label="Job activity" />
                   )}
                   {requestsNavPath && item.path === requestsNavPath && hasRequestsNavActivity && (
-                    <ActivityDot className="ml-1" aria-label="New requests" />
+                    <ActivityDot className="ml-1 shrink-0" aria-label="New requests" />
                   )}
                   {paymentsNavPath && item.path === paymentsNavPath && hasPaymentsNavActivity && (
-                    <ActivityDot className="ml-1" aria-label="New refund" />
+                    <ActivityDot className="ml-1 shrink-0" aria-label="New refund" />
+                  )}
+                  {ordersNavPath && item.path === ordersNavPath && hasOrdersNavActivity && (
+                    <ActivityDot className="ml-1 shrink-0" aria-label="Order activity" />
+                  )}
+                  {earningsNavPath && item.path === earningsNavPath && hasEarningsDot && (
+                    <ActivityDot className="ml-1 shrink-0" aria-label="Payout activity" />
                   )}
                   {active && (
                     <ChevronRight className="ml-auto h-4 w-4" />

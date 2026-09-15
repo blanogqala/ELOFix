@@ -3,6 +3,7 @@ import type { AppNotification } from '@/types';
 import {
   hasJobsNavActivity,
   hasRequestsNavActivity,
+  hasEarningsNavActivity,
   isUnreadRequest,
   requestHasActivity,
 } from './jobActivityIndicators';
@@ -47,5 +48,11 @@ describe('jobActivityIndicators', () => {
     const notifications = [n({ type: 'job_request', read: true })];
     expect(hasRequestsNavActivity(notifications)).toBe(false);
     expect(hasJobsNavActivity(notifications)).toBe(false);
+  });
+
+  it('lights Earnings for unread payout_status', () => {
+    expect(hasEarningsNavActivity([n({ type: 'payout_status', jobId: undefined })])).toBe(true);
+    expect(hasEarningsNavActivity([n({ type: 'payout_status', read: true })])).toBe(false);
+    expect(hasEarningsNavActivity([n({ type: 'withdrawal_paid' })])).toBe(true);
   });
 });

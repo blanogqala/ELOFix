@@ -8,11 +8,13 @@ const BRANCH_NAV_PATH_TYPES = {
     "material_order_cancelled",
     "supplier_material_order_new",
     "supplier_material_order_cancelled",
+    "material_order_customer_issue",
   ],
   "/supplier/earnings": [
     "withdrawal_approved",
     "withdrawal_paid",
     "withdrawal_failed",
+    "payout_status",
   ],
 };
 

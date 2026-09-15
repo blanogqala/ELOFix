@@ -62,6 +62,15 @@ function recipientTypeFromIntent(intent) {
   return "PROVIDER";
 }
 
+/** Branch staff payout dots are scoped to this branch only. */
+function resolvePayoutStaffNotifyBranchId(intent, materialOrder) {
+  if (recipientTypeFromIntent(intent) !== "SUPPLIER_BRANCH") return null;
+  const fromIntent = String(intent?.branchId || "").trim();
+  if (fromIntent) return fromIntent;
+  const fromOrder = String(materialOrder?.branchId || "").trim();
+  return fromOrder || null;
+}
+
 /**
  * Build additive payout columns for a newly PAID intent. Does not touch commission/recipient.
  */
@@ -116,6 +125,7 @@ module.exports = {
   processorFeeFromPaystackEvidence,
   initialPayoutStatusForPaidIntent,
   recipientTypeFromIntent,
+  resolvePayoutStaffNotifyBranchId,
   payoutColumnsForPaidIntent,
   toPublicPayoutBreakdown,
   mapPaystackSettlementApiStatus,
