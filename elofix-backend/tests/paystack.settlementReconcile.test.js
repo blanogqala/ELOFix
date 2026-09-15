@@ -10,6 +10,8 @@ const ACCT_A = "ACCT_PROV_A";
 const ACCT_B = "ACCT_PROV_B";
 const ACCT_SUP = "ACCT_SUP_OK";
 const ACCT_SUP_WRONG = "ACCT_SUP_WRONG";
+const ACCT_OLD = "ACCT_HIST_OLD";
+const ACCT_NEW = "ACCT_HIST_NEW";
 
 function laborPayload(subaccount) {
   return { subaccount, bearer: "subaccount", fees_split: { paystack: 282 } };
@@ -179,6 +181,33 @@ async function run() {
   const other = await seedLaborPair(`${suffix}x`, ACCT_B);
   const supplierOk = await seedSupplierIntent(`${suffix}ok`, ACCT_SUP);
   const supplierBad = await seedSupplierIntent(`${suffix}bad`, ACCT_SUP);
+  const historical = await seedLaborPair(`${suffix}h`, ACCT_OLD);
+  if (!process.env.PAYSTACK_MODE) process.env.PAYSTACK_MODE = "test";
+  const histProvider = await prisma.provider.create({
+    data: {
+      userId: historical.providerUser.id,
+      businessName: `Hist Biz ${suffix}`,
+      approved: true,
+      profileCompleted: true,
+    },
+  });
+  await prisma.providerWithdrawalProfile.create({
+    data: {
+      id: randomUUID(),
+      providerId: histProvider.id,
+      bankName: "FNB",
+      accountHolder: "Provider",
+      accountNumber: "enc:test-hist-acct",
+      branchCode: "enc:test-250655",
+      accountType: "CHEQUE",
+      verificationStatus: "VERIFIED",
+      gatewayProvider: "PAYSTACK",
+      gatewayRecipientId: ACCT_NEW,
+      gatewayProfileStatus: "ACTIVE",
+      gatewayProfilePayload: { domain: "test", subaccount_code: ACCT_NEW },
+      isActive: true,
+    },
+  });
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
 
@@ -189,7 +218,9 @@ async function run() {
     mixed: `88004${suffix.slice(0, 4)}`,
     supOk: `88005${suffix.slice(0, 4)}`,
     supBad: `88006${suffix.slice(0, 4)}`,
-    byId: `88007${suffix.slice(0, 4)}`, // unused id not present in scoped list
+    byId: `88007${suffix.slice(0, 4)}`,
+    histOld: `88008${suffix.slice(0, 4)}`,
+    histNew: `88009${suffix.slice(0, 4)}`,
   };
 
   paystack.getSettlementTransactions = async (settlementId) => {
@@ -200,6 +231,12 @@ async function run() {
     if (id === String(ids.supOk) || id === String(ids.supBad)) {
       const intent = id === String(ids.supOk) ? supplierOk.intent : supplierBad.intent;
       return txnsFor([intent]);
+    }
+    if (id === String(ids.histOld)) {
+      return txnsFor([historical.a]);
+    }
+    if (id === String(ids.histNew)) {
+      return txnsFor([historical.b]);
     }
     return txnsFor([labor.a, labor.b]);
   };
@@ -391,13 +428,44 @@ async function run() {
     assert.strictEqual(byIdOk.skipped, false);
     assert.strictEqual(byIdOk.settlementId, first.settlementId);
 
+    // Historical charge-time ACCT_OLD vs current profile ACCT_NEW
+    const histOld = await rec.applyPaystackSettlementRow(
+      { id: ids.histOld, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_OLD)
+    );
+    assert.strictEqual(histOld.skipped, false);
+    assert.strictEqual(histOld.linked, 1);
+    const histSettled = await prisma.paymentIntent.findUnique({ where: { id: historical.a.id } });
+    assert.strictEqual(histSettled.payoutSettlementStatus, "SETTLED");
+    const histRow = await prisma.gatewayPayoutSettlement.findUnique({
+      where: {
+        gateway_externalSettlementId: {
+          gateway: "PAYSTACK",
+          externalSettlementId: String(ids.histOld),
+        },
+      },
+    });
+    assert.strictEqual(histRow.subaccountCode, ACCT_OLD);
+
+    const histNew = await rec.applyPaystackSettlementRow(
+      { id: ids.histNew, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_NEW)
+    );
+    assert.strictEqual(histNew.skipped, true);
+    const histB = await prisma.paymentIntent.findUnique({ where: { id: historical.b.id } });
+    assert.strictEqual(histB.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(histB.payoutSettlementId, null);
+
     console.log("paystack.settlementReconcile.test.js: all passed");
   } finally {
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
     await wipeSettlements(Object.values(ids));
+    await prisma.providerWithdrawalProfile.deleteMany({ where: { providerId: histProvider.id } }).catch(() => {});
+    await prisma.provider.deleteMany({ where: { id: histProvider.id } }).catch(() => {});
     await cleanupLabor(labor);
     await cleanupLabor(other);
+    await cleanupLabor(historical);
     await cleanupSupplier(supplierOk);
     await cleanupSupplier(supplierBad);
   }

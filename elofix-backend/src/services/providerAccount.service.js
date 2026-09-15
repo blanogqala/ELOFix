@@ -541,6 +541,19 @@ async function persistProviderWithdrawalProfile(userId, body, { mode = "upsert",
 
   let verificationStatus = bankCheck.duplicate ? "ACTION_REQUIRED" : "PENDING_VERIFICATION";
 
+  if (existing && materialChange) {
+    const removeMeta = await payoutDestinationService.canDeactivatePayoutProfile({
+      scope: "provider",
+      entityId: provider.id,
+    });
+    if (!removeMeta.canRemove) {
+      throw new AppError(
+        removeMeta.removeBlockedReason || "Bank details cannot be changed while a Paystack payout is still processing.",
+        409
+      );
+    }
+  }
+
   if (existing && materialChange && existing.gatewayRecipientId) {
     await payoutDestinationService.deactivatePayoutDestination({
       scope: "provider",

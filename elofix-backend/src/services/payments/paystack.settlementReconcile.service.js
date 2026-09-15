@@ -97,15 +97,14 @@ async function resolveIntendedPaystackSubaccount(intent) {
   if (!isMarketplaceSplitKind(intent?.kind)) return null;
 
   const evidence = normalizeAcct(intent.gatewayPayload);
-  let destination = null;
+  if (evidence) return evidence;
+
   try {
     const paystackRecipient = require("./paystack.recipient");
-    destination = normalizeAcct(await paystackRecipient.lookupMarketplaceSubaccount(intent, prisma));
+    return normalizeAcct(await paystackRecipient.lookupMarketplaceSubaccount(intent, prisma));
   } catch {
-    destination = null;
+    return null;
   }
-  if (evidence && destination && !sameAcct(evidence, destination)) return null;
-  return evidence || destination || null;
 }
 
 async function listKnownRecipientPaystackSubaccounts() {

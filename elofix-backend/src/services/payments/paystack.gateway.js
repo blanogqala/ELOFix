@@ -455,18 +455,29 @@ async function listSettlements({ from, to, subaccount, page = 1, perPage = 50 } 
   };
 }
 
-async function getSettlementTransactions(settlementId, { page = 1, perPage = 100 } = {}) {
+async function getSettlementTransactions(settlementId, { page = 1, perPage = 100, maxPages = 10 } = {}) {
   const id = String(settlementId || "").trim();
-  if (!id) return { transactions: [] };
-  const params = new URLSearchParams();
-  params.set("page", String(page));
-  params.set("perPage", String(perPage));
-  const { json } = await paystackRequest(
-    "GET",
-    `/settlement/${encodeURIComponent(id)}/transactions?${params.toString()}`
-  );
-  const data = Array.isArray(json?.data) ? json.data : [];
-  return { transactions: data, meta: json?.meta && typeof json.meta === "object" ? json.meta : null };
+  if (!id) return { transactions: [], meta: null };
+  const startPage = Math.max(1, Number(page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(perPage) || 100));
+  const pageCap = Math.min(20, Math.max(1, Number(maxPages) || 10));
+  const transactions = [];
+  let lastMeta = null;
+  for (let current = startPage; current < startPage + pageCap; current += 1) {
+    const params = new URLSearchParams();
+    params.set("page", String(current));
+    params.set("perPage", String(pageSize));
+    const { json } = await paystackRequest(
+      "GET",
+      `/settlement/${encodeURIComponent(id)}/transactions?${params.toString()}`
+    );
+    const data = Array.isArray(json?.data) ? json.data : [];
+    lastMeta = json?.meta && typeof json.meta === "object" ? json.meta : null;
+    if (data.length) transactions.push(...data);
+    const pageCount = Number(lastMeta?.pageCount || lastMeta?.page_count || 1);
+    if (!data.length || current >= pageCount) break;
+  }
+  return { transactions, meta: lastMeta };
 }
 
 async function verifySettlementWebhook(payload) {

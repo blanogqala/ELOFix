@@ -10,6 +10,7 @@ const {
   isPaystackSubaccountCode,
   safePaystackSubaccountCode,
   isPaystackRecipientUsableInCurrentMode,
+  MARKETPLACE_SPLIT_KINDS,
 } = require("./payments/paystack.payload");
 
 const SCOPES = new Set(["provider", "branch"]);
@@ -381,6 +382,24 @@ async function canDeactivatePayoutProfile({ scope, entityId }) {
       where: { id: String(entityId) },
       select: { userId: true },
     });
+    const unresolvedPaystackPayouts = provider
+      ? await prisma.paymentIntent.count({
+          where: {
+            recipientUserId: provider.userId,
+            state: "PAID",
+            provider: "PAYSTACK",
+            kind: { in: [...MARKETPLACE_SPLIT_KINDS] },
+            payoutSettlementStatus: { in: ["PENDING", "PROCESSING", "FAILED"] },
+          },
+        })
+      : 0;
+    if (unresolvedPaystackPayouts > 0) {
+      return {
+        canRemove: false,
+        removeBlockedReason: "Bank details cannot be changed while a Paystack payout is still processing.",
+      };
+    }
+
     const pendingIntents = provider
       ? await prisma.paymentIntent.count({
           where: {

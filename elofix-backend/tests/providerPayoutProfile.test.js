@@ -119,6 +119,146 @@ async function main() {
       if (!(e instanceof AppError) || e.statusCode !== 410) throw e;
     }
 
+    const { Prisma } = require("@prisma/client");
+    const payoutDestinationService = require("../src/services/payoutDestination.service");
+    let deactivateCalls = 0;
+    const origDeactivate = payoutDestinationService.deactivatePayoutDestination;
+    payoutDestinationService.deactivatePayoutDestination = async (...args) => {
+      deactivateCalls += 1;
+      return origDeactivate(...args);
+    };
+
+    const inflightUser = await prisma.user.create({
+      data: {
+        email: `payout.inflight.${suffix}@example.com`,
+        password: "x",
+        name: "Inflight",
+        role: "PROVIDER",
+      },
+    });
+    const inflightProvider = await prisma.provider.create({
+      data: {
+        userId: inflightUser.id,
+        businessName: `Inflight Biz ${suffix}`,
+        approved: true,
+        profileCompleted: true,
+      },
+    });
+    const inflightCustomer = await prisma.user.create({
+      data: {
+        email: `payout.icust.${suffix}@example.com`,
+        password: "x",
+        name: "Customer",
+        role: "CUSTOMER",
+      },
+    });
+    const inflightJob = await prisma.job.create({
+      data: {
+        id: randomUUID(),
+        title: "Inflight",
+        customerId: inflightCustomer.id,
+        providerId: inflightUser.id,
+        category: "tiling",
+        description: "test",
+        status: "ACCEPTED",
+        price: new Prisma.Decimal("100.00"),
+        measurements: {},
+        materials: [],
+        images: [],
+      },
+    });
+    await prisma.providerWithdrawalProfile.create({
+      data: {
+        id: randomUUID(),
+        providerId: inflightProvider.id,
+        bankName: "FNB",
+        accountHolder: "Inflight",
+        accountNumber: "enc:test-2222222222",
+        branchCode: "enc:test-250655",
+        accountType: "CHEQUE",
+        verificationStatus: "VERIFIED",
+        gatewayProvider: "PAYSTACK",
+        gatewayRecipientId: "ACCT_KEEP",
+        gatewayProfileStatus: "ACTIVE",
+        gatewayProfilePayload: { domain: "test", subaccount_code: "ACCT_KEEP" },
+        isActive: true,
+      },
+    });
+
+    async function seedInflightIntent(status) {
+      return prisma.paymentIntent.create({
+        data: {
+          id: randomUUID(),
+          merchantReference: `EF-IF-${status}-${suffix}`.toUpperCase(),
+          provider: "PAYSTACK",
+          kind: "LABOR",
+          paymentType: "DEPOSIT",
+          userId: inflightCustomer.id,
+          jobId: inflightJob.id,
+          recipientUserId: inflightUser.id,
+          amount: new Prisma.Decimal("50.00"),
+          commissionAmount: new Prisma.Decimal("3.50"),
+          recipientAmount: new Prisma.Decimal("46.50"),
+          currency: "ZAR",
+          state: "PAID",
+          paidAt: new Date(),
+          providerPayoutStatus: "COMPLETE",
+          payoutSettlementStatus: status,
+          gatewayPayload: { subaccount: "ACCT_KEEP", bearer: "subaccount" },
+        },
+      });
+    }
+
+    const replaceBody = {
+      confirmReplace: true,
+      bankName: "ABSA",
+      accountHolder: "Inflight",
+      accountNumber: "5555555555",
+      branchCode: "632005",
+      accountType: "SAVINGS",
+    };
+
+    try {
+      for (const status of ["PROCESSING", "PENDING", "FAILED"]) {
+        const intent = await seedInflightIntent(status);
+        deactivateCalls = 0;
+        let blocked = false;
+        try {
+          await providerAccountService.replaceWithdrawalProfile(inflightUser.id, replaceBody);
+        } catch (e) {
+          blocked = e instanceof AppError && e.statusCode === 409;
+          if (!blocked) throw e;
+          if (!String(e.message).includes("Paystack payout is still processing")) {
+            throw new Error(`unexpected 409 message: ${e.message}`);
+          }
+        }
+        if (!blocked) throw new Error(`expected 409 for ${status}`);
+        if (deactivateCalls !== 0) throw new Error(`gateway deactivation must not run for ${status}`);
+        const kept = await prisma.providerWithdrawalProfile.findUnique({
+          where: { providerId: inflightProvider.id },
+        });
+        if (kept.gatewayRecipientId !== "ACCT_KEEP") {
+          throw new Error(`ACCT_ must remain for ${status}`);
+        }
+        if (kept.bankName !== "FNB") throw new Error(`bank profile must remain for ${status}`);
+        await prisma.paymentIntent.delete({ where: { id: intent.id } });
+      }
+
+      const settledIntent = await seedInflightIntent("SETTLED");
+      const settledReplace = await providerAccountService.replaceWithdrawalProfile(inflightUser.id, replaceBody);
+      if (settledReplace.profile?.bankName !== "ABSA") {
+        throw new Error("SETTLED payouts must allow bank replacement");
+      }
+      await prisma.paymentIntent.delete({ where: { id: settledIntent.id } }).catch(() => {});
+    } finally {
+      payoutDestinationService.deactivatePayoutDestination = origDeactivate;
+      await prisma.paymentIntent.deleteMany({ where: { jobId: inflightJob.id } }).catch(() => {});
+      await prisma.job.deleteMany({ where: { id: inflightJob.id } }).catch(() => {});
+      await prisma.providerWithdrawalProfile.deleteMany({ where: { providerId: inflightProvider.id } }).catch(() => {});
+      await prisma.provider.deleteMany({ where: { id: inflightProvider.id } }).catch(() => {});
+      await prisma.user.deleteMany({ where: { id: { in: [inflightUser.id, inflightCustomer.id] } } }).catch(() => {});
+    }
+
     console.log("providerPayoutProfile.test.js: OK");
   } finally {
     await prisma.providerWithdrawalProfile.deleteMany({ where: { providerId: provider.id } }).catch(() => {});
