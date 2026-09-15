@@ -42,11 +42,24 @@ export const CUSTOMER_PAYMENTS_NAV_TYPES: AppNotificationType[] = [
   ...PAYMENTS_NAV_TYPES,
 ] as AppNotificationType[];
 
+export const EARNINGS_NAV_TYPES: AppNotificationType[] = [
+  'withdrawal_approved',
+  'withdrawal_paid',
+  'withdrawal_failed',
+  'payout_status',
+];
+
 export function hasPaymentsNavActivity(notifications: AppNotification[]): boolean {
   return notifications.some(
     (n) =>
       !n.read &&
       CUSTOMER_PAYMENTS_NAV_TYPES.includes(n.type as AppNotificationType)
+  );
+}
+
+export function hasEarningsNavActivity(notifications: AppNotification[]): boolean {
+  return notifications.some(
+    (n) => !n.read && EARNINGS_NAV_TYPES.includes(n.type as AppNotificationType)
   );
 }
 

@@ -277,6 +277,8 @@ const WITHDRAWAL_NAV_TYPES = [
   "withdrawal_failed",
 ];
 
+const EARNINGS_NAV_TYPES = [...WITHDRAWAL_NAV_TYPES, "payout_status"];
+
 /** Customer Payments orange-dot — refund completion events only (not refund_approved). */
 const PAYMENTS_NAV_TYPES = [
   "refund_processed",
@@ -296,7 +298,7 @@ const NAV_PATH_TYPES = {
   "/user/payments": PAYMENTS_NAV_TYPES,
   "/provider/jobs": JOBS_NAV_TYPES,
   "/provider/requests": ["job_request"],
-  "/provider/earnings": WITHDRAWAL_NAV_TYPES,
+  "/provider/earnings": EARNINGS_NAV_TYPES,
   "/provider/profile": [
     "provider_application_submitted",
     "provider_application_rejected",
@@ -304,7 +306,7 @@ const NAV_PATH_TYPES = {
     "provider_approved",
   ],
   "/supplier/orders": SUPPLIER_ORDER_NAV_TYPES,
-  "/supplier/earnings": WITHDRAWAL_NAV_TYPES,
+  "/supplier/earnings": EARNINGS_NAV_TYPES,
 };
 
 const JOBS_NAV_PATHS = new Set(["/user/jobs", "/provider/jobs"]);

@@ -46,7 +46,9 @@ import {
 } from '@/lib/quotationFile';
 import { buildExternalSearchUrl } from '@/lib/map/externalNavigationUrl';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { formatZar, paymentModeLabel } from '@/lib/paymentSchedule';
+import { RecipientSharePreview } from '@/components/payments/RecipientSharePreview';
+import { PayoutBreakdown } from '@/components/payments/PayoutBreakdown';
+import { twoPaymentStagePreview } from '@/lib/recipientGrossSharePreview';
 import {
   JobPaymentProgressCard,
   paymentStatusLabelFromSummary,
@@ -910,6 +912,15 @@ export default function ProviderJobDetail() {
         : job.servicePrice
           ? 'Awaiting payment'
           : 'Not priced';
+  const draftServiceAmount = Number.parseFloat(servicePriceAmount);
+  const showDraftSharePreview = Number.isFinite(draftServiceAmount) && draftServiceAmount > 0;
+  const draftStagePreview =
+    showDraftSharePreview && paymentMode === 'TWO_PAYMENT_50_50'
+      ? twoPaymentStagePreview(draftServiceAmount)
+      : null;
+  const laborPayouts = (job.payoutReconciliations || []).filter(
+    (row) => String(row.kind || '').toUpperCase() === 'LABOR'
+  );
 
   return (
     <DashboardLayout>
@@ -1277,9 +1288,12 @@ export default function ProviderJobDetail() {
                 <CardTitle className="text-lg">Quote</CardTitle>
               </CardHeader>
               <CardContent className="min-w-0 space-y-2 text-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Customer quote
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {hasRefundedMaterials
-                    ? 'Cancelled material orders are excluded from the total; customer refunds show below (93% net).'
+                    ? 'Cancelled material orders are excluded from the total; customer refunds show below.'
                     : 'Materials total includes paid customer purchases; cancelled store orders are excluded.'}
                 </p>
                 <div className="flex justify-between gap-3 min-w-0">
@@ -1352,6 +1366,36 @@ export default function ProviderJobDetail() {
                     )}
                   </div>
                 )}
+                {job.servicePrice?.amount != null && Number(job.servicePrice.amount) > 0 ? (
+                  <div className="border-t border-border pt-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Provider service earning
+                    </p>
+                    {laborPayouts.length > 0 ? (
+                      laborPayouts.map((row) => (
+                        <PayoutBreakdown
+                          key={row.paymentIntentId}
+                          customerAmount={row.customerAmount}
+                          commissionAmount={row.commissionAmount}
+                          recipientGrossShare={row.recipientGrossShare}
+                          processorFeeAmount={row.processorFeeAmount}
+                          expectedBankSettlementAmount={row.expectedBankSettlementAmount}
+                          payoutSettlementStatus={row.payoutSettlementStatus}
+                          payoutSettledAt={row.payoutSettledAt}
+                          recipientLabel="Provider gross share (93%)"
+                        />
+                      ))
+                    ) : (
+                      <RecipientSharePreview
+                        customerAmount={Number(job.servicePrice.amount)}
+                        customerLabel="Service gross"
+                        grossShareLabel="Provider gross share (93%)"
+                        pendingFeeLabel="Pending confirmation"
+                        pendingSettlementLabel="Pending confirmation"
+                      />
+                    )}
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           )}
@@ -1391,6 +1435,31 @@ export default function ProviderJobDetail() {
                   />
                 </div>
               </div>
+              {showDraftSharePreview ? (
+                <div className="rounded-lg border border-border bg-muted/20 p-3 min-w-0">
+                  <RecipientSharePreview
+                    customerAmount={draftServiceAmount}
+                    customerLabel="Customer service price"
+                    grossShareLabel="Your gross share (93%)"
+                    pendingFeeLabel="Confirmed after payment"
+                    pendingSettlementLabel="Confirmed after payment"
+                    stages={
+                      draftStagePreview
+                        ? [
+                            {
+                              title: 'Deposit customer payment',
+                              customerAmount: draftStagePreview.deposit.customerPrice,
+                            },
+                            {
+                              title: 'Completion customer payment',
+                              customerAmount: draftStagePreview.completion.customerPrice,
+                            },
+                          ]
+                        : undefined
+                    }
+                  />
+                </div>
+              ) : null}
               <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4 space-y-3">
                 <Label className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
                   <Paperclip className="h-3.5 w-3.5" />

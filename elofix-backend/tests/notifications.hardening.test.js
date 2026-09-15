@@ -61,11 +61,19 @@ function testOutboxBackoffSchedule() {
 }
 
 function testNavPathTypesIncludeSupplierOrders() {
+  const { BRANCH_NAV_PATH_TYPES } = require("../src/services/branchStaffNotification.service");
   assert.ok(NAV_PATH_TYPES["/supplier/orders"].includes("supplier_material_order_new"));
   assert.ok(NAV_PATH_TYPES["/supplier/orders"].includes("material_order_cancelled"));
+  assert.ok(!NAV_PATH_TYPES["/supplier/orders"].includes("material_order_customer_issue"));
   assert.ok(NAV_PATH_TYPES["/supplier/earnings"].includes("withdrawal_paid"));
+  assert.ok(NAV_PATH_TYPES["/supplier/earnings"].includes("payout_status"));
   assert.ok(NAV_PATH_TYPES["/provider/earnings"].includes("withdrawal_paid"));
+  assert.ok(NAV_PATH_TYPES["/provider/earnings"].includes("payout_status"));
   assert.ok(NAV_PATH_TYPES["/user/material-orders"].includes("delivery_quote"));
+  assert.ok(BRANCH_NAV_PATH_TYPES["/supplier/orders"].includes("material_order_customer_issue"));
+  assert.ok(BRANCH_NAV_PATH_TYPES["/supplier/orders"].includes("material_order_new"));
+  assert.ok(BRANCH_NAV_PATH_TYPES["/supplier/earnings"].includes("payout_status"));
+  assert.ok(BRANCH_NAV_PATH_TYPES["/supplier/earnings"].includes("withdrawal_paid"));
 }
 
 function testJobsNavClearanceExcludesJobChat() {

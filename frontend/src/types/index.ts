@@ -1055,7 +1055,8 @@ export type AppNotificationType =
   | 'material_order_customer_issue'
   | 'supplier_account_ready'
   | 'account_blocked'
-  | 'account_unblocked';
+  | 'account_unblocked'
+  | 'payout_status';
 
 export interface AppNotification {
   id: string;

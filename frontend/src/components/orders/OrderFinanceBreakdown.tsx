@@ -1,5 +1,6 @@
 import { formatCurrency } from '@/lib/formatCurrency';
 import { resolveOrderFinance, type OrderFinanceBreakdown } from '@/lib/orderFinance';
+import { feeIsKnown } from '@/lib/payoutDisplay';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -16,6 +17,9 @@ type Props = {
   showSupplierNet?: boolean;
   deliveryNote?: string;
   className?: string;
+  processorFeeAmount?: number | null;
+  expectedBankSettlementAmount?: number | null;
+  payoutSettlementStatus?: string | null;
 };
 
 export function OrderFinanceBreakdown({
@@ -24,6 +28,9 @@ export function OrderFinanceBreakdown({
   showSupplierNet = true,
   deliveryNote,
   className,
+  processorFeeAmount,
+  expectedBankSettlementAmount,
+  payoutSettlementStatus: _payoutSettlementStatus,
   ...orderParts
 }: Props) {
   const finance =
@@ -67,7 +74,8 @@ export function OrderFinanceBreakdown({
           </div>
           {!compact ? (
             <p className="text-xs text-muted-foreground">
-              Materials + delivery combined. Platform fee is 7% of this total.
+              Materials + delivery combined. EloFix commission is 7% of this total (gross share 93% before Paystack
+              fee).
             </p>
           ) : null}
         </>
@@ -80,13 +88,37 @@ export function OrderFinanceBreakdown({
       {showSupplierNet && !compact ? (
         <>
           <div className="flex justify-between gap-4 text-muted-foreground">
-            <span>Platform fee (7%)</span>
-            <span className="tabular-nums">− {formatCurrency(finance.platformCommission, { decimals: 2 })}</span>
+            <span className="min-w-0 break-words">EloFix commission (7%)</span>
+            <span className="tabular-nums shrink-0">
+              − {formatCurrency(finance.platformCommission, { decimals: 2 })}
+            </span>
           </div>
           <div className="flex justify-between gap-4 font-medium text-foreground">
-            <span>Supplier receives</span>
-            <span className="tabular-nums">{formatCurrency(finance.supplierNet, { decimals: 2 })}</span>
+            <span className="min-w-0 break-words">Supplier gross share (93%)</span>
+            <span className="tabular-nums shrink-0">{formatCurrency(finance.supplierNet, { decimals: 2 })}</span>
           </div>
+          <div className="flex justify-between gap-4 text-muted-foreground">
+            <span className="min-w-0 break-words">Paystack processing fee</span>
+            <span className="tabular-nums shrink-0">
+              {feeIsKnown(processorFeeAmount)
+                ? `− ${formatCurrency(Number(processorFeeAmount), { decimals: 2 })}`
+                : 'Pending confirmation'}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4 font-medium text-foreground">
+            <span className="min-w-0 break-words">Expected bank settlement</span>
+            <span className="tabular-nums shrink-0">
+              {feeIsKnown(expectedBankSettlementAmount)
+                ? formatCurrency(Number(expectedBankSettlementAmount), { decimals: 2 })
+                : 'Pending confirmation'}
+            </span>
+          </div>
+          {!feeIsKnown(processorFeeAmount) ? (
+            <p className="text-xs text-muted-foreground break-words">
+              Paystack processing fee is confirmed after payment and may reduce the final amount credited to the
+              supplier bank.
+            </p>
+          ) : null}
         </>
       ) : null}
       {deliveryNote ? <p className="text-xs text-muted-foreground pt-1">{deliveryNote}</p> : null}

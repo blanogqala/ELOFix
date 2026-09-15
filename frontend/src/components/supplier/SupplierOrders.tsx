@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
+import { RecipientSharePreview } from '@/components/payments/RecipientSharePreview';
 import { settlementStatusLabel } from '@/lib/branchSettlementDisplay';
 import { resolveOrderFinance, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid, isStoreDeliveryRejected, isStoreDeliveryType } from '@/lib/orderFinance';
 import { formatCurrency } from '@/lib/formatCurrency';
@@ -1116,7 +1117,7 @@ function DetailPanel({
             )}
             {refunded && String((order as { cancelledBy?: string }).cancelledBy || '').toLowerCase() === 'customer' && (
               <p className="text-xs text-muted-foreground">
-                Customer receives 93% of the order total; platform keeps the 7% commission.
+                Customer refunds exclude EloFix commission. This is not a supplier bank settlement.
               </p>
             )}
           </div>
@@ -1311,7 +1312,14 @@ function DetailPanel({
           <div className="rounded-lg border border-primary p-4">
             <p className="text-xs font-medium uppercase text-muted-foreground">Totals</p>
             <div className="mt-2">
-              <OrderFinanceBreakdown finance={finance} showSupplierNet={!refunded} />
+              <OrderFinanceBreakdown
+                finance={finance}
+                showSupplierNet={!refunded}
+                processorFeeAmount={(order as { processorFeeAmount?: number | null }).processorFeeAmount}
+                expectedBankSettlementAmount={
+                  (order as { expectedBankSettlementAmount?: number | null }).expectedBankSettlementAmount
+                }
+              />
             </div>
             {refunded && refundAmount > 0 && (
               <p className="mt-2 text-sm font-medium text-destructive tabular-nums">
@@ -1349,6 +1357,14 @@ function DetailPanel({
                   onChange={(e) => setDeliveryFeeDraft(e.target.value)}
                 />
               </div>
+              {Number(deliveryFeeDraft) > 0 ? (
+                <RecipientSharePreview
+                  customerAmount={Number(deliveryFeeDraft)}
+                  customerLabel="Customer delivery charge"
+                  grossShareLabel="Branch gross share (93%)"
+                  className="rounded-md border border-border bg-background/60 p-3"
+                />
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor={`delivery-note-${order.id}`}>Note (optional)</Label>
                 <Input
