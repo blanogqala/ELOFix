@@ -19,7 +19,7 @@ export type SettlementJobGroup = {
   stagesPaid: number;
   stagesExpected: number | null;
   providerShareRemaining: number | null;
-  settlementLabel: 'Fully settled' | 'Partially settled' | 'Pending';
+  settlementLabel: 'All customer payments confirmed' | 'Some customer payments confirmed' | 'Pending';
 };
 
 function stageRank(paymentType: string | null | undefined): number {
@@ -81,11 +81,11 @@ export function groupSettlementRecordsByJob(
 
     let settlementLabel: SettlementJobGroup['settlementLabel'] = 'Pending';
     if (remaining != null && nearlyZero(remaining) && stagesPaid > 0) {
-      settlementLabel = 'Fully settled';
+      settlementLabel = 'All customer payments confirmed';
     } else if (stagesExpected != null && stagesPaid >= stagesExpected && stagesPaid > 0) {
-      settlementLabel = 'Fully settled';
+      settlementLabel = 'All customer payments confirmed';
     } else if (stagesPaid > 0) {
-      settlementLabel = 'Partially settled';
+      settlementLabel = 'Some customer payments confirmed';
     }
 
     const first = stages[0];

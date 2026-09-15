@@ -477,7 +477,7 @@ function alreadySplitSettlementResult(intent) {
   return {
     supported: true,
     alreadySplitAtCharge: true,
-    status: "COMPLETE",
+    status: "PROCESSING",
     settlementId: intent?.gatewayTransactionId || intent?.merchantReference || null,
     message: "paystack_split_at_charge_no_transfer",
   };

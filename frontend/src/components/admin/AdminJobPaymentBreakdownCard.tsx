@@ -8,7 +8,8 @@ import {
   getAdminNetPaidLaborProviderShare,
 } from '@/lib/adminJobFinancial';
 import { formatZar, paymentModeLabel } from '@/lib/paymentSchedule';
-import type { Job } from '@/types';
+import type { Job, JobPayoutReconciliation } from '@/types';
+import { PayoutBreakdown } from '@/components/payments/PayoutBreakdown';
 import { DollarSign } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -242,6 +243,32 @@ export function AdminJobPaymentBreakdownCard({
             </>
           )}
         </div>
+        {Array.isArray(job.payoutReconciliations) && job.payoutReconciliations.length > 0 ? (
+          <div className="space-y-3 pt-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Payout reconciliation
+            </p>
+            {job.payoutReconciliations.map((row: JobPayoutReconciliation) => (
+              <div key={row.paymentIntentId} className="rounded-lg border border-border p-3 space-y-2">
+                <p className="text-xs font-mono break-all text-muted-foreground">
+                  {row.kind}
+                  {row.paymentType ? ` · ${row.paymentType}` : ''} · {row.merchantReference}
+                  {row.externalSettlementId ? ` · settlement ${row.externalSettlementId}` : ''}
+                </p>
+                <PayoutBreakdown
+                  customerAmount={row.customerAmount}
+                  commissionAmount={row.commissionAmount}
+                  recipientGrossShare={row.recipientGrossShare}
+                  processorFeeAmount={row.processorFeeAmount}
+                  expectedBankSettlementAmount={row.expectedBankSettlementAmount}
+                  payoutSettlementStatus={row.payoutSettlementStatus}
+                  payoutSettledAt={row.payoutSettledAt}
+                  recipientLabel="Recipient gross share"
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
         {footer}
       </CardContent>
     </Card>

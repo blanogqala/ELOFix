@@ -9,6 +9,8 @@ import {
   formatSettlementStageLabel,
   type SettlementJobGroup,
 } from '@/lib/providerSettlementGroups';
+import { paymentConfirmedLabel } from '@/lib/payoutDisplay';
+import { PayoutBreakdown } from '@/components/payments/PayoutBreakdown';
 
 type Props = {
   groups: SettlementJobGroup[];
@@ -56,7 +58,8 @@ export function ProviderSettlementJobGroups({
                     variant="secondary"
                     className={cn(
                       'text-[10px]',
-                      group.settlementLabel === 'Fully settled' && 'bg-success/15 text-success'
+                      group.settlementLabel === 'All customer payments confirmed' &&
+                        'bg-success/15 text-success'
                     )}
                   >
                     {group.settlementLabel}
@@ -99,32 +102,24 @@ export function ProviderSettlementJobGroups({
                 {group.stages.map((stage) => (
                   <div
                     key={stage.id}
-                    className="rounded-md border border-border bg-background p-3 text-sm space-y-1"
+                    className="rounded-md border border-border bg-background p-3 text-sm space-y-2"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium">{formatSettlementStageLabel(stage.paymentType)}</p>
-                      <Badge className="bg-success text-success-foreground text-[10px]">Settled</Badge>
+                      <Badge className="bg-success text-success-foreground text-[10px]">
+                        {paymentConfirmedLabel(stage.paymentState || 'PAID')}
+                      </Badge>
                     </div>
-                    <div className="flex justify-between gap-2 text-muted-foreground">
-                      <span>Customer payment</span>
-                      <span className="tabular-nums text-foreground">
-                        {formatCurrency(stage.customerAmount, { decimals: 2 })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between gap-2 text-muted-foreground">
-                      <span>Provider share</span>
-                      <span className="tabular-nums text-foreground font-medium">
-                        {formatCurrency(stage.providerShare, { decimals: 2 })}
-                      </span>
-                    </div>
-                    {variant === 'share' ? (
-                      <div className="flex justify-between gap-2 text-muted-foreground">
-                        <span>Commission</span>
-                        <span className="tabular-nums">
-                          {formatCurrency(stage.commissionAmount, { decimals: 2 })}
-                        </span>
-                      </div>
-                    ) : null}
+                    <PayoutBreakdown
+                      customerAmount={stage.customerAmount}
+                      commissionAmount={stage.commissionAmount}
+                      recipientGrossShare={stage.providerShare}
+                      processorFeeAmount={stage.processorFeeAmount}
+                      expectedBankSettlementAmount={stage.expectedBankSettlementAmount}
+                      payoutSettlementStatus={stage.payoutSettlementStatus}
+                      payoutSettledAt={stage.payoutSettledAt}
+                      recipientLabel="Your gross share"
+                    />
                     <p className="text-xs text-muted-foreground font-mono break-all pt-1">
                       {stage.merchantReference}
                     </p>

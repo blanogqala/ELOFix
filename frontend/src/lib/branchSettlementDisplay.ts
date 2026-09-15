@@ -1,3 +1,5 @@
+import { settlementStatusLabel as payoutSettlementStatusLabel } from '@/lib/payoutDisplay';
+
 export {
   payoutVerificationLabel,
   type PayoutVerificationStatus as BranchPayoutVerificationStatus,
@@ -13,22 +15,7 @@ export type BranchSettlementStatus =
   | 'REVERSED';
 
 export function settlementStatusLabel(status: BranchSettlementStatus | string | null | undefined): string {
-  switch (status) {
-    case 'SETTLED':
-      return 'Settled';
-    case 'PROCESSING':
-      return 'Processing';
-    case 'PENDING':
-      return 'Pending settlement';
-    case 'NOT_SUPPORTED':
-      return 'Automatic settlement unavailable';
-    case 'FAILED':
-      return 'Settlement failed';
-    case 'REVERSED':
-      return 'Reversed';
-    default:
-      return 'Not applicable';
-  }
+  return payoutSettlementStatusLabel(status);
 }
 
 export function isBankProfileComplete(profile: {

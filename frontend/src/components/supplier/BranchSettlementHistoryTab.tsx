@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getBranchSettlementHistory, type BranchSettlementEventRow } from '@/lib/api/supplierPortal';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { settlementStatusLabel } from '@/lib/branchSettlementDisplay';
+import { SettlementStatusBadge } from '@/components/payments/SettlementStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -55,7 +56,12 @@ export function BranchSettlementHistoryTab({
         Gross: Number(row.grossAmount || 0),
         Commission: Number(row.commissionAmount || 0),
         Net: Number(row.netAmount || 0),
-        Status: settlementStatusLabel(row.settlementStatus),
+        'Paystack fee': row.processorFeeAmount == null ? 'Pending confirmation' : Number(row.processorFeeAmount || 0),
+        'Expected bank':
+          row.expectedBankSettlementAmount == null
+            ? 'Pending confirmation'
+            : Number(row.expectedBankSettlementAmount || 0),
+        Status: settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus),
         Gateway: row.gatewayReference || row.gatewaySettlementId || '—',
       })),
     [rows]
@@ -153,6 +159,8 @@ export function BranchSettlementHistoryTab({
                       <th className="px-3 py-2">Gross</th>
                       <th className="px-3 py-2">Commission</th>
                       <th className="px-3 py-2">Net</th>
+                      <th className="px-3 py-2">Paystack fee</th>
+                      <th className="px-3 py-2">Expected bank</th>
                       <th className="px-3 py-2">Status</th>
                       <th className="px-3 py-2">Gateway ref</th>
                     </tr>
@@ -168,8 +176,20 @@ export function BranchSettlementHistoryTab({
                         <td className="px-3 py-2 tabular-nums">{formatCurrency(row.grossAmount)}</td>
                         <td className="px-3 py-2 tabular-nums">{formatCurrency(row.commissionAmount)}</td>
                         <td className="px-3 py-2 tabular-nums">{formatCurrency(row.netAmount)}</td>
-                        <td className="px-3 py-2">{settlementStatusLabel(row.settlementStatus)}</td>
-                        <td className="px-3 py-2 font-mono text-xs">
+                        <td className="px-3 py-2 tabular-nums">
+                          {row.processorFeeAmount == null
+                            ? 'Pending confirmation'
+                            : formatCurrency(row.processorFeeAmount)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">
+                          {row.expectedBankSettlementAmount == null
+                            ? 'Pending confirmation'
+                            : formatCurrency(row.expectedBankSettlementAmount)}
+                        </td>
+                        <td className="px-3 py-2">
+                          <SettlementStatusBadge status={row.payoutSettlementStatus || row.settlementStatus} />
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs break-all">
                           {row.gatewayReference || row.gatewaySettlementId || '—'}
                         </td>
                       </tr>

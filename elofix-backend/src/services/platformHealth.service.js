@@ -144,6 +144,7 @@ async function checkBackgroundJobs() {
     { name: "notificationOutbox", disabled: cronDisabled("DISABLE_NOTIFICATION_OUTBOX_CRON") },
     { name: "completionDeadline", disabled: cronDisabled("DISABLE_COMPLETION_DEADLINE_CRON") },
     { name: "stuckWithdrawal", disabled: cronDisabled("DISABLE_STUCK_WITHDRAWAL_CRON") },
+    { name: "paystackSettlementReconcile", disabled: cronDisabled("DISABLE_PAYSTACK_SETTLEMENT_RECONCILE_CRON") },
   ];
   const disabledCount = crons.filter((c) => c.disabled).length;
   let status = "healthy";

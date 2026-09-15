@@ -59,7 +59,7 @@ describe('groupSettlementRecordsByJob', () => {
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].stagesPaid).toBe(1);
-    expect(groups[0].settlementLabel).toBe('Partially settled');
+    expect(groups[0].settlementLabel).toBe('Some customer payments confirmed');
   });
 
   it('formats stage labels', () => {

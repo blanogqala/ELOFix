@@ -720,6 +720,25 @@ export interface JobMaterialOrderSnapshot {
   } | null;
 }
 
+export type JobPayoutReconciliation = {
+  paymentIntentId: string;
+  merchantReference: string;
+  kind: string;
+  paymentType?: string | null;
+  gateway?: string | null;
+  paymentState?: string | null;
+  customerAmount: number;
+  commissionAmount: number;
+  recipientGrossShare: number;
+  processorFeeAmount?: number | null;
+  expectedBankSettlementAmount?: number | null;
+  payoutSettlementStatus?: string | null;
+  payoutSettlementId?: string | null;
+  payoutSettledAt?: string | null;
+  externalSettlementId?: string | null;
+  recipientUserId?: string | null;
+};
+
 export interface Job {
   id: string;
   category: string;
@@ -770,6 +789,7 @@ export interface Job {
   } | null;
   nextLaborPaymentType?: LaborPaymentType | null;
   paymentSummary?: JobPaymentSummary | null;
+  payoutReconciliations?: JobPayoutReconciliation[];
   depositPayment?: {
     status: 'paid';
     amount: number;

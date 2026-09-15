@@ -201,12 +201,21 @@ async function settlementWebhook(req, res) {
   const provider = String(req.params.provider || "").trim();
   const branchSettlement = require("../services/branchSettlement.service");
   const { marketplaceSettlementEnabled } = require("../services/payments/paymentConfig");
+  const { getGateway, normalizeProvider } = require("../services/payments/gatewayRegistry");
 
   if (!marketplaceSettlementEnabled()) {
     return res.status(501).json({ success: false, message: "Marketplace settlement is not enabled" });
   }
 
   let payload = req.body;
+  const providerKey = normalizeProvider(provider);
+  if (providerKey === "PAYSTACK" && Buffer.isBuffer(req.body)) {
+    const gw = getGateway("PAYSTACK");
+    const sig = req.headers["x-paystack-signature"];
+    if (!gw.verifyWebhookSignature(req.body, sig)) {
+      return res.status(400).json({ success: false, message: "Invalid webhook" });
+    }
+  }
   if (Buffer.isBuffer(payload)) {
     try {
       payload = JSON.parse(payload.toString("utf8"));

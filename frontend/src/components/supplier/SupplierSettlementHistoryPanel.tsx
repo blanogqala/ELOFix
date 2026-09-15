@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { settlementStatusLabel } from '@/lib/branchSettlementDisplay';
+import { SettlementStatusBadge } from '@/components/payments/SettlementStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -87,8 +88,13 @@ export function SupplierSettlementHistoryPanel({
         Type: formatEventType(row.eventType),
         Gross: Number(row.grossAmount || 0),
         Commission: Number(row.commissionAmount || 0),
-        Net: Number(row.netAmount || 0),
-        Status: settlementStatusLabel(row.settlementStatus),
+        'Supplier share': Number(row.netAmount || 0),
+        'Paystack fee': row.processorFeeAmount == null ? 'Pending confirmation' : Number(row.processorFeeAmount || 0),
+        'Expected bank':
+          row.expectedBankSettlementAmount == null
+            ? 'Pending confirmation'
+            : Number(row.expectedBankSettlementAmount || 0),
+        Status: settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus),
         Gateway: row.gatewayReference || row.gatewaySettlementId || '—',
       })),
     [rows]
@@ -107,7 +113,7 @@ export function SupplierSettlementHistoryPanel({
     doc.text(`Settlement history (${from} to ${to})`, 14, 14);
     autoTable(doc, {
       startY: 20,
-      head: [['Date', 'Branch', 'Order', 'Type', 'Gross', 'Commission', 'Net', 'Status', 'Gateway ref']],
+      head: [['Date', 'Branch', 'Order', 'Type', 'Gross', 'Commission', 'Share', 'Fee', 'Bank', 'Status', 'Gateway ref']],
       body: rows.map((row) => [
         new Date(row.createdAt).toLocaleString('en-ZA'),
         row.branchName || row.branchId,
@@ -116,7 +122,11 @@ export function SupplierSettlementHistoryPanel({
         Number(row.grossAmount || 0).toFixed(2),
         Number(row.commissionAmount || 0).toFixed(2),
         Number(row.netAmount || 0).toFixed(2),
-        settlementStatusLabel(row.settlementStatus),
+        row.processorFeeAmount == null ? 'Pending' : Number(row.processorFeeAmount).toFixed(2),
+        row.expectedBankSettlementAmount == null
+          ? 'Pending'
+          : Number(row.expectedBankSettlementAmount).toFixed(2),
+        settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus),
         row.gatewayReference || row.gatewaySettlementId || '—',
       ]),
       styles: { fontSize: 8, cellPadding: 2 },
@@ -204,7 +214,9 @@ export function SupplierSettlementHistoryPanel({
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Gross</th>
                     <th className="px-3 py-2">Commission</th>
-                    <th className="px-3 py-2">Net</th>
+                    <th className="px-3 py-2">Share</th>
+                    <th className="px-3 py-2">Paystack fee</th>
+                    <th className="px-3 py-2">Expected bank</th>
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2">Gateway ref</th>
                   </tr>
@@ -221,8 +233,20 @@ export function SupplierSettlementHistoryPanel({
                       <td className="px-3 py-2 tabular-nums">{formatCurrency(row.grossAmount)}</td>
                       <td className="px-3 py-2 tabular-nums">{formatCurrency(row.commissionAmount)}</td>
                       <td className="px-3 py-2 tabular-nums">{formatCurrency(row.netAmount)}</td>
-                      <td className="px-3 py-2">{settlementStatusLabel(row.settlementStatus)}</td>
-                      <td className="px-3 py-2 font-mono text-xs">
+                      <td className="px-3 py-2 tabular-nums">
+                        {row.processorFeeAmount == null
+                          ? 'Pending confirmation'
+                          : formatCurrency(row.processorFeeAmount)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">
+                        {row.expectedBankSettlementAmount == null
+                          ? 'Pending confirmation'
+                          : formatCurrency(row.expectedBankSettlementAmount)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <SettlementStatusBadge status={row.payoutSettlementStatus || row.settlementStatus} />
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs break-all">
                         {row.gatewayReference || row.gatewaySettlementId || '—'}
                       </td>
                     </tr>

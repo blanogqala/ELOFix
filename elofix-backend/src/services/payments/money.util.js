@@ -81,10 +81,35 @@ function splitFiftyFiftySchedule(quotedMajor) {
   };
 }
 
+/**
+ * Expected bank settlement = recipient gross share − known gateway fee.
+ * Returns nulls when the fee is unknown, non-finite, negative, or larger than the share.
+ * Never invents a fee. Never mutates commission/recipient ledger amounts.
+ *
+ * @param {number|string|Prisma.Decimal} recipientGrossMajor
+ * @param {number|string|Prisma.Decimal|null|undefined} processorFeeMajor
+ * @returns {{ processorFeeAmount: Prisma.Decimal|null, expectedBankSettlementAmount: Prisma.Decimal|null }}
+ */
+function computeExpectedBankSettlement(recipientGrossMajor, processorFeeMajor) {
+  if (processorFeeMajor == null || processorFeeMajor === "") {
+    return { processorFeeAmount: null, expectedBankSettlementAmount: null };
+  }
+  const feeCents = toCents(processorFeeMajor);
+  const recipientCents = toCents(recipientGrossMajor);
+  if (!Number.isFinite(feeCents) || feeCents < 0 || feeCents > recipientCents) {
+    return { processorFeeAmount: null, expectedBankSettlementAmount: null };
+  }
+  return {
+    processorFeeAmount: new Prisma.Decimal(fromCents(feeCents).toFixed(2)),
+    expectedBankSettlementAmount: new Prisma.Decimal(fromCents(recipientCents - feeCents).toFixed(2)),
+  };
+}
+
 module.exports = {
   getPlatformCommissionRate,
   toCents,
   fromCents,
   splitCommission,
   splitFiftyFiftySchedule,
+  computeExpectedBankSettlement,
 };

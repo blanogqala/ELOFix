@@ -117,7 +117,7 @@ export function AdminSupplierMaterialOrdersSection({
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {formatCurrency(totalSettled)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Verified branch settlements</p>
+              <p className="mt-1 text-xs text-muted-foreground">Verified Paystack bank settlements</p>
             </CardContent>
           </Card>
         </div>

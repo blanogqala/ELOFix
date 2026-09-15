@@ -138,6 +138,23 @@ enum BranchSettlementEventType {
   SETTLEMENT_FAILED
 }
 
+/// Bank/payout settlement status (orthogonal to PaymentIntent.state / providerPayoutStatus).
+enum PayoutSettlementStatus {
+  NOT_APPLICABLE
+  NOT_SUPPORTED
+  PENDING
+  PROCESSING
+  SETTLED
+  FAILED
+  REVERSED
+}
+
+enum PayoutRecipientType {
+  PROVIDER
+  SUPPLIER_BRANCH
+  COURIER
+}
+
 /// Admin-configurable service category payment strategy (snapshotted onto Job at accept).
 enum CategoryPaymentMode {
   TWO_PAYMENT_50_50
@@ -598,6 +615,14 @@ model PaymentIntent {
   branchSettlementStatus BranchSettlementStatus @default(NOT_APPLICABLE)
   branchSettlementId     String?
   branchSettlementEvents BranchSettlementEvent[]
+  /// Authoritative Paystack processor fee charged to the recipient (null = unknown).
+  processorFeeAmount     Decimal?               @db.Decimal(12, 2)
+  /// recipientAmount minus processorFeeAmount when fee is known (null = unknown).
+  expectedBankSettlementAmount Decimal?         @db.Decimal(12, 2)
+  payoutSettlementStatus PayoutSettlementStatus @default(NOT_APPLICABLE)
+  payoutSettlementId     String?
+  payoutSettlement       GatewayPayoutSettlement? @relation(fields: [payoutSettlementId], references: [id], onDelete: SetNull)
+  payoutSettlementItems  GatewayPayoutSettlementItem[]
 
   @@unique([materialOrderId, kind])
   @@index([jobId])
@@ -609,6 +634,8 @@ model PaymentIntent {
   @@index([provider, gatewayTransactionId])
   @@index([branchId])
   @@index([branchSettlementStatus])
+  @@index([payoutSettlementStatus])
+  @@index([payoutSettlementId])
 }
 
 /// Idempotent webhook processing per provider event
@@ -1327,6 +1354,76 @@ model BranchSettlementEvent {
   @@index([paymentIntentId])
   @@index([eventType])
   @@index([settlementStatus])
+}
+
+/// Canonical Paystack (or future gateway) payout batch. One settlement may contain many PaymentIntents.
+model GatewayPayoutSettlement {
+  id                   String                 @id @default(uuid())
+  gateway              PaymentProvider
+  externalSettlementId String?
+  recipientType        PayoutRecipientType
+  recipientUserId      String?
+  supplierId           String?
+  branchId             String?
+  /// Public Paystack subaccount code (ACCT_…), never full banking details.
+  subaccountCode       String?
+  status               PayoutSettlementStatus @default(PENDING)
+  currency             String                 @default("ZAR")
+  grossRecipientShare  Decimal                @default(0) @db.Decimal(12, 2)
+  gatewayFeeAmount     Decimal?               @db.Decimal(12, 2)
+  expectedBankAmount   Decimal?               @db.Decimal(12, 2)
+  settlementDate       DateTime?
+  processingAt         DateTime?
+  settledAt            DateTime?
+  failedAt             DateTime?
+  reversedAt           DateTime?
+  gatewayReference     String?
+  failureReason        String?
+  /// Minimized gateway metadata (ids, status, totals, transaction references).
+  metadata             Json?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  items                GatewayPayoutSettlementItem[]
+  events               GatewayPayoutSettlementEvent[]
+  paymentIntents       PaymentIntent[]
+
+  @@unique([gateway, externalSettlementId])
+  @@index([status])
+  @@index([recipientUserId])
+  @@index([supplierId])
+  @@index([branchId])
+  @@index([subaccountCode])
+}
+
+model GatewayPayoutSettlementItem {
+  id                         String                  @id @default(uuid())
+  settlementId               String
+  settlement                 GatewayPayoutSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  paymentIntentId            String
+  paymentIntent              PaymentIntent           @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  customerAmount             Decimal                 @db.Decimal(12, 2)
+  commissionAmount           Decimal                 @default(0) @db.Decimal(12, 2)
+  recipientGrossShare        Decimal                 @default(0) @db.Decimal(12, 2)
+  gatewayFeeAmount           Decimal?                @db.Decimal(12, 2)
+  expectedBankAmount         Decimal?                @db.Decimal(12, 2)
+  createdAt                  DateTime                @default(now())
+
+  @@unique([settlementId, paymentIntentId])
+  @@index([paymentIntentId])
+}
+
+model GatewayPayoutSettlementEvent {
+  id                     String                  @id @default(uuid())
+  settlementId           String
+  settlement             GatewayPayoutSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  fromStatus             PayoutSettlementStatus?
+  toStatus               PayoutSettlementStatus
+  source                 String
+  notificationDedupeKey  String?
+  createdAt              DateTime                @default(now())
+
+  @@index([settlementId, createdAt])
+  @@index([notificationDedupeKey])
 }
 
 /// Standalone customer delivery request (moving / courier without material purchase).

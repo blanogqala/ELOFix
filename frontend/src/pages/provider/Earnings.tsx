@@ -314,7 +314,7 @@ export default function ProviderEarnings() {
                 <p className="text-base font-bold leading-tight tabular-nums truncate sm:text-lg lg:text-xl xl:text-2xl">
                   {stageCounts.paid} of {Math.max(stageCounts.expected, stageCounts.paid)}
                 </p>
-                <p className="text-xs text-muted-foreground sm:text-sm">Paid/settled stages</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">Customer payments received</p>
               </div>
             </div>
           </div>
@@ -735,7 +735,7 @@ export default function ProviderEarnings() {
           <TabsContent value="history" className="mt-4 space-y-4">
             <div className="card-elevated overflow-hidden">
               <div className="border-b border-border p-4 sm:p-6">
-                <h2 className="text-lg font-semibold">Payment settlement records</h2>
+                <h2 className="text-lg font-semibold">Customer payments received</h2>
               </div>
               <div className="p-4 sm:p-6">
                 {isLoading ? (
