@@ -6,7 +6,16 @@ const prisma = require("../src/config/prisma");
 const rec = require("../src/services/payments/paystack.settlementReconcile.service");
 const paystack = require("../src/services/payments/paystack.gateway");
 
-async function seedTwoIntents(suffix) {
+const ACCT_A = "ACCT_PROV_A";
+const ACCT_B = "ACCT_PROV_B";
+const ACCT_SUP = "ACCT_SUP_OK";
+const ACCT_SUP_WRONG = "ACCT_SUP_WRONG";
+
+function laborPayload(subaccount) {
+  return { subaccount, bearer: "subaccount", fees_split: { paystack: 282 } };
+}
+
+async function seedLaborPair(suffix, subaccount = ACCT_A) {
   const customer = await prisma.user.create({
     data: {
       email: `d3.cust.${suffix}@example.com`,
@@ -38,35 +47,75 @@ async function seedTwoIntents(suffix) {
       images: [],
     },
   });
+  const shared = {
+    provider: "PAYSTACK",
+    kind: "LABOR",
+    userId: customer.id,
+    jobId: job.id,
+    recipientUserId: providerUser.id,
+    amount: new Prisma.Decimal("50.00"),
+    commissionAmount: new Prisma.Decimal("3.50"),
+    recipientAmount: new Prisma.Decimal("46.50"),
+    currency: "ZAR",
+    state: "PAID",
+    paidAt: new Date(),
+    payoutSettlementStatus: "PROCESSING",
+    gatewayPayload: laborPayload(subaccount),
+  };
   const a = await prisma.paymentIntent.create({
     data: {
       id: randomUUID(),
       merchantReference: `EF-D3A-${suffix}`.toUpperCase(),
-      provider: "PAYSTACK",
-      kind: "LABOR",
       paymentType: "DEPOSIT",
-      userId: customer.id,
-      jobId: job.id,
-      recipientUserId: providerUser.id,
-      amount: new Prisma.Decimal("50.00"),
-      commissionAmount: new Prisma.Decimal("3.50"),
-      recipientAmount: new Prisma.Decimal("46.50"),
-      currency: "ZAR",
-      state: "PAID",
-      paidAt: new Date(),
-      payoutSettlementStatus: "PROCESSING",
+      ...shared,
     },
   });
   const b = await prisma.paymentIntent.create({
     data: {
       id: randomUUID(),
       merchantReference: `EF-D3B-${suffix}`.toUpperCase(),
-      provider: "PAYSTACK",
-      kind: "LABOR",
       paymentType: "COMPLETION",
+      ...shared,
+    },
+  });
+  return { customer, providerUser, job, a, b };
+}
+
+async function seedSupplierIntent(suffix, subaccount) {
+  const customer = await prisma.user.create({
+    data: {
+      email: `d3.scust.${suffix}@example.com`,
+      password: "x",
+      name: "Customer",
+      role: "CUSTOMER",
+    },
+  });
+  const supplier = await prisma.supplier.create({
+    data: { name: `D3 Supplier ${suffix}` },
+  });
+  const branch = await prisma.branch.create({
+    data: { supplierId: supplier.id, name: `D3 Branch ${suffix}` },
+  });
+  const order = await prisma.materialOrder.create({
+    data: {
       userId: customer.id,
-      jobId: job.id,
-      recipientUserId: providerUser.id,
+      supplierId: supplier.id,
+      branchId: branch.id,
+      paymentStatus: "paid",
+      materialsSubtotal: 50,
+      payload: { totalAmount: 50 },
+    },
+  });
+  const intent = await prisma.paymentIntent.create({
+    data: {
+      id: randomUUID(),
+      merchantReference: `EF-D3S-${suffix}`.toUpperCase(),
+      provider: "PAYSTACK",
+      kind: "MATERIAL_ORDER",
+      paymentType: "MATERIAL_ORDER",
+      userId: customer.id,
+      materialOrderId: order.id,
+      branchId: branch.id,
       amount: new Prisma.Decimal("50.00"),
       commissionAmount: new Prisma.Decimal("3.50"),
       recipientAmount: new Prisma.Decimal("46.50"),
@@ -74,94 +123,283 @@ async function seedTwoIntents(suffix) {
       state: "PAID",
       paidAt: new Date(),
       payoutSettlementStatus: "PROCESSING",
+      gatewayPayload: laborPayload(subaccount),
     },
   });
-  return { customer, providerUser, job, a, b };
+  return { customer, supplier, branch, order, intent };
 }
 
-async function cleanup(fix) {
+async function cleanupLabor(fix) {
   if (!fix) return;
-  await prisma.gatewayPayoutSettlementItem.deleteMany({
-    where: { paymentIntentId: { in: [fix.a.id, fix.b.id] } },
-  }).catch(() => {});
+  await prisma.gatewayPayoutSettlementItem
+    .deleteMany({ where: { paymentIntentId: { in: [fix.a.id, fix.b.id] } } })
+    .catch(() => {});
   await prisma.paymentIntent.deleteMany({ where: { id: { in: [fix.a.id, fix.b.id] } } }).catch(() => {});
   await prisma.job.deleteMany({ where: { id: fix.job.id } }).catch(() => {});
   await prisma.user.deleteMany({ where: { id: { in: [fix.customer.id, fix.providerUser.id] } } }).catch(() => {});
 }
 
+async function cleanupSupplier(fix) {
+  if (!fix) return;
+  await prisma.gatewayPayoutSettlementItem
+    .deleteMany({ where: { paymentIntentId: fix.intent.id } })
+    .catch(() => {});
+  await prisma.paymentIntent.deleteMany({ where: { id: fix.intent.id } }).catch(() => {});
+  await prisma.materialOrder.deleteMany({ where: { id: fix.order.id } }).catch(() => {});
+  await prisma.branch.deleteMany({ where: { id: fix.branch.id } }).catch(() => {});
+  await prisma.supplier.deleteMany({ where: { id: fix.supplier.id } }).catch(() => {});
+  await prisma.user.deleteMany({ where: { id: fix.customer.id } }).catch(() => {});
+}
+
+async function wipeSettlements(externalIds) {
+  const settlements = await prisma.gatewayPayoutSettlement.findMany({
+    where: { gateway: "PAYSTACK", externalSettlementId: { in: externalIds.map(String) } },
+    select: { id: true },
+  });
+  const ids = settlements.map((s) => s.id);
+  if (!ids.length) return;
+  await prisma.gatewayPayoutSettlementEvent.deleteMany({ where: { settlementId: { in: ids } } }).catch(() => {});
+  await prisma.gatewayPayoutSettlementItem.deleteMany({ where: { settlementId: { in: ids } } }).catch(() => {});
+  await prisma.gatewayPayoutSettlement.deleteMany({ where: { id: { in: ids } } }).catch(() => {});
+}
+
+function txnsFor(intents) {
+  return {
+    transactions: intents.map((intent) => ({
+      reference: intent.merchantReference,
+      fees_split: { paystack: 282 },
+      bearer: "subaccount",
+    })),
+  };
+}
+
 async function run() {
   const suffix = randomUUID().slice(0, 8);
-  const fix = await seedTwoIntents(suffix);
+  const labor = await seedLaborPair(suffix, ACCT_A);
+  const other = await seedLaborPair(`${suffix}x`, ACCT_B);
+  const supplierOk = await seedSupplierIntent(`${suffix}ok`, ACCT_SUP);
+  const supplierBad = await seedSupplierIntent(`${suffix}bad`, ACCT_SUP);
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
-  paystack.listSettlements = async () => ({ settlements: [] });
-  paystack.getSettlementTransactions = async () => ({
-    transactions: [
-      { reference: fix.a.merchantReference, fees_split: { paystack: 282 }, bearer: "subaccount" },
-      { reference: fix.b.merchantReference, fees_split: { paystack: 282 }, bearer: "subaccount" },
-    ],
-  });
+
+  const ids = {
+    main: `88001${suffix.slice(0, 4)}`,
+    provider: `88002${suffix.slice(0, 4)}`,
+    wrong: `88003${suffix.slice(0, 4)}`,
+    mixed: `88004${suffix.slice(0, 4)}`,
+    supOk: `88005${suffix.slice(0, 4)}`,
+    supBad: `88006${suffix.slice(0, 4)}`,
+    byId: `88007${suffix.slice(0, 4)}`, // unused id not present in scoped list
+  };
+
+  paystack.getSettlementTransactions = async (settlementId) => {
+    const id = String(settlementId);
+    if (id === String(ids.mixed)) {
+      return txnsFor([labor.a, other.a]);
+    }
+    if (id === String(ids.supOk) || id === String(ids.supBad)) {
+      const intent = id === String(ids.supOk) ? supplierOk.intent : supplierBad.intent;
+      return txnsFor([intent]);
+    }
+    return txnsFor([labor.a, labor.b]);
+  };
+
+  paystack.listSettlements = async (opts = {}) => {
+    const scoped = String(opts.subaccount || "");
+    if (!scoped || scoped.toLowerCase() === "none") {
+      throw new Error("recipient reconcile must not list unscoped or main-account settlements");
+    }
+    if (scoped.toUpperCase() === ACCT_A.toUpperCase()) {
+      return {
+        settlements: [
+          { id: ids.provider, status: "success", currency: "ZAR", settlement_date: "2026-09-15T00:00:00.000Z" },
+        ],
+      };
+    }
+    return { settlements: [] };
+  };
+
   try {
+    const applyOpts = (scopedSubaccount) => ({
+      source: "reconcile_job",
+      notify: false,
+      scopedSubaccount,
+    });
+
+    // H / A (main): same refs, no recipient scope — must not SETTLED
+    const mainNone = await rec.applyPaystackSettlementRow(
+      { id: ids.main, status: "success", currency: "ZAR" },
+      applyOpts("none")
+    );
+    assert.strictEqual(mainNone.skipped, true);
+    assert.strictEqual(mainNone.reason, "main_account_settlement_ignored");
+
+    const mainMissing = await rec.applyPaystackSettlementRow(
+      { id: ids.main, status: "success", currency: "ZAR" },
+      { source: "reconcile_job", notify: false }
+    );
+    assert.strictEqual(mainMissing.skipped, true);
+    assert.strictEqual(mainMissing.reason, "missing_recipient_subaccount_scope");
+
+    let a = await prisma.paymentIntent.findUnique({ where: { id: labor.a.id } });
+    assert.strictEqual(a.payoutSettlementStatus, "PROCESSING");
+
+    // B: wrong ACCT
+    const wrong = await rec.applyPaystackSettlementRow(
+      { id: ids.wrong, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_B)
+    );
+    assert.strictEqual(wrong.skipped, true);
+    a = await prisma.paymentIntent.findUnique({ where: { id: labor.a.id } });
+    assert.strictEqual(a.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(a.payoutSettlementId, null);
+
+    // C + F: correct ACCT, two intents same subaccount, persist scope even if API omits code
     const first = await rec.applyPaystackSettlementRow(
       {
-        id: 991122,
+        id: ids.provider,
         status: "success",
         currency: "ZAR",
         settlement_date: "2026-09-15T00:00:00.000Z",
-        subaccount: "ACCT_TEST",
       },
-      { source: "reconcile_job", notify: false }
+      applyOpts(ACCT_A)
     );
     assert.strictEqual(first.skipped, false);
     assert.strictEqual(first.linked, 2);
     assert.strictEqual(first.status, "SETTLED");
 
-    const second = await rec.applyPaystackSettlementRow(
-      {
-        id: 991122,
-        status: "success",
-        currency: "ZAR",
-        settlement_date: "2026-09-15T00:00:00.000Z",
-        subaccount: "ACCT_TEST",
+    const settlement = await prisma.gatewayPayoutSettlement.findUnique({
+      where: {
+        gateway_externalSettlementId: {
+          gateway: "PAYSTACK",
+          externalSettlementId: String(ids.provider),
+        },
       },
-      { source: "reconcile_job", notify: false }
-    );
-    assert.strictEqual(second.settlementId, first.settlementId);
-    assert.strictEqual(second.linked, 2);
-
-    const count = await prisma.gatewayPayoutSettlement.count({
-      where: { gateway: "PAYSTACK", externalSettlementId: "991122" },
     });
-    assert.strictEqual(count, 1);
+    assert.ok(settlement);
+    assert.strictEqual(settlement.subaccountCode, ACCT_A);
 
-    const a = await prisma.paymentIntent.findUnique({ where: { id: fix.a.id } });
+    const items = await prisma.gatewayPayoutSettlementItem.findMany({
+      where: { settlementId: settlement.id },
+    });
+    assert.strictEqual(items.length, 2);
+
+    a = await prisma.paymentIntent.findUnique({ where: { id: labor.a.id } });
+    const b = await prisma.paymentIntent.findUnique({ where: { id: labor.b.id } });
     assert.strictEqual(a.payoutSettlementStatus, "SETTLED");
+    assert.strictEqual(b.payoutSettlementStatus, "SETTLED");
+    assert.strictEqual(a.payoutSettlementId, settlement.id);
+    assert.strictEqual(b.payoutSettlementId, settlement.id);
     assert.strictEqual(Number(a.commissionAmount), 3.5);
     assert.strictEqual(Number(a.recipientAmount), 46.5);
     assert.strictEqual(Number(a.processorFeeAmount), 2.82);
     assert.strictEqual(Number(a.expectedBankSettlementAmount), 43.68);
 
+    // I: idempotent re-run
+    const eventCountBefore = await prisma.gatewayPayoutSettlementEvent.count({
+      where: { settlementId: settlement.id },
+    });
+    const second = await rec.applyPaystackSettlementRow(
+      {
+        id: ids.provider,
+        status: "success",
+        currency: "ZAR",
+        settlement_date: "2026-09-15T00:00:00.000Z",
+      },
+      applyOpts(ACCT_A)
+    );
+    assert.strictEqual(second.settlementId, first.settlementId);
+    assert.strictEqual(second.linked, 2);
+    assert.strictEqual(second.changed, false);
+    const count = await prisma.gatewayPayoutSettlement.count({
+      where: { gateway: "PAYSTACK", externalSettlementId: String(ids.provider) },
+    });
+    assert.strictEqual(count, 1);
+    const itemsAfter = await prisma.gatewayPayoutSettlementItem.count({
+      where: { settlementId: settlement.id },
+    });
+    assert.strictEqual(itemsAfter, 2);
+    const eventCountAfter = await prisma.gatewayPayoutSettlementEvent.count({
+      where: { settlementId: settlement.id },
+    });
+    assert.strictEqual(eventCountAfter, eventCountBefore);
+
     const failed = await rec.applyPaystackSettlementRow(
-      { id: 991122, status: "mystery-status", currency: "ZAR" },
-      { notify: false }
+      { id: ids.provider, status: "mystery-status", currency: "ZAR" },
+      applyOpts(ACCT_A)
     );
     assert.strictEqual(failed.skipped, true);
+
+    // D: supplier wrong subaccount
+    const supWrong = await rec.applyPaystackSettlementRow(
+      { id: ids.supBad, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_SUP_WRONG)
+    );
+    assert.strictEqual(supWrong.skipped, true);
+    const supplierBadFresh = await prisma.paymentIntent.findUnique({ where: { id: supplierBad.intent.id } });
+    assert.strictEqual(supplierBadFresh.payoutSettlementStatus, "PROCESSING");
+
+    // E: supplier correct subaccount
+    const supOk = await rec.applyPaystackSettlementRow(
+      { id: ids.supOk, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_SUP)
+    );
+    assert.strictEqual(supOk.skipped, false);
+    assert.strictEqual(supOk.linked, 1);
+    const supplierOkFresh = await prisma.paymentIntent.findUnique({ where: { id: supplierOk.intent.id } });
+    assert.strictEqual(supplierOkFresh.payoutSettlementStatus, "SETTLED");
+
+    // G: mixed recipients in one settlement
+    const mixed = await rec.applyPaystackSettlementRow(
+      { id: ids.mixed, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_A)
+    );
+    assert.strictEqual(mixed.skipped, true);
+    assert.strictEqual(mixed.reason, "mixed_or_mismatched_recipient_subaccount");
+    const otherFresh = await prisma.paymentIntent.findUnique({ where: { id: other.a.id } });
+    assert.strictEqual(otherFresh.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(otherFresh.payoutSettlementId, null);
+
+    // 10: byId without scope cannot synthesize SETTLED
+    const byIdBare = await rec.reconcilePaystackSettlementById(ids.byId, {
+      status: "success",
+      notify: false,
+    });
+    assert.strictEqual(byIdBare.skipped, true);
+    assert.strictEqual(byIdBare.reason, "missing_recipient_subaccount_scope");
+
+    const byIdWrong = await rec.reconcilePaystackSettlementById(ids.provider, {
+      status: "success",
+      notify: false,
+      scopedSubaccount: ACCT_B,
+    });
+    assert.strictEqual(byIdWrong.skipped, true);
+
+    const byIdMissing = await rec.reconcilePaystackSettlementById(ids.byId, {
+      status: "success",
+      notify: false,
+      scopedSubaccount: ACCT_A,
+    });
+    assert.strictEqual(byIdMissing.skipped, true);
+    assert.strictEqual(byIdMissing.reason, "settlement_not_in_subaccount_scope");
+
+    const byIdOk = await rec.reconcilePaystackSettlementById(ids.provider, {
+      status: "success",
+      notify: false,
+      scopedSubaccount: ACCT_A,
+    });
+    assert.strictEqual(byIdOk.skipped, false);
+    assert.strictEqual(byIdOk.settlementId, first.settlementId);
 
     console.log("paystack.settlementReconcile.test.js: all passed");
   } finally {
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
-    const settlements = await prisma.gatewayPayoutSettlement.findMany({
-      where: { externalSettlementId: "991122" },
-      select: { id: true },
-    });
-    const ids = settlements.map((s) => s.id);
-    if (ids.length) {
-      await prisma.gatewayPayoutSettlementEvent.deleteMany({ where: { settlementId: { in: ids } } }).catch(() => {});
-      await prisma.gatewayPayoutSettlementItem.deleteMany({ where: { settlementId: { in: ids } } }).catch(() => {});
-      await prisma.gatewayPayoutSettlement.deleteMany({ where: { id: { in: ids } } }).catch(() => {});
-    }
-    await cleanup(fix);
+    await wipeSettlements(Object.values(ids));
+    await cleanupLabor(labor);
+    await cleanupLabor(other);
+    await cleanupSupplier(supplierOk);
+    await cleanupSupplier(supplierBad);
   }
 }
 

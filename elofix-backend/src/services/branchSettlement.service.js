@@ -465,6 +465,8 @@ async function handleSettlementWebhook(providerInput, payload, headers = {}) {
       source: "settlement_webhook",
       status: verified.status,
       notify: true,
+      scopedSubaccount: verified.subaccount,
+      subaccount: verified.subaccount,
     });
     return { processed: !applied.skipped, ...applied };
   }
