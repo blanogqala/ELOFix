@@ -4,6 +4,7 @@ import {
   settlementStatusLabel,
   settlementStatusDescription,
   feeIsKnown,
+  providerGrossShareDisclaimer,
 } from '@/lib/payoutDisplay';
 
 describe('payoutDisplay', () => {
@@ -25,5 +26,13 @@ describe('payoutDisplay', () => {
     expect(feeIsKnown(2.82)).toBe(true);
     expect(settlementStatusLabel('FAILED')).toBe('Failed');
     expect(settlementStatusLabel('REVERSED')).toBe('Reversed');
+  });
+
+  it('describes 93% as gross marketplace share, not the final bank amount', () => {
+    const text = providerGrossShareDisclaimer('R50.00', 'R46.50');
+    expect(text).toContain('After the 7% EloFix commission');
+    expect(text).toContain('R46.50 (93%)');
+    expect(text).toContain('not the final bank amount');
+    expect(text).not.toMatch(/after EloFix commission \(93%\)/);
   });
 });

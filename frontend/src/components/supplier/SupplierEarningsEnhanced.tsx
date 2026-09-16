@@ -15,6 +15,15 @@ import { Label } from '@/components/ui/label';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { supplierBranchGrossRevenue } from '@/lib/supplierAnalyticsDisplay';
 import {
+  SETTLEMENT_KPI_DATE_HINT,
+  SUPPLIER_GROSS_SHARE_HINT,
+  SUPPLIER_GROSS_SHARE_LABEL,
+  SUPPLIER_PENDING_SETTLEMENT_LABEL,
+  SUPPLIER_SETTLED_HINT,
+  SUPPLIER_SETTLED_LABEL,
+  pendingSettlementHelperText,
+} from '@/lib/supplierSettlementKpiDisplay';
+import {
   computeActiveSubtotal,
   computeCompletedSubtotal,
   computePendingSubtotal,
@@ -507,6 +516,8 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
   const branchRows = branchAnalyticsData?.branches ?? [];
   const totalPendingSettlement = branchAnalyticsData?.totalPendingSettlement ?? 0;
   const totalSettled = branchAnalyticsData?.totalSettled ?? 0;
+  const needsAttentionAmount = branchAnalyticsData?.needsAttentionAmount ?? 0;
+  const pendingUsesGrossFallback = Boolean(branchAnalyticsData?.pendingUsesGrossFallback);
 
   const hubSummary = useMemo(
     () => hubExport?.summary ?? { ...EMPTY_SUPPLIER_ORDERS_EXPORT_SUMMARY },
@@ -548,35 +559,45 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total net earnings</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">{SUPPLIER_GROSS_SHARE_LABEL}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {formatCurrency(hubActiveSummary.net)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Supplier share · excluding cancelled</p>
+              <p className="mt-1 text-xs text-muted-foreground">{SUPPLIER_GROSS_SHARE_HINT}</p>
             </CardContent>
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Pending settlement</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {SUPPLIER_PENDING_SETTLEMENT_LABEL}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-primary">
                 {formatCurrency(totalPendingSettlement)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">In selected date range · all branches</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {pendingSettlementHelperText(pendingUsesGrossFallback)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{SETTLEMENT_KPI_DATE_HINT}</p>
+              {needsAttentionAmount > 0 ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {formatCurrency(needsAttentionAmount)} needs attention (failed, reversed, or unsupported)
+                </p>
+              ) : null}
             </CardContent>
           </Card>
           <Card className="card-elevated sm:col-span-2 lg:col-span-1">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Settled</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">{SUPPLIER_SETTLED_LABEL}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {formatCurrency(totalSettled)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Verified Paystack bank settlements</p>
+              <p className="mt-1 text-xs text-muted-foreground">{SUPPLIER_SETTLED_HINT}</p>
             </CardContent>
           </Card>
         </div>
@@ -677,7 +698,7 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Pending settlement</span>
+                    <span className="text-muted-foreground">{SUPPLIER_PENDING_SETTLEMENT_LABEL}</span>
                     <span className="font-medium text-primary">
                       {formatCurrency(b.pendingSettlement ?? 0)}
                     </span>

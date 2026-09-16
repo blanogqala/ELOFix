@@ -140,13 +140,13 @@ export default function SupplierBranchEarningsPage() {
           </Card>
           <Card className="card-elevated">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Net earnings</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Gross supplier share (93%)</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {cardsLoading ? '…' : formatCurrency(activeSummary.net)}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Branch share · excluding cancelled</p>
+              <p className="mt-1 text-xs text-muted-foreground">93% marketplace share before Paystack fees</p>
             </CardContent>
           </Card>
         </div>

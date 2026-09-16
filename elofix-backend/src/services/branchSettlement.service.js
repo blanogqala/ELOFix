@@ -5,7 +5,18 @@ const AppError = require("../utils/AppError");
 const payoutDestinationService = require("./payoutDestination.service");
 
 const SETTLED_STATUSES = new Set(["SETTLED"]);
-const PENDING_STATUSES = new Set(["PENDING", "PROCESSING", "NOT_SUPPORTED", "FAILED"]);
+const PENDING_PAYOUT_STATUSES = new Set(["PENDING", "PROCESSING"]);
+const AUTHORITATIVE_D3_PAYOUT_STATUSES = new Set([
+  "PENDING",
+  "PROCESSING",
+  "SETTLED",
+  "FAILED",
+  "REVERSED",
+]);
+const ATTENTION_PAYOUT_STATUSES = new Set(["FAILED", "REVERSED", "NOT_SUPPORTED", "NOT_APPLICABLE"]);
+const SUPPLIER_RECIPIENT_KINDS = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
+/** Settlement KPI date range uses PaymentIntent.paidAt (fallback createdAt), not Paystack settlement_date. */
+const SETTLEMENT_KPI_DATE_BASIS = "paymentIntent.paidAt_or_createdAt";
 
 function roundMoney2(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -36,6 +47,60 @@ function dateFilter({ from, to } = {}) {
       ...(toDate ? { lte: toDate } : {}),
     },
   };
+}
+
+function paidAtOrCreatedAtFilter({ from, to } = {}) {
+  const fromDate = parseDateBound(from, false);
+  const toDate = parseDateBound(to, true);
+  if (!fromDate && !toDate) return {};
+  const range = {
+    ...(fromDate ? { gte: fromDate } : {}),
+    ...(toDate ? { lte: toDate } : {}),
+  };
+  return {
+    OR: [{ paidAt: range }, { AND: [{ paidAt: null }, { createdAt: range }] }],
+  };
+}
+
+function emptySettlementSummary() {
+  return {
+    totalMaterialSales: 0,
+    platformCommission: 0,
+    netBranchEarnings: 0,
+    pendingSettlement: 0,
+    settled: 0,
+    needsAttentionAmount: 0,
+    needsAttentionCount: 0,
+    pendingUsesGrossFallback: false,
+    settlementKpiDateBasis: SETTLEMENT_KPI_DATE_BASIS,
+    gatewaySettlementSupported: gatewaySettlementSupported(),
+  };
+}
+
+function payoutBucketAmount(intent) {
+  if (intent?.expectedBankSettlementAmount != null && Number.isFinite(Number(intent.expectedBankSettlementAmount))) {
+    return { amount: roundMoney2(intent.expectedBankSettlementAmount), usesGrossFallback: false };
+  }
+  return { amount: roundMoney2(intent?.recipientAmount || 0), usesGrossFallback: true };
+}
+
+function isStoreDeliveryToBranch(intent, order) {
+  if (String(intent?.kind || "").toUpperCase() !== "DELIVERY_FEE") return false;
+  const payload = order?.payload && typeof order.payload === "object" ? order.payload : {};
+  return String(payload.deliveryType || "").toUpperCase() === "STORE_DELIVERY";
+}
+
+function isSupplierBranchRecipientIntent(intent, order, branchId, supplierOrgId) {
+  const kind = String(intent?.kind || "").toUpperCase();
+  if (!SUPPLIER_RECIPIENT_KINDS.has(kind)) return false;
+  if (kind === "LABOR" || kind === "PROVIDER_REFUND_REPAYMENT") return false;
+  const bid = String(branchId);
+  const sid = String(supplierOrgId);
+  const intentBranch = String(intent?.branchId || order?.branchId || "");
+  if (intentBranch !== bid) return false;
+  if (order?.supplierId && String(order.supplierId) !== sid) return false;
+  if (kind === "DELIVERY_FEE") return isStoreDeliveryToBranch(intent, order);
+  return kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER";
 }
 
 function mapGatewaySettlementStatus(raw) {
@@ -262,6 +327,11 @@ async function initiateSettlementAfterPayment(tx, intent, order) {
 async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from, to } = {}) {
   const bid = String(branchId);
   const sid = String(supplierOrgId);
+  const owned = await prisma.branch.findFirst({
+    where: { id: bid, supplierId: sid },
+    select: { id: true },
+  });
+  if (!owned) return emptySettlementSummary();
 
   const orders = await prisma.materialOrder.findMany({
     where: {
@@ -271,6 +341,7 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
       ...dateFilter({ from, to }),
     },
     select: {
+      id: true,
       materialsSubtotal: true,
       platformCommission: true,
       supplierEarning: true,
@@ -279,22 +350,90 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
     },
   });
 
+  const dateWhere = paidAtOrCreatedAtFilter({ from, to });
+  const intents = await prisma.paymentIntent.findMany({
+    where: {
+      state: "PAID",
+      kind: { in: ["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"] },
+      AND: [
+        {
+          OR: [{ branchId: bid }, { materialOrder: { is: { branchId: bid, supplierId: sid } } }],
+        },
+        ...(Object.keys(dateWhere).length ? [dateWhere] : []),
+      ],
+    },
+    select: {
+      id: true,
+      kind: true,
+      branchId: true,
+      materialOrderId: true,
+      recipientAmount: true,
+      expectedBankSettlementAmount: true,
+      payoutSettlementStatus: true,
+      paidAt: true,
+      createdAt: true,
+      materialOrder: {
+        select: {
+          id: true,
+          supplierId: true,
+          branchId: true,
+          payload: true,
+        },
+      },
+    },
+  });
+
   let totalMaterialSales = 0;
   let platformCommission = 0;
   let netBranchEarnings = 0;
-  let pendingSettlement = 0;
-  let settled = 0;
-
   for (const o of orders) {
     totalMaterialSales += Number(o.materialsSubtotal || 0);
     platformCommission += Number(o.platformCommission || 0);
-    const net = Number(o.supplierEarning || 0);
-    netBranchEarnings += net;
-    const st = String(o.settlementStatus || "NOT_APPLICABLE");
+    netBranchEarnings += Number(o.supplierEarning || 0);
+  }
+
+  let pendingSettlement = 0;
+  let settled = 0;
+  let needsAttentionAmount = 0;
+  let needsAttentionCount = 0;
+  let pendingUsesGrossFallback = false;
+  const d3CoveredOrderIds = new Set();
+
+  for (const intent of intents) {
+    if (!isSupplierBranchRecipientIntent(intent, intent.materialOrder, bid, sid)) continue;
+    const payoutStatus = String(intent.payoutSettlementStatus || "NOT_APPLICABLE").toUpperCase();
+    if (
+      (intent.kind === "MATERIAL_ORDER" || intent.kind === "JOB_STORE_ORDER") &&
+      intent.materialOrderId &&
+      AUTHORITATIVE_D3_PAYOUT_STATUSES.has(payoutStatus)
+    ) {
+      d3CoveredOrderIds.add(String(intent.materialOrderId));
+    }
+    if (!AUTHORITATIVE_D3_PAYOUT_STATUSES.has(payoutStatus)) continue;
+    const bucket = payoutBucketAmount(intent);
+    if (PENDING_PAYOUT_STATUSES.has(payoutStatus)) {
+      pendingSettlement += bucket.amount;
+      if (bucket.usesGrossFallback) pendingUsesGrossFallback = true;
+    } else if (SETTLED_STATUSES.has(payoutStatus)) {
+      settled += bucket.amount;
+    } else if (ATTENTION_PAYOUT_STATUSES.has(payoutStatus)) {
+      needsAttentionAmount += bucket.amount;
+      needsAttentionCount += 1;
+    }
+  }
+
+  for (const o of orders) {
+    if (d3CoveredOrderIds.has(String(o.id))) continue;
+    const st = String(o.settlementStatus || "NOT_APPLICABLE").toUpperCase();
+    const net = Number(o.settlementAmount != null ? o.settlementAmount : o.supplierEarning || 0);
     if (SETTLED_STATUSES.has(st)) {
-      settled += Number(o.settlementAmount || net);
-    } else if (PENDING_STATUSES.has(st) || st === "NOT_APPLICABLE") {
-      pendingSettlement += Number(o.settlementAmount || net);
+      settled += net;
+    } else if (PENDING_PAYOUT_STATUSES.has(st)) {
+      pendingSettlement += net;
+      pendingUsesGrossFallback = true;
+    } else if (ATTENTION_PAYOUT_STATUSES.has(st) || st === "ACTION_REQUIRED") {
+      needsAttentionAmount += net;
+      needsAttentionCount += 1;
     }
   }
 
@@ -304,13 +443,28 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
     netBranchEarnings: roundMoney2(netBranchEarnings),
     pendingSettlement: roundMoney2(pendingSettlement),
     settled: roundMoney2(settled),
+    needsAttentionAmount: roundMoney2(needsAttentionAmount),
+    needsAttentionCount,
+    pendingUsesGrossFallback,
+    settlementKpiDateBasis: SETTLEMENT_KPI_DATE_BASIS,
     gatewaySettlementSupported: gatewaySettlementSupported(),
   };
 }
 
 async function aggregateSupplierSettlementSummary(supplierOrgId, { from, to } = {}) {
   const sid = String(supplierOrgId || "").trim();
-  if (!sid) return { totalPendingSettlement: 0, totalSettled: 0, byBranchId: {}, gatewaySettlementSupported: false };
+  if (!sid) {
+    return {
+      totalPendingSettlement: 0,
+      totalSettled: 0,
+      totalNeedsAttentionAmount: 0,
+      totalNeedsAttentionCount: 0,
+      pendingUsesGrossFallback: false,
+      settlementKpiDateBasis: SETTLEMENT_KPI_DATE_BASIS,
+      byBranchId: {},
+      gatewaySettlementSupported: false,
+    };
+  }
 
   const branches = await prisma.branch.findMany({
     where: { supplierId: sid },
@@ -320,20 +474,33 @@ async function aggregateSupplierSettlementSummary(supplierOrgId, { from, to } = 
   const byBranchId = {};
   let totalPendingSettlement = 0;
   let totalSettled = 0;
+  let totalNeedsAttentionAmount = 0;
+  let totalNeedsAttentionCount = 0;
+  let pendingUsesGrossFallback = false;
 
   for (const b of branches) {
     const summary = await aggregateBranchSettlementSummary(b.id, sid, { from, to });
     byBranchId[b.id] = {
       pendingSettlement: summary.pendingSettlement,
       settled: summary.settled,
+      needsAttentionAmount: summary.needsAttentionAmount,
+      needsAttentionCount: summary.needsAttentionCount,
+      pendingUsesGrossFallback: summary.pendingUsesGrossFallback,
     };
     totalPendingSettlement = roundMoney2(totalPendingSettlement + summary.pendingSettlement);
     totalSettled = roundMoney2(totalSettled + summary.settled);
+    totalNeedsAttentionAmount = roundMoney2(totalNeedsAttentionAmount + summary.needsAttentionAmount);
+    totalNeedsAttentionCount += summary.needsAttentionCount;
+    if (summary.pendingUsesGrossFallback) pendingUsesGrossFallback = true;
   }
 
   return {
     totalPendingSettlement,
     totalSettled,
+    totalNeedsAttentionAmount,
+    totalNeedsAttentionCount,
+    pendingUsesGrossFallback,
+    settlementKpiDateBasis: SETTLEMENT_KPI_DATE_BASIS,
     byBranchId,
     gatewaySettlementSupported: gatewaySettlementSupported(),
   };
@@ -509,4 +676,5 @@ module.exports = {
   listSupplierSettlementHistory,
   applySettlementStatusUpdate,
   handleSettlementWebhook,
+  SETTLEMENT_KPI_DATE_BASIS,
 };

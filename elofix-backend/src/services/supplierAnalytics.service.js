@@ -204,6 +204,8 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
       grossRevenue: Math.round((netEarnings + platformCommission) * 100) / 100,
       pendingSettlement: withdrawalsSummary.byBranchId[b.id]?.pendingSettlement ?? 0,
       settled: withdrawalsSummary.byBranchId[b.id]?.settled ?? 0,
+      needsAttentionAmount: withdrawalsSummary.byBranchId[b.id]?.needsAttentionAmount ?? 0,
+      needsAttentionCount: withdrawalsSummary.byBranchId[b.id]?.needsAttentionCount ?? 0,
       managerEmails: (b.branchUsers || []).map((u) => u.email).filter(Boolean),
     });
   }
@@ -212,6 +214,10 @@ async function listBranchesWithStats(supplierOrgId, query = {}) {
     branches: out,
     totalPendingSettlement: withdrawalsSummary.totalPendingSettlement,
     totalSettled: withdrawalsSummary.totalSettled,
+    needsAttentionAmount: withdrawalsSummary.totalNeedsAttentionAmount ?? 0,
+    needsAttentionCount: withdrawalsSummary.totalNeedsAttentionCount ?? 0,
+    pendingUsesGrossFallback: Boolean(withdrawalsSummary.pendingUsesGrossFallback),
+    settlementKpiDateBasis: withdrawalsSummary.settlementKpiDateBasis,
     gatewaySettlementSupported: withdrawalsSummary.gatewaySettlementSupported,
   };
 }

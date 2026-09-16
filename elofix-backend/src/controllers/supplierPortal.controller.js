@@ -96,6 +96,10 @@ async function getAnalyticsBranches(req, res) {
     branches: result.branches,
     totalPendingSettlement: result.totalPendingSettlement,
     totalSettled: result.totalSettled,
+    needsAttentionAmount: result.needsAttentionAmount,
+    needsAttentionCount: result.needsAttentionCount,
+    pendingUsesGrossFallback: result.pendingUsesGrossFallback,
+    settlementKpiDateBasis: result.settlementKpiDateBasis,
     gatewaySettlementSupported: result.gatewaySettlementSupported,
   });
 }
