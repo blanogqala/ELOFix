@@ -105,3 +105,11 @@ export function settlementStatusBadgeClass(status: string | null | undefined): s
 export function feeIsKnown(amount: number | null | undefined): boolean {
   return amount != null && Number.isFinite(Number(amount));
 }
+
+export function providerGrossShareDisclaimer(customerPaid: string, grossShare: string): string {
+  return (
+    `After the 7% EloFix commission, your gross marketplace share is ${grossShare} (93%). ` +
+    `This is not the final bank amount. Paystack processing fees may reduce the amount credited to your bank. ` +
+    `Customer paid ${customerPaid}.`
+  );
+}

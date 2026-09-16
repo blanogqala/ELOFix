@@ -522,6 +522,8 @@ export interface SupplierBranchAnalyticsRow {
   grossRevenue?: number;
   pendingSettlement?: number;
   settled?: number;
+  needsAttentionAmount?: number;
+  needsAttentionCount?: number;
   managerEmails?: string[];
 }
 
@@ -529,6 +531,10 @@ export interface SupplierAnalyticsBranchesResult {
   branches: SupplierBranchAnalyticsRow[];
   totalPendingSettlement: number;
   totalSettled: number;
+  needsAttentionAmount?: number;
+  needsAttentionCount?: number;
+  pendingUsesGrossFallback?: boolean;
+  settlementKpiDateBasis?: string;
   gatewaySettlementSupported?: boolean;
 }
 
@@ -543,12 +549,20 @@ export async function getSupplierAnalyticsBranches(params?: {
     branches: SupplierBranchAnalyticsRow[];
     totalPendingSettlement?: number;
     totalSettled?: number;
+    needsAttentionAmount?: number;
+    needsAttentionCount?: number;
+    pendingUsesGrossFallback?: boolean;
+    settlementKpiDateBasis?: string;
     gatewaySettlementSupported?: boolean;
   }>('/supplier/analytics/branches', { params: { ...params } });
   return {
     branches: Array.isArray(data?.branches) ? data.branches : [],
     totalPendingSettlement: Number(data?.totalPendingSettlement ?? 0),
     totalSettled: Number(data?.totalSettled ?? 0),
+    needsAttentionAmount: Number(data?.needsAttentionAmount ?? 0),
+    needsAttentionCount: Number(data?.needsAttentionCount ?? 0),
+    pendingUsesGrossFallback: Boolean(data?.pendingUsesGrossFallback),
+    settlementKpiDateBasis: data?.settlementKpiDateBasis,
     gatewaySettlementSupported: Boolean(data?.gatewaySettlementSupported),
   };
 }
@@ -614,6 +628,10 @@ export interface BranchSettlementSummary {
   netBranchEarnings: number;
   pendingSettlement: number;
   settled: number;
+  needsAttentionAmount?: number;
+  needsAttentionCount?: number;
+  pendingUsesGrossFallback?: boolean;
+  settlementKpiDateBasis?: string;
   gatewaySettlementSupported: boolean;
 }
 
@@ -679,6 +697,10 @@ export async function getBranchBalance(branchId: string): Promise<BranchSettleme
     netBranchEarnings: data.netBranchEarnings ?? 0,
     pendingSettlement: data.pendingSettlement ?? 0,
     settled: data.settled ?? 0,
+    needsAttentionAmount: data.needsAttentionAmount ?? 0,
+    needsAttentionCount: data.needsAttentionCount ?? 0,
+    pendingUsesGrossFallback: Boolean(data.pendingUsesGrossFallback),
+    settlementKpiDateBasis: data.settlementKpiDateBasis,
     gatewaySettlementSupported: Boolean(data.gatewaySettlementSupported),
   };
 }

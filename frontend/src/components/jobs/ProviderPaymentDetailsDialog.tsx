@@ -13,6 +13,7 @@ import { CheckCircle2, Lock } from 'lucide-react';
 import { PayoutBreakdown } from '@/components/payments/PayoutBreakdown';
 import type { Job } from '@/types';
 import { formatZar } from '@/lib/paymentSchedule';
+import { providerGrossShareDisclaimer } from '@/lib/payoutDisplay';
 import { cn } from '@/lib/utils';
 import {
   buildProviderPaymentDetailsModel,
@@ -157,9 +158,10 @@ export function ProviderPaymentDetailsDialog({ open, onOpenChange, job }: Props)
               ) : null}
             </div>
             <p className="text-xs text-muted-foreground">
-              Customer paid {formatZar(model.customerTotalPaid)}. Your gross share is{' '}
-              {formatZar(model.providerShareRecorded)} after EloFix commission (93%) — not the final bank amount.
-              Paystack processing fee is confirmed after payment and may reduce the amount credited to your bank.
+              {providerGrossShareDisclaimer(
+                formatZar(model.customerTotalPaid),
+                formatZar(model.providerShareRecorded)
+              )}
             </p>
           </section>
 
