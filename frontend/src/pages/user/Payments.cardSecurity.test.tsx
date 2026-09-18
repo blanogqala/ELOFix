@@ -20,13 +20,10 @@ vi.mock('@/components/layout/DashboardLayout', () => ({
   DashboardLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-const getSavedCards = vi.fn();
 const getInvoices = vi.fn();
 const getJobsByUser = vi.fn();
 
 vi.mock('@/lib/api/payments', () => ({
-  getSavedCards: (...args: unknown[]) => getSavedCards(...args),
-  deleteCard: vi.fn(),
   getInvoices: (...args: unknown[]) => getInvoices(...args),
 }));
 
@@ -37,7 +34,6 @@ vi.mock('@/lib/api/jobs', () => ({
 describe('/user/payments card-data security', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getSavedCards.mockResolvedValue([]);
     getInvoices.mockResolvedValue([]);
     getJobsByUser.mockResolvedValue([]);
   });
@@ -50,14 +46,12 @@ describe('/user/payments card-data security', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /Payments/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /^Payments$/i })).toBeInTheDocument();
     });
 
     expect(screen.queryByPlaceholderText('1234 5678 9012 3456')).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^CVV$/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Add New Card/i })).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/Saved payment methods will be managed securely through our payment service provider/i)
-    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save card/i })).not.toBeInTheDocument();
   });
 });

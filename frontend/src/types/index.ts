@@ -979,6 +979,16 @@ export interface Invoice {
   driverName?: string;
   /** For delivery invoices: vehicle type and number plate */
   vehicleInfo?: string;
+  /** Optional JSON metadata preserved by the backend invoice payload. */
+  meta?: Record<string, unknown>;
+  materialOrderId?: string | null;
+  jobStoreOrderId?: string | null;
+  orderId?: string | null;
+  paymentIntentId?: string | null;
+  paymentType?: string | null;
+  kind?: string | null;
+  storeName?: string | null;
+  jobTitle?: string | null;
 }
 
 // Notification Types

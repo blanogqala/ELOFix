@@ -1,114 +1,96 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useToast } from '@/hooks/use-toast';
-import { getSavedCards, deleteCard, getInvoices } from '@/lib/api/payments';
+import { getInvoices } from '@/lib/api/payments';
 import { getJobsByUser } from '@/lib/api/jobs';
-import { SavedCard, Invoice } from '@/types';
-import { 
-  CreditCard, 
-  Trash2, 
+import { Invoice } from '@/types';
+import {
   FileText,
   Download,
   ChevronRight,
   CheckCircle,
   AlertCircle,
   RotateCcw,
-  Shield
+  CreditCard,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { format, parseISO } from 'date-fns';
+import {
+  groupPaymentInvoices,
+  invoiceDisplayLabel,
+  invoiceStatusLabel,
+  isPaymentInvoice,
+  isRefundInvoice,
+  type PaymentHistoryGroup,
+} from '@/lib/customerPaymentHistory';
 
-type TabType = 'methods' | 'invoices';
+type TabType = 'payments' | 'refunds';
 
-function isRefundInvoice(invoice: Invoice): boolean {
-  const type = String(invoice.type || '').toLowerCase();
-  const status = String(invoice.status || '').toLowerCase();
-  return type === 'refund' || status === 'refunded' || status === 'partially_refunded';
+function safePaidAt(iso: string): string {
+  try {
+    return format(parseISO(iso), 'd MMM yyyy');
+  } catch {
+    return iso;
+  }
 }
 
 export default function UserPayments() {
   const { user } = useAuth();
-  const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<TabType>('methods');
-  const [cards, setCards] = useState<SavedCard[]>([]);
+  const userId = user?.id;
+  const [activeTab, setActiveTab] = useState<TabType>('payments');
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [jobs, setJobs] = useState<{ id: string; categoryName: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!user) return;
+    if (!userId) return;
     try {
-      const [cardsData, invoicesData, jobsData] = await Promise.all([
-        getSavedCards(user.id),
-        getInvoices(user.id),
-        getJobsByUser(user.id),
+      const [invoicesData, jobsData] = await Promise.all([
+        getInvoices(userId),
+        getJobsByUser(userId),
       ]);
-      setCards(cardsData);
-      setInvoices(invoicesData.sort((a, b) => 
-        new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime()
-      ));
-      setJobs(jobsData.map(j => ({ id: j.id, categoryName: j.categoryName })));
+      setInvoices(
+        invoicesData.sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime())
+      );
+      setJobs(jobsData.map((j) => ({ id: j.id, categoryName: j.categoryName })));
     } catch (error) {
       console.error('Failed to load payment data:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
-    if (user) {
+    if (userId) {
       void loadData();
     }
-  }, [user, loadData]);
+  }, [userId, loadData]);
 
-  const handleDeleteLegacyCard = async (cardId: string) => {
-    if (!user) return;
-    try {
-      await deleteCard(user.id, cardId);
-      await loadData();
-      toast({ title: 'Removed', description: 'Legacy card metadata was deleted.' });
-    } catch {
-      toast({ title: 'Failed to remove', variant: 'destructive' });
-    }
-  };
-
-  const groupInvoicesByJob = (invoices: Invoice[]) => {
-    const byJob = new Map<string, Invoice[]>();
-    invoices.forEach(inv => {
-      const key = inv.jobId;
-      if (!byJob.has(key)) byJob.set(key, []);
-      byJob.get(key)!.push(inv);
-    });
-    return Array.from(byJob.entries()).map(([jobId, invs]) => {
-      const job = jobs.find(j => j.id === jobId);
-      const label = job ? job.categoryName : (invs[0]?.hardwareStores?.[0] || `Order #${jobId.slice(-8)}`);
-      return { jobId, label, invoices: invs.sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime()) };
-    }).sort((a, b) => {
-      const aLatest = Math.max(...a.invoices.map(i => new Date(i.paidAt).getTime()));
-      const bLatest = Math.max(...b.invoices.map(i => new Date(i.paidAt).getTime()));
-      return bLatest - aLatest;
-    });
-  };
+  const paymentInvoices = useMemo(() => invoices.filter(isPaymentInvoice), [invoices]);
+  const refundInvoices = useMemo(() => invoices.filter(isRefundInvoice), [invoices]);
+  const paymentGroups = useMemo(
+    () => groupPaymentInvoices(paymentInvoices, jobs),
+    [paymentInvoices, jobs]
+  );
+  const refundGroups = useMemo(
+    () => groupPaymentInvoices(refundInvoices, jobs),
+    [refundInvoices, jobs]
+  );
 
   const getStatusIcon = (status: Invoice['status']) => {
     switch (status) {
-      case 'paid': return <CheckCircle className="h-4 w-4 text-success" />;
-      case 'partially_refunded': return <AlertCircle className="h-4 w-4 text-warning" />;
-      case 'refunded': return <RotateCcw className="h-4 w-4 text-primary" />;
-    }
-  };
-
-  const getStatusLabel = (status: Invoice['status']) => {
-    switch (status) {
-      case 'paid': return 'Paid';
-      case 'partially_refunded': return 'Partially Refunded';
-      case 'refunded': return 'Refunded';
+      case 'paid':
+        return <CheckCircle className="h-4 w-4 text-success" />;
+      case 'partially_refunded':
+        return <AlertCircle className="h-4 w-4 text-warning" />;
+      case 'refunded':
+        return <RotateCcw className="h-4 w-4 text-primary" />;
     }
   };
 
@@ -145,7 +127,7 @@ export default function UserPayments() {
           </div>
           <div style="text-align: right;">
             <p>Date: ${format(parseISO(invoice.paidAt), 'PPP')}</p>
-            <span class="status ${invoice.status}">${getStatusLabel(invoice.status)}</span>
+            <span class="status ${invoice.status}">${invoiceStatusLabel(invoice.status)}</span>
           </div>
         </div>
         
@@ -193,18 +175,104 @@ export default function UserPayments() {
     printWindow.document.close();
   };
 
+  const renderGroup = (group: PaymentHistoryGroup, refundStyle: boolean) => (
+    <div key={group.key} className="card-elevated min-w-0 max-w-full overflow-hidden">
+      <div className="flex min-w-0 flex-col gap-2 border-b border-border p-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="break-words font-semibold">{group.title}</h3>
+          <p className="break-all text-xs text-muted-foreground">{group.subtitle}</p>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="text-muted-foreground">
+            {group.invoices.length} {group.invoices.length === 1 ? 'payment' : 'payments'}
+          </span>
+          <span className={cn('font-medium tabular-nums', refundStyle && 'text-success')}>
+            {refundStyle ? '+' : ''}
+            {formatCurrency(group.totalPaid, { decimals: 2 })}
+            {refundStyle ? '' : ' total paid'}
+          </span>
+          {group.kind === 'job' && group.key.includes(':') ? (
+            <Button variant="link" className="h-auto p-0 text-xs" asChild>
+              <Link to={`/user/jobs/${group.key.slice(group.key.indexOf(':') + 1)}`}>Open job</Link>
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <div className="divide-y divide-border">
+        {group.invoices.map((invoice) => (
+          <div
+            key={invoice.id}
+            className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between"
+            onClick={() => setSelectedInvoice(invoice)}
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              <div
+                className={cn(
+                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                  refundStyle ? 'bg-success/10' : 'bg-primary/10'
+                )}
+              >
+                {refundStyle ? (
+                  <RotateCcw className="h-4 w-4 text-success" />
+                ) : (
+                  <Receipt className="h-4 w-4 text-primary" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="break-words font-medium">
+                  {refundStyle ? `Refund · ${group.title}` : invoiceDisplayLabel(invoice, group.kind)}
+                </p>
+                <p className="text-sm text-muted-foreground">{safePaidAt(invoice.paidAt)}</p>
+              </div>
+            </div>
+            <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-end">
+              <div className="min-w-0 text-left sm:text-right">
+                <p
+                  className={cn(
+                    'font-semibold tabular-nums',
+                    refundStyle ? 'text-success' : 'text-foreground'
+                  )}
+                >
+                  {refundStyle ? '+' : ''}
+                  {formatCurrency(invoice.totalAmount, { decimals: 2 })}
+                </p>
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  {getStatusIcon(invoice.status)}
+                  <span>{refundStyle ? 'Refunded' : invoiceStatusLabel(invoice.status)}</span>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedInvoice(invoice);
+                }}
+              >
+                View invoice
+              </Button>
+              <ChevronRight className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   if (isLoading) {
     return (
       <DashboardLayout>
         <div className="space-y-6 animate-pulse">
           <div className="h-8 w-48 bg-muted rounded" />
-          <div className="flex gap-4">
-            <div className="h-10 w-24 bg-muted rounded" />
-            <div className="h-10 w-24 bg-muted rounded" />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="h-10 bg-muted rounded" />
+            <div className="h-10 bg-muted rounded" />
           </div>
           <div className="card-elevated p-6">
             <div className="space-y-4">
-              {[1, 2, 3].map(i => (
+              {[1, 2, 3].map((i) => (
                 <div key={i} className="h-20 bg-muted rounded" />
               ))}
             </div>
@@ -216,252 +284,177 @@ export default function UserPayments() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 md:space-y-8 animate-fade-in">
+      <div className="min-w-0 max-w-full space-y-6 md:space-y-8 animate-fade-in">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Payments</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">View invoices and payment method information</p>
+          <p className="text-sm text-muted-foreground sm:text-base">
+            View your payments, invoices and refunds.
+          </p>
         </div>
 
-        <div className="flex flex-wrap gap-2 border-b border-border">
+        <div
+          role="tablist"
+          aria-label="Payment history sections"
+          className="grid w-full grid-cols-2 border-b border-border"
+        >
           <button
-            onClick={() => setActiveTab('methods')}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'payments'}
+            onClick={() => setActiveTab('payments')}
             className={cn(
-              "px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px",
-              activeTab === 'methods' 
-                ? "border-primary text-primary" 
-                : "border-transparent text-muted-foreground hover:text-foreground"
+              'inline-flex min-w-0 items-center justify-center gap-1.5 border-b-2 px-2 py-2 text-center text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm',
+              activeTab === 'payments'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            <CreditCard className="inline-block h-4 w-4 mr-2" />
-            Payment methods
+            <CreditCard className="h-4 w-4 shrink-0" />
+            <span className="truncate">Payments</span>
           </button>
           <button
-            onClick={() => setActiveTab('invoices')}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'refunds'}
+            onClick={() => setActiveTab('refunds')}
             className={cn(
-              "px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px",
-              activeTab === 'invoices' 
-                ? "border-primary text-primary" 
-                : "border-transparent text-muted-foreground hover:text-foreground"
+              'inline-flex min-w-0 items-center justify-center gap-1.5 border-b-2 px-2 py-2 text-center text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm',
+              activeTab === 'refunds'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            <FileText className="inline-block h-4 w-4 mr-2" />
-            Refunded Invoices
+            <FileText className="h-4 w-4 shrink-0" />
+            <span className="truncate sm:hidden">Refunds</span>
+            <span className="hidden truncate sm:inline">Refund Invoices</span>
           </button>
         </div>
 
-        {activeTab === 'methods' && (
+        {activeTab === 'payments' && (
           <div className="space-y-4">
-            <div className="card-elevated p-6 space-y-3">
-              <div className="flex items-start gap-3">
-                <Shield className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="space-y-2">
-                  <h3 className="font-semibold">Payment methods</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Saved payment methods will be managed securely through our payment service provider
-                    once card tokenisation is enabled.
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Sensitive card information is entered and processed through the applicable payment
-                    service provider. Paystack is currently EloFix's primary live payment processor.
-                    EloFix does not store CVV/CVC or full card numbers.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {cards.length > 0 && (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Legacy display metadata only — not a vaulted payment method. These rows cannot be used
-                  to charge a card.
+            {paymentGroups.length === 0 ? (
+              <div className="card-elevated p-12 text-center">
+                <Receipt className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+                <h3 className="mb-2 font-semibold">No payments yet</h3>
+                <p className="text-sm text-muted-foreground">
+                  Paid service jobs and material orders will appear here.
                 </p>
-                {cards.map((card) => (
-                  <div key={card.id} className="card-elevated p-4">
-                    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                        <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center">
-                          <CreditCard className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                        <div>
-                          <p className="font-medium capitalize">
-                            {card.brand} •••• {card.last4}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            Expires {String(card.expiryMonth).padStart(2, '0')}/{card.expiryYear}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Status: LEGACY_METADATA_ONLY
-                          </p>
-                        </div>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-9 shrink-0 text-destructive hover:bg-destructive/10"
-                        onClick={() => handleDeleteLegacyCard(card.id)}
-                        aria-label="Remove legacy card metadata"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
               </div>
+            ) : (
+              paymentGroups.map((group) => renderGroup(group, false))
             )}
           </div>
         )}
 
-        {activeTab === 'invoices' && (
-          <div className="space-y-6">
-            {(() => {
-              const refundInvoices = invoices.filter(isRefundInvoice);
-              if (refundInvoices.length === 0) {
-                return (
-                  <div className="card-elevated p-12 text-center">
-                    <RotateCcw className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="font-semibold mb-2">No refunds yet</h3>
-                    <p className="text-muted-foreground text-sm">
-                      Completed refunds for your jobs will appear here
-                    </p>
-                  </div>
-                );
-              }
-              return groupInvoicesByJob(refundInvoices).map((group) => (
-                <div key={group.jobId}>
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold">{group.label}</h3>
-                    {group.jobId && !String(group.jobId).startsWith('store-') ? (
-                      <Button variant="link" className="h-auto p-0 text-xs" asChild>
-                        <Link to={`/user/jobs/${group.jobId}`}>Open job</Link>
-                      </Button>
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    {group.invoices.map((invoice) => (
-                      <div
-                        key={invoice.id}
-                        className="card-elevated p-4 cursor-pointer hover:border-primary/30 transition-colors"
-                        onClick={() => setSelectedInvoice(invoice)}
-                      >
-                        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10">
-                              <RotateCcw className="h-4 w-4 text-success" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">Refund · {group.label}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {format(parseISO(invoice.paidAt), 'PPP')}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
-                            <div className="text-left sm:text-right">
-                              <p className="font-semibold text-success tabular-nums">
-                                +{formatCurrency(invoice.totalAmount, { decimals: 2 })}
-                              </p>
-                              <div className="flex items-center gap-1 text-xs text-success">
-                                <CheckCircle className="h-3.5 w-3.5" />
-                                <span>Refunded</span>
-                              </div>
-                            </div>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ));
-            })()}
+        {activeTab === 'refunds' && (
+          <div className="space-y-4">
+            {refundGroups.length === 0 ? (
+              <div className="card-elevated p-12 text-center">
+                <RotateCcw className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+                <h3 className="mb-2 font-semibold">No refunds yet</h3>
+                <p className="text-sm text-muted-foreground">
+                  Completed refunds for your jobs will appear here
+                </p>
+              </div>
+            ) : (
+              refundGroups.map((group) => renderGroup(group, true))
+            )}
           </div>
         )}
 
         <Dialog open={!!selectedInvoice} onOpenChange={() => setSelectedInvoice(null)}>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-h-[min(90dvh,40rem)] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Invoice Details</DialogTitle>
             </DialogHeader>
             {selectedInvoice && (
-              <div className="space-y-4 pt-2">
-                <div className="flex items-center justify-between">
-                  <div>
+              <div className="min-w-0 max-w-full space-y-4 pt-2">
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Invoice ID</p>
-                    <p className="font-medium">{selectedInvoice.id}</p>
+                    <p className="break-all font-medium">{selectedInvoice.id}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     {getStatusIcon(selectedInvoice.status)}
-                    <span className="text-sm font-medium">{getStatusLabel(selectedInvoice.status)}</span>
+                    <span className="text-sm font-medium">{invoiceStatusLabel(selectedInvoice.status)}</span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div>
+                <div className="grid grid-cols-1 gap-4 rounded-lg bg-muted/50 p-4 sm:grid-cols-2">
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Job Reference</p>
-                    <p className="font-medium">{selectedInvoice.jobId}</p>
+                    <p className="break-all font-medium">{selectedInvoice.jobId || '—'}</p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Payment Date</p>
-                    <p className="font-medium">{format(parseISO(selectedInvoice.paidAt), 'PPP')}</p>
+                    <p className="break-words font-medium">
+                      {format(parseISO(selectedInvoice.paidAt), 'PPP')}
+                    </p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Payment Method</p>
-                    <p className="font-medium">{selectedInvoice.paymentMethod}</p>
+                    <p className="break-words font-medium">{selectedInvoice.paymentMethod}</p>
                   </div>
                   {selectedInvoice.cardLast4 && (
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm text-muted-foreground">Card</p>
                       <p className="font-medium">•••• {selectedInvoice.cardLast4}</p>
                     </div>
                   )}
                 </div>
 
-                <div>
-                  <h4 className="font-medium mb-2">Cost Breakdown</h4>
-                  <div className="space-y-2 border border-border rounded-lg p-3">
+                <div className="min-w-0">
+                  <h4 className="mb-2 font-medium">Cost Breakdown</h4>
+                  <div className="space-y-2 rounded-lg border border-border p-3">
                     {selectedInvoice.lineItems.map((item, idx) => (
-                      <div key={idx} className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">
+                      <div key={idx} className="flex min-w-0 items-start justify-between gap-3 text-sm">
+                        <span className="min-w-0 break-words text-muted-foreground">
                           {item.description}
                           {item.quantity > 1 && ` (x${item.quantity})`}
                         </span>
-                        <span>{formatCurrency(item.total, { decimals: 2 })}</span>
+                        <span className="shrink-0 tabular-nums">
+                          {formatCurrency(item.total, { decimals: 2 })}
+                        </span>
                       </div>
                     ))}
-                    <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
+                    <div className="mt-2 flex min-w-0 items-start justify-between gap-3 border-t border-border pt-2 font-medium">
                       <span>Total</span>
-                      <span>{formatCurrency(selectedInvoice.totalAmount, { decimals: 2 })}</span>
+                      <span className="shrink-0 tabular-nums">
+                        {formatCurrency(selectedInvoice.totalAmount, { decimals: 2 })}
+                      </span>
                     </div>
-                    {selectedInvoice.refundedAmount && (
-                      <div className="flex justify-between text-success">
+                    {selectedInvoice.refundedAmount ? (
+                      <div className="flex min-w-0 items-start justify-between gap-3 text-success">
                         <span>Refunded</span>
-                        <span>-{formatCurrency(selectedInvoice.refundedAmount, { decimals: 2 })}</span>
+                        <span className="shrink-0 tabular-nums">
+                          -{formatCurrency(selectedInvoice.refundedAmount, { decimals: 2 })}
+                        </span>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
                 {selectedInvoice.hardwareStores && selectedInvoice.hardwareStores.length > 0 && (
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Hardware Stores</p>
-                    <p className="font-medium">{selectedInvoice.hardwareStores.join(', ')}</p>
+                    <p className="break-words font-medium">{selectedInvoice.hardwareStores.join(', ')}</p>
                   </div>
                 )}
                 {selectedInvoice.driverName && (
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Driver</p>
-                    <p className="font-medium">{selectedInvoice.driverName}</p>
+                    <p className="break-words font-medium">{selectedInvoice.driverName}</p>
                   </div>
                 )}
                 {selectedInvoice.vehicleInfo && (
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Vehicle</p>
-                    <p className="font-medium">{selectedInvoice.vehicleInfo}</p>
+                    <p className="break-words font-medium">{selectedInvoice.vehicleInfo}</p>
                   </div>
                 )}
 
-                <Button 
-                  className="w-full" 
+                <Button
+                  className="w-full"
                   variant="outline"
                   onClick={() => handlePrintInvoice(selectedInvoice)}
                 >

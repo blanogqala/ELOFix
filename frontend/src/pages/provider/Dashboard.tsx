@@ -18,7 +18,7 @@ import { isActiveWorkflowStatus } from '@/lib/jobStatusMapping';
 import { JobPaymentListSummary } from '@/components/jobs/JobPaymentListSummary';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { groupJobsForList } from '@/lib/jobListGrouping';
-import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
+import { JobListGroup, JobListRowBody, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { ProviderTrustScoreCard } from '@/components/provider/ProviderTrustScoreCard';
 import { useProviderStatus } from '@/hooks/useProviderStatus';
 
@@ -82,22 +82,22 @@ export default function ProviderDashboard() {
   const groupedRecentJobs = groupJobsForList(recentJobs).slice(0, 3);
 
   const renderJobRow = (job: Job, variant: JobListRowVariant) => (
-    <>
-      <div className="min-w-0 flex-1">
-        <div className="mb-1 flex flex-wrap items-center gap-2">
-          <p className={cn('text-sm font-medium', variant === 'child' && 'text-muted-foreground')}>
-            {variant === 'child' ? 'Material delivery' : job.categoryName}
+    <JobListRowBody
+      primary={
+        <>
+          <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2">
+            <p className={cn('min-w-0 break-words text-sm font-medium', variant === 'child' && 'text-muted-foreground')}>
+              {variant === 'child' ? 'Material delivery' : job.categoryName}
+            </p>
+            <span className="shrink-0">{getStatusBadge(job)}</span>
+          </div>
+          <p className="line-clamp-2 break-words text-xs text-muted-foreground">
+            {variant === 'child' ? job.description : job.userName}
           </p>
-          {getStatusBadge(job)}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {variant === 'child' ? job.description : job.userName}
-        </p>
-      </div>
-      <div className="shrink-0 text-right">
-        <JobPaymentListSummary job={job} showDate compact />
-      </div>
-    </>
+        </>
+      }
+      financial={<JobPaymentListSummary job={job} showDate compact />}
+    />
   );
 
   return (
@@ -282,12 +282,12 @@ export default function ProviderDashboard() {
         <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
           {/* Pending Requests Column */}
           <div className="card-elevated overflow-hidden">
-            <div className="grid grid-cols-2 gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-              <div className="min-w-0 col-span-1">
+            <div className="flex items-start justify-between gap-3 border-b border-border p-4 sm:p-6">
+              <div className="min-w-0">
                 <h2 className="text-lg font-semibold sm:text-xl">Pending Requests</h2>
                 <p className="text-sm text-muted-foreground">{pendingJobs.length} awaiting response</p>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => navigate('/provider/requests')}>
+              <Button variant="ghost" size="sm" className="h-9 shrink-0 px-2 sm:px-3" onClick={() => navigate('/provider/requests')}>
                 View All <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </div>
@@ -303,27 +303,27 @@ export default function ProviderDashboard() {
                     className="p-4 hover:bg-muted/50 cursor-pointer transition-colors"
                     onClick={() => navigate(`/provider/requests/${job.id}`)}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
                       {job.images[0] ? (
-                        <div className="h-12 w-12 rounded-lg overflow-hidden shrink-0">
+                        <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg">
                           <img src={resolveUploadUrl(job.images[0])} alt="" className="h-full w-full object-cover" />
                         </div>
                       ) : (
-                        <div className="h-12 w-12 rounded-lg bg-warning/10 flex items-center justify-center shrink-0">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-warning/10">
                           <ClipboardList className="h-6 w-6 text-warning" />
                         </div>
                       )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm">{job.categoryName}</p>
-                        <p className="text-xs text-muted-foreground truncate">{job.description}</p>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Package className="h-3 w-3" /> {job.materials.length} items
-                          </span>
-                          <span>{new Date(job.createdAt).toLocaleDateString()}</span>
+                      <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-medium">{job.categoryName}</p>
+                          <p className="line-clamp-2 break-words text-xs text-muted-foreground">{job.description}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Package className="h-3 w-3" /> {job.materials.length} items
+                            </span>
+                            <span>{new Date(job.createdAt).toLocaleDateString()}</span>
+                          </div>
                         </div>
-                      </div>
-                      <div className="text-right shrink-0">
                         <JobPaymentListSummary job={job} compact className="text-primary [&_p:first-child]:text-primary [&_p:first-child]:font-semibold" />
                       </div>
                     </div>
@@ -342,12 +342,12 @@ export default function ProviderDashboard() {
 
           {/* Recent Jobs Column */}
           <div className="card-elevated overflow-hidden">
-            <div className="grid grid-cols-2 gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-              <div className="min-w-0 col-span-1">
+            <div className="flex items-start justify-between gap-3 border-b border-border p-4 sm:p-6">
+              <div className="min-w-0">
                 <h2 className="text-lg font-semibold sm:text-xl">Recent Jobs</h2>
                 <p className="text-sm text-muted-foreground">{recentJobs.length} jobs</p>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => navigate('/provider/jobs')}>
+              <Button variant="ghost" size="sm" className="h-9 shrink-0 px-2 sm:px-3" onClick={() => navigate('/provider/jobs')}>
                 View All <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </div>

@@ -23,7 +23,7 @@ import { useJobActivityIndicators } from '@/hooks/useJobActivityIndicators';
 import { ActivityDot } from '@/components/ui/ActivityDot';
 import { activeTabHasActivity } from '@/lib/jobActivityIndicators';
 import { groupJobsForList } from '@/lib/jobListGrouping';
-import { JobListGroup, JobListRowVariant } from '@/components/jobs/JobListGroup';
+import { JobListGroup, JobListRowBody, JobListRowVariant } from '@/components/jobs/JobListGroup';
 import { ProviderRequestCard } from '@/components/jobs/ProviderRequestCard';
 import { jobHasSubmittedReview } from '@/lib/jobReviewStatus';
 
@@ -157,28 +157,47 @@ export default function ProviderActiveJobs() {
   const groupedEntries = groupJobsForList(filtered);
 
   const renderJobRow = (job: Job, variant: JobListRowVariant) => (
-    <>
-      <div className="min-w-0 flex-1">
-        <div className="mb-1 flex flex-wrap items-center gap-2">
-          <p className={cn('font-medium', variant === 'child' && 'text-sm')}>
-            {variant === 'child' ? 'Material delivery' : job.categoryName}
-          </p>
-          {getStatusBadge(job)}
-          {jobHasActivity(job.id) && (
-            <ActivityDot aria-label="This job needs your attention" />
+    <JobListRowBody
+      primary={
+        <>
+          <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2">
+            <p className={cn('min-w-0 break-words font-medium', variant === 'child' && 'text-sm')}>
+              {variant === 'child' ? 'Material delivery' : job.categoryName}
+            </p>
+            <span className="shrink-0">{getStatusBadge(job)}</span>
+            {jobHasActivity(job.id) && (
+              <ActivityDot aria-label="This job needs your attention" />
+            )}
+          </div>
+          <p className="line-clamp-2 break-words text-sm text-muted-foreground">{job.description}</p>
+          {variant === 'parent' && (
+            <p className="mt-1 break-words text-xs text-muted-foreground">Client: {job.userName}</p>
           )}
-        </div>
-        <p className="truncate text-sm text-muted-foreground">{job.description}</p>
-        {variant === 'parent' && (
-          <p className="mt-1 text-xs text-muted-foreground">Client: {job.userName}</p>
-        )}
-      </div>
-      <div className="flex shrink-0 flex-col items-stretch gap-1 sm:items-end sm:text-right">
-        {job.status === 'CANCELLED' && jobsView === 'jobs' && (
+        </>
+      }
+      financial={
+        <>
+          <JobPaymentListSummary job={job} compact />
+          {job.status === 'COMPLETED' && jobHasSubmittedReview(job) ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Customer review:{' '}
+              {'★'.repeat(Math.max(0, Math.min(5, Math.round(Number(job.jobReview?.rating ?? job.userRating) || 0))))}
+              {'☆'.repeat(
+                5 - Math.max(0, Math.min(5, Math.round(Number(job.jobReview?.rating ?? job.userRating) || 0)))
+              )}
+            </p>
+          ) : null}
+          <p className="mt-1 text-xs text-muted-foreground">
+            {new Date(job.createdAt).toLocaleDateString()}
+          </p>
+        </>
+      }
+      actions={
+        job.status === 'CANCELLED' && jobsView === 'jobs' ? (
           <Button
             variant="outline"
             size="sm"
-            className="mt-2 h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:mt-0 sm:w-auto"
+            className="h-9 w-full whitespace-nowrap text-muted-foreground hover:bg-destructive sm:w-auto"
             disabled={isJobRefundUnsettled(job)}
             title={isJobRefundUnsettled(job) ? getRefundBlocksDeleteMessage() : undefined}
             onClick={(e) => {
@@ -190,22 +209,9 @@ export default function ProviderActiveJobs() {
           >
             <Trash2 className="mr-1 h-4 w-4" /> Delete
           </Button>
-        )}
-        <JobPaymentListSummary job={job} compact />
-        {job.status === 'COMPLETED' && jobHasSubmittedReview(job) ? (
-          <p className="text-xs text-muted-foreground">
-            Customer review:{' '}
-            {'★'.repeat(Math.max(0, Math.min(5, Math.round(Number(job.jobReview?.rating ?? job.userRating) || 0))))}
-            {'☆'.repeat(
-              5 - Math.max(0, Math.min(5, Math.round(Number(job.jobReview?.rating ?? job.userRating) || 0)))
-            )}
-          </p>
-        ) : null}
-        <p className="text-xs text-muted-foreground">
-          {new Date(job.createdAt).toLocaleDateString()}
-        </p>
-      </div>
-    </>
+        ) : undefined
+      }
+    />
   );
 
   const renderDisputeNote = (job: Job) => {
@@ -267,7 +273,7 @@ export default function ProviderActiveJobs() {
     }
 
     return (
-      <div key={key} className="card-elevated overflow-hidden transition-shadow hover:shadow-lg">
+      <div key={key} className="card-elevated min-w-0 max-w-full overflow-hidden transition-shadow hover:shadow-lg">
         <JobListGroup
           entry={entry}
           onJobClick={(job) => navigate(`/provider/jobs/${job.id}`)}
