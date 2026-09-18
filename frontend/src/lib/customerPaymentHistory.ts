@@ -2,8 +2,17 @@ import type { Invoice } from '@/types';
 
 export function isRefundInvoice(invoice: Invoice): boolean {
   const type = String(invoice.type || '').toLowerCase();
-  const status = String(invoice.status || '').toLowerCase();
-  return type === 'refund' || status === 'refunded' || status === 'partially_refunded';
+  if (type === 'refund') return true;
+  // Original labor/material/delivery rows stay in Payments even if later refunded.
+  if (type === 'labor' || type === 'materials' || type === 'delivery') return false;
+
+  const source = metaString(invoice, 'source').toLowerCase();
+  if (source === 'paystack_refund_processed') return true;
+  const lines = invoice.lineItems || [];
+  if (lines.length > 0 && lines.every((line) => /refund/i.test(String(line.description || '')))) {
+    return true;
+  }
+  return false;
 }
 
 export function isPaymentInvoice(invoice: Invoice): boolean {
@@ -31,6 +40,7 @@ export function invoiceMaterialOrderId(invoice: Invoice): string {
   return (
     metaString(invoice, 'materialOrderId') ||
     metaString(invoice, 'orderId') ||
+    metaString(invoice, 'jobStoreOrderId') ||
     ''
   );
 }
@@ -45,6 +55,10 @@ function looksLikeJobId(jobId: string): boolean {
   return true;
 }
 
+function isKnownJobId(jobId: string, knownJobIds: Set<string>): boolean {
+  return looksLikeJobId(jobId) && knownJobIds.has(jobId);
+}
+
 export type PaymentHistoryGroupKind = 'job' | 'material_order' | 'ungrouped';
 
 export type PaymentHistoryGroup = {
@@ -56,34 +70,28 @@ export type PaymentHistoryGroup = {
   totalPaid: number;
 };
 
-function invoiceHasRealJob(invoice: Invoice, knownJobIds: Set<string>): boolean {
-  const jobId = trimId(invoice.jobId);
-  if (!looksLikeJobId(jobId)) return false;
-  if (knownJobIds.size > 0) return knownJobIds.has(jobId);
-  return true;
-}
-
 export function paymentGroupKey(
   invoice: Invoice,
   knownJobIds: Set<string> = new Set()
 ): { kind: PaymentHistoryGroupKind; id: string } {
   const jobId = trimId(invoice.jobId);
-  const materialOrderId = invoiceMaterialOrderId(invoice);
+  const orderRef = invoiceMaterialOrderId(invoice);
   const type = String(invoice.type || '').toLowerCase();
-  const linkedToJob = invoiceHasRealJob(invoice, knownJobIds);
+  const knownJob = isKnownJobId(jobId, knownJobIds);
 
-  if ((type === 'materials' || type === 'delivery') && !linkedToJob && (materialOrderId || jobId)) {
-    return { kind: 'material_order', id: materialOrderId || jobId };
+  if (type === 'materials' || type === 'delivery') {
+    if (knownJob) return { kind: 'job', id: jobId };
+    if (orderRef) return { kind: 'material_order', id: orderRef };
+    if (jobId) return { kind: 'ungrouped', id: jobId };
+    return { kind: 'ungrouped', id: trimId(invoice.id) || 'unknown' };
   }
-  if (linkedToJob) {
+
+  if (knownJob) return { kind: 'job', id: jobId };
+  if (jobId && (type === 'labor' || type === 'refund')) {
     return { kind: 'job', id: jobId };
   }
-  if (materialOrderId) {
-    return { kind: 'material_order', id: materialOrderId };
-  }
-  if (jobId) {
-    return { kind: 'ungrouped', id: jobId };
-  }
+  if (orderRef) return { kind: 'material_order', id: orderRef };
+  if (jobId) return { kind: 'ungrouped', id: jobId };
   return { kind: 'ungrouped', id: trimId(invoice.id) || 'unknown' };
 }
 

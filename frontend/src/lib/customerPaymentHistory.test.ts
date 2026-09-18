@@ -25,7 +25,48 @@ function inv(over: Partial<Invoice>): Invoice {
 }
 
 describe('customerPaymentHistory', () => {
-  it('Payments tab excludes refund invoices', () => {
+  it('labor partially_refunded stays in Payments, not Refund Invoices', () => {
+    const labor = inv({ id: 'p1', type: 'labor', status: 'partially_refunded', totalAmount: 200 });
+    expect(isPaymentInvoice(labor)).toBe(true);
+    expect(isRefundInvoice(labor)).toBe(false);
+  });
+
+  it('type=refund status=refunded is a Refund Invoice', () => {
+    const refund = inv({ id: 'r1', type: 'refund', status: 'refunded', totalAmount: 186 });
+    expect(isRefundInvoice(refund)).toBe(true);
+    expect(isPaymentInvoice(refund)).toBe(false);
+  });
+
+  it('original R200 payment and R186 refund stay on separate tabs with no +R200 refund row', () => {
+    const original = inv({
+      id: 'pay-200',
+      type: 'labor',
+      status: 'partially_refunded',
+      totalAmount: 200,
+      paymentType: 'DEPOSIT',
+    });
+    const refund = inv({
+      id: 'ref-186',
+      type: 'refund',
+      status: 'refunded',
+      totalAmount: 186,
+    });
+    const jobs = [{ id: 'job-1', categoryName: 'Tiling' }];
+    const paymentGroups = groupPaymentInvoices([original, refund].filter(isPaymentInvoice), jobs);
+    const refundGroups = groupPaymentInvoices([original, refund].filter(isRefundInvoice), jobs);
+
+    expect(paymentGroups).toHaveLength(1);
+    expect(paymentGroups[0].totalPaid).toBe(200);
+    expect(paymentGroups[0].invoices.map((i) => i.id)).toEqual(['pay-200']);
+    expect(invoiceDisplayLabel(original, 'job')).toMatch(/Service (deposit|payment)/);
+
+    expect(refundGroups).toHaveLength(1);
+    expect(refundGroups[0].totalPaid).toBe(186);
+    expect(refundGroups[0].invoices.map((i) => i.id)).toEqual(['ref-186']);
+    expect(refundGroups[0].invoices.some((i) => i.totalAmount === 200)).toBe(false);
+  });
+
+  it('Payments tab excludes type=refund invoices', () => {
     const payment = inv({ id: 'p1', type: 'labor' });
     const refund = inv({ id: 'r1', type: 'refund', status: 'refunded' });
     expect(isPaymentInvoice(payment)).toBe(true);
@@ -33,16 +74,17 @@ describe('customerPaymentHistory', () => {
     expect(isRefundInvoice(refund)).toBe(true);
   });
 
-  it('Refund Invoices tab includes only refund/refunded invoices', () => {
+  it('labor status=refunded is still an original payment invoice', () => {
     const paid = inv({ type: 'materials', status: 'paid' });
-    const refunded = inv({ type: 'labor', status: 'refunded' });
+    const laborRefundedStatus = inv({ type: 'labor', status: 'refunded' });
     const typed = inv({ type: 'refund', status: 'refunded' });
     expect(isRefundInvoice(paid)).toBe(false);
-    expect(isRefundInvoice(refunded)).toBe(true);
+    expect(isRefundInvoice(laborRefundedStatus)).toBe(false);
+    expect(isPaymentInvoice(laborRefundedStatus)).toBe(true);
     expect(isRefundInvoice(typed)).toBe(true);
   });
 
-  it('labor/material/delivery invoices group by job when jobId is a real job', () => {
+  it('labor/material/delivery invoices group by job when jobId is a known job', () => {
     const jobs = [{ id: 'job-abc', categoryName: 'Tiling' }];
     const rows = [
       inv({
@@ -102,7 +144,23 @@ describe('customerPaymentHistory', () => {
     expect(invoiceDisplayLabel(rows[1], 'material_order')).toBe('Store delivery');
   });
 
-  it('old invoice without new optional metadata still renders as a job group with generic service label', () => {
+  it('zero service jobs + leftover jobId with materialOrderId is a material order, not a service job', () => {
+    const row = inv({
+      id: 'mat-legacy',
+      jobId: 'order-123',
+      type: 'materials',
+      materialOrderId: 'order-123',
+      storeName: 'ABC Materials',
+      totalAmount: 90,
+    });
+    const groups = groupPaymentInvoices([row], []);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].kind).toBe('material_order');
+    expect(groups[0].kind).not.toBe('job');
+    expect(paymentGroupKey(row, new Set()).kind).toBe('material_order');
+  });
+
+  it('old labor invoice without new optional metadata still renders as a job group with generic service label', () => {
     const old = inv({
       id: 'legacy',
       jobId: '24f1a81f-old',

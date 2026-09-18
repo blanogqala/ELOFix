@@ -110,4 +110,32 @@ describe.sequential('/user/payments history', () => {
     expect(screen.getByText('ref-1')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download Invoice/i })).toBeInTheDocument();
   });
+
+  it('keeps a partially_refunded original payment on Payments and the refund amount on Refund Invoices', async () => {
+    getInvoices.mockResolvedValue([
+      invoice({
+        id: 'pay-200',
+        type: 'labor',
+        status: 'partially_refunded',
+        paymentType: 'DEPOSIT',
+        totalAmount: 200,
+      }),
+      invoice({ id: 'ref-186', type: 'refund', status: 'refunded', totalAmount: 186 }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <UserPayments />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/Partially Refunded/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/200/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Refund · Tiling/i)).not.toBeInTheDocument();
+
+    screen.getByRole('tab', { name: /Refund/i }).click();
+    expect(await screen.findByText(/Refund · Tiling/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/186/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Partially Refunded/i)).not.toBeInTheDocument();
+  });
 });
