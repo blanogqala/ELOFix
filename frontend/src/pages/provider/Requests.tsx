@@ -131,7 +131,7 @@ export default function ProviderRequests() {
           <TabsList className="flex h-auto w-full flex-wrap gap-1 sm:gap-0">
             <TabsTrigger value="pending" className="gap-2">
               <ClipboardList className="h-4 w-4" />
-              Pending Requests
+              Pending
               {pendingJobs.length > 0 && (
                 <Badge variant="secondary" className="ml-1">{pendingJobs.length}</Badge>
               )}
