@@ -21,6 +21,19 @@ function isPaystackSubaccountCode(code) {
 }
 
 /**
+ * Paystack List Settlements `subaccount` query is a numeric subaccount id, not ACCT_.
+ * @returns {number|null}
+ */
+function numericPaystackSubaccountIdOrNull(value) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  return n;
+}
+
+/**
  * Required Paystack API domain from PAYSTACK_MODE only. Never inferred from NODE_ENV.
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {"test"|"live"|null}
@@ -598,6 +611,7 @@ module.exports = {
   PAYSTACK_REFUND_EVENTS,
   ACTIVE_PENDING_REFUND_STATUSES,
   isPaystackSubaccountCode,
+  numericPaystackSubaccountIdOrNull,
   requiredPaystackDomain,
   storedPaystackRecipientDomain,
   isPaystackRecipientUsableInCurrentMode,

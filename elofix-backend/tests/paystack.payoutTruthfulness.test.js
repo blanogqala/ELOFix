@@ -133,8 +133,13 @@ async function run() {
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
   const origConfigured = paystack.isConfigured;
+  const origResolve = paystack.resolvePaystackSubaccountId;
   let verifyCalls = 0;
   paystack.isConfigured = () => true;
+  paystack.resolvePaystackSubaccountId = async (code) => {
+    if (String(code).toUpperCase() === ACCT_OLD.toUpperCase()) return 424242;
+    return null;
+  };
   paystack.verifyTransaction = async (reference) => {
     verifyCalls += 1;
     return {
@@ -217,8 +222,14 @@ async function run() {
 
     rec.resetProviderPayoutRefreshThrottleForTests();
     let listed = [];
+    let resolved = [];
+    paystack.resolvePaystackSubaccountId = async (code) => {
+      resolved.push(String(code));
+      if (String(code).toUpperCase() === ACCT_OLD.toUpperCase()) return 424242;
+      return null;
+    };
     paystack.listSettlements = async (opts = {}) => {
-      listed.push(String(opts.subaccount || ""));
+      listed.push(opts.subaccount);
       return { settlements: [] };
     };
     const mixed = await seedIntent(`${suffix}c`, {
@@ -230,9 +241,31 @@ async function run() {
       providerUserId: mixed.providerUser.id,
       intents: [{ ...mixed.intent, kind: "LABOR", provider: "PAYSTACK", state: "PAID" }],
     });
-    assert.ok(listed.every((code) => code.toUpperCase() === ACCT_OLD));
+    assert.ok(resolved.some((code) => String(code).toUpperCase() === ACCT_OLD.toUpperCase()));
+    assert.ok(listed.every((id) => Number(id) === 424242));
     assert.ok(!listed.includes(ACCT_NEW));
+    assert.ok(!listed.includes(ACCT_OLD));
     await cleanup(mixed);
+
+    rec.resetProviderPayoutRefreshThrottleForTests();
+    listed = [];
+    paystack.resolvePaystackSubaccountId = async () => null;
+    paystack.listSettlements = async (opts = {}) => {
+      listed.push(opts.subaccount);
+      return { settlements: [] };
+    };
+    const unresolved = await seedIntent(`${suffix}d`, {
+      payoutSettlementStatus: "PENDING",
+      subaccount: ACCT_OLD,
+      gatewayPayload: { subaccount: ACCT_OLD, fees: 282, fees_split: null },
+    });
+    await rec.refreshProviderPaystackPayoutObservability({
+      providerUserId: unresolved.providerUser.id,
+      intents: [{ ...unresolved.intent, kind: "LABOR", provider: "PAYSTACK", state: "PAID" }],
+    });
+    assert.deepStrictEqual(listed, []);
+    await cleanup(unresolved);
+    paystack.resolvePaystackSubaccountId = origResolve;
 
     console.log("paystack.payoutTruthfulness.test.js: all passed");
   } finally {
@@ -240,6 +273,7 @@ async function run() {
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
     paystack.isConfigured = origConfigured;
+    paystack.resolvePaystackSubaccountId = origResolve;
     rec.resetProviderPayoutRefreshThrottleForTests();
     await cleanup(keep, [settlement.id]);
     await cleanup(repairable);

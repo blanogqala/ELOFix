@@ -155,18 +155,44 @@ async function listKnownRecipientPaystackSubaccounts() {
 }
 
 async function listSettlementsForSubaccount(paystack, { subaccount, from, to, maxPages = 3 } = {}) {
+  if (isMainAccountScope(subaccount)) return [];
   const code = normalizeAcct(subaccount);
   if (!code) return [];
+  let numericId = null;
+  try {
+    if (typeof paystack.resolvePaystackSubaccountId === "function") {
+      numericId = await paystack.resolvePaystackSubaccountId(code);
+    }
+  } catch (err) {
+    console.warn(
+      "[paystack-settlement-reconcile] subaccount id lookup failed; skipping scoped list",
+      err?.message || err
+    );
+    return [];
+  }
+  if (numericId == null) {
+    console.warn("[paystack-settlement-reconcile] subaccount id unresolved; skipping scoped list");
+    return [];
+  }
   const rows = [];
   let page = 1;
   while (page <= maxPages) {
-    const { settlements, meta } = await paystack.listSettlements({
-      from,
-      to,
-      page,
-      perPage: 50,
-      subaccount: code,
-    });
+    let settlements = [];
+    let meta = null;
+    try {
+      const listed = await paystack.listSettlements({
+        from,
+        to,
+        page,
+        perPage: 50,
+        subaccount: numericId,
+      });
+      settlements = listed?.settlements;
+      meta = listed?.meta;
+    } catch (err) {
+      console.warn("[paystack-settlement-reconcile] scoped settlement list failed", err?.message || err);
+      break;
+    }
     if (!settlements || settlements.length === 0) break;
     rows.push(...settlements);
     const pageCount = Number(meta?.pageCount || meta?.page_count || 1);

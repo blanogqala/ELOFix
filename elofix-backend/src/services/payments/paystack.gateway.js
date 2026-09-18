@@ -12,6 +12,7 @@ const {
   mapPaystackRefundResult,
   alreadySplitSettlementResult,
   isPaystackSubaccountCode,
+  numericPaystackSubaccountIdOrNull,
   mapPaystackChargeEventState,
   sanitizePaystackWebhookRaw,
   extractPaystackSplitEvidence,
@@ -26,6 +27,73 @@ const paystackRecipient = require("./paystack.recipient");
 
 function isConfigured(env = process.env) {
   return isPaystackConfigured(env);
+}
+
+const SUBACCOUNT_ID_CACHE_TTL_MS = 15 * 60 * 1000;
+const subaccountNumericIdCache = new Map();
+
+function resetPaystackSubaccountIdCacheForTests() {
+  subaccountNumericIdCache.clear();
+}
+
+function samePaystackSubaccountCode(a, b) {
+  const left = safePaystackSubaccountCode(a);
+  const right = safePaystackSubaccountCode(b);
+  if (!left || !right) return false;
+  return left.toUpperCase() === right.toUpperCase();
+}
+
+/**
+ * Resolve a trusted EloFix ACCT_ code to Paystack's numeric subaccount id.
+ * Numeric id is only for GET /settlement filtering. Never persist it as recipient identity.
+ * Fail closed on mismatch. Do not cache failures.
+ * @param {string} subaccountCode
+ * @returns {Promise<number|null>}
+ */
+async function resolvePaystackSubaccountId(subaccountCode) {
+  const code = safePaystackSubaccountCode(subaccountCode);
+  if (!code) return null;
+  const cacheKey = code.toUpperCase();
+  const cached = subaccountNumericIdCache.get(cacheKey);
+  if (cached && cached.id != null && cached.expiresAt > Date.now()) {
+    return cached.id;
+  }
+  const { json } = await paystackRequest("GET", `/subaccount/${encodeURIComponent(code)}`);
+  const data = json?.data && typeof json.data === "object" && !Array.isArray(json.data) ? json.data : {};
+  const returnedCode = safePaystackSubaccountCode(data.subaccount_code || data.subaccount);
+  if (!returnedCode || !samePaystackSubaccountCode(returnedCode, code)) {
+    return null;
+  }
+  const id = numericPaystackSubaccountIdOrNull(data.id);
+  if (id == null) return null;
+  subaccountNumericIdCache.set(cacheKey, {
+    id,
+    expiresAt: Date.now() + SUBACCOUNT_ID_CACHE_TTL_MS,
+  });
+  return id;
+}
+
+async function resolveListSettlementsSubaccountFilter(subaccount) {
+  const raw = subaccount == null ? "" : String(subaccount).trim();
+  if (!raw || raw.toLowerCase() === "none") {
+    const err = new Error("Paystack list settlements requires a recipient subaccount scope");
+    err.code = "PAYSTACK_SETTLEMENT_SCOPE_REQUIRED";
+    throw err;
+  }
+  const numeric = numericPaystackSubaccountIdOrNull(raw);
+  if (numeric != null) return numeric;
+  try {
+    const resolved = await resolvePaystackSubaccountId(raw);
+    if (resolved != null) return resolved;
+  } catch (err) {
+    const wrapped = new Error(err?.message || "Paystack subaccount id lookup failed");
+    wrapped.code = "PAYSTACK_SUBACCOUNT_ID_UNRESOLVED";
+    wrapped.cause = err;
+    throw wrapped;
+  }
+  const err = new Error("Paystack list settlements could not resolve recipient subaccount id");
+  err.code = "PAYSTACK_SUBACCOUNT_ID_UNRESOLVED";
+  throw err;
 }
 
 function checkoutReturnUrl(intent) {
@@ -441,17 +509,19 @@ async function getSettlementStatus(settlementId) {
 }
 
 async function listSettlements({ from, to, subaccount, page = 1, perPage = 50 } = {}) {
+  const filterId = await resolveListSettlementsSubaccountFilter(subaccount);
   const params = new URLSearchParams();
   params.set("page", String(page));
   params.set("perPage", String(perPage));
   if (from) params.set("from", String(from));
   if (to) params.set("to", String(to));
-  if (subaccount) params.set("subaccount", String(subaccount));
+  params.set("subaccount", String(filterId));
   const { json } = await paystackRequest("GET", `/settlement?${params.toString()}`);
   const data = Array.isArray(json?.data) ? json.data : [];
   return {
     settlements: data,
     meta: json?.meta && typeof json.meta === "object" ? json.meta : null,
+    subaccountId: filterId,
   };
 }
 
@@ -526,5 +596,7 @@ module.exports = {
   verifySettlementWebhook,
   listSettlements,
   getSettlementTransactions,
+  resolvePaystackSubaccountId,
+  resetPaystackSubaccountIdCacheForTests,
   assertPaystackCredentials,
 };
