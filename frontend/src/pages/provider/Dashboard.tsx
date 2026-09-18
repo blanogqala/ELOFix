@@ -144,7 +144,7 @@ export default function ProviderDashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         <div className="card-elevated p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 sm:h-12 sm:w-12">
