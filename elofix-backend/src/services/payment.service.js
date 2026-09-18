@@ -13,6 +13,7 @@ const {
   parsePaymentCardFromGatewayPayload,
 } = require("../utils/paymentCard.util");
 const { paidLaborGrossFromJob } = require("../utils/refundMath.util");
+const invoiceReadModel = require("./invoiceReadModel");
 
 /**
  * Persist masked card metadata returned by a PSP after successful payment.
@@ -157,6 +158,13 @@ async function setDefaultCard(userId, cardId) {
 }
 
 function normalizeInvoice(invoice) {
+  const meta = invoice.meta && typeof invoice.meta === "object" && !Array.isArray(invoice.meta) ? invoice.meta : undefined;
+  const pick = (key) => {
+    const top = invoice[key];
+    if (top != null && String(top).trim() !== "") return String(top);
+    if (meta && meta[key] != null && String(meta[key]).trim() !== "") return String(meta[key]);
+    return undefined;
+  };
   return {
     id: invoice.id || randomUUID(),
     jobId: String(invoice.jobId || ""),
@@ -175,8 +183,38 @@ function normalizeInvoice(invoice) {
     createdAt: invoice.createdAt || new Date().toISOString(),
     driverName: invoice.driverName || undefined,
     vehicleInfo: invoice.vehicleInfo || undefined,
-    meta: invoice.meta && typeof invoice.meta === "object" ? invoice.meta : undefined,
+    meta,
+    materialOrderId: pick("materialOrderId"),
+    jobStoreOrderId: pick("jobStoreOrderId"),
+    paymentIntentId: pick("paymentIntentId"),
+    paymentType: pick("paymentType"),
+    kind: pick("kind"),
+    storeName: pick("storeName"),
+    jobTitle: pick("jobTitle"),
   };
+}
+
+function withIntentCardLast4(intent) {
+  const card = parsePaymentCardFromGatewayPayload(intent.gatewayPayload, intent.provider);
+  return {
+    ...intent,
+    cardLast4: card?.last4 || undefined,
+  };
+}
+
+async function loadPaidCustomerIntents(userId) {
+  return prisma.paymentIntent.findMany({
+    where: {
+      userId: String(userId),
+      state: { in: ["PAID", "PARTIALLY_REFUNDED"] },
+      kind: { in: ["LABOR", "MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"] },
+    },
+    include: {
+      job: { select: { id: true, title: true, category: true } },
+      materialOrder: { select: { id: true, jobId: true, payload: true } },
+    },
+    orderBy: { paidAt: "desc" },
+  });
 }
 
 async function createInvoice(payload) {
@@ -193,19 +231,43 @@ async function createInvoice(payload) {
 }
 
 async function getInvoices(userId) {
+  const uid = String(userId);
   const rows = await prisma.invoice.findMany({
-    where: { userId: String(userId) },
+    where: { userId: uid },
     orderBy: { createdAt: "desc" },
   });
-  return rows.map((r) => (r.payload && typeof r.payload === "object" ? r.payload : {}));
+  const stored = rows.map((r) =>
+    invoiceReadModel.flattenInvoicePayload(r.payload && typeof r.payload === "object" ? r.payload : {})
+  );
+  const intents = (await loadPaidCustomerIntents(uid)).map(withIntentCardLast4);
+  return invoiceReadModel.mergeStoredInvoicesWithPaidIntents(stored, intents);
 }
 
 async function getInvoiceById(userId, invoiceId) {
+  const uid = String(userId);
+  const id = String(invoiceId);
   const row = await prisma.invoice.findFirst({
-    where: { userId: String(userId), id: invoiceId },
+    where: { userId: uid, id },
   });
-  if (!row) return null;
-  return row.payload && typeof row.payload === "object" ? row.payload : null;
+  if (row && row.payload && typeof row.payload === "object") {
+    return invoiceReadModel.flattenInvoicePayload(row.payload);
+  }
+  const intentId = invoiceReadModel.parseSynthesizedIntentId(id);
+  if (!intentId) return null;
+  const intent = await prisma.paymentIntent.findFirst({
+    where: {
+      id: intentId,
+      userId: uid,
+      state: { in: ["PAID", "PARTIALLY_REFUNDED"] },
+      kind: { in: ["LABOR", "MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"] },
+    },
+    include: {
+      job: { select: { id: true, title: true, category: true } },
+      materialOrder: { select: { id: true, jobId: true, payload: true } },
+    },
+  });
+  if (!intent) return null;
+  return invoiceReadModel.invoiceFromPaidIntent(withIntentCardLast4(intent));
 }
 
 async function createRefundInvoice(userId, jobId, laborRefund, materialsRefund, cardLast4) {

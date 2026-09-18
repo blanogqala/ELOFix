@@ -1,13 +1,6 @@
 import type { Job } from '@/types';
-import { getJobPriceDisplay } from '@/lib/jobUtils';
-import { formatCurrency } from '@/lib/formatCurrency';
 import { cn } from '@/lib/utils';
-import { resolveCustomerRefundDisplay } from '@/lib/refundStatusDisplay';
-import {
-  getCompletionPaymentDueSummaryLine,
-  isAdminRequiredCompletionPayment,
-  isCompletionPaymentOverdue,
-} from '@/lib/completionPaymentDue';
+import { getJobPaymentListSummaryModel } from '@/lib/jobPaymentListSummaryModel';
 
 type Props = {
   job: Job;
@@ -20,25 +13,30 @@ type Props = {
 /**
  * Compact list/card financial summary from authoritative paymentSummary via getJobPriceDisplay.
  * Never shows bare "(Paid)" for deposit-only jobs.
+ * Mobile compact omits the redundant "Paid Rxx" line and the extra "Payment remaining" cue.
  */
 export function JobPaymentListSummary({ job, className, showDate = false, compact = false }: Props) {
-  const display = getJobPriceDisplay(job);
+  const model = getJobPaymentListSummaryModel(job);
   const {
-    text,
+    amountText,
     paymentStatusLabel,
-    paidAmount,
-    remainingAmount,
+    compactStatusLabel,
+    paidAmountText,
+    remainingAmountText,
     isFullyPaid,
     isPartialPaid,
+    showPaidAmountLine,
+    showRemainingLine,
+    showPaymentRemainingCue,
+    refundLine,
+    refundLabel,
+    refundInFlight,
+    processedRefund,
+    adminDueSummaryLine,
+    adminPaymentRequired,
+    adminPaymentOverdue,
     underAdminReview,
-  } = display;
-  const refundUi = resolveCustomerRefundDisplay(job);
-  const processedRefund = refundUi.mode === 'completed';
-  const refundInFlight =
-    refundUi.mode === 'pending' || refundUi.mode === 'processing' || refundUi.mode === 'failed';
-  const adminPaymentRequired = isAdminRequiredCompletionPayment(job);
-  const adminPaymentOverdue = adminPaymentRequired && isCompletionPaymentOverdue(job);
-  const adminDueSummaryLine = getCompletionPaymentDueSummaryLine(job);
+  } = model;
 
   const statusClass = isFullyPaid
     ? 'text-success'
@@ -47,44 +45,54 @@ export function JobPaymentListSummary({ job, className, showDate = false, compac
       : 'text-muted-foreground';
 
   return (
-    <div className={cn('text-right shrink-0', className)}>
-      <p className={cn('font-medium tabular-nums', compact ? 'text-sm' : undefined)}>
-        {text}
+    <div
+      data-testid="job-payment-list-summary"
+      className={cn('min-w-0 max-w-full text-left sm:text-right', className)}
+    >
+      <p className={cn('break-words font-medium tabular-nums', compact ? 'text-sm' : undefined)}>
+        <span>{amountText}</span>
         {processedRefund ? (
-          <span className="ml-1 text-xs text-destructive">(Refunded)</span>
+          <span className="ml-1 hidden text-xs text-destructive sm:inline">(Refunded)</span>
         ) : refundInFlight ? (
-          <span className="ml-1 text-xs text-amber-700 dark:text-amber-200">({refundUi.label})</span>
+          <span className="ml-1 hidden text-xs text-amber-700 dark:text-amber-200 sm:inline">
+            ({refundLabel})
+          </span>
         ) : paymentStatusLabel && (isFullyPaid || isPartialPaid) ? (
-          <span className={cn('ml-1 text-xs font-medium', statusClass)}>({paymentStatusLabel})</span>
+          <span className={cn('ml-1 hidden text-xs font-medium sm:inline', statusClass)}>
+            ({paymentStatusLabel})
+          </span>
         ) : null}
       </p>
 
-      {(processedRefund || refundInFlight) && refundUi.amount > 0 ? (
-        <p className="mt-0.5 text-xs tabular-nums text-destructive">
-          {processedRefund ? 'Refunded' : refundUi.label} {formatCurrency(refundUi.amount, { decimals: 2 })}
-          {processedRefund ? ' ✓' : ''}
+      {!processedRefund && !refundInFlight && compactStatusLabel && (isFullyPaid || isPartialPaid) ? (
+        <p className={cn('mt-0.5 text-xs font-medium sm:hidden', statusClass)}>{compactStatusLabel}</p>
+      ) : null}
+
+      {refundLine ? (
+        <p className="mt-0.5 break-words text-xs tabular-nums text-destructive">{refundLine}</p>
+      ) : null}
+
+      {showPaidAmountLine && paidAmountText ? (
+        <p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">
+          <span className="tabular-nums">Paid {paidAmountText}</span>
+          {showRemainingLine && remainingAmountText ? (
+            <>
+              <span className="mx-1">·</span>
+              <span className="tabular-nums text-primary">{remainingAmountText} remaining</span>
+            </>
+          ) : null}
         </p>
       ) : null}
 
-      {!processedRefund && !refundInFlight && isPartialPaid && paidAmount != null && remainingAmount != null ? (
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          <span className="tabular-nums">Paid {formatCurrency(paidAmount, { decimals: 2 })}</span>
-          <span className="mx-1">·</span>
-          <span className="tabular-nums text-primary">
-            {formatCurrency(remainingAmount, { decimals: 2 })} remaining
-          </span>
-        </p>
+      {showRemainingLine && remainingAmountText ? (
+        <p className="mt-0.5 text-xs tabular-nums text-primary sm:hidden">{remainingAmountText} remaining</p>
       ) : null}
 
-      {!processedRefund && !refundInFlight && isPartialPaid ? (
+      {showPaymentRemainingCue ? (
         <p
           className={cn(
-            'mt-0.5 text-[11px] font-medium',
-            adminPaymentRequired
-              ? adminPaymentOverdue
-                ? 'text-destructive'
-                : 'text-warning'
-              : 'text-primary'
+            'mt-0.5 hidden text-[11px] font-medium sm:block',
+            adminPaymentRequired ? (adminPaymentOverdue ? 'text-destructive' : 'text-warning') : 'text-primary'
           )}
         >
           {adminPaymentRequired ? 'Payment required' : 'Payment remaining'}
@@ -94,7 +102,7 @@ export function JobPaymentListSummary({ job, className, showDate = false, compac
       {adminDueSummaryLine ? (
         <p
           className={cn(
-            'mt-0.5 text-xs tabular-nums',
+            'mt-0.5 break-words text-xs tabular-nums',
             adminPaymentOverdue ? 'text-destructive font-medium' : 'text-muted-foreground'
           )}
         >
@@ -103,7 +111,7 @@ export function JobPaymentListSummary({ job, className, showDate = false, compac
       ) : null}
 
       {underAdminReview ? (
-        <p className="text-xs text-amber-700 dark:text-amber-200">Under admin review</p>
+        <p className="break-words text-xs text-amber-700 dark:text-amber-200">Under admin review</p>
       ) : null}
 
       {showDate ? (
