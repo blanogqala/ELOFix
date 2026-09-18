@@ -119,6 +119,7 @@ export function ProviderSettlementJobGroups({
                       payoutSettlementStatus={stage.payoutSettlementStatus}
                       payoutSettledAt={stage.payoutSettledAt}
                       recipientLabel="Your gross share"
+                      showExpectedBankSettlement={false}
                     />
                     <p className="text-xs text-muted-foreground font-mono break-all pt-1">
                       {stage.merchantReference}

@@ -273,6 +273,51 @@ async function getProviderEarnings(userId) {
           select: {
             id: true,
             jobId: true,
+            kind: true,
+            paymentType: true,
+            amount: true,
+            commissionAmount: true,
+            recipientAmount: true,
+            merchantReference: true,
+            paidAt: true,
+            createdAt: true,
+            state: true,
+            provider: true,
+            gatewayPayload: true,
+            processorFeeAmount: true,
+            expectedBankSettlementAmount: true,
+            payoutSettlementStatus: true,
+            payoutSettlementId: true,
+            payoutSettlement: {
+              select: { id: true, settledAt: true, settlementDate: true, externalSettlementId: true },
+            },
+          },
+        });
+
+  try {
+    const rec = require("./payments/paystack.settlementReconcile.service");
+    await rec.refreshProviderPaystackPayoutObservability({
+      providerUserId,
+      intents: paidIntents,
+    });
+  } catch (refreshErr) {
+    console.warn("[provider-earnings] payout observability refresh skipped", refreshErr?.message || refreshErr);
+  }
+
+  const settledIntents =
+    jobIds.length === 0
+      ? []
+      : await prisma.paymentIntent.findMany({
+          where: {
+            jobId: { in: jobIds },
+            kind: "LABOR",
+            state: "PAID",
+            recipientUserId: providerUserId,
+          },
+          orderBy: { paidAt: "desc" },
+          select: {
+            id: true,
+            jobId: true,
             paymentType: true,
             amount: true,
             commissionAmount: true,
@@ -307,7 +352,7 @@ async function getProviderEarnings(userId) {
     ])
   );
 
-  const settlementRecords = paidIntents.map((intent) => {
+  const settlementRecords = settledIntents.map((intent) => {
     const meta = intent.jobId ? jobMetaById.get(intent.jobId) : null;
     const settledAt = intent.payoutSettlement?.settledAt || intent.payoutSettlement?.settlementDate || null;
     return {

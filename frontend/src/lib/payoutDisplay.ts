@@ -63,7 +63,7 @@ export function settlementStatusDescription(
 ): string {
   switch (normalizePayoutStatus(status)) {
     case 'PROCESSING':
-      return 'Paystack is processing this settlement. Your bank may reflect the credit after Paystack completes settlement.';
+      return 'Paystack is processing this payout. Bank reflection time can vary.';
     case 'SETTLED': {
       const when = settledAt ? new Date(settledAt) : null;
       const dateLabel =
@@ -71,11 +71,11 @@ export function settlementStatusDescription(
           ? when.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' })
           : null;
       return dateLabel
-        ? `Paystack completed this settlement on ${dateLabel}. Bank reflection time can vary.`
-        : 'Paystack completed this settlement. Bank reflection time can vary.';
+        ? `Paystack has completed this payout on ${dateLabel}. Bank reflection time can vary.`
+        : 'Paystack has completed this payout. Bank reflection time can vary.';
     }
     case 'PENDING':
-      return 'This payout has not started processing yet.';
+      return 'Payment confirmed. This payout is waiting for Paystack settlement processing.';
     case 'FAILED':
       return 'This payout could not be completed. EloFix is checking the settlement.';
     case 'REVERSED':
@@ -105,6 +105,9 @@ export function settlementStatusBadgeClass(status: string | null | undefined): s
 export function feeIsKnown(amount: number | null | undefined): boolean {
   return amount != null && Number.isFinite(Number(amount));
 }
+
+export const PROVIDER_EARNINGS_SUBTITLE =
+  'Provider earnings recorded from customer payments. Paystack payout status is tracked separately from customer payment confirmation.';
 
 export function providerGrossShareDisclaimer(customerPaid: string, grossShare: string): string {
   return (

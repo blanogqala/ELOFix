@@ -5,6 +5,7 @@ import {
   settlementStatusDescription,
   feeIsKnown,
   providerGrossShareDisclaimer,
+  PROVIDER_EARNINGS_SUBTITLE,
 } from '@/lib/payoutDisplay';
 
 describe('payoutDisplay', () => {
@@ -18,6 +19,14 @@ describe('payoutDisplay', () => {
     expect(settlementStatusLabel('SETTLED')).toBe('Settled by Paystack');
     expect(settlementStatusDescription('SETTLED', '2026-09-15T00:00:00.000Z')).toContain(
       'Bank reflection time can vary'
+    );
+    expect(settlementStatusDescription('SETTLED')).toContain('Paystack has completed this payout');
+    expect(settlementStatusDescription('SETTLED')).not.toMatch(/Money received in your bank/i);
+    expect(settlementStatusDescription('PENDING')).toBe(
+      'Payment confirmed. This payout is waiting for Paystack settlement processing.'
+    );
+    expect(settlementStatusDescription('PROCESSING')).toBe(
+      'Paystack is processing this payout. Bank reflection time can vary.'
     );
   });
 
@@ -34,5 +43,10 @@ describe('payoutDisplay', () => {
     expect(text).toContain('R46.50 (93%)');
     expect(text).toContain('not the final bank amount');
     expect(text).not.toMatch(/after EloFix commission \(93%\)/);
+  });
+
+  it('does not use the outdated split-capable gateway earnings subtitle', () => {
+    expect(PROVIDER_EARNINGS_SUBTITLE).not.toMatch(/until a split-capable gateway is connected/i);
+    expect(PROVIDER_EARNINGS_SUBTITLE).toMatch(/Paystack payout status is tracked separately/i);
   });
 });

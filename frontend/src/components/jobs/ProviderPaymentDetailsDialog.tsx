@@ -181,6 +181,7 @@ export function ProviderPaymentDetailsDialog({ open, onOpenChange, job }: Props)
                     expectedBankSettlementAmount={row.expectedBankSettlementAmount}
                     payoutSettlementStatus={row.payoutSettlementStatus}
                     payoutSettledAt={row.payoutSettledAt}
+                    showExpectedBankSettlement={false}
                   />
                 </div>
               ))}
