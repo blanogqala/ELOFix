@@ -38,6 +38,7 @@ import {
   countPaidSettlementStages,
   groupSettlementRecordsByJob,
 } from '@/lib/providerSettlementGroups';
+import { PROVIDER_EARNINGS_SUBTITLE } from '@/lib/payoutDisplay';
 import { ProviderSettlementJobGroups } from '@/components/provider/ProviderSettlementJobGroups';
 import { RefundSummaryLine, hasRefundDisplay } from '@/components/payments/RefundSummaryLine';
 import { queryKeys } from '@/lib/queryKeys';
@@ -286,8 +287,7 @@ export default function ProviderEarnings() {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">Earnings</h1>
           <p className="text-sm text-muted-foreground sm:text-base">
-            Provider share recorded from customer payments (ZAR). Bank payout is outside EloFix until a
-            split-capable gateway is connected.
+            {PROVIDER_EARNINGS_SUBTITLE}
           </p>
         </div>
 

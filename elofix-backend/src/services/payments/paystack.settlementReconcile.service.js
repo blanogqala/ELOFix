@@ -7,7 +7,8 @@ const {
   mapPaystackSettlementApiStatus,
   recipientTypeFromIntent,
   resolvePayoutStaffNotifyBranchId,
-  processorFeeFromPaystackEvidence,
+  resolveAuthoritativeProcessorFee,
+  shouldRepairFalseChargeTimeProcessing,
   majorOrNull,
 } = require("./payoutTransparency.util");
 const {
@@ -51,13 +52,24 @@ function minimizedSettlementMetadata(row, transactionRefs) {
   };
 }
 
-function feeFromSettlementTransaction(txn) {
-  const evidence = {
-    bearer: txn?.fees_split ? "subaccount" : txn?.bearer,
-    fees_split: txn?.fees_split,
-  };
-  if (txn?.bearer) evidence.bearer = String(txn.bearer).trim().toLowerCase();
-  return processorFeeFromPaystackEvidence(evidence);
+const PROVIDER_PAYOUT_REFRESH_THROTTLE_MS = 60 * 1000;
+const providerSubaccountRefreshAt = new Map();
+
+function resetProviderPayoutRefreshThrottleForTests() {
+  providerSubaccountRefreshAt.clear();
+}
+
+function throttleKey(providerUserId, subaccount) {
+  return `${String(providerUserId)}:${String(subaccount || "").trim().toUpperCase()}`;
+}
+
+function isRefreshThrottled(key, now = Date.now()) {
+  const last = providerSubaccountRefreshAt.get(key);
+  return last != null && now - last < PROVIDER_PAYOUT_REFRESH_THROTTLE_MS;
+}
+
+function markRefreshAttempt(key, now = Date.now()) {
+  providerSubaccountRefreshAt.set(key, now);
 }
 
 function normalizeAcct(value) {
@@ -274,7 +286,15 @@ async function applyPaystackSettlementRow(row, opts = {}) {
   if (!externalId) return { skipped: true, reason: "missing_id" };
 
   const mapped = mapPaystackSettlementApiStatus(row.status);
-  if (!mapped) return { skipped: true, reason: "unknown_status", externalId };
+  if (!mapped) {
+    if (String(row?.status || "").trim().toLowerCase() === "paid") {
+      console.warn(
+        "[paystack-settlement-reconcile] Settlement API status 'paid' is not a documented settlement success state",
+        { externalId }
+      );
+    }
+    return { skipped: true, reason: "unknown_status", externalId };
+  }
 
   const paystack = require("./paystack.gateway");
   const { transactions } = await paystack.getSettlementTransactions(externalId);
@@ -404,10 +424,11 @@ async function applyPaystackSettlementRow(row, opts = {}) {
 
     for (const intent of intents) {
       const txn = txnByRef.get(intent.merchantReference);
-      let fee = intent.processorFeeAmount;
-      if (fee == null && txn) {
-        fee = feeFromSettlementTransaction(txn);
-      }
+      const fee = resolveAuthoritativeProcessorFee({
+        intent,
+        evidence: intent.gatewayPayload,
+        settlementTxn: txn,
+      });
       const net = computeExpectedBankSettlement(intent.recipientAmount, fee);
       await tx.gatewayPayoutSettlementItem.upsert({
         where: {
@@ -601,25 +622,267 @@ async function reconcileRecentPaystackSettlements(opts = {}) {
   };
 }
 
-async function notifyChargeTimeProcessing(intentId) {
-  const intent = await prisma.paymentIntent.findUnique({ where: { id: String(intentId) } });
-  if (!intent) return;
-  if (String(intent.payoutSettlementStatus) !== "PROCESSING") return;
-  await notifyPayoutTransition({
-    intent,
-    fromStatus: "PENDING",
-    toStatus: "PROCESSING",
-    settlementId: intent.id,
-    notify: true,
+async function reconcilePaystackSubaccountSettlements({ subaccount, from, to, source, notify } = {}) {
+  if (isMainAccountScope(subaccount)) {
+    return { skipped: true, reason: "main_account_settlement_ignored", settlements: 0, linked: 0 };
+  }
+  const scoped = normalizeAcct(subaccount);
+  if (!scoped) {
+    return { skipped: true, reason: "missing_recipient_subaccount_scope", settlements: 0, linked: 0 };
+  }
+  const paystack = require("./paystack.gateway");
+  if (typeof paystack.isConfigured === "function" && !paystack.isConfigured()) {
+    return { skipped: true, reason: "not_configured", settlements: 0, linked: 0 };
+  }
+  const toDate = to || new Date().toISOString().slice(0, 10);
+  const fromDateObj = new Date();
+  fromDateObj.setDate(fromDateObj.getDate() - 14);
+  const fromDate = from || fromDateObj.toISOString().slice(0, 10);
+  const settlements = await listSettlementsForSubaccount(paystack, {
+    subaccount: scoped,
+    from: fromDate,
+    to: toDate,
+    maxPages: 5,
   });
+  let linked = 0;
+  let changed = 0;
+  let scanned = 0;
+  for (const row of settlements) {
+    scanned += 1;
+    try {
+      const applied = await applyPaystackSettlementRow(row, {
+        source: source || "provider_earnings_refresh",
+        notify: notify !== false,
+        scopedSubaccount: scoped,
+      });
+      if (!applied.skipped) {
+        linked += applied.linked || 0;
+        if (applied.changed) changed += 1;
+      }
+    } catch (err) {
+      console.error("[paystack-settlement-reconcile] subaccount row failed", row?.id, err?.message || err);
+    }
+  }
+  return {
+    skipped: false,
+    settlements: scanned,
+    linked,
+    changed,
+    from: fromDate,
+    to: toDate,
+    subaccount: scoped,
+  };
+}
+
+/**
+ * Retired: charge.success only proves customer payment. It is not payout processing.
+ */
+async function notifyChargeTimeProcessing() {
+  return { skipped: true, reason: "retired_charge_time_processing_is_not_payout_processing" };
+}
+
+async function repairFalseChargeTimeProcessing(intents) {
+  const rows = Array.isArray(intents) ? intents : [];
+  const repaired = [];
+  for (const intent of rows) {
+    if (!shouldRepairFalseChargeTimeProcessing(intent)) continue;
+    await prisma.paymentIntent.update({
+      where: { id: intent.id },
+      data: { payoutSettlementStatus: "PENDING" },
+    });
+    repaired.push(intent.id);
+  }
+  return repaired;
+}
+
+async function backfillProcessorFeeFromStoredEvidence(intents) {
+  const rows = Array.isArray(intents) ? intents : [];
+  const updated = [];
+  for (const intent of rows) {
+    if (String(intent?.provider || "").toUpperCase() !== "PAYSTACK") continue;
+    if (String(intent?.state || "").toUpperCase() !== "PAID") continue;
+    if (!isMarketplaceSplitKind(intent?.kind)) continue;
+    if (intent.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))) continue;
+    const fee = resolveAuthoritativeProcessorFee({
+      intent,
+      evidence: intent.gatewayPayload,
+    });
+    if (fee == null) continue;
+    const net = computeExpectedBankSettlement(intent.recipientAmount, fee);
+    await prisma.paymentIntent.update({
+      where: { id: intent.id },
+      data: {
+        processorFeeAmount: net.processorFeeAmount,
+        expectedBankSettlementAmount: net.expectedBankSettlementAmount,
+      },
+    });
+    updated.push(intent.id);
+  }
+  return updated;
+}
+
+async function backfillProcessorFeeFromVerify(intents) {
+  const rows = Array.isArray(intents) ? intents : [];
+  const paystack = require("./paystack.gateway");
+  if (typeof paystack.isConfigured === "function" && !paystack.isConfigured()) return [];
+  const updated = [];
+  for (const intent of rows) {
+    if (String(intent?.provider || "").toUpperCase() !== "PAYSTACK") continue;
+    if (String(intent?.state || "").toUpperCase() !== "PAID") continue;
+    if (!isMarketplaceSplitKind(intent?.kind)) continue;
+    if (intent.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))) continue;
+    const fromStored = resolveAuthoritativeProcessorFee({
+      intent,
+      evidence: intent.gatewayPayload,
+    });
+    if (fromStored != null) continue;
+    const ref = String(intent.merchantReference || "").trim();
+    if (!ref) continue;
+    try {
+      const verified = await paystack.verifyTransaction(ref);
+      const fee = resolveAuthoritativeProcessorFee({
+        intent,
+        evidence: intent.gatewayPayload,
+        verifyRaw: verified?.raw,
+      });
+      if (fee == null) continue;
+      const net = computeExpectedBankSettlement(intent.recipientAmount, fee);
+      const prevPayload =
+        intent.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
+          ? intent.gatewayPayload
+          : {};
+      const mergedPayload = {
+        ...prevPayload,
+        ...(verified?.raw && typeof verified.raw === "object" ? verified.raw : {}),
+      };
+      await prisma.paymentIntent.update({
+        where: { id: intent.id },
+        data: {
+          processorFeeAmount: net.processorFeeAmount,
+          expectedBankSettlementAmount: net.expectedBankSettlementAmount,
+          gatewayPayload: mergedPayload,
+        },
+      });
+      updated.push(intent.id);
+    } catch (err) {
+      console.warn("[paystack-fee-backfill] verify skipped", ref, err?.message || err);
+    }
+  }
+  return updated;
+}
+
+function ymd(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function historicalChargeSubaccount(intent) {
+  return normalizeAcct(intent?.gatewayPayload);
+}
+
+function isUnresolvedPaystackPayout(intent) {
+  const status = String(intent?.payoutSettlementStatus || "").trim().toUpperCase();
+  return status === "PENDING" || status === "PROCESSING" || status === "FAILED";
+}
+
+/**
+ * Targeted Provider earnings refresh. Never runs global reconciliation.
+ * Historical ACCT_ on gatewayPayload is authoritative.
+ */
+async function refreshProviderPaystackPayoutObservability({ providerUserId, intents } = {}) {
+  const rows = Array.isArray(intents) ? intents : [];
+  const paystackRows = rows.filter(
+    (intent) =>
+      String(intent?.provider || "").toUpperCase() === "PAYSTACK" &&
+      String(intent?.state || "").toUpperCase() === "PAID" &&
+      isMarketplaceSplitKind(intent?.kind)
+  );
+  const repaired = await repairFalseChargeTimeProcessing(paystackRows);
+  const feeFromEvidence = await backfillProcessorFeeFromStoredEvidence(paystackRows);
+
+  const unresolved = paystackRows.filter((intent) => {
+    if (repaired.includes(intent.id)) return true;
+    return isUnresolvedPaystackPayout(intent);
+  });
+  const missingFee = paystackRows.filter((intent) => {
+    if (feeFromEvidence.includes(intent.id)) return false;
+    if (intent.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))) return false;
+    return true;
+  });
+
+  const codes = new Map();
+  const oldestByCode = new Map();
+  for (const intent of unresolved) {
+    const code = historicalChargeSubaccount(intent);
+    if (!code) continue;
+    const key = code.toUpperCase();
+    codes.set(key, code);
+    const paidDay = ymd(intent.paidAt || intent.createdAt);
+    if (!paidDay) continue;
+    const prev = oldestByCode.get(key);
+    if (!prev || paidDay < prev) oldestByCode.set(key, paidDay);
+  }
+
+  const to = new Date().toISOString().slice(0, 10);
+  const dueCodes = [];
+  for (const [key, code] of codes.entries()) {
+    const tKey = throttleKey(providerUserId, key);
+    if (isRefreshThrottled(tKey)) continue;
+    markRefreshAttempt(tKey);
+    dueCodes.push({ code, from: oldestByCode.get(key) || undefined });
+  }
+
+  const needsVerify = missingFee.some((intent) => {
+    const fromStored = resolveAuthoritativeProcessorFee({
+      intent,
+      evidence: intent.gatewayPayload,
+    });
+    return fromStored == null;
+  });
+  const verifyKey = throttleKey(providerUserId, "VERIFY");
+  const verifyDue = needsVerify && !isRefreshThrottled(verifyKey);
+  if (verifyDue) markRefreshAttempt(verifyKey);
+
+  let verified = [];
+  try {
+    for (const item of dueCodes) {
+      await reconcilePaystackSubaccountSettlements({
+        subaccount: item.code,
+        from: item.from,
+        to,
+        source: "provider_earnings_refresh",
+        notify: true,
+      });
+    }
+    if (verifyDue) {
+      verified = await backfillProcessorFeeFromVerify(missingFee);
+    }
+  } catch (err) {
+    console.warn("[provider-earnings] paystack refresh unavailable", err?.message || err);
+  }
+
+  return {
+    repaired: repaired.length,
+    feeFromEvidence: feeFromEvidence.length,
+    verified: verified.length,
+    reconciledSubaccounts: dueCodes.length,
+  };
 }
 
 module.exports = {
   applyPaystackSettlementRow,
   reconcilePaystackSettlementById,
   reconcileRecentPaystackSettlements,
+  reconcilePaystackSubaccountSettlements,
+  refreshProviderPaystackPayoutObservability,
+  repairFalseChargeTimeProcessing,
+  backfillProcessorFeeFromStoredEvidence,
   notifyChargeTimeProcessing,
   notifyPayoutTransition,
   listKnownRecipientPaystackSubaccounts,
   resolveTrustedSubaccountScope,
+  resetProviderPayoutRefreshThrottleForTests,
+  PROVIDER_PAYOUT_REFRESH_THROTTLE_MS,
 };

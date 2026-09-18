@@ -10,6 +10,7 @@ import { SettlementStatusBadge } from '@/components/payments/SettlementStatusBad
 type Props = PayoutBreakdownAmounts & {
   recipientLabel?: string;
   className?: string;
+  showExpectedBankSettlement?: boolean;
 };
 
 function Row({
@@ -49,6 +50,7 @@ export function PayoutBreakdown({
   payoutSettledAt,
   recipientLabel = 'Your gross share',
   className,
+  showExpectedBankSettlement = true,
 }: Props) {
   const feeKnown = feeIsKnown(processorFeeAmount);
   const netKnown = feeIsKnown(expectedBankSettlementAmount);
@@ -74,11 +76,13 @@ export function PayoutBreakdown({
         }
         negative={feeKnown}
       />
-      <Row
-        label="Expected bank settlement"
-        value={netKnown ? formatCurrency(Number(expectedBankSettlementAmount), { decimals: 2 }) : 'Pending confirmation'}
-        emphasize={netKnown}
-      />
+      {showExpectedBankSettlement ? (
+        <Row
+          label="Expected bank settlement"
+          value={netKnown ? formatCurrency(Number(expectedBankSettlementAmount), { decimals: 2 }) : 'Pending confirmation'}
+          emphasize={netKnown}
+        />
+      ) : null}
       {!feeKnown ? (
         <p className="text-xs text-muted-foreground">
           Paystack fee will be confirmed during settlement.

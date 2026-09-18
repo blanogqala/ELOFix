@@ -47,5 +47,8 @@ describe('ProviderSettlementJobGroups', () => {
     expect(await screen.findByText('Payment confirmed')).toBeInTheDocument();
     expect(screen.getByText('Processing')).toBeInTheDocument();
     expect(screen.queryByText(/^Settled$/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Expected bank settlement')).not.toBeInTheDocument();
+    expect(screen.getByText(/2,82/)).toBeInTheDocument();
+    expect(screen.queryByText('Pending confirmation')).not.toBeInTheDocument();
   });
 });

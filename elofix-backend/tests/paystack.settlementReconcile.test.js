@@ -61,7 +61,7 @@ async function seedLaborPair(suffix, subaccount = ACCT_A) {
     currency: "ZAR",
     state: "PAID",
     paidAt: new Date(),
-    payoutSettlementStatus: "PROCESSING",
+    payoutSettlementStatus: "PENDING",
     gatewayPayload: laborPayload(subaccount),
   };
   const a = await prisma.paymentIntent.create({
@@ -124,7 +124,7 @@ async function seedSupplierIntent(suffix, subaccount) {
       currency: "ZAR",
       state: "PAID",
       paidAt: new Date(),
-      payoutSettlementStatus: "PROCESSING",
+      payoutSettlementStatus: "PENDING",
       gatewayPayload: laborPayload(subaccount),
     },
   });
@@ -279,7 +279,7 @@ async function run() {
     assert.strictEqual(mainMissing.reason, "missing_recipient_subaccount_scope");
 
     let a = await prisma.paymentIntent.findUnique({ where: { id: labor.a.id } });
-    assert.strictEqual(a.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(a.payoutSettlementStatus, "PENDING");
 
     // B: wrong ACCT
     const wrong = await rec.applyPaystackSettlementRow(
@@ -288,7 +288,7 @@ async function run() {
     );
     assert.strictEqual(wrong.skipped, true);
     a = await prisma.paymentIntent.findUnique({ where: { id: labor.a.id } });
-    assert.strictEqual(a.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(a.payoutSettlementStatus, "PENDING");
     assert.strictEqual(a.payoutSettlementId, null);
 
     // C + F: correct ACCT, two intents same subaccount, persist scope even if API omits code
@@ -374,7 +374,7 @@ async function run() {
     );
     assert.strictEqual(supWrong.skipped, true);
     const supplierBadFresh = await prisma.paymentIntent.findUnique({ where: { id: supplierBad.intent.id } });
-    assert.strictEqual(supplierBadFresh.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(supplierBadFresh.payoutSettlementStatus, "PENDING");
 
     // E: supplier correct subaccount
     const supOk = await rec.applyPaystackSettlementRow(
@@ -394,7 +394,7 @@ async function run() {
     assert.strictEqual(mixed.skipped, true);
     assert.strictEqual(mixed.reason, "mixed_or_mismatched_recipient_subaccount");
     const otherFresh = await prisma.paymentIntent.findUnique({ where: { id: other.a.id } });
-    assert.strictEqual(otherFresh.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(otherFresh.payoutSettlementStatus, "PENDING");
     assert.strictEqual(otherFresh.payoutSettlementId, null);
 
     // 10: byId without scope cannot synthesize SETTLED
@@ -453,8 +453,47 @@ async function run() {
     );
     assert.strictEqual(histNew.skipped, true);
     const histB = await prisma.paymentIntent.findUnique({ where: { id: historical.b.id } });
-    assert.strictEqual(histB.payoutSettlementStatus, "PROCESSING");
+    assert.strictEqual(histB.payoutSettlementStatus, "PENDING");
     assert.strictEqual(histB.payoutSettlementId, null);
+
+    // Settlement API processing then success; fees from txn.fees when fees_split is absent
+    ids.proc = `88010${suffix.slice(0, 4)}`;
+    const pendingIntent = await prisma.paymentIntent.findUnique({ where: { id: other.a.id } });
+    paystack.getSettlementTransactions = async (settlementId) => {
+      if (String(settlementId) === String(ids.proc)) {
+        return {
+          transactions: [
+            {
+              reference: pendingIntent.merchantReference,
+              fees: 282,
+              fees_split: null,
+              bearer: "subaccount",
+            },
+          ],
+        };
+      }
+      return txnsFor([labor.a, labor.b]);
+    };
+    const processing = await rec.applyPaystackSettlementRow(
+      { id: ids.proc, status: "processing", currency: "ZAR" },
+      applyOpts(ACCT_B)
+    );
+    assert.strictEqual(processing.skipped, false);
+    assert.strictEqual(processing.status, "PROCESSING");
+    const afterProcessing = await prisma.paymentIntent.findUnique({ where: { id: other.a.id } });
+    assert.strictEqual(afterProcessing.payoutSettlementStatus, "PROCESSING");
+    assert.ok(afterProcessing.payoutSettlementId);
+    assert.strictEqual(Number(afterProcessing.processorFeeAmount), 2.82);
+    const settledFromProcessing = await rec.applyPaystackSettlementRow(
+      { id: ids.proc, status: "success", currency: "ZAR" },
+      applyOpts(ACCT_B)
+    );
+    assert.strictEqual(settledFromProcessing.status, "SETTLED");
+    const afterSettled = await prisma.paymentIntent.findUnique({ where: { id: other.a.id } });
+    assert.strictEqual(afterSettled.payoutSettlementStatus, "SETTLED");
+    assert.strictEqual(Number(afterSettled.amount), 50);
+    assert.strictEqual(Number(afterSettled.commissionAmount), 3.5);
+    assert.strictEqual(Number(afterSettled.recipientAmount), 46.5);
 
     console.log("paystack.settlementReconcile.test.js: all passed");
   } finally {

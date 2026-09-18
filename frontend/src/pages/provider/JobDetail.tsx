@@ -1383,6 +1383,7 @@ export default function ProviderJobDetail() {
                           payoutSettlementStatus={row.payoutSettlementStatus}
                           payoutSettledAt={row.payoutSettledAt}
                           recipientLabel="Provider gross share (93%)"
+                          showExpectedBankSettlement={false}
                         />
                       ))
                     ) : (
