@@ -1,4 +1,4 @@
-import { test, expect, registerCustomer, login, ensureCustomerHasSavedCard, completePaymentInTest, setupApprovedProviderForE2E } from './fixtures';
+import { test, expect, registerCustomer, login, completePaymentInTest, setupApprovedProviderForE2E } from './fixtures';
 
 test.describe.serial('Customer ↔ Provider critical lifecycle', () => {
   test.setTimeout(480_000);
@@ -14,7 +14,6 @@ test.describe.serial('Customer ↔ Provider critical lifecycle', () => {
       providerSetup;
 
     const customer = await registerCustomer(page);
-    await ensureCustomerHasSavedCard(page);
 
     // Create a service request (customer).
     await page.goto('/user/new-request');

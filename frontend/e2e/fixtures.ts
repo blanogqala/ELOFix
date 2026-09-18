@@ -301,15 +301,17 @@ export async function setupApprovedProviderForE2E(
   };
 }
 
-export async function ensureCustomerHasSavedCard(page: Page) {
-  // Block 5: EloFix no longer collects raw card data. Tokenisation is not active yet.
+export async function ensureCustomerPaymentsPageSecure(page: Page) {
+  // Customer Payments is invoice history, not a saved-card vault. EloFix must not collect PAN/CVC.
   await gotoApp(page, '/user/payments');
-  await expect(page.getByRole('heading', { name: /Payments/i })).toBeVisible();
-  await expect(
-    page.getByText(/Saved payment methods will be managed securely through our payment service provider/i)
-  ).toBeVisible();
-  await expect(page.getByRole('button', { name: /Add New Card/i })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Payments', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: /Refund( Invoices)?/i })).toBeVisible();
   await expect(page.getByPlaceholder('1234 5678 9012 3456')).toHaveCount(0);
+  await expect(page.getByLabel(/CVC|CVV|Security Code/i)).toHaveCount(0);
+  await expect(page.locator('#payment-modal-cvc')).toHaveCount(0);
+  await expect(page.locator('#material-cvc')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Add New Card/i })).toHaveCount(0);
 }
 
 export async function completePaymentInTest(page: Page, opts: { clickPayButton: () => Promise<void> }) {

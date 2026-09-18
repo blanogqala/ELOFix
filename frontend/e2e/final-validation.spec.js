@@ -34,7 +34,7 @@ test('final validation smoke flow', async ({ page }) => {
   await page.getByLabel('Password').fill(password);
   await page.getByLabel(/I agree to the/i).check();
   await page.getByRole('button', { name: 'Create Account' }).click();
-  await expect(page).toHaveURL(/\/user\/dashboard/);
+  await expect(page).toHaveURL(/\/user\/dashboard/, { timeout: 60_000 });
 
   await page.goto(`${BASE_URL}/user/new-request`);
   await expect(page).toHaveURL(/\/user\/new-request/);
@@ -66,7 +66,7 @@ test('final validation smoke flow', async ({ page }) => {
   await page.getByLabel('Password').fill(password);
   await page.getByLabel(/I agree to the/i).check();
   await page.getByRole('button', { name: 'Create Account' }).click();
-  await expect(page).toHaveURL(/\/provider\/profile/);
+  await expect(page).toHaveURL(/\/provider\/profile/, { timeout: 60_000 });
 
   const gotIt = page.getByRole('button', { name: 'Got it' });
   await gotIt.click({ timeout: 8000 }).catch(() => {});

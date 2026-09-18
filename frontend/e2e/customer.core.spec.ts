@@ -1,4 +1,4 @@
-import { test, expect, registerCustomer, login, ensureCustomerHasSavedCard } from './fixtures';
+import { test, expect, registerCustomer, login, ensureCustomerPaymentsPageSecure } from './fixtures';
 
 test.describe('Customer critical workflows (UI-only)', () => {
   test.setTimeout(120_000);
@@ -14,10 +14,10 @@ test.describe('Customer critical workflows (UI-only)', () => {
     await expect(page).toHaveURL(/\/user\/dashboard/);
   });
 
-  test('payments: payment methods page does not collect raw card data', async ({ page }) => {
+  test('payments: payment history page does not collect raw card data', async ({ page }) => {
     const customer = await registerCustomer(page);
     await login(page, customer.email, customer.password);
-    await ensureCustomerHasSavedCard(page);
+    await ensureCustomerPaymentsPageSecure(page);
   });
 
   test('request service wizard loads and enforces required steps', async ({ page }) => {
