@@ -527,15 +527,18 @@ async function processStagedCustomerPayouts(payouts) {
           const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
           const prevImmediate = Number(refund.immediateRefund) || 0;
           const prevPending = Number(refund.pendingRefund) || 0;
+          const newPending = Math.max(0, roundMoney(prevPending - p.amount));
+          const businessComplete = newPending <= EPS;
+          const now = new Date().toISOString();
           return {
             ...m,
             refund: {
               ...refund,
-              status: "processed",
-              customerRefundStatus: "REFUND_COMPLETED",
+              status: businessComplete ? "processed" : "partial",
+              customerRefundStatus: businessComplete ? "REFUND_COMPLETED" : "REFUND_PROCESSING",
               immediateRefund: roundMoney(prevImmediate + p.amount),
-              pendingRefund: Math.max(0, roundMoney(prevPending - p.amount)),
-              completedAt: new Date().toISOString(),
+              pendingRefund: newPending,
+              completedAt: businessComplete ? refund.completedAt || now : refund.completedAt || null,
             },
           };
         });
