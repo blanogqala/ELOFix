@@ -210,6 +210,23 @@ async function run() {
   });
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
+  const origResolve = paystack.resolvePaystackSubaccountId;
+  const ID_A = 100001;
+  const ID_B = 100002;
+  const ID_SUP = 100003;
+  const ID_OLD = 100004;
+  const ID_NEW = 100005;
+  const listedSubaccounts = [];
+
+  paystack.resolvePaystackSubaccountId = async (code) => {
+    const c = String(code || "").toUpperCase();
+    if (c === ACCT_A.toUpperCase()) return ID_A;
+    if (c === ACCT_B.toUpperCase()) return ID_B;
+    if (c === ACCT_SUP.toUpperCase()) return ID_SUP;
+    if (c === ACCT_OLD.toUpperCase()) return ID_OLD;
+    if (c === ACCT_NEW.toUpperCase()) return ID_NEW;
+    return null;
+  };
 
   const ids = {
     main: `88001${suffix.slice(0, 4)}`,
@@ -242,11 +259,15 @@ async function run() {
   };
 
   paystack.listSettlements = async (opts = {}) => {
-    const scoped = String(opts.subaccount || "");
-    if (!scoped || scoped.toLowerCase() === "none") {
+    const scoped = opts.subaccount;
+    listedSubaccounts.push(scoped);
+    if (scoped == null || String(scoped).trim() === "" || String(scoped).toLowerCase() === "none") {
       throw new Error("recipient reconcile must not list unscoped or main-account settlements");
     }
-    if (scoped.toUpperCase() === ACCT_A.toUpperCase()) {
+    if (/^ACCT_/i.test(String(scoped))) {
+      throw new Error("Paystack list settlements must use numeric subaccount id, not ACCT_ code");
+    }
+    if (Number(scoped) === ID_A) {
       return {
         settlements: [
           { id: ids.provider, status: "success", currency: "ZAR", settlement_date: "2026-09-15T00:00:00.000Z" },
@@ -427,6 +448,10 @@ async function run() {
     });
     assert.strictEqual(byIdOk.skipped, false);
     assert.strictEqual(byIdOk.settlementId, first.settlementId);
+    assert.ok(listedSubaccounts.length > 0);
+    assert.ok(listedSubaccounts.every((id) => Number.isInteger(Number(id)) && Number(id) > 0));
+    assert.ok(listedSubaccounts.every((id) => !/^ACCT_/i.test(String(id))));
+    assert.ok(listedSubaccounts.includes(ID_A));
 
     // Historical charge-time ACCT_OLD vs current profile ACCT_NEW
     const histOld = await rec.applyPaystackSettlementRow(
@@ -499,6 +524,7 @@ async function run() {
   } finally {
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
+    paystack.resolvePaystackSubaccountId = origResolve;
     await wipeSettlements(Object.values(ids));
     await prisma.providerWithdrawalProfile.deleteMany({ where: { providerId: histProvider.id } }).catch(() => {});
     await prisma.provider.deleteMany({ where: { id: histProvider.id } }).catch(() => {});

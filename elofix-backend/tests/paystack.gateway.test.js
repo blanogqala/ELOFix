@@ -1015,6 +1015,105 @@ async function testDestinationResultRequiresAcctCode() {
   }
 }
 
+async function testResolvePaystackSubaccountIdAndSettlementFilter() {
+  paystack.resetPaystackSubaccountIdCacheForTests();
+  const mock = installFetchMock((url, method) => {
+    if (url.includes("/subaccount/ACCT_HIST_OLD") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: {
+          id: 1234567,
+          subaccount_code: "ACCT_HIST_OLD",
+          account_number: "1234567890",
+          settlement_bank: "FNB",
+        },
+      });
+    }
+    if (url.includes("/subaccount/ACCT_MISMATCH") && method === "GET") {
+      return jsonResponse({
+        status: true,
+        data: { id: 99, subaccount_code: "ACCT_OTHER" },
+      });
+    }
+    if (url.includes("/subaccount/ACCT_UNKNOWN") && method === "GET") {
+      return jsonResponse({ status: false, message: "Subaccount not found" }, 404);
+    }
+    if (url.includes("/settlement?") && method === "GET") {
+      return jsonResponse({ status: true, data: [] });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv({ ...validTestEnv() }, async () => {
+      const { numericPaystackSubaccountIdOrNull } = require("../src/services/payments/paystack.payload");
+      assert.strictEqual(numericPaystackSubaccountIdOrNull("ACCT_X"), null);
+      assert.strictEqual(numericPaystackSubaccountIdOrNull("1234567"), 1234567);
+
+      const id = await paystack.resolvePaystackSubaccountId("ACCT_HIST_OLD");
+      assert.strictEqual(id, 1234567);
+      const cached = await paystack.resolvePaystackSubaccountId("ACCT_HIST_OLD");
+      assert.strictEqual(cached, 1234567);
+      const subGets = mock.calls.filter((c) => c.url.includes("/subaccount/ACCT_HIST_OLD"));
+      assert.strictEqual(subGets.length, 1, "numeric id must be cached");
+      assert.ok(!JSON.stringify(subGets[0]).includes("1234567890"));
+
+      const mismatch = await paystack.resolvePaystackSubaccountId("ACCT_MISMATCH");
+      assert.strictEqual(mismatch, null);
+
+      const listed = await paystack.listSettlements({
+        from: "2026-09-01",
+        to: "2026-09-18",
+        subaccount: "ACCT_HIST_OLD",
+        page: 1,
+        perPage: 50,
+      });
+      assert.strictEqual(listed.subaccountId, 1234567);
+      const settlementCalls = mock.calls.filter((c) => c.url.includes("/settlement?"));
+      assert.strictEqual(settlementCalls.length, 1);
+      const settlementUrl = settlementCalls[0].url;
+      assert.ok(settlementUrl.includes("subaccount=1234567"), settlementUrl);
+      assert.ok(!settlementUrl.includes("subaccount=ACCT_"), settlementUrl);
+      assert.ok(!settlementUrl.includes("subaccount=none"), settlementUrl);
+
+      const beforeUnscoped = mock.calls.filter((c) => c.url.includes("/settlement?")).length;
+      let threw = false;
+      try {
+        await paystack.listSettlements({ subaccount: "none" });
+      } catch (err) {
+        threw = true;
+        assert.strictEqual(err.code, "PAYSTACK_SETTLEMENT_SCOPE_REQUIRED");
+      }
+      assert.strictEqual(threw, true);
+      threw = false;
+      try {
+        await paystack.listSettlements({});
+      } catch (err) {
+        threw = true;
+        assert.strictEqual(err.code, "PAYSTACK_SETTLEMENT_SCOPE_REQUIRED");
+      }
+      assert.strictEqual(threw, true);
+      const afterUnscoped = mock.calls.filter((c) => c.url.includes("/settlement?")).length;
+      assert.strictEqual(afterUnscoped, beforeUnscoped);
+
+      threw = false;
+      try {
+        await paystack.listSettlements({ subaccount: "ACCT_UNKNOWN" });
+      } catch (err) {
+        threw = true;
+        assert.strictEqual(err.code, "PAYSTACK_SUBACCOUNT_ID_UNRESOLVED");
+      }
+      assert.strictEqual(threw, true);
+      assert.strictEqual(
+        mock.calls.filter((c) => c.url.includes("/settlement?")).length,
+        beforeUnscoped
+      );
+    });
+  } finally {
+    mock.restore();
+    paystack.resetPaystackSubaccountIdCacheForTests();
+  }
+}
+
 async function main() {
   testNormalizeProvider();
   testEnabledRegistry();
@@ -1043,6 +1142,7 @@ async function main() {
   await testSettlementsDoNotTransfer();
   await testRefundPendingNotFinal();
   await testVerifyTransactionMocked();
+  await testResolvePaystackSubaccountIdAndSettlementFilter();
   console.log("paystack.gateway.test.js: all passed");
 }
 
