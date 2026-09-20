@@ -65,7 +65,7 @@ async function seedIntent(suffix, extras = {}) {
       recipientAmount: new Prisma.Decimal("46.50"),
       currency: "ZAR",
       state: "PAID",
-      paidAt: new Date(),
+      paidAt: extras.paidAt || new Date(),
       payoutSettlementStatus: extras.payoutSettlementStatus || "PENDING",
       payoutSettlementId: extras.payoutSettlementId || null,
       processorFeeAmount: extras.processorFeeAmount === undefined ? new Prisma.Decimal("2.82") : extras.processorFeeAmount,
@@ -129,6 +129,7 @@ async function run() {
   paystack.resolvePaystackSubaccountId = async (code) => {
     if (String(code).toUpperCase() === ACCT.toUpperCase()) return 991122;
     if (String(code).toUpperCase() === ACCT_OTHER.toUpperCase()) return 334455;
+    if (String(code).toUpperCase() === "ACCT_DIAG_AMT") return 778899;
     return null;
   };
   let exportCalls = 0;
@@ -216,6 +217,7 @@ async function run() {
       paymentIntentId: successFix.intent.id,
     });
     assert.strictEqual(successOut.settlements[0].status, "success");
+    assert.strictEqual(successOut.settlements[0].matchingStrategy, "reference");
     assert.strictEqual(successOut.settlements[0].mappedStatus, "SETTLED");
     assert.strictEqual(successOut.settlements[0].referenceMatched, true);
     assert.strictEqual(successOut.settlements[0].matchedReference, successFix.intent.merchantReference);
@@ -275,7 +277,8 @@ async function run() {
     assert.strictEqual(noTxnOut.settlements[0].fallbackAttempted, true);
     assert.strictEqual(noTxnOut.settlements[0].fallbackTransactionCount, 0);
     assert.strictEqual(noTxnOut.settlements[0].referenceMatched, false);
-    assert.strictEqual(noTxnOut.skipReason, "no_transactions");
+    assert.strictEqual(noTxnOut.settlements[0].matchingStrategy, "none");
+    assert.strictEqual(noTxnOut.skipReason, "no_transactions_and_no_amount");
     assert.ok(exportCalls >= 1);
 
     const mismatch = await seedIntent("mismatch", { subaccount: ACCT_OTHER });
@@ -427,6 +430,46 @@ async function run() {
 
     assert.strictEqual(applyCalls, 0, "diagnostic must never apply settlement rows");
 
+    const amountDiag = await seedIntent("amtdiag", {
+      subaccount: "ACCT_DIAG_AMT",
+      paidAt: new Date("2026-09-10T10:00:00.000Z"),
+    });
+    fixtures.push(amountDiag);
+    paystack.listSettlements = async (opts = {}) => {
+      assert.strictEqual(Number(opts.subaccount), 778899);
+      return {
+        settlements: [
+          {
+            id: 8011,
+            status: "success",
+            settlement_date: "2026-09-18T00:00:00.000Z",
+            currency: "ZAR",
+            effective_amount: 4368,
+            total_amount: 4368,
+            total_fees: 282,
+            total_processed: 4650,
+          },
+        ],
+        meta: { pageCount: 1 },
+      };
+    };
+    paystack.getSettlementTransactions = async () => ({ transactions: [] });
+    paystack.getSettlementTransactionsViaExport = async () => ({ transactions: [] });
+    const amountOut = await diagnostic.diagnosePaystackSettlement({
+      reference: amountDiag.intent.merchantReference,
+    });
+    assert.strictEqual(amountOut.settlements[0].matchingStrategy, "settlement_amount_single");
+    assert.strictEqual(amountOut.settlements[0].effectiveAmount, 4368);
+    assert.strictEqual(amountOut.settlements[0].totalAmount, 4368);
+    assert.strictEqual(amountOut.settlements[0].totalFees, 282);
+    assert.strictEqual(amountOut.settlements[0].totalProcessed, 4650);
+    assert.deepStrictEqual(amountOut.settlements[0].matchedIntentIds, [amountDiag.intent.id]);
+    assert.strictEqual(amountOut.skipReason, "match_found_not_linked");
+    assert.strictEqual(amountOut.reconciliationDecision, "skipped");
+    await assertUnchangedAmounts(amountDiag.intent.id, amountDiag.intent);
+    assert.strictEqual(applyCalls, 0, "diagnostic must never apply settlement rows");
+
+    paystack.listSettlements = async () => ({ settlements: [], meta: { pageCount: 1 } });
     const listed = await rec.listSettlementsForSubaccountDetailed(paystack, {
       subaccount: ACCT,
       from: "2026-09-01",

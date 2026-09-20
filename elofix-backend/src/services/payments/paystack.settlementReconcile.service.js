@@ -17,6 +17,14 @@ const {
   isPaystackRecipientUsableInCurrentMode,
 } = require("./paystack.payload");
 const { sanitizePaystackFailure } = require("./paystack.client");
+const {
+  settlementFinancialFields,
+  settlementMatchAmountSubunits,
+  recipientNetCents,
+  paidAtNotAfterSettlement,
+  decideAmountFallback,
+  sortSettlementsOldestFirst,
+} = require("./paystack.settlementAmountMatch");
 
 function toDecimal(value) {
   return new Prisma.Decimal(String(Number(Number(value || 0).toFixed(2))));
@@ -40,15 +48,18 @@ function payoutNotifyAmount(intent) {
   return majorOrNull(intent.recipientAmount) ?? 0;
 }
 
-function minimizedSettlementMetadata(row, transactionRefs) {
+function minimizedSettlementMetadata(row, transactionRefs, matchingStrategy) {
+  const fields = settlementFinancialFields(row);
   return {
     id: row?.id != null ? String(row.id) : null,
     status: row?.status != null ? String(row.status) : null,
     currency: row?.currency != null ? String(row.currency) : null,
-    total_amount: row?.total_amount != null ? Number(row.total_amount) : null,
-    effective_amount: row?.effective_amount != null ? Number(row.effective_amount) : null,
-    total_fees: row?.total_fees != null ? Number(row.total_fees) : null,
+    total_amount: fields.totalAmount,
+    effective_amount: fields.effectiveAmount,
+    total_fees: fields.totalFees,
+    total_processed: fields.totalProcessed,
     settlement_date: row?.settlement_date || row?.paid_at || null,
+    matching_strategy: matchingStrategy || null,
     transaction_references: Array.isArray(transactionRefs) ? transactionRefs.slice(0, 200) : [],
   };
 }
@@ -173,6 +184,41 @@ async function listKnownRecipientPaystackSubaccounts() {
   return [...codes.values()];
 }
 
+async function listUnresolvedHistoricalPaystackSubaccounts() {
+  const rows = await prisma.paymentIntent.findMany({
+    where: {
+      provider: "PAYSTACK",
+      state: "PAID",
+      payoutSettlementId: null,
+      payoutSettlementStatus: { in: ["PENDING", "PROCESSING", "FAILED"] },
+    },
+    select: { kind: true, gatewayPayload: true },
+    take: 2000,
+  });
+  const codes = new Map();
+  for (const intent of rows) {
+    if (!isMarketplaceSplitKind(intent.kind)) continue;
+    const code = normalizeAcct(intent.gatewayPayload);
+    if (!code) continue;
+    codes.set(code.toUpperCase(), code);
+  }
+  return [...codes.values()];
+}
+
+async function listRecipientPaystackSubaccountsForReconcile() {
+  const [known, historical] = await Promise.all([
+    listKnownRecipientPaystackSubaccounts(),
+    listUnresolvedHistoricalPaystackSubaccounts(),
+  ]);
+  const codes = new Map();
+  for (const code of [...known, ...historical]) {
+    const normalized = normalizeAcct(code);
+    if (!normalized) continue;
+    codes.set(normalized.toUpperCase(), normalized);
+  }
+  return [...codes.values()];
+}
+
 async function listSettlementsForSubaccountDetailed(paystack, { subaccount, from, to, maxPages = 3 } = {}) {
   const empty = {
     rows: [],
@@ -256,15 +302,16 @@ async function listSettlementsForSubaccountDetailed(paystack, { subaccount, from
     statuses: summarizeSettlementStatuses(rows),
     pagesChecked,
   });
+  const chronological = sortSettlementsOldestFirst(rows);
   return {
-    rows,
+    rows: chronological,
     numericId,
     pagesChecked,
     from: from || null,
     to: to || null,
     acct: code,
     error: null,
-    skipReason: rows.length === 0 ? "no_settlements_returned" : null,
+    skipReason: chronological.length === 0 ? "no_settlements_returned" : null,
   };
 }
 
@@ -421,16 +468,27 @@ async function applyPaystackSettlementRow(row, opts = {}) {
       source: txnSource,
       fallbackAttempted: Boolean(fetched?.fallbackAttempted),
     });
-    logPaystackSettlement("intent not linked", {
-      settlementId: externalId,
-      reason: fetched?.error ? "API_error" : "no_transactions",
-    });
-    return {
-      skipped: true,
-      reason: "no_transactions",
+    if (fetched?.error) {
+      logPaystackSettlement("intent not linked", {
+        settlementId: externalId,
+        reason: "API_error",
+      });
+      return {
+        skipped: true,
+        reason: "no_transactions",
+        matchingStrategy: "none",
+        externalId,
+        apiError: fetched.error,
+      };
+    }
+    return applySettlementAmountFallback(row, {
+      source,
+      notify,
+      trustedSubaccount,
+      mapped,
       externalId,
-      apiError: fetched?.error || null,
-    };
+      txnSource,
+    });
   }
 
   const candidates = await prisma.paymentIntent.findMany({
@@ -478,6 +536,194 @@ async function applyPaystackSettlementRow(row, opts = {}) {
     return { skipped: true, reason: "no_matching_intents_for_subaccount", externalId };
   }
 
+  return finalizeLinkedPaystackSettlement({
+    row,
+    intents,
+    txnByRef,
+    trustedSubaccount,
+    mapped,
+    source,
+    notify,
+    externalId,
+    transactionRefs: refs,
+    matchingStrategy: "reference",
+  });
+}
+
+async function collectAmountFallbackCandidates({
+  trustedSubaccount,
+  currency,
+  settlementDate,
+  existingSettlementId,
+} = {}) {
+  const or = [
+    {
+      payoutSettlementId: null,
+      payoutSettlementStatus: { in: ["PENDING", "PROCESSING", "FAILED"] },
+    },
+  ];
+  if (existingSettlementId) {
+    or.push({ payoutSettlementId: existingSettlementId });
+  }
+  const rows = await prisma.paymentIntent.findMany({
+    where: {
+      provider: "PAYSTACK",
+      state: "PAID",
+      OR: or,
+    },
+  });
+
+  const scoped = [];
+  for (const intent of rows) {
+    if (!isMarketplaceSplitKind(intent.kind)) continue;
+    const historical = normalizeAcct(intent.gatewayPayload);
+    if (!historical || !sameAcct(historical, trustedSubaccount)) continue;
+    scoped.push(intent);
+  }
+
+  const expectedCurrency = String(currency || "").trim().toUpperCase();
+  const currencyMismatch = [];
+  const currencyOk = [];
+  for (const intent of scoped) {
+    const intentCurrency = String(intent.currency || "").trim().toUpperCase();
+    if (!expectedCurrency || !intentCurrency || intentCurrency !== expectedCurrency) {
+      currencyMismatch.push(intent);
+      continue;
+    }
+    currencyOk.push(intent);
+  }
+
+  const missingPaidAt = [];
+  const afterSettlement = [];
+  const before = [];
+  for (const intent of currencyOk) {
+    if (!intent.paidAt) {
+      missingPaidAt.push(intent);
+      continue;
+    }
+    if (!paidAtNotAfterSettlement(intent.paidAt, settlementDate)) {
+      afterSettlement.push(intent);
+      continue;
+    }
+    before.push(intent);
+  }
+
+  const missingNet = [];
+  const eligible = [];
+  for (const intent of before) {
+    const net = recipientNetCents(intent);
+    if (net == null) {
+      missingNet.push(intent);
+      continue;
+    }
+    eligible.push({ intent, netCents: net, paidAt: intent.paidAt });
+  }
+
+  eligible.sort((a, b) => {
+    const ta = new Date(a.paidAt).getTime();
+    const tb = new Date(b.paidAt).getTime();
+    if (ta !== tb) return ta - tb;
+    return String(a.intent.id).localeCompare(String(b.intent.id));
+  });
+
+  return {
+    scoped,
+    currencyMismatch,
+    missingPaidAt,
+    afterSettlement,
+    missingNet,
+    eligible,
+  };
+}
+
+async function applySettlementAmountFallback(
+  row,
+  { source, notify, trustedSubaccount, mapped, externalId, txnSource } = {}
+) {
+  const targetCents = settlementMatchAmountSubunits(row);
+  const settlementDate = row?.settlement_date || row?.paid_at || null;
+  const currency = String(row?.currency || "").trim().toUpperCase();
+  const existing = await prisma.gatewayPayoutSettlement.findUnique({
+    where: {
+      gateway_externalSettlementId: { gateway: "PAYSTACK", externalSettlementId: String(externalId) },
+    },
+  });
+  const existingCode = normalizeAcct(existing?.subaccountCode);
+  if (existingCode && !sameAcct(existingCode, trustedSubaccount)) {
+    return { skipped: true, reason: "existing_settlement_subaccount_mismatch", externalId, matchingStrategy: "none" };
+  }
+
+  const collected =
+    targetCents != null && settlementDate && currency
+      ? await collectAmountFallbackCandidates({
+          trustedSubaccount,
+          currency,
+          settlementDate,
+          existingSettlementId: existing?.id || null,
+        })
+      : {
+          scoped: [],
+          currencyMismatch: [],
+          missingPaidAt: [],
+          afterSettlement: [],
+          missingNet: [],
+          eligible: [],
+        };
+
+  const decision = decideAmountFallback({
+    collected,
+    targetCents,
+    hasSettlementDate: Boolean(settlementDate),
+    hasCurrency: Boolean(currency),
+  });
+
+  if (!decision.matched) {
+    logPaystackSettlement("intent not linked", {
+      settlementId: externalId,
+      reason: decision.skipReason,
+      source: txnSource || "settlement_amount",
+    });
+    return {
+      skipped: true,
+      reason: decision.skipReason,
+      matchingStrategy: "none",
+      externalId,
+    };
+  }
+
+  logPaystackSettlement("settlement amount matched", {
+    settlementId: externalId,
+    strategy: decision.matchingStrategy,
+    matched: decision.intents.length,
+    amount: targetCents,
+  });
+
+  return finalizeLinkedPaystackSettlement({
+    row,
+    intents: decision.intents,
+    txnByRef: new Map(),
+    trustedSubaccount,
+    mapped,
+    source,
+    notify,
+    externalId,
+    transactionRefs: decision.intents.map((intent) => intent.merchantReference),
+    matchingStrategy: decision.matchingStrategy,
+  });
+}
+
+async function finalizeLinkedPaystackSettlement({
+  row,
+  intents,
+  txnByRef,
+  trustedSubaccount,
+  mapped,
+  source,
+  notify,
+  externalId,
+  transactionRefs,
+  matchingStrategy,
+}) {
   const first = intents[0];
   const settlementDate = isoDate(row.settlement_date || row.paid_at);
   const now = new Date();
@@ -513,7 +759,7 @@ async function applyPaystackSettlementRow(row, opts = {}) {
       gatewayReference: row.settlement_date ? String(row.settlement_date) : existing?.gatewayReference || null,
       settlementDate: settlementDate,
       failureReason: mapped === "FAILED" ? String(row.reason || row.message || "Paystack settlement failed") : null,
-      metadata: minimizedSettlementMetadata(row, refs),
+      metadata: minimizedSettlementMetadata(row, transactionRefs, matchingStrategy),
       ...statusTimestamps,
     };
 
@@ -689,6 +935,7 @@ async function applyPaystackSettlementRow(row, opts = {}) {
     status: result.mapped,
     linked: result.linked.length,
     changed: result.changed,
+    matchingStrategy: matchingStrategy || "reference",
   };
 }
 
@@ -725,7 +972,7 @@ async function reconcileRecentPaystackSettlements(opts = {}) {
   fromDate.setDate(fromDate.getDate() - (opts.lookbackDays != null ? Number(opts.lookbackDays) : 14));
   const from = opts.from || fromDate.toISOString().slice(0, 10);
 
-  const subaccounts = await listKnownRecipientPaystackSubaccounts();
+  const subaccounts = await listRecipientPaystackSubaccountsForReconcile();
   let linked = 0;
   let scanned = 0;
   let changed = 0;
@@ -1024,6 +1271,8 @@ module.exports = {
   notifyChargeTimeProcessing,
   notifyPayoutTransition,
   listKnownRecipientPaystackSubaccounts,
+  listRecipientPaystackSubaccountsForReconcile,
+  collectAmountFallbackCandidates,
   listSettlementsForSubaccountDetailed,
   resolveTrustedSubaccountScope,
   resetProviderPayoutRefreshThrottleForTests,

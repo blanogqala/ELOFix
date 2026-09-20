@@ -155,7 +155,7 @@ async function run() {
       { scopedSubaccount: ACCT, source: "test", notify: false }
     );
     assert.strictEqual(skippedEmpty.skipped, true);
-    assert.strictEqual(skippedEmpty.reason, "no_transactions");
+    assert.strictEqual(skippedEmpty.reason, "no_transactions_and_no_amount");
     const emptyFresh = await prisma.paymentIntent.findUnique({ where: { id: empty.intent.id } });
     assert.strictEqual(emptyFresh.payoutSettlementStatus, "PENDING");
 

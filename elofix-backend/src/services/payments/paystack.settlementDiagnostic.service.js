@@ -8,6 +8,11 @@ const {
 } = require("./payoutTransparency.util");
 const { safePaystackSubaccountCode } = require("./paystack.payload");
 const rec = require("./paystack.settlementReconcile.service");
+const {
+  settlementFinancialFields,
+  settlementMatchAmountSubunits,
+  decideAmountFallback,
+} = require("./paystack.settlementAmountMatch");
 
 function ymd(value) {
   if (!value) return null;
@@ -56,8 +61,19 @@ function decideSkipReason({
   if (!listed?.rows?.length) return listed?.skipReason || "no_settlements_returned";
   if (anyMatch && !matchedMappedStatus) return "unknown_settlement_status";
   if (anyMatch) return "match_found_not_linked";
-  if (settlements.length > 0 && settlements.every((row) => row.transactionCount === 0 && !row.apiError)) {
-    return "no_transactions";
+  const rowReasons = settlements.map((row) => row.skipReason).filter(Boolean);
+  const priority = [
+    "API_error",
+    "ambiguous_amount_match",
+    "recipient_scope_mismatch",
+    "missing_recipient_net",
+    "payment_after_settlement",
+    "amount_mismatch",
+    "no_transactions_and_no_amount",
+    "no_transactions",
+  ];
+  for (const reason of priority) {
+    if (rowReasons.includes(reason)) return reason;
   }
   if (
     settlements.some(
@@ -67,6 +83,9 @@ function decideSkipReason({
     )
   ) {
     return "API_error";
+  }
+  if (settlements.length > 0 && settlements.every((row) => row.transactionCount === 0 && !row.apiError)) {
+    return "no_transactions_and_no_amount";
   }
   return "reference_not_found";
 }
@@ -181,17 +200,27 @@ async function diagnosePaystackSettlement({
     const settlementId = row?.id != null ? String(row.id) : null;
     const status = row?.status != null ? String(row.status) : null;
     const mapped = mapPaystackSettlementApiStatus(status);
+    const fields = settlementFinancialFields(row);
     const scanned = {
       settlementId,
       status,
       settlementDate: row?.settlement_date || row?.paid_at || null,
       currency: row?.currency != null ? String(row.currency) : null,
+      totalAmount: fields.totalAmount,
+      effectiveAmount: fields.effectiveAmount,
+      totalFees: fields.totalFees,
+      totalProcessed: fields.totalProcessed,
       transactionCount: 0,
       primaryTransactionCount: 0,
       fallbackAttempted: false,
       fallbackTransactionCount: 0,
       transactionSource: "settlement_api",
       referenceMatched: false,
+      matchingStrategy: "none",
+      candidateIntentIds: [],
+      candidateNetAmounts: [],
+      matchedIntentIds: [],
+      skipReason: null,
       mappedStatus: mapped,
       apiError: null,
     };
@@ -231,6 +260,8 @@ async function diagnosePaystackSettlement({
       anyMatch = true;
       if (mapped) matchedMappedStatus = mapped;
       scanned.referenceMatched = true;
+      scanned.matchingStrategy = "reference";
+      scanned.matchedIntentIds = [intent.id];
       scanned.matchedReference = intent.merchantReference;
       scanned.matchedTransactionStatus = txnStatus(match);
       const fee = resolveAuthoritativeProcessorFee({
@@ -239,6 +270,29 @@ async function diagnosePaystackSettlement({
         settlementTxn: fetched?.source === "transaction_export" ? null : match,
       });
       scanned.matchedTransactionFee = majorOrNull(fee);
+    } else if (transactions.length === 0 && !scanned.apiError) {
+      const targetCents = settlementMatchAmountSubunits(row);
+      const decision = await diagnoseAmountFallback({
+        intent,
+        historicalSubaccountCode,
+        scanned,
+        targetCents,
+      });
+      scanned.matchingStrategy = decision.matchingStrategy;
+      scanned.candidateIntentIds = decision.candidateIntentIds;
+      scanned.candidateNetAmounts = decision.candidateNetAmounts;
+      scanned.matchedIntentIds = decision.matchedIntentIds;
+      scanned.skipReason = decision.skipReason;
+      if (decision.thisIntentMatched) {
+        anyMatch = true;
+        if (mapped) matchedMappedStatus = mapped;
+      }
+    } else if (transactions.length === 0 && scanned.apiError) {
+      scanned.matchingStrategy = "none";
+      scanned.skipReason = "API_error";
+    } else {
+      scanned.matchingStrategy = "none";
+      scanned.skipReason = "reference_not_found";
     }
     settlements.push(scanned);
   }
@@ -257,6 +311,48 @@ async function diagnosePaystackSettlement({
     reconciliationDecision: intent.payoutSettlementId ? "linked" : "skipped",
     skipReason,
     apiError: firstTxnApiError && skipReason === "API_error" ? firstTxnApiError : null,
+  };
+}
+
+async function diagnoseAmountFallback({ intent, historicalSubaccountCode, scanned, targetCents }) {
+  const empty = {
+    matchingStrategy: "none",
+    candidateIntentIds: [],
+    candidateNetAmounts: [],
+    matchedIntentIds: [],
+    skipReason: "no_transactions_and_no_amount",
+    thisIntentMatched: false,
+  };
+  if (!historicalSubaccountCode) {
+    return { ...empty, skipReason: "recipient_scope_mismatch" };
+  }
+  if (targetCents == null || !scanned.settlementDate || !scanned.currency) {
+    return empty;
+  }
+  const collected = await rec.collectAmountFallbackCandidates({
+    trustedSubaccount: historicalSubaccountCode,
+    currency: scanned.currency,
+    settlementDate: scanned.settlementDate,
+    existingSettlementId: null,
+  });
+  const decision = decideAmountFallback({
+    collected,
+    targetCents,
+    hasSettlementDate: Boolean(scanned.settlementDate),
+    hasCurrency: Boolean(scanned.currency),
+  });
+  const matchedIds = (decision.intents || []).map((row) => row.id);
+  const thisIntentMatched = matchedIds.includes(intent.id);
+  let skipReason = decision.skipReason;
+  if (decision.matched && !thisIntentMatched) skipReason = "amount_mismatch";
+  if (decision.matched && thisIntentMatched) skipReason = null;
+  return {
+    matchingStrategy: decision.matchingStrategy || "none",
+    candidateIntentIds: (collected.eligible || []).map((row) => row.intent.id),
+    candidateNetAmounts: (collected.eligible || []).map((row) => row.netCents),
+    matchedIntentIds: matchedIds,
+    skipReason,
+    thisIntentMatched,
   };
 }
 

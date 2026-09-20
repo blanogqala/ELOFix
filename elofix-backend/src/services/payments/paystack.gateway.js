@@ -525,10 +525,37 @@ async function listSettlements({ from, to, subaccount, page = 1, perPage = 50 } 
   const { json } = await paystackRequest("GET", `/settlement?${params.toString()}`);
   const data = Array.isArray(json?.data) ? json.data : [];
   return {
-    settlements: data,
+    settlements: data.map(sanitizeListedSettlement).filter(Boolean),
     meta: json?.meta && typeof json.meta === "object" ? json.meta : null,
     subaccountId: filterId,
   };
+}
+
+/**
+ * Keep Settlement API financial fields as integer subunits.
+ * Never pass through bank account numbers or other secrets.
+ */
+function sanitizeListedSettlement(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  if (row.id == null || row.id === "") return null;
+  const { settlementFinancialFields } = require("./paystack.settlementAmountMatch");
+  const fields = settlementFinancialFields(row);
+  const sub = safePaystackSubaccountCode(row.subaccount_code || row.subaccount);
+  const sanitized = {
+    id: row.id,
+    status: row.status != null ? String(row.status) : null,
+    currency: row.currency != null ? String(row.currency).toUpperCase() : null,
+    total_amount: fields.totalAmount,
+    effective_amount: fields.effectiveAmount,
+    total_fees: fields.totalFees,
+    total_processed: fields.totalProcessed,
+    settlement_date: row.settlement_date || row.paid_at || null,
+  };
+  if (sub) {
+    sanitized.subaccount = sub;
+    sanitized.subaccount_code = sub;
+  }
+  return sanitized;
 }
 
 async function getSettlementTransactions(settlementId, { page = 1, perPage = 100, maxPages = 10 } = {}) {
