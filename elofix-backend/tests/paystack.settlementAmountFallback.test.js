@@ -153,7 +153,9 @@ async function run() {
   const origTx = paystack.getSettlementTransactions;
   const origExport = paystack.getSettlementTransactionsViaExport;
   const origResolve = paystack.resolvePaystackSubaccountId;
+  const origIsConfigured = paystack.isConfigured;
 
+  paystack.isConfigured = () => true;
   paystack.getSettlementTransactions = async () => ({ transactions: [] });
   paystack.getSettlementTransactionsViaExport = async () => ({ transactions: [] });
   paystack.resolvePaystackSubaccountId = async (code) => {
@@ -446,6 +448,7 @@ async function run() {
     paystack.getSettlementTransactions = origTx;
     paystack.getSettlementTransactionsViaExport = origExport;
     paystack.resolvePaystackSubaccountId = origResolve;
+    paystack.isConfigured = origIsConfigured;
     await wipeSettlements(Object.values(ids));
     for (const fix of fixtures.reverse()) {
       await cleanup(fix);
