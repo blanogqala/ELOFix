@@ -15,6 +15,10 @@ const AUTHORITATIVE_D3_PAYOUT_STATUSES = new Set([
 const ATTENTION_PAYOUT_STATUSES = new Set(["FAILED", "REVERSED", "NOT_SUPPORTED", "ACTION_REQUIRED"]);
 const SUPPLIER_RECIPIENT_KINDS = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
 const { pickAuthoritativeMaterialsIntent } = require("../utils/supplierSettlementPresentation.util");
+const {
+  positiveMajor,
+  resolveSupplierRecipientGrossMajor,
+} = require("./payments/supplierPayoutAmounts.util");
 /** Settlement KPI date range uses PaymentIntent.paidAt (fallback createdAt), not Paystack settlement_date. */
 const SETTLEMENT_KPI_DATE_BASIS = "paymentIntent.paidAt_or_createdAt";
 
@@ -78,22 +82,44 @@ function emptySettlementSummary() {
 }
 
 function payoutBucketAmount(intent) {
-  const expected = Number(intent?.expectedBankSettlementAmount);
-  if (intent?.expectedBankSettlementAmount != null && Number.isFinite(expected) && expected > 0) {
+  const expected = positiveMajor(intent?.expectedBankSettlementAmount);
+  if (expected != null) {
     return { amount: roundMoney2(expected), usesGrossFallback: false };
   }
 
-  const recipient = Number(intent?.recipientAmount);
-  if (intent?.recipientAmount != null && Number.isFinite(recipient) && recipient > 0) {
-    return { amount: roundMoney2(recipient), usesGrossFallback: true };
-  }
-
-  const supplierEarning = Number(intent?.materialOrder?.supplierEarning);
-  if (intent?.materialOrder?.supplierEarning != null && Number.isFinite(supplierEarning) && supplierEarning > 0) {
-    return { amount: roundMoney2(supplierEarning), usesGrossFallback: true };
+  const recipientGross = resolveSupplierRecipientGrossMajor(intent);
+  if (recipientGross != null) {
+    return { amount: roundMoney2(recipientGross), usesGrossFallback: true };
   }
 
   return { amount: 0, usesGrossFallback: true };
+}
+
+function orderFallbackPendingAmount(order) {
+  const settlement = positiveMajor(order?.settlementAmount);
+  if (settlement != null) return roundMoney2(settlement);
+  const earning = positiveMajor(order?.supplierEarning);
+  if (earning != null) return roundMoney2(earning);
+  return 0;
+}
+
+function attachAuthoritativeOrderForKpi(intent, branchOrders) {
+  if (intent?.materialOrder) return intent;
+  const payload =
+    intent?.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
+      ? intent.gatewayPayload
+      : {};
+  const hint = String(payload.orderId || payload.jobStoreOrderId || intent?.materialOrderId || "").trim();
+  const matches = (branchOrders || []).filter((order) => {
+    if (hint && String(order.id) === hint) return true;
+    const orderPayload = order.payload && typeof order.payload === "object" ? order.payload : {};
+    if (hint && String(orderPayload.jobStoreOrderId || orderPayload.orderId || "") === hint) {
+      if (!intent.jobId || !order.jobId || String(order.jobId) === String(intent.jobId)) return true;
+    }
+    return false;
+  });
+  if (matches.length === 1) return { ...intent, materialOrder: matches[0] };
+  return intent;
 }
 
 function isStoreDeliveryToBranch(intent, order) {
@@ -114,8 +140,9 @@ function selectDedupedSupplierIntents(intents, branchId, supplierOrgId) {
       continue;
     }
     const kind = String(intent.kind || "").toUpperCase();
-    if ((kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER") && intent.materialOrderId) {
-      const mid = String(intent.materialOrderId);
+    const orderKey = intent.materialOrderId || intent.materialOrder?.id;
+    if ((kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER") && orderKey) {
+      const mid = String(orderKey);
       const prev = materialsByOrder.get(mid) || [];
       prev.push(intent);
       materialsByOrder.set(mid, prev);
@@ -385,6 +412,8 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
     },
     select: {
       id: true,
+      jobId: true,
+      payload: true,
       materialsSubtotal: true,
       platformCommission: true,
       supplierEarning: true,
@@ -394,13 +423,20 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
   });
 
   const dateWhere = paidAtOrCreatedAtFilter({ from, to });
+  const branchJobIds = [...new Set(orders.map((order) => order.jobId).filter(Boolean).map(String))];
   const intents = await prisma.paymentIntent.findMany({
     where: {
       state: "PAID",
       kind: { in: ["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"] },
       AND: [
         {
-          OR: [{ branchId: bid }, { materialOrder: { is: { branchId: bid, supplierId: sid } } }],
+          OR: [
+            { branchId: bid },
+            { materialOrder: { is: { branchId: bid, supplierId: sid } } },
+            ...(branchJobIds.length
+              ? [{ kind: { in: ["MATERIAL_ORDER", "JOB_STORE_ORDER"] }, jobId: { in: branchJobIds } }]
+              : []),
+          ],
         },
         ...(Object.keys(dateWhere).length ? [dateWhere] : []),
       ],
@@ -408,6 +444,7 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
     select: {
       id: true,
       kind: true,
+      jobId: true,
       branchId: true,
       materialOrderId: true,
       recipientAmount: true,
@@ -415,6 +452,7 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
       payoutSettlementStatus: true,
       paidAt: true,
       createdAt: true,
+      gatewayPayload: true,
       materialOrder: {
         select: {
           id: true,
@@ -426,6 +464,7 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
       },
     },
   });
+  const scopedIntents = intents.map((intent) => attachAuthoritativeOrderForKpi(intent, orders));
 
   let totalMaterialSales = 0;
   let platformCommission = 0;
@@ -445,15 +484,16 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
 
   // Only payoutSettlementStatus === SETTLED leaves Pending Settlement.
   // FAILED / REVERSED remain pending and are also flagged as needs-attention.
-  for (const intent of selectDedupedSupplierIntents(intents, bid, sid)) {
+  for (const intent of selectDedupedSupplierIntents(scopedIntents, bid, sid)) {
     const payoutStatus = String(intent.payoutSettlementStatus || "NOT_APPLICABLE").toUpperCase();
     const kind = String(intent.kind || "").toUpperCase();
+    const coveredOrderId = intent.materialOrderId || intent.materialOrder?.id;
     if (
       (kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER") &&
-      intent.materialOrderId &&
+      coveredOrderId &&
       AUTHORITATIVE_D3_PAYOUT_STATUSES.has(payoutStatus)
     ) {
-      d3CoveredOrderIds.add(String(intent.materialOrderId));
+      d3CoveredOrderIds.add(String(coveredOrderId));
     }
     if (!AUTHORITATIVE_D3_PAYOUT_STATUSES.has(payoutStatus)) continue;
     const bucket = payoutBucketAmount(intent);
@@ -472,7 +512,7 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
   for (const o of orders) {
     if (d3CoveredOrderIds.has(String(o.id))) continue;
     const st = String(o.settlementStatus || "NOT_APPLICABLE").toUpperCase();
-    const net = Number(o.settlementAmount != null ? o.settlementAmount : o.supplierEarning || 0);
+    const net = orderFallbackPendingAmount(o);
     if (SETTLED_STATUSES.has(st)) {
       settled += net;
       continue;

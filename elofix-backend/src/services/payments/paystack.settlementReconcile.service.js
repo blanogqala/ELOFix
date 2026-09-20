@@ -4,6 +4,11 @@ const prisma = require("../../config/prisma");
 const { emitDomainUpdate } = require("../../utils/realtimeEmitter");
 const { computeExpectedBankSettlement, fromCents, toCents } = require("./money.util");
 const {
+  MATERIAL_ORDER_INCLUDE,
+  prepareSupplierAmountMatchCandidate,
+} = require("./supplierPayoutAccounting.util");
+const { resolveSupplierRecipientGrossMajor } = require("./supplierPayoutAmounts.util");
+const {
   mapPaystackSettlementApiStatus,
   recipientTypeFromIntent,
   resolvePayoutStaffNotifyBranchId,
@@ -571,6 +576,7 @@ async function collectAmountFallbackCandidates({
       state: "PAID",
       OR: or,
     },
+    include: MATERIAL_ORDER_INCLUDE,
   });
 
   const scoped = [];
@@ -578,7 +584,8 @@ async function collectAmountFallbackCandidates({
     if (!isMarketplaceSplitKind(intent.kind)) continue;
     const historical = normalizeAcct(intent.gatewayPayload);
     if (!historical || !sameAcct(historical, trustedSubaccount)) continue;
-    scoped.push(intent);
+    const prepared = await prepareSupplierAmountMatchCandidate(intent);
+    scoped.push(prepared);
   }
 
   const expectedCurrency = String(currency || "").trim().toUpperCase();
@@ -817,7 +824,8 @@ async function finalizeLinkedPaystackSettlement({
         evidence: intent.gatewayPayload,
         settlementTxn: txn,
       });
-      const net = computeExpectedBankSettlement(intent.recipientAmount, fee);
+      const recipientGross = resolveSupplierRecipientGrossMajor(intent);
+      const net = computeExpectedBankSettlement(recipientGross, fee);
       await tx.gatewayPayoutSettlementItem.upsert({
         where: {
           settlementId_paymentIntentId: {
@@ -831,14 +839,14 @@ async function finalizeLinkedPaystackSettlement({
           paymentIntentId: intent.id,
           customerAmount: toDecimal(intent.amount),
           commissionAmount: toDecimal(intent.commissionAmount),
-          recipientGrossShare: toDecimal(intent.recipientAmount),
+          recipientGrossShare: toDecimal(recipientGross ?? intent.recipientAmount),
           gatewayFeeAmount: net.processorFeeAmount,
           expectedBankAmount: net.expectedBankSettlementAmount,
         },
         update: {
           customerAmount: toDecimal(intent.amount),
           commissionAmount: toDecimal(intent.commissionAmount),
-          recipientGrossShare: toDecimal(intent.recipientAmount),
+          recipientGrossShare: toDecimal(recipientGross ?? intent.recipientAmount),
           gatewayFeeAmount: net.processorFeeAmount,
           expectedBankAmount: net.expectedBankSettlementAmount,
         },
@@ -1091,21 +1099,25 @@ async function backfillProcessorFeeFromStoredEvidence(intents) {
     if (String(intent?.provider || "").toUpperCase() !== "PAYSTACK") continue;
     if (String(intent?.state || "").toUpperCase() !== "PAID") continue;
     if (!isMarketplaceSplitKind(intent?.kind)) continue;
-    if (intent.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))) continue;
+    const prepared = await prepareSupplierAmountMatchCandidate(intent);
+    if (prepared.processorFeeAmount != null && Number.isFinite(Number(prepared.processorFeeAmount))) {
+      if (prepared.processorFeeAmount !== intent.processorFeeAmount) updated.push(prepared.id);
+      continue;
+    }
     const fee = resolveAuthoritativeProcessorFee({
-      intent,
-      evidence: intent.gatewayPayload,
+      intent: prepared,
+      evidence: prepared.gatewayPayload,
     });
     if (fee == null) continue;
-    const net = computeExpectedBankSettlement(intent.recipientAmount, fee);
+    const net = computeExpectedBankSettlement(resolveSupplierRecipientGrossMajor(prepared), fee);
     await prisma.paymentIntent.update({
-      where: { id: intent.id },
+      where: { id: prepared.id },
       data: {
         processorFeeAmount: net.processorFeeAmount,
         expectedBankSettlementAmount: net.expectedBankSettlementAmount,
       },
     });
-    updated.push(intent.id);
+    updated.push(prepared.id);
   }
   return updated;
 }
@@ -1129,30 +1141,31 @@ async function backfillProcessorFeeFromVerify(intents) {
     if (!ref) continue;
     try {
       const verified = await paystack.verifyTransaction(ref);
+      const prepared = await prepareSupplierAmountMatchCandidate(intent);
       const fee = resolveAuthoritativeProcessorFee({
-        intent,
-        evidence: intent.gatewayPayload,
+        intent: prepared,
+        evidence: prepared.gatewayPayload,
         verifyRaw: verified?.raw,
       });
       if (fee == null) continue;
-      const net = computeExpectedBankSettlement(intent.recipientAmount, fee);
+      const net = computeExpectedBankSettlement(resolveSupplierRecipientGrossMajor(prepared), fee);
       const prevPayload =
-        intent.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
-          ? intent.gatewayPayload
+        prepared.gatewayPayload && typeof prepared.gatewayPayload === "object" && !Array.isArray(prepared.gatewayPayload)
+          ? prepared.gatewayPayload
           : {};
       const mergedPayload = {
         ...prevPayload,
         ...(verified?.raw && typeof verified.raw === "object" ? verified.raw : {}),
       };
       await prisma.paymentIntent.update({
-        where: { id: intent.id },
+        where: { id: prepared.id },
         data: {
           processorFeeAmount: net.processorFeeAmount,
           expectedBankSettlementAmount: net.expectedBankSettlementAmount,
           gatewayPayload: mergedPayload,
         },
       });
-      updated.push(intent.id);
+      updated.push(prepared.id);
     } catch (err) {
       console.warn("[paystack-fee-backfill] verify skipped", ref, err?.message || err);
     }

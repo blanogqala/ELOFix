@@ -1,4 +1,5 @@
 const { toCents, computeExpectedBankSettlement } = require("./money.util");
+const { resolveSupplierRecipientGrossMajor } = require("./supplierPayoutAmounts.util");
 
 /**
  * Paystack settlement amounts are integer subunits (cents). Reject non-integers.
@@ -39,19 +40,21 @@ function settlementMatchAmountSubunits(row) {
 /**
  * Recipient net cents for amount fallback.
  * Preferred: persisted expectedBankSettlementAmount.
- * Else: recipientAmount − processorFeeAmount only when both are known.
+ * Else: resolved recipient gross − processorFeeAmount only when both are known.
+ * Supplier historical fallback: recipientAmount, else MaterialOrder.supplierEarning.
  */
 function recipientNetCents(intent) {
   if (intent?.expectedBankSettlementAmount != null && intent.expectedBankSettlementAmount !== "") {
     const cents = toCents(intent.expectedBankSettlementAmount);
     if (Number.isFinite(cents) && cents > 0) return cents;
   }
+  const recipientGross = resolveSupplierRecipientGrossMajor(intent);
   if (
-    intent?.recipientAmount != null &&
+    recipientGross != null &&
     intent?.processorFeeAmount != null &&
     intent.processorFeeAmount !== ""
   ) {
-    const net = computeExpectedBankSettlement(intent.recipientAmount, intent.processorFeeAmount);
+    const net = computeExpectedBankSettlement(recipientGross, intent.processorFeeAmount);
     if (net.expectedBankSettlementAmount != null) {
       const cents = toCents(net.expectedBankSettlementAmount);
       if (Number.isFinite(cents) && cents > 0) return cents;
