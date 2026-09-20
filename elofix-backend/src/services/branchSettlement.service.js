@@ -5,7 +5,6 @@ const AppError = require("../utils/AppError");
 const payoutDestinationService = require("./payoutDestination.service");
 
 const SETTLED_STATUSES = new Set(["SETTLED"]);
-const PENDING_PAYOUT_STATUSES = new Set(["PENDING", "PROCESSING"]);
 const AUTHORITATIVE_D3_PAYOUT_STATUSES = new Set([
   "PENDING",
   "PROCESSING",
@@ -13,8 +12,9 @@ const AUTHORITATIVE_D3_PAYOUT_STATUSES = new Set([
   "FAILED",
   "REVERSED",
 ]);
-const ATTENTION_PAYOUT_STATUSES = new Set(["FAILED", "REVERSED", "NOT_SUPPORTED", "NOT_APPLICABLE"]);
+const ATTENTION_PAYOUT_STATUSES = new Set(["FAILED", "REVERSED", "NOT_SUPPORTED", "ACTION_REQUIRED"]);
 const SUPPLIER_RECIPIENT_KINDS = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
+const { pickAuthoritativeMaterialsIntent } = require("../utils/supplierSettlementPresentation.util");
 /** Settlement KPI date range uses PaymentIntent.paidAt (fallback createdAt), not Paystack settlement_date. */
 const SETTLEMENT_KPI_DATE_BASIS = "paymentIntent.paidAt_or_createdAt";
 
@@ -88,6 +88,35 @@ function isStoreDeliveryToBranch(intent, order) {
   if (String(intent?.kind || "").toUpperCase() !== "DELIVERY_FEE") return false;
   const payload = order?.payload && typeof order.payload === "object" ? order.payload : {};
   return String(payload.deliveryType || "").toUpperCase() === "STORE_DELIVERY";
+}
+
+/**
+ * One materials payout per MaterialOrder (MATERIAL_ORDER wins over JOB_STORE_ORDER).
+ * Delivery-fee intents stay separate — they are a different payout.
+ */
+function selectDedupedSupplierIntents(intents, branchId, supplierOrgId) {
+  const materialsByOrder = new Map();
+  const others = [];
+  for (const intent of intents) {
+    if (!isSupplierBranchRecipientIntent(intent, intent.materialOrder, branchId, supplierOrgId)) {
+      continue;
+    }
+    const kind = String(intent.kind || "").toUpperCase();
+    if ((kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER") && intent.materialOrderId) {
+      const mid = String(intent.materialOrderId);
+      const prev = materialsByOrder.get(mid) || [];
+      prev.push(intent);
+      materialsByOrder.set(mid, prev);
+      continue;
+    }
+    others.push(intent);
+  }
+  const chosen = [];
+  for (const list of materialsByOrder.values()) {
+    const picked = pickAuthoritativeMaterialsIntent(list);
+    if (picked) chosen.push(picked);
+  }
+  return [...chosen, ...others];
 }
 
 function isSupplierBranchRecipientIntent(intent, order, branchId, supplierOrgId) {
@@ -401,11 +430,13 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
   let pendingUsesGrossFallback = false;
   const d3CoveredOrderIds = new Set();
 
-  for (const intent of intents) {
-    if (!isSupplierBranchRecipientIntent(intent, intent.materialOrder, bid, sid)) continue;
+  // Only payoutSettlementStatus === SETTLED leaves Pending Settlement.
+  // FAILED / REVERSED remain pending and are also flagged as needs-attention.
+  for (const intent of selectDedupedSupplierIntents(intents, bid, sid)) {
     const payoutStatus = String(intent.payoutSettlementStatus || "NOT_APPLICABLE").toUpperCase();
+    const kind = String(intent.kind || "").toUpperCase();
     if (
-      (intent.kind === "MATERIAL_ORDER" || intent.kind === "JOB_STORE_ORDER") &&
+      (kind === "MATERIAL_ORDER" || kind === "JOB_STORE_ORDER") &&
       intent.materialOrderId &&
       AUTHORITATIVE_D3_PAYOUT_STATUSES.has(payoutStatus)
     ) {
@@ -413,12 +444,13 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
     }
     if (!AUTHORITATIVE_D3_PAYOUT_STATUSES.has(payoutStatus)) continue;
     const bucket = payoutBucketAmount(intent);
-    if (PENDING_PAYOUT_STATUSES.has(payoutStatus)) {
-      pendingSettlement += bucket.amount;
-      if (bucket.usesGrossFallback) pendingUsesGrossFallback = true;
-    } else if (SETTLED_STATUSES.has(payoutStatus)) {
+    if (SETTLED_STATUSES.has(payoutStatus)) {
       settled += bucket.amount;
-    } else if (ATTENTION_PAYOUT_STATUSES.has(payoutStatus)) {
+      continue;
+    }
+    pendingSettlement += bucket.amount;
+    if (bucket.usesGrossFallback) pendingUsesGrossFallback = true;
+    if (ATTENTION_PAYOUT_STATUSES.has(payoutStatus)) {
       needsAttentionAmount += bucket.amount;
       needsAttentionCount += 1;
     }
@@ -430,10 +462,11 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
     const net = Number(o.settlementAmount != null ? o.settlementAmount : o.supplierEarning || 0);
     if (SETTLED_STATUSES.has(st)) {
       settled += net;
-    } else if (PENDING_PAYOUT_STATUSES.has(st)) {
-      pendingSettlement += net;
-      pendingUsesGrossFallback = true;
-    } else if (ATTENTION_PAYOUT_STATUSES.has(st) || st === "ACTION_REQUIRED") {
+      continue;
+    }
+    pendingSettlement += net;
+    pendingUsesGrossFallback = true;
+    if (ATTENTION_PAYOUT_STATUSES.has(st)) {
       needsAttentionAmount += net;
       needsAttentionCount += 1;
     }
