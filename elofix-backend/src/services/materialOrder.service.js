@@ -17,6 +17,10 @@ const {
   jobSiteAddressFromRow,
   jobSiteLocationFromRow,
 } = require("../utils/address.util");
+const {
+  pickAuthoritativeMaterialsIntent,
+  resolveSupplierOrderSettlement,
+} = require("../utils/supplierSettlementPresentation.util");
 
 async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
   const org = String(supplierOrgId || "").trim();
@@ -4137,14 +4141,53 @@ async function computeBranchEarnedInRange(supplierId, branchId, { from, to } = {
   return total;
 }
 
+async function loadPaidMaterialsIntentsByOrderIds(orderIds) {
+  const ids = [...new Set((orderIds || []).map(String).filter(Boolean))];
+  const byOrder = new Map();
+  if (!ids.length) return byOrder;
+  const intents = await prisma.paymentIntent.findMany({
+    where: {
+      state: "PAID",
+      materialOrderId: { in: ids },
+      kind: { in: ["MATERIAL_ORDER", "JOB_STORE_ORDER"] },
+    },
+    select: {
+      id: true,
+      materialOrderId: true,
+      kind: true,
+      payoutSettlementStatus: true,
+    },
+  });
+  for (const intent of intents) {
+    const mid = String(intent.materialOrderId || "");
+    if (!mid) continue;
+    const list = byOrder.get(mid) || [];
+    list.push(intent);
+    byOrder.set(mid, list);
+  }
+  const chosen = new Map();
+  for (const [mid, list] of byOrder) {
+    const picked = pickAuthoritativeMaterialsIntent(list);
+    if (picked) chosen.set(mid, picked);
+  }
+  return chosen;
+}
+
 async function buildSupplierOrdersExport(supplierId, { from, to, branchId } = {}) {
   const orders = await listMaterialOrdersBySupplier(supplierId, { from, to, branchId });
+  const settlementByOrderId = await loadPaidMaterialsIntentsByOrderIds(orders.map((o) => o.id));
   const rows = orders.map((o) => {
     const fx = computeSupplierExportFinancials(o);
+    const settlement = resolveSupplierOrderSettlement(
+      settlementByOrderId.get(String(o.id)) || null,
+      o.settlementStatus
+    );
     return {
       orderId: o.id,
       branchName: o.branchName != null && String(o.branchName).trim() ? String(o.branchName).trim() : null,
       status: String(o.fulfillmentStatus || "PENDING"),
+      settlementStatus: settlement.settlementStatus,
+      settlementRawStatus: settlement.settlementRawStatus,
       totalAmount: fx.totalAmount,
       commission: fx.commission,
       netEarnings: fx.netEarnings,

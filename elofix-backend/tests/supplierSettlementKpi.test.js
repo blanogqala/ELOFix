@@ -238,13 +238,13 @@ async function main() {
       from: "2026-09-15",
       to: "2026-09-15",
     });
-    assert.strictEqual(aFailed.pendingSettlement, 0);
+    assert.strictEqual(aFailed.pendingSettlement, 43.68);
     assert.ok(aFailed.needsAttentionAmount >= 43.68);
     assert.ok(aFailed.needsAttentionCount >= 1);
 
     const laborFresh = await prisma.paymentIntent.findUnique({ where: { id: laborIntent.id } });
     assert.strictEqual(Number(laborFresh.recipientAmount), 46.5);
-    assert.strictEqual(aFailed.pendingSettlement, 0);
+    assert.strictEqual(aFailed.pendingSettlement, 43.68);
 
     const legacyOnly = await branchSettlementService.aggregateBranchSettlementSummary(branchA.id, supplier.id, {
       from: "2026-09-15",

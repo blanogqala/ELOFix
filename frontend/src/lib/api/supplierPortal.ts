@@ -175,6 +175,8 @@ export interface SupplierOrdersExportRow {
   orderId: string;
   branchName?: string | null;
   status: string;
+  settlementStatus: 'PENDING' | 'PROCESSING' | 'SUCCESS';
+  settlementRawStatus?: string | null;
   totalAmount: number;
   commission: number;
   netEarnings: number;

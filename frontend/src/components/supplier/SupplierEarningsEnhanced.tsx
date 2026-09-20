@@ -19,10 +19,12 @@ import {
   SUPPLIER_GROSS_SHARE_HINT,
   SUPPLIER_GROSS_SHARE_LABEL,
   SUPPLIER_PENDING_SETTLEMENT_LABEL,
-  SUPPLIER_SETTLED_HINT,
-  SUPPLIER_SETTLED_LABEL,
   pendingSettlementHelperText,
 } from '@/lib/supplierSettlementKpiDisplay';
+import {
+  formatSupplierSettlementLabel,
+  supplierSettlementBadgeClass,
+} from '@/lib/supplierOrdersSettlementDisplay';
 import {
   computeActiveSubtotal,
   computeCompletedSubtotal,
@@ -33,6 +35,7 @@ import {
   type OrderStatusFilter,
 } from '@/lib/supplierOrdersExportDisplay';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 import { FileSpreadsheet, FileText, Building2, ChevronRight, MapPin } from 'lucide-react';
 import { utils, writeFile } from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -153,6 +156,7 @@ export function SupplierEarningsOrdersPanel({
         Branch: row.branchName || '',
         'Order ID': row.orderId,
         Status: row.status,
+        Settlement: formatSupplierSettlementLabel(row.settlementStatus),
         'Total Amount': Number(row.totalAmount || 0),
         'Commission (7%)': Number(row.commission || 0),
         'Net Earnings': Number(row.netEarnings || 0),
@@ -182,11 +186,12 @@ export function SupplierEarningsOrdersPanel({
     doc.text(`Supplier Earnings (${heading || exportTag}) (${from} to ${to})`, 14, 14);
     autoTable(doc, {
       startY: 20,
-      head: [['Branch', 'Order ID', 'Status', 'Total', 'Commission', 'Net', 'Refund', 'Cancellation', 'Reason', 'Cancelled By']],
+      head: [['Branch', 'Order ID', 'Status', 'Settlement', 'Total', 'Commission', 'Net', 'Refund', 'Cancellation', 'Reason', 'Cancelled By']],
       body: filteredRows.map((row: SupplierOrdersExportRow) => [
         String(row.branchName || '—'),
         String(row.orderId || ''),
         formatStatus(row.status || ''),
+        formatSupplierSettlementLabel(row.settlementStatus),
         String(Number(row.totalAmount || 0).toFixed(2)),
         String(Number(row.commission || 0).toFixed(2)),
         String(Number(row.netEarnings || 0).toFixed(2)),
@@ -340,6 +345,7 @@ export function SupplierEarningsOrdersPanel({
                     <th className="px-3 py-2">Branch</th>
                     <th className="px-3 py-2">Order ID</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Settlement</th>
                     <th className="px-3 py-2">Total</th>
                     <th className="px-3 py-2">Commission</th>
                     <th className="px-3 py-2">Net</th>
@@ -351,13 +357,13 @@ export function SupplierEarningsOrdersPanel({
                 <tbody>
                   {rows.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-4 text-muted-foreground" colSpan={9}>
+                      <td className="px-3 py-4 text-muted-foreground" colSpan={10}>
                         No orders in selected range.
                       </td>
                     </tr>
                   ) : filteredRows.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-4 text-muted-foreground" colSpan={9}>
+                      <td className="px-3 py-4 text-muted-foreground" colSpan={10}>
                         No orders match the selected status filter.
                       </td>
                     </tr>
@@ -376,6 +382,17 @@ export function SupplierEarningsOrdersPanel({
                           </td>
                           <td className="px-3 py-2 font-mono text-xs">{row.orderId}</td>
                           <td className="px-3 py-2 capitalize">{formatStatus(row.status)}</td>
+                          <td className="px-3 py-2">
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'px-2 py-0 text-[10px] font-semibold',
+                                supplierSettlementBadgeClass(row.settlementStatus)
+                              )}
+                            >
+                              {formatSupplierSettlementLabel(row.settlementStatus)}
+                            </Badge>
+                          </td>
                           <td
                             className={cn(
                               'px-3 py-2 tabular-nums',
@@ -409,7 +426,7 @@ export function SupplierEarningsOrdersPanel({
                       ))}
                       {filteredActiveSubtotal.count > 0 && statusFilter === '__all__' && (
                         <tr className="border-t-2 border-primary/40 bg-primary/5 font-semibold">
-                          <td className="px-3 py-2.5" colSpan={3}>
+                          <td className="px-3 py-2.5" colSpan={4}>
                             Active subtotal ({filteredActiveSubtotal.count})
                           </td>
                           <td className="px-3 py-2.5 tabular-nums">
@@ -426,7 +443,7 @@ export function SupplierEarningsOrdersPanel({
                       )}
                       {filteredCompletedSubtotal.count > 0 && statusFilter === 'completed' && (
                         <tr className="border-t-2 border-primary/40 bg-primary/5 font-semibold">
-                          <td className="px-3 py-2.5" colSpan={3}>
+                          <td className="px-3 py-2.5" colSpan={4}>
                             Completed subtotal ({filteredCompletedSubtotal.count})
                           </td>
                           <td className="px-3 py-2.5 tabular-nums">
@@ -443,7 +460,7 @@ export function SupplierEarningsOrdersPanel({
                       )}
                       {filteredPendingSubtotal.count > 0 && statusFilter === 'pending' && (
                         <tr className="border-t-2 border-primary/40 bg-primary/5 font-semibold">
-                          <td className="px-3 py-2.5" colSpan={3}>
+                          <td className="px-3 py-2.5" colSpan={4}>
                             Pending subtotal ({filteredPendingSubtotal.count})
                           </td>
                           <td className="px-3 py-2.5 tabular-nums">
@@ -515,7 +532,6 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
   });
   const branchRows = branchAnalyticsData?.branches ?? [];
   const totalPendingSettlement = branchAnalyticsData?.totalPendingSettlement ?? 0;
-  const totalSettled = branchAnalyticsData?.totalSettled ?? 0;
   const needsAttentionAmount = branchAnalyticsData?.needsAttentionAmount ?? 0;
   const pendingUsesGrossFallback = Boolean(branchAnalyticsData?.pendingUsesGrossFallback);
 
@@ -534,7 +550,7 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
       {hubLoading || branchesLoading ? (
         <p className="text-sm text-muted-foreground">Loading summary…</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Card className="card-elevated">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total revenue</CardTitle>
@@ -587,17 +603,6 @@ export function SupplierEarningsHub({ userId }: { userId: string }) {
                   {formatCurrency(needsAttentionAmount)} needs attention (failed, reversed, or unsupported)
                 </p>
               ) : null}
-            </CardContent>
-          </Card>
-          <Card className="card-elevated sm:col-span-2 lg:col-span-1">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{SUPPLIER_SETTLED_LABEL}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                {formatCurrency(totalSettled)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">{SUPPLIER_SETTLED_HINT}</p>
             </CardContent>
           </Card>
         </div>
