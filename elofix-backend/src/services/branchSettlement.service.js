@@ -78,10 +78,22 @@ function emptySettlementSummary() {
 }
 
 function payoutBucketAmount(intent) {
-  if (intent?.expectedBankSettlementAmount != null && Number.isFinite(Number(intent.expectedBankSettlementAmount))) {
-    return { amount: roundMoney2(intent.expectedBankSettlementAmount), usesGrossFallback: false };
+  const expected = Number(intent?.expectedBankSettlementAmount);
+  if (intent?.expectedBankSettlementAmount != null && Number.isFinite(expected) && expected > 0) {
+    return { amount: roundMoney2(expected), usesGrossFallback: false };
   }
-  return { amount: roundMoney2(intent?.recipientAmount || 0), usesGrossFallback: true };
+
+  const recipient = Number(intent?.recipientAmount);
+  if (intent?.recipientAmount != null && Number.isFinite(recipient) && recipient > 0) {
+    return { amount: roundMoney2(recipient), usesGrossFallback: true };
+  }
+
+  const supplierEarning = Number(intent?.materialOrder?.supplierEarning);
+  if (intent?.materialOrder?.supplierEarning != null && Number.isFinite(supplierEarning) && supplierEarning > 0) {
+    return { amount: roundMoney2(supplierEarning), usesGrossFallback: true };
+  }
+
+  return { amount: 0, usesGrossFallback: true };
 }
 
 function isStoreDeliveryToBranch(intent, order) {
@@ -409,6 +421,7 @@ async function aggregateBranchSettlementSummary(branchId, supplierOrgId, { from,
           supplierId: true,
           branchId: true,
           payload: true,
+          supplierEarning: true,
         },
       },
     },

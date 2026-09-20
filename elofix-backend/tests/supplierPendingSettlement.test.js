@@ -163,6 +163,70 @@ async function main() {
       "G: MATERIAL_ORDER + JOB_STORE_ORDER for one order counted once"
     );
 
+    const zeroRecipientOrder = await prisma.materialOrder.create({
+      data: {
+        userId: customer.id,
+        supplierId: supplier.id,
+        branchId: branch.id,
+        paymentStatus: "paid",
+        materialsSubtotal: dec(50),
+        platformCommission: dec(3.5),
+        supplierEarning: dec(46.5),
+        settlementStatus: "PENDING",
+        settlementAmount: dec(46.5),
+        payload: { totalAmount: 50, seed: "ZERO-RECIPIENT" },
+        createdAt: paidAt,
+      },
+    });
+    const zeroRecipientIntent = await prisma.paymentIntent.create({
+      data: {
+        id: randomUUID(),
+        merchantReference: `EF-PEND-ZERO-${suffix}`.toUpperCase(),
+        provider: "PAYSTACK",
+        kind: "MATERIAL_ORDER",
+        paymentType: "MATERIAL_ORDER",
+        userId: customer.id,
+        materialOrderId: zeroRecipientOrder.id,
+        branchId: branch.id,
+        amount: dec(50),
+        commissionAmount: dec(0),
+        recipientAmount: dec(0),
+        expectedBankSettlementAmount: null,
+        currency: "ZAR",
+        state: "PAID",
+        paidAt,
+        payoutSettlementStatus: "PENDING",
+      },
+    });
+    created.push({ order: zeroRecipientOrder, intent: zeroRecipientIntent });
+
+    const zeroRecipientPending = await branchSettlementService.aggregateBranchSettlementSummary(
+      branch.id,
+      supplier.id,
+      fromTo
+    );
+    assert.strictEqual(
+      zeroRecipientPending.pendingSettlement,
+      372,
+      "historical recipientAmount=0 uses MaterialOrder.supplierEarning 46.50"
+    );
+    assert.strictEqual(zeroRecipientPending.pendingUsesGrossFallback, true);
+
+    await prisma.paymentIntent.update({
+      where: { id: zeroRecipientIntent.id },
+      data: { payoutSettlementStatus: "SETTLED" },
+    });
+    const zeroRecipientSettled = await branchSettlementService.aggregateBranchSettlementSummary(
+      branch.id,
+      supplier.id,
+      fromTo
+    );
+    assert.strictEqual(
+      zeroRecipientSettled.pendingSettlement,
+      325.5,
+      "SETTLED removes the supplierEarning fallback amount without double-count leftover"
+    );
+
     console.log("supplierPendingSettlement.test.js: OK");
   } finally {
     const intentIds = created.map((c) => c.intent.id);
