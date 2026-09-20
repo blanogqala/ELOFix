@@ -117,6 +117,7 @@ interface BackendJob {
   paymentSummary?: Job['paymentSummary'];
   depositPayment?: Job['depositPayment'];
   completionPayment?: Job['completionPayment'];
+  payoutReconciliations?: Job['payoutReconciliations'];
 }
 
 interface BackendJobsResponse {
@@ -147,7 +148,7 @@ function numOrUndef(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function toFrontendJob(job: BackendJob): Job {
+export function toFrontendJob(job: BackendJob): Job {
   const price = Number(job.price) || 0;
   const totalPriceNum = numOrUndef(job.totalPrice);
   const serviceAmount =
@@ -288,6 +289,9 @@ function toFrontendJob(job: BackendJob): Job {
     paymentSummary: job.paymentSummary ?? null,
     depositPayment: job.depositPayment ?? null,
     completionPayment: job.completionPayment ?? null,
+    payoutReconciliations: Array.isArray(job.payoutReconciliations)
+      ? job.payoutReconciliations
+      : [],
     completionPaymentDue: job.completionPaymentDue
       ? {
           amountDue: Number(job.completionPaymentDue.amountDue) || 0,
