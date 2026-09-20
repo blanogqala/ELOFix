@@ -197,6 +197,10 @@ async function paystackWebhook(req, res) {
   res.status(status).json({ success: status < 400, ...out });
 }
 
+/**
+ * Compatibility endpoint. Paystack payout finality is not driven by settlement.*
+ * webhooks; Settlement API reconciliation runs independently.
+ */
 async function settlementWebhook(req, res) {
   const provider = String(req.params.provider || "").trim();
   const branchSettlement = require("../services/branchSettlement.service");

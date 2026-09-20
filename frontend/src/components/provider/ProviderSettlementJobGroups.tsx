@@ -117,6 +117,7 @@ export function ProviderSettlementJobGroups({
                       processorFeeAmount={stage.processorFeeAmount}
                       expectedBankSettlementAmount={stage.expectedBankSettlementAmount}
                       payoutSettlementStatus={stage.payoutSettlementStatus}
+                      payoutSettlementId={stage.payoutSettlementId}
                       payoutSettledAt={stage.payoutSettledAt}
                       recipientLabel="Your gross share"
                       showExpectedBankSettlement={false}

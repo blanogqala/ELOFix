@@ -47,6 +47,7 @@ export function PayoutBreakdown({
   processorFeeAmount,
   expectedBankSettlementAmount,
   payoutSettlementStatus,
+  payoutSettlementId,
   payoutSettledAt,
   recipientLabel = 'Your gross share',
   className,
@@ -91,12 +92,15 @@ export function PayoutBreakdown({
       {payoutSettlementStatus ? (
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <span className="text-xs text-muted-foreground">Payout status</span>
-          <SettlementStatusBadge status={payoutSettlementStatus} />
+          <SettlementStatusBadge
+            status={payoutSettlementStatus}
+            payoutSettlementId={payoutSettlementId}
+          />
         </div>
       ) : null}
       {payoutSettlementStatus ? (
         <p className="text-xs text-muted-foreground">
-          {settlementStatusDescription(payoutSettlementStatus, payoutSettledAt)}
+          {settlementStatusDescription(payoutSettlementStatus, payoutSettledAt, payoutSettlementId)}
         </p>
       ) : null}
     </div>

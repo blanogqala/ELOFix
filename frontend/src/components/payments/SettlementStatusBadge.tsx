@@ -4,13 +4,14 @@ import { settlementStatusBadgeClass, settlementStatusLabel } from '@/lib/payoutD
 
 type Props = {
   status?: string | null;
+  payoutSettlementId?: string | null;
   className?: string;
 };
 
-export function SettlementStatusBadge({ status, className }: Props) {
+export function SettlementStatusBadge({ status, payoutSettlementId, className }: Props) {
   return (
     <Badge className={cn('text-[10px] whitespace-normal text-center', settlementStatusBadgeClass(status), className)}>
-      {settlementStatusLabel(status)}
+      {settlementStatusLabel(status, payoutSettlementId)}
     </Badge>
   );
 }

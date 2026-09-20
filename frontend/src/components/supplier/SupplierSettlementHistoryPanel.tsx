@@ -94,7 +94,10 @@ export function SupplierSettlementHistoryPanel({
           row.expectedBankSettlementAmount == null
             ? 'Pending confirmation'
             : Number(row.expectedBankSettlementAmount || 0),
-        Status: settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus),
+        Status: settlementStatusLabel(
+          row.payoutSettlementStatus || row.settlementStatus,
+          row.payoutSettlementId
+        ),
         Gateway: row.gatewayReference || row.gatewaySettlementId || '—',
       })),
     [rows]
@@ -126,7 +129,7 @@ export function SupplierSettlementHistoryPanel({
         row.expectedBankSettlementAmount == null
           ? 'Pending'
           : Number(row.expectedBankSettlementAmount).toFixed(2),
-        settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus),
+        settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus, row.payoutSettlementId),
         row.gatewayReference || row.gatewaySettlementId || '—',
       ]),
       styles: { fontSize: 8, cellPadding: 2 },
@@ -244,7 +247,10 @@ export function SupplierSettlementHistoryPanel({
                           : formatCurrency(row.expectedBankSettlementAmount)}
                       </td>
                       <td className="px-3 py-2">
-                        <SettlementStatusBadge status={row.payoutSettlementStatus || row.settlementStatus} />
+                        <SettlementStatusBadge
+                          status={row.payoutSettlementStatus || row.settlementStatus}
+                          payoutSettlementId={row.payoutSettlementId}
+                        />
                       </td>
                       <td className="px-3 py-2 font-mono text-xs break-all">
                         {row.gatewayReference || row.gatewaySettlementId || '—'}

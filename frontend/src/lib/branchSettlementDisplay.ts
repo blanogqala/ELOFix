@@ -14,8 +14,11 @@ export type BranchSettlementStatus =
   | 'FAILED'
   | 'REVERSED';
 
-export function settlementStatusLabel(status: BranchSettlementStatus | string | null | undefined): string {
-  return payoutSettlementStatusLabel(status);
+export function settlementStatusLabel(
+  status: BranchSettlementStatus | string | null | undefined,
+  payoutSettlementId?: string | null
+): string {
+  return payoutSettlementStatusLabel(status, payoutSettlementId);
 }
 
 export function isBankProfileComplete(profile: {

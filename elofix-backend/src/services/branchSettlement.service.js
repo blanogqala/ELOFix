@@ -128,6 +128,7 @@ function toPublicEvent(row, branchName) {
     netAmount: roundMoney2(row.netAmount),
     settlementStatus: intent?.payoutSettlementStatus || row.settlementStatus,
     payoutSettlementStatus: intent?.payoutSettlementStatus || row.settlementStatus,
+    payoutSettlementId: intent?.payoutSettlementId || null,
     processorFeeAmount:
       intent?.processorFeeAmount != null && Number.isFinite(Number(intent.processorFeeAmount))
         ? roundMoney2(intent.processorFeeAmount)
@@ -151,6 +152,7 @@ const payoutIntentInclude = {
       processorFeeAmount: true,
       expectedBankSettlementAmount: true,
       payoutSettlementStatus: true,
+      payoutSettlementId: true,
       payoutSettlement: { select: { externalSettlementId: true } },
     },
   },
@@ -611,6 +613,11 @@ async function applySettlementStatusUpdate({
   return { duplicate: false, orderId, settlementStatus: st };
 }
 
+/**
+ * Optional settlement webhook compatibility path.
+ * Paystack payout reconciliation does not depend on settlement.* webhooks.
+ * Polling GET /settlement remains the authoritative discovery path.
+ */
 async function handleSettlementWebhook(providerInput, payload, headers = {}) {
   const { getGateway, normalizeProvider } = require("./payments/gatewayRegistry");
   const provider = normalizeProvider(providerInput);

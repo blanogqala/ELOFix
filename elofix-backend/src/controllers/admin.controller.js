@@ -738,6 +738,17 @@ async function reconcilePayoutSettlements(req, res) {
   res.json({ success: true, ...result });
 }
 
+async function getPaystackSettlementDiagnostic(req, res) {
+  const diagnostic = require("../services/payments/paystack.settlementDiagnostic.service");
+  const result = await diagnostic.diagnosePaystackSettlement({
+    reference: req.query?.reference,
+    paymentIntentId: req.query?.paymentIntentId || req.query?.intentId,
+    lookbackDays: req.query?.lookbackDays,
+    maxPages: req.query?.maxPages,
+  });
+  res.json({ success: true, ...result });
+}
+
 module.exports = {
   listProviders,
   listProviderNetRevenues,
@@ -814,4 +825,5 @@ module.exports = {
   listPendingPayoutProfiles,
   listPaymentObligations,
   reconcilePayoutSettlements,
+  getPaystackSettlementDiagnostic,
 };

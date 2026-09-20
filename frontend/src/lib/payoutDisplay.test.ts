@@ -22,18 +22,24 @@ describe('payoutDisplay', () => {
     );
     expect(settlementStatusDescription('SETTLED')).toContain('Paystack has completed this payout');
     expect(settlementStatusDescription('SETTLED')).not.toMatch(/Money received in your bank/i);
+    expect(settlementStatusLabel('PENDING')).toBe('Awaiting Paystack payout record');
     expect(settlementStatusDescription('PENDING')).toBe(
-      'Payment confirmed. This payout is waiting for Paystack settlement processing.'
+      'Payment confirmed. EloFix has not yet received or matched the Paystack settlement record.'
+    );
+    expect(settlementStatusLabel('PENDING', 'gps_1')).toBe('Pending at Paystack');
+    expect(settlementStatusDescription('PENDING', null, 'gps_1')).toBe(
+      'Payment confirmed. This payout is pending at Paystack.'
     );
     expect(settlementStatusDescription('PROCESSING')).toBe(
       'Paystack is processing this payout. Bank reflection time can vary.'
     );
+    expect(settlementStatusLabel('FAILED')).toBe('Settlement issue');
   });
 
   it('does not invent unknown fees', () => {
     expect(feeIsKnown(null)).toBe(false);
     expect(feeIsKnown(2.82)).toBe(true);
-    expect(settlementStatusLabel('FAILED')).toBe('Failed');
+    expect(settlementStatusLabel('FAILED')).toBe('Settlement issue');
     expect(settlementStatusLabel('REVERSED')).toBe('Reversed');
   });
 
