@@ -12,7 +12,7 @@ const paystack = require("../src/services/payments/paystack.gateway");
 
 const ACCT = "ACCT_EXPORT_FB";
 
-async function seedIntent(suffix) {
+async function seedIntent(suffix, extras = {}) {
   const customer = await prisma.user.create({
     data: {
       email: `exfb.cust.${suffix}@example.com`,
@@ -61,9 +61,13 @@ async function seedIntent(suffix) {
       state: "PAID",
       paidAt: new Date(),
       payoutSettlementStatus: "PENDING",
-      processorFeeAmount: new Prisma.Decimal("2.82"),
-      expectedBankSettlementAmount: new Prisma.Decimal("43.68"),
-      gatewayPayload: {
+      processorFeeAmount:
+        extras.processorFeeAmount === undefined ? new Prisma.Decimal("2.82") : extras.processorFeeAmount,
+      expectedBankSettlementAmount:
+        extras.expectedBankSettlementAmount === undefined
+          ? new Prisma.Decimal("43.68")
+          : extras.expectedBankSettlementAmount,
+      gatewayPayload: extras.gatewayPayload || {
         subaccount: ACCT,
         bearer: "subaccount",
         fees: 282,
@@ -101,25 +105,23 @@ async function run() {
   const match = await seedIntent(randomUUID().slice(0, 8));
   const miss = await seedIntent(randomUUID().slice(0, 8));
   const empty = await seedIntent(randomUUID().slice(0, 8));
+  const noFee = await seedIntent(randomUUID().slice(0, 8), {
+    processorFeeAmount: null,
+    expectedBankSettlementAmount: null,
+    gatewayPayload: { subaccount: ACCT, bearer: "subaccount" },
+  });
   const linked = [];
   try {
     paystack.getSettlementTransactions = async () => ({ transactions: [] });
     paystack.getSettlementTransactionsViaExport = async (settlementId) => {
       if (String(settlementId) === "88001991") {
-        return {
-          transactions: [
-            {
-              reference: match.intent.merchantReference,
-              status: "success",
-              fees: 282,
-              bearer: "subaccount",
-              fees_split: { paystack: 282 },
-            },
-          ],
-        };
+        return { transactions: [{ reference: match.intent.merchantReference, status: "success" }] };
       }
       if (String(settlementId) === "88001992") {
-        return { transactions: [{ reference: "EF-NOT-THIS-ONE", status: "success", fees: 282 }] };
+        return { transactions: [{ reference: "EF-NOT-THIS-ONE", status: "success" }] };
+      }
+      if (String(settlementId) === "88001994") {
+        return { transactions: [{ reference: noFee.intent.merchantReference, status: "success" }] };
       }
       return { transactions: [] };
     };
@@ -157,6 +159,17 @@ async function run() {
     const emptyFresh = await prisma.paymentIntent.findUnique({ where: { id: empty.intent.id } });
     assert.strictEqual(emptyFresh.payoutSettlementStatus, "PENDING");
 
+    const appliedNoFee = await rec.applyPaystackSettlementRow(
+      { id: 88001994, status: "success", currency: "ZAR", settlement_date: "2026-09-15" },
+      { scopedSubaccount: ACCT, source: "test", notify: false }
+    );
+    assert.strictEqual(appliedNoFee.skipped, false);
+    assert.strictEqual(appliedNoFee.status, "SETTLED");
+    const noFeeFresh = await prisma.paymentIntent.findUnique({ where: { id: noFee.intent.id } });
+    assert.strictEqual(noFeeFresh.payoutSettlementStatus, "SETTLED");
+    assert.strictEqual(noFeeFresh.processorFeeAmount, null);
+    linked.push(noFeeFresh.payoutSettlementId);
+
     const mainIgnored = rec.resolveTrustedSubaccountScope({ id: 1, status: "success" }, { scopedSubaccount: "none" });
     assert.strictEqual(mainIgnored.ok, false);
 
@@ -168,6 +181,7 @@ async function run() {
     await cleanup(match, linked);
     await cleanup(miss);
     await cleanup(empty);
+    await cleanup(noFee);
   }
 }
 

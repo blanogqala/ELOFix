@@ -3,7 +3,7 @@ const prisma = require("../../config/prisma");
 const { sanitizePaystackFailure } = require("./paystack.client");
 const {
   mapPaystackSettlementApiStatus,
-  feeFromSettlementTransaction,
+  resolveAuthoritativeProcessorFee,
   majorOrNull,
 } = require("./payoutTransparency.util");
 const { safePaystackSubaccountCode } = require("./paystack.payload");
@@ -233,7 +233,11 @@ async function diagnosePaystackSettlement({
       scanned.referenceMatched = true;
       scanned.matchedReference = intent.merchantReference;
       scanned.matchedTransactionStatus = txnStatus(match);
-      const fee = feeFromSettlementTransaction(match, intent);
+      const fee = resolveAuthoritativeProcessorFee({
+        intent,
+        evidence: intent.gatewayPayload,
+        settlementTxn: fetched?.source === "transaction_export" ? null : match,
+      });
       scanned.matchedTransactionFee = majorOrNull(fee);
     }
     settlements.push(scanned);

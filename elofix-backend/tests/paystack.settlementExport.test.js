@@ -27,13 +27,30 @@ async function run() {
   assert.strictEqual(safeExportUrlForLog(signed), "https://files.paystack.co/exports/100/x.csv");
   assert.doesNotMatch(safeExportUrlForLog(signed), /secretvalue/);
 
+  const membership = transactionsFromExportCsv(
+    "Reference,Fees,Amount\nEF-TEST,2.82,50.00\n"
+  );
+  assert.strictEqual(membership.length, 1);
+  assert.strictEqual(membership[0].reference, "EF-TEST");
+  assert.ok(!Object.prototype.hasOwnProperty.call(membership[0], "fees"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(membership[0], "fees_split"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(membership[0], "amount"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(membership[0], "bearer"));
+
+  const integerCsv = transactionsFromExportCsv("Reference,Fees,Amount\nEF-TEST,282,5000\n");
+  assert.strictEqual(integerCsv[0].reference, "EF-TEST");
+  assert.ok(!Object.prototype.hasOwnProperty.call(integerCsv[0], "fees"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(integerCsv[0], "amount"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(integerCsv[0], "fees_split"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(integerCsv[0], "bearer"));
+
   const reordered = transactionsFromExportCsv(
     "Fees,Status,Customer Email,Reference,Amount\n2.82,success,hidden@example.com,EF-TEST,50.00\n"
   );
   assert.strictEqual(reordered.length, 1);
   assert.strictEqual(reordered[0].reference, "EF-TEST");
   assert.strictEqual(reordered[0].status, "success");
-  assert.strictEqual(reordered[0].fees, 282);
+  assert.ok(!Object.prototype.hasOwnProperty.call(reordered[0], "fees"));
   assert.ok(!JSON.stringify(reordered[0]).includes("hidden@example.com"));
 
   const emptyCsv = transactionsFromExportCsv("Reference,Status\n");

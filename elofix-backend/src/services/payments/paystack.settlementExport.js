@@ -1,5 +1,3 @@
-const { toCents } = require("./money.util");
-
 const EXPORT_MAX_BYTES = 2 * 1024 * 1024;
 const EXPORT_TIMEOUT_MS = 15_000;
 const EXPORT_MAX_REDIRECTS = 5;
@@ -110,24 +108,9 @@ function pickCsvValue(map, aliases) {
   return null;
 }
 
-function exportFeeToSubunits(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const cleaned = String(raw).replace(/[^0-9.-]/g, "");
-  const n = Number(cleaned);
-  if (!Number.isFinite(n) || n < 0) return null;
-  if (String(cleaned).includes(".")) return toCents(n);
-  return Math.round(n);
-}
-
-function exportAmountToSubunits(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const cleaned = String(raw).replace(/[^0-9.-]/g, "");
-  const n = Number(cleaned);
-  if (!Number.isFinite(n)) return null;
-  if (String(cleaned).includes(".")) return toCents(n);
-  return Math.round(n);
-}
-
+/**
+ * Membership-only parse. CSV Amount/Fees are not financial authority.
+ */
 function transactionsFromExportCsv(text) {
   const records = parseCsvRecords(text);
   if (records.length < 2) return [];
@@ -144,18 +127,8 @@ function transactionsFromExportCsv(text) {
     );
     if (!reference) continue;
     const statusRaw = pickCsvValue(map, ["status", "transaction status"]);
-    const feesSubunits = exportFeeToSubunits(pickCsvValue(map, ["fees", "fee", "paystack fees", "transaction fees"]));
-    const amountSubunits = exportAmountToSubunits(
-      pickCsvValue(map, ["amount", "transaction amount", "requested amount"])
-    );
     const txn = { reference };
     if (statusRaw != null) txn.status = String(statusRaw).trim();
-    if (amountSubunits != null) txn.amount = amountSubunits;
-    if (feesSubunits != null) {
-      txn.fees = feesSubunits;
-      txn.fees_split = { paystack: feesSubunits };
-      txn.bearer = "subaccount";
-    }
     out.push(txn);
   }
   return out;

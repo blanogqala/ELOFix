@@ -357,9 +357,10 @@ async function run() {
         {
           reference: exportFix.intent.merchantReference,
           status: "success",
-          fees: 282,
+          fees: 999999,
+          amount: 5000,
           bearer: "subaccount",
-          fees_split: { paystack: 282 },
+          fees_split: { paystack: 999999 },
         },
       ],
     });
@@ -379,6 +380,23 @@ async function run() {
     assert.doesNotMatch(dumped, /cvv/i);
     assert.doesNotMatch(dumped, /files\.paystack\.co/i);
     await assertUnchangedAmounts(exportFix.intent.id, exportFix.intent);
+
+    const exportNoFee = await seedIntent("exportnofee", {
+      processorFeeAmount: null,
+      expectedBankSettlementAmount: null,
+      gatewayPayload: { subaccount: ACCT, bearer: "subaccount" },
+    });
+    fixtures.push(exportNoFee);
+    paystack.getSettlementTransactionsViaExport = async () => ({
+      transactions: [{ reference: exportNoFee.intent.merchantReference, status: "success", fees: 282 }],
+    });
+    const exportNoFeeOut = await diagnostic.diagnosePaystackSettlement({
+      reference: exportNoFee.intent.merchantReference,
+    });
+    assert.strictEqual(exportNoFeeOut.settlements[0].referenceMatched, true);
+    assert.strictEqual(exportNoFeeOut.settlements[0].transactionSource, "transaction_export");
+    assert.strictEqual(exportNoFeeOut.settlements[0].matchedTransactionFee, null);
+    await assertUnchangedAmounts(exportNoFee.intent.id, exportNoFee.intent);
 
     const exportMiss = await seedIntent("exportmiss");
     fixtures.push(exportMiss);
