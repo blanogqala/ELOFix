@@ -212,6 +212,98 @@ async function main() {
     );
     assert.strictEqual(zeroRecipientPending.pendingUsesGrossFallback, true);
 
+    const unlinkedOrder = await prisma.materialOrder.create({
+      data: {
+        userId: customer.id,
+        supplierId: supplier.id,
+        branchId: branch.id,
+        jobId: null,
+        paymentStatus: "paid",
+        materialsSubtotal: dec(50),
+        platformCommission: dec(3.5),
+        supplierEarning: dec(46.5),
+        settlementStatus: "NOT_APPLICABLE",
+        settlementAmount: dec(0),
+        payload: { totalAmount: 50, seed: "UNLINKED-ZERO-SETTLEMENT" },
+        createdAt: paidAt,
+      },
+    });
+    created.push({ order: unlinkedOrder, intent: { id: `missing-${suffix}` } });
+    const unlinkedPending = await branchSettlementService.aggregateBranchSettlementSummary(
+      branch.id,
+      supplier.id,
+      fromTo
+    );
+    assert.strictEqual(
+      unlinkedPending.pendingSettlement,
+      418.5,
+      "unlinked paid order with settlementAmount=0 uses supplierEarning 46.50"
+    );
+
+    const job = await prisma.job.create({
+      data: {
+        id: randomUUID(),
+        title: `Unlinked store ${suffix}`,
+        customerId: customer.id,
+        providerId: supplierUser.id,
+        category: "tiling",
+        description: "test",
+        status: "ACCEPTED",
+        price: dec(50),
+        measurements: {},
+        materials: [],
+        images: [],
+      },
+    });
+    const jobLinkedOrder = await prisma.materialOrder.create({
+      data: {
+        userId: customer.id,
+        supplierId: supplier.id,
+        branchId: branch.id,
+        jobId: job.id,
+        paymentStatus: "paid",
+        materialsSubtotal: dec(50),
+        platformCommission: dec(3.5),
+        supplierEarning: dec(46.5),
+        settlementStatus: "NOT_APPLICABLE",
+        settlementAmount: dec(0),
+        payload: { totalAmount: 50, jobStoreOrderId: "store-r50" },
+        createdAt: paidAt,
+      },
+    });
+    const unlinkedJobStore = await prisma.paymentIntent.create({
+      data: {
+        id: randomUUID(),
+        merchantReference: `EF-PEND-UNLINK-${suffix}`.toUpperCase(),
+        provider: "PAYSTACK",
+        kind: "JOB_STORE_ORDER",
+        paymentType: "JOB_STORE_ORDER",
+        userId: customer.id,
+        jobId: job.id,
+        amount: dec(50),
+        commissionAmount: dec(0),
+        recipientAmount: dec(0),
+        expectedBankSettlementAmount: null,
+        currency: "ZAR",
+        state: "PAID",
+        paidAt,
+        payoutSettlementStatus: "PENDING",
+        gatewayPayload: { orderId: jobLinkedOrder.id },
+      },
+    });
+    created.push({ order: jobLinkedOrder, intent: unlinkedJobStore, extraJobId: job.id });
+
+    const discovered = await branchSettlementService.aggregateBranchSettlementSummary(
+      branch.id,
+      supplier.id,
+      fromTo
+    );
+    assert.strictEqual(
+      discovered.pendingSettlement,
+      465,
+      "unlinked JOB_STORE_ORDER discovered via jobId uses supplierEarning once"
+    );
+
     await prisma.paymentIntent.update({
       where: { id: zeroRecipientIntent.id },
       data: { payoutSettlementStatus: "SETTLED" },
@@ -223,7 +315,7 @@ async function main() {
     );
     assert.strictEqual(
       zeroRecipientSettled.pendingSettlement,
-      325.5,
+      418.5,
       "SETTLED removes the supplierEarning fallback amount without double-count leftover"
     );
 
@@ -231,8 +323,10 @@ async function main() {
   } finally {
     const intentIds = created.map((c) => c.intent.id);
     const orderIds = [...new Set(created.map((c) => c.order.id))];
+    const jobIds = created.map((c) => c.extraJobId).filter(Boolean);
     await prisma.paymentIntent.deleteMany({ where: { id: { in: intentIds } } }).catch(() => {});
     await prisma.materialOrder.deleteMany({ where: { id: { in: orderIds } } }).catch(() => {});
+    if (jobIds.length) await prisma.job.deleteMany({ where: { id: { in: jobIds } } }).catch(() => {});
     await prisma.branch.deleteMany({ where: { id: branch.id } }).catch(() => {});
     await prisma.supplier.deleteMany({ where: { id: supplier.id } }).catch(() => {});
     await prisma.user.deleteMany({ where: { id: { in: [customer.id, supplierUser.id] } } }).catch(() => {});

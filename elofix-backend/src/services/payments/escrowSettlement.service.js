@@ -35,6 +35,8 @@ async function settleMaterialOrderFromIntent(tx, intent) {
     throw new AppError("Material order not found", 404);
   }
   if (order.paymentStatus === "paid") {
+    const accounting = require("./supplierPayoutAccounting.util");
+    await accounting.repairSupplierMarketplacePayoutAccounting({ ...intent, materialOrder: order }, { client: tx });
     return { alreadyPaid: true, order };
   }
 
@@ -74,6 +76,12 @@ async function settleMaterialOrderFromIntent(tx, intent) {
 
   const settlement = require("./settlement.service");
   await settlement.stampIntentCommission(tx, intent, subtotal, null);
+  const accounting = require("./supplierPayoutAccounting.util");
+  const stamped = await tx.paymentIntent.findUnique({
+    where: { id: intent.id },
+    include: accounting.MATERIAL_ORDER_INCLUDE,
+  });
+  await accounting.persistExpectedBankIfKnown(stamped || intent, { client: tx });
 
   await tx.paymentIntent.update({
     where: { id: intent.id },
@@ -97,15 +105,22 @@ function checkoutMetaFromIntent(intent) {
   return p;
 }
 
+async function persistJobStoreMarketplaceAccounting(intent, hints = {}) {
+  const accounting = require("./supplierPayoutAccounting.util");
+  return accounting.repairSupplierMarketplacePayoutAccounting(intent, hints);
+}
+
 /**
  * Job-linked store materials (JOB_STORE_ORDER without materialOrderId).
  * Runs after intent is PAID; idempotent via payForStoreMaterials.
+ * Always stamps the same 7%/93% marketplace share used by material payments.
  */
 async function settleJobStoreOrderFromIntent(intent) {
   if (!intent || String(intent.kind || "") !== "JOB_STORE_ORDER") {
     return { skipped: true };
   }
   if (intent.materialOrderId) {
+    await persistJobStoreMarketplaceAccounting(intent);
     return { skipped: true, reason: "material_order_linked" };
   }
   const jobId = intent.jobId ? String(intent.jobId) : "";
@@ -131,6 +146,9 @@ async function settleJobStoreOrderFromIntent(intent) {
     throw new AppError("Store order not found for this job payment", 404);
   }
   if (match.payment?.materialsPaid === true) {
+    await persistJobStoreMarketplaceAccounting(intent, {
+      orderIdHint: match.orderId ? String(match.orderId) : orderIdHint,
+    });
     return { alreadyApplied: true };
   }
 
@@ -172,10 +190,17 @@ async function settleJobStoreOrderFromIntent(intent) {
   } catch (e) {
     const msg = String(e?.message || "");
     if (e?.statusCode === 400 && /already|paid|no longer active/i.test(msg)) {
+      await persistJobStoreMarketplaceAccounting(intent, {
+        orderIdHint: match.orderId ? String(match.orderId) : orderIdHint,
+      });
       return { alreadyApplied: true };
     }
     throw e;
   }
+
+  await persistJobStoreMarketplaceAccounting(intent, {
+    orderIdHint: match.orderId ? String(match.orderId) : orderIdHint,
+  });
 
   await prisma.paymentIntent.update({
     where: { id: intent.id },

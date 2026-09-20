@@ -56,6 +56,26 @@ function row(id, netCents, paidAt) {
     }),
     null
   );
+  assert.strictEqual(
+    match.recipientNetCents({
+      kind: "JOB_STORE_ORDER",
+      expectedBankSettlementAmount: null,
+      recipientAmount: 0,
+      processorFeeAmount: 2.82,
+      materialOrder: { supplierEarning: 46.5 },
+    }),
+    4368
+  );
+  assert.strictEqual(
+    match.recipientNetCents({
+      kind: "JOB_STORE_ORDER",
+      expectedBankSettlementAmount: null,
+      recipientAmount: 0,
+      processorFeeAmount: 2.82,
+      materialOrder: { supplierEarning: 0 },
+    }),
+    null
+  );
 }
 
 {
