@@ -30,6 +30,10 @@ export type AdminPaystackSettlementDiagnosticRow = {
   settlementDate: string | null;
   currency: string | null;
   transactionCount: number;
+  primaryTransactionCount?: number;
+  fallbackAttempted?: boolean;
+  fallbackTransactionCount?: number;
+  transactionSource?: string | null;
   referenceMatched: boolean;
   matchedReference?: string;
   matchedTransactionStatus?: string | null;

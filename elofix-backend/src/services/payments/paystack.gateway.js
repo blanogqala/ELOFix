@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const AppError = require("../../utils/AppError");
 const { frontendBaseUrl, isPaystackConfigured, assertPaystackCredentials } = require("./paymentConfig");
-const { paystackRequest, readSecret, redactDeep } = require("./paystack.client");
+const { paystackRequest, readSecret, redactDeep, sanitizePaystackFailure } = require("./paystack.client");
 const { fromCents } = require("./money.util");
 const {
   ELOFIX_GROSS_COMMISSION_PERCENT,
@@ -24,6 +24,12 @@ const {
   assertBankCodeNotBlindBranchCode,
 } = require("./paystack.banks");
 const paystackRecipient = require("./paystack.recipient");
+const {
+  assertAllowedExportUrl,
+  downloadPaystackExportCsv,
+  safeExportUrlForLog,
+  transactionsFromExportCsv,
+} = require("./paystack.settlementExport");
 
 function isConfigured(env = process.env) {
   return isPaystackConfigured(env);
@@ -551,6 +557,82 @@ async function getSettlementTransactions(settlementId, { page = 1, perPage = 100
 }
 
 /**
+ * Documented Paystack fallback: GET /transaction/export?settlement={id}
+ * Used only when GET /settlement/:id/transactions returns zero rows.
+ * Never exposes the signed export URL to clients.
+ */
+async function getSettlementTransactionsViaExport(settlementId) {
+  const id = String(settlementId || "").trim();
+  const numericId = numericPaystackSubaccountIdOrNull(id);
+  if (numericId == null) {
+    const err = new Error("Paystack transaction export requires a numeric settlement id");
+    err.code = "PAYSTACK_EXPORT_SETTLEMENT_ID";
+    throw err;
+  }
+  const params = new URLSearchParams();
+  params.set("settlement", String(numericId));
+  const { json } = await paystackRequest("GET", `/transaction/export?${params.toString()}`);
+  const path = json?.data?.path || json?.data?.url || json?.data?.file || null;
+  if (!path) {
+    const err = new Error("Paystack transaction export did not return a download path");
+    err.code = "PAYSTACK_EXPORT_PATH_MISSING";
+    throw err;
+  }
+  const allowed = assertAllowedExportUrl(path);
+  let csv;
+  try {
+    csv = await downloadPaystackExportCsv(allowed);
+  } catch (err) {
+    console.warn("[paystack-settlement] export download failed", safeExportUrlForLog(allowed), err?.code || err?.message);
+    throw err;
+  }
+  return { transactions: transactionsFromExportCsv(csv) };
+}
+
+/**
+ * Primary: GET /settlement/:id/transactions
+ * Fallback only when that list is empty: GET /transaction/export?settlement=:id
+ */
+async function getAuthoritativeSettlementTransactions(settlementId, opts = {}) {
+  const primary = await module.exports.getSettlementTransactions(settlementId, opts);
+  const primaryList = Array.isArray(primary?.transactions) ? primary.transactions : [];
+  if (primaryList.length > 0) {
+    return {
+      transactions: primaryList,
+      source: "settlement_api",
+      primaryCount: primaryList.length,
+      fallbackUsed: false,
+      fallbackAttempted: false,
+      fallbackTransactionCount: 0,
+      error: null,
+    };
+  }
+  try {
+    const exported = await module.exports.getSettlementTransactionsViaExport(settlementId);
+    const list = Array.isArray(exported?.transactions) ? exported.transactions : [];
+    return {
+      transactions: list,
+      source: "transaction_export",
+      primaryCount: 0,
+      fallbackUsed: list.length > 0,
+      fallbackAttempted: true,
+      fallbackTransactionCount: list.length,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      transactions: [],
+      source: "transaction_export",
+      primaryCount: 0,
+      fallbackUsed: false,
+      fallbackAttempted: true,
+      fallbackTransactionCount: 0,
+      error: sanitizePaystackFailure(err, "transaction_export_failed"),
+    };
+  }
+}
+
+/**
  * Compatibility parser for settlement.* payloads if they ever arrive.
  *
  * Paystack's current documented supported webhook event list does not include
@@ -606,6 +688,8 @@ module.exports = {
   verifySettlementWebhook,
   listSettlements,
   getSettlementTransactions,
+  getSettlementTransactionsViaExport,
+  getAuthoritativeSettlementTransactions,
   resolvePaystackSubaccountId,
   resetPaystackSubaccountIdCacheForTests,
   assertPaystackCredentials,

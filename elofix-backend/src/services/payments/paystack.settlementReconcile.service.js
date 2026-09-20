@@ -398,10 +398,15 @@ async function applyPaystackSettlementRow(row, opts = {}) {
   }
 
   const paystack = require("./paystack.gateway");
-  const { transactions } = await paystack.getSettlementTransactions(externalId);
+  const fetched =
+    typeof paystack.getAuthoritativeSettlementTransactions === "function"
+      ? await paystack.getAuthoritativeSettlementTransactions(externalId)
+      : await paystack.getSettlementTransactions(externalId);
+  const transactions = Array.isArray(fetched?.transactions) ? fetched.transactions : [];
+  const txnSource = fetched?.source || "settlement_api";
   const refs = [];
   const txnByRef = new Map();
-  for (const txn of transactions || []) {
+  for (const txn of transactions) {
     const ref = String(txn?.reference || txn?.transaction?.reference || "").trim();
     if (!ref) continue;
     refs.push(ref);
@@ -413,12 +418,19 @@ async function applyPaystackSettlementRow(row, opts = {}) {
       status: row.status,
       transactions: 0,
       matched: 0,
+      source: txnSource,
+      fallbackAttempted: Boolean(fetched?.fallbackAttempted),
     });
     logPaystackSettlement("intent not linked", {
       settlementId: externalId,
-      reason: "no_transactions",
+      reason: fetched?.error ? "API_error" : "no_transactions",
     });
-    return { skipped: true, reason: "no_transactions", externalId };
+    return {
+      skipped: true,
+      reason: "no_transactions",
+      externalId,
+      apiError: fetched?.error || null,
+    };
   }
 
   const candidates = await prisma.paymentIntent.findMany({
@@ -429,6 +441,7 @@ async function applyPaystackSettlementRow(row, opts = {}) {
     status: row.status,
     transactions: refs.length,
     matched: candidates.length,
+    source: txnSource,
   });
   if (candidates.length === 0) {
     logPaystackSettlement("intent not linked", {
