@@ -4,7 +4,7 @@
  */
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 const assert = require("assert");
-const { splitCommission, splitFiftyFiftySchedule, toCents, fromCents } = require("../src/services/payments/money.util");
+const { splitCommission, splitFiftyFiftySchedule, toCents, fromCents, computeExpectedBankSettlement } = require("../src/services/payments/money.util");
 const paymentModeService = require("../src/services/payments/paymentMode.service");
 
 function approxEqual(a, b, eps = 0.001) {
@@ -163,6 +163,21 @@ function approxEqual(a, b, eps = 0.001) {
   });
   assert.ok(summary);
   approxEqual(summary.totalAmount, 4500);
+}
+
+// N: R50 marketplace split + known Paystack fee — cents-safe, not hardcoded in product code
+{
+  const split = splitCommission(50);
+  approxEqual(Number(split.commissionAmount), 3.5);
+  approxEqual(Number(split.recipientAmount), 46.5);
+  assert.strictEqual(toCents(50), 5000);
+  assert.strictEqual(toCents(3.5), 350);
+  assert.strictEqual(toCents(46.5), 4650);
+  const net = computeExpectedBankSettlement(46.5, 2.82);
+  approxEqual(Number(net.processorFeeAmount), 2.82);
+  approxEqual(Number(net.expectedBankSettlementAmount), 43.68);
+  assert.strictEqual(toCents(net.expectedBankSettlementAmount), 4368);
+  assert.strictEqual(fromCents(4368), 43.68);
 }
 
 console.log("paymentModes.test.js: OK");

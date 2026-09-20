@@ -1039,7 +1039,24 @@ async function testResolvePaystackSubaccountIdAndSettlementFilter() {
       return jsonResponse({ status: false, message: "Subaccount not found" }, 404);
     }
     if (url.includes("/settlement?") && method === "GET") {
-      return jsonResponse({ status: true, data: [] });
+      return jsonResponse({
+        status: true,
+        data: [
+          {
+            id: 11734367,
+            status: "success",
+            currency: "ZAR",
+            total_amount: 4368,
+            effective_amount: 4368,
+            total_fees: 282,
+            total_processed: 4650,
+            settlement_date: "2026-09-18T00:00:00.000Z",
+            subaccount_code: "ACCT_HIST_OLD",
+            account_number: "1234567890",
+            settlement_bank: "FNB",
+          },
+        ],
+      });
     }
     throw new Error(`unexpected fetch ${method} ${url}`);
   });
@@ -1068,6 +1085,16 @@ async function testResolvePaystackSubaccountIdAndSettlementFilter() {
         perPage: 50,
       });
       assert.strictEqual(listed.subaccountId, 1234567);
+      assert.strictEqual(listed.settlements.length, 1);
+      assert.strictEqual(listed.settlements[0].effective_amount, 4368);
+      assert.strictEqual(listed.settlements[0].total_amount, 4368);
+      assert.strictEqual(listed.settlements[0].total_fees, 282);
+      assert.strictEqual(listed.settlements[0].total_processed, 4650);
+      assert.strictEqual(listed.settlements[0].currency, "ZAR");
+      assert.ok(!Object.prototype.hasOwnProperty.call(listed.settlements[0], "account_number"));
+      assert.ok(!Object.prototype.hasOwnProperty.call(listed.settlements[0], "settlement_bank"));
+      const listedDump = JSON.stringify(listed.settlements[0]);
+      assert.doesNotMatch(listedDump, /1234567890/);
       const settlementCalls = mock.calls.filter((c) => c.url.includes("/settlement?"));
       assert.strictEqual(settlementCalls.length, 1);
       const settlementUrl = settlementCalls[0].url;
