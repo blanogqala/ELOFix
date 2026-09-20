@@ -59,7 +59,13 @@ function decideSkipReason({
   if (settlements.length > 0 && settlements.every((row) => row.transactionCount === 0 && !row.apiError)) {
     return "no_transactions";
   }
-  if (settlements.some((row) => row.apiError?.category === "settlement_transactions_failed")) {
+  if (
+    settlements.some(
+      (row) =>
+        row.apiError?.category === "settlement_transactions_failed" ||
+        row.apiError?.category === "transaction_export_failed"
+    )
+  ) {
     return "API_error";
   }
   return "reference_not_found";
@@ -181,6 +187,10 @@ async function diagnosePaystackSettlement({
       settlementDate: row?.settlement_date || row?.paid_at || null,
       currency: row?.currency != null ? String(row.currency) : null,
       transactionCount: 0,
+      primaryTransactionCount: 0,
+      fallbackAttempted: false,
+      fallbackTransactionCount: 0,
+      transactionSource: "settlement_api",
       referenceMatched: false,
       mappedStatus: mapped,
       apiError: null,
@@ -191,10 +201,12 @@ async function diagnosePaystackSettlement({
       continue;
     }
 
-    let transactions = [];
+    let fetched;
     try {
-      const fetched = await paystack.getSettlementTransactions(settlementId);
-      transactions = Array.isArray(fetched?.transactions) ? fetched.transactions : [];
+      fetched =
+        typeof paystack.getAuthoritativeSettlementTransactions === "function"
+          ? await paystack.getAuthoritativeSettlementTransactions(settlementId)
+          : await paystack.getSettlementTransactions(settlementId);
     } catch (err) {
       scanned.apiError = sanitizePaystackFailure(err, "settlement_transactions_failed");
       if (!firstTxnApiError) firstTxnApiError = scanned.apiError;
@@ -202,7 +214,18 @@ async function diagnosePaystackSettlement({
       continue;
     }
 
+    const transactions = Array.isArray(fetched?.transactions) ? fetched.transactions : [];
+    scanned.primaryTransactionCount =
+      fetched?.primaryCount != null ? Number(fetched.primaryCount) : transactions.length;
+    scanned.fallbackAttempted = Boolean(fetched?.fallbackAttempted);
+    scanned.fallbackTransactionCount =
+      fetched?.fallbackTransactionCount != null ? Number(fetched.fallbackTransactionCount) : 0;
+    scanned.transactionSource = fetched?.source || "settlement_api";
     scanned.transactionCount = transactions.length;
+    if (fetched?.error && transactions.length === 0) {
+      scanned.apiError = fetched.error;
+      if (!firstTxnApiError) firstTxnApiError = fetched.error;
+    }
     const match = transactions.find((txn) => txnReference(txn) === String(intent.merchantReference || "").trim());
     if (match) {
       anyMatch = true;

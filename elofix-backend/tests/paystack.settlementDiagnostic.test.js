@@ -117,6 +117,7 @@ async function run() {
   const origResolve = paystack.resolvePaystackSubaccountId;
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
+  const origExport = paystack.getSettlementTransactionsViaExport;
   const origConfigured = paystack.isConfigured;
   const origApply = rec.applyPaystackSettlementRow;
   let applyCalls = 0;
@@ -129,6 +130,11 @@ async function run() {
     if (String(code).toUpperCase() === ACCT.toUpperCase()) return 991122;
     if (String(code).toUpperCase() === ACCT_OTHER.toUpperCase()) return 334455;
     return null;
+  };
+  let exportCalls = 0;
+  paystack.getSettlementTransactionsViaExport = async () => {
+    exportCalls += 1;
+    return { transactions: [] };
   };
 
   const fixtures = [];
@@ -217,6 +223,9 @@ async function run() {
     assert.strictEqual(successOut.settlements[0].matchedTransactionFee, 2.82);
     assert.strictEqual(successOut.skipReason, "match_found_not_linked");
     assert.strictEqual(successOut.reconciliationDecision, "skipped");
+    assert.strictEqual(successOut.settlements[0].transactionSource, "settlement_api");
+    assert.strictEqual(successOut.settlements[0].fallbackAttempted, false);
+    assert.strictEqual(exportCalls, 0, "export fallback must not run when settlement transactions exist");
     await assertUnchangedAmounts(successFix.intent.id, successFix.intent);
 
     const pendingFix = await seedIntent("pending");
@@ -257,11 +266,17 @@ async function run() {
       meta: { pageCount: 1 },
     });
     paystack.getSettlementTransactions = async () => ({ transactions: [] });
+    exportCalls = 0;
     const noTxnOut = await diagnostic.diagnosePaystackSettlement({
       reference: noTxn.intent.merchantReference,
     });
     assert.strictEqual(noTxnOut.settlements[0].transactionCount, 0);
+    assert.strictEqual(noTxnOut.settlements[0].primaryTransactionCount, 0);
+    assert.strictEqual(noTxnOut.settlements[0].fallbackAttempted, true);
+    assert.strictEqual(noTxnOut.settlements[0].fallbackTransactionCount, 0);
+    assert.strictEqual(noTxnOut.settlements[0].referenceMatched, false);
     assert.strictEqual(noTxnOut.skipReason, "no_transactions");
+    assert.ok(exportCalls >= 1);
 
     const mismatch = await seedIntent("mismatch", { subaccount: ACCT_OTHER });
     fixtures.push(mismatch);
@@ -330,6 +345,68 @@ async function run() {
     assert.strictEqual(txnOut.settlements[0].apiError.category, "settlement_transactions_failed");
     assert.strictEqual(txnOut.settlements[0].apiError.httpStatus, 500);
 
+    const exportFix = await seedIntent("exportok");
+    fixtures.push(exportFix);
+    paystack.listSettlements = async () => ({
+      settlements: [{ id: 7007, status: "success", settlement_date: "2026-09-15", currency: "ZAR" }],
+      meta: { pageCount: 1 },
+    });
+    paystack.getSettlementTransactions = async () => ({ transactions: [] });
+    paystack.getSettlementTransactionsViaExport = async () => ({
+      transactions: [
+        {
+          reference: exportFix.intent.merchantReference,
+          status: "success",
+          fees: 282,
+          bearer: "subaccount",
+          fees_split: { paystack: 282 },
+        },
+      ],
+    });
+    const exportOut = await diagnostic.diagnosePaystackSettlement({
+      reference: exportFix.intent.merchantReference,
+    });
+    assert.strictEqual(exportOut.settlements[0].primaryTransactionCount, 0);
+    assert.strictEqual(exportOut.settlements[0].fallbackAttempted, true);
+    assert.strictEqual(exportOut.settlements[0].fallbackTransactionCount, 1);
+    assert.strictEqual(exportOut.settlements[0].transactionSource, "transaction_export");
+    assert.strictEqual(exportOut.settlements[0].referenceMatched, true);
+    assert.strictEqual(exportOut.settlements[0].mappedStatus, "SETTLED");
+    assert.strictEqual(exportOut.settlements[0].matchedTransactionFee, 2.82);
+    const dumped = JSON.stringify(exportOut);
+    assert.doesNotMatch(dumped, /authorization/i);
+    assert.doesNotMatch(dumped, /account_number/i);
+    assert.doesNotMatch(dumped, /cvv/i);
+    assert.doesNotMatch(dumped, /files\.paystack\.co/i);
+    await assertUnchangedAmounts(exportFix.intent.id, exportFix.intent);
+
+    const exportMiss = await seedIntent("exportmiss");
+    fixtures.push(exportMiss);
+    paystack.getSettlementTransactionsViaExport = async () => ({
+      transactions: [{ reference: "EF-OTHER-EXPORT", status: "success", fees: 282 }],
+    });
+    const exportMissOut = await diagnostic.diagnosePaystackSettlement({
+      reference: exportMiss.intent.merchantReference,
+    });
+    assert.strictEqual(exportMissOut.settlements[0].referenceMatched, false);
+    assert.strictEqual(exportMissOut.skipReason, "reference_not_found");
+
+    const exportFail = await seedIntent("exportfail");
+    fixtures.push(exportFail);
+    paystack.getSettlementTransactionsViaExport = async () => {
+      const err = new Error("export failed");
+      err.httpStatus = 502;
+      err.paystack = { message: "export failed", httpStatus: 502 };
+      throw err;
+    };
+    const exportFailOut = await diagnostic.diagnosePaystackSettlement({
+      reference: exportFail.intent.merchantReference,
+    });
+    assert.strictEqual(exportFailOut.skipReason, "API_error");
+    assert.strictEqual(exportFailOut.settlements[0].fallbackAttempted, true);
+    assert.strictEqual(exportFailOut.settlements[0].apiError.category, "transaction_export_failed");
+    assert.doesNotMatch(JSON.stringify(exportFailOut), /Authorization/i);
+
     assert.strictEqual(applyCalls, 0, "diagnostic must never apply settlement rows");
 
     const listed = await rec.listSettlementsForSubaccountDetailed(paystack, {
@@ -345,6 +422,7 @@ async function run() {
     paystack.resolvePaystackSubaccountId = origResolve;
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
+    paystack.getSettlementTransactionsViaExport = origExport;
     paystack.isConfigured = origConfigured;
     for (const fix of fixtures.reverse()) {
       await cleanup(fix);

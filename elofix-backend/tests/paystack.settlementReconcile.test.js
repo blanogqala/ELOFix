@@ -210,6 +210,7 @@ async function run() {
   });
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
+  const origExport = paystack.getSettlementTransactionsViaExport;
   const origResolve = paystack.resolvePaystackSubaccountId;
   const ID_A = 100001;
   const ID_B = 100002;
@@ -257,6 +258,7 @@ async function run() {
     }
     return txnsFor([labor.a, labor.b]);
   };
+  paystack.getSettlementTransactionsViaExport = async () => ({ transactions: [] });
 
   paystack.listSettlements = async (opts = {}) => {
     const scoped = opts.subaccount;
@@ -524,6 +526,7 @@ async function run() {
   } finally {
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
+    paystack.getSettlementTransactionsViaExport = origExport;
     paystack.resolvePaystackSubaccountId = origResolve;
     await wipeSettlements(Object.values(ids));
     await prisma.providerWithdrawalProfile.deleteMany({ where: { providerId: histProvider.id } }).catch(() => {});

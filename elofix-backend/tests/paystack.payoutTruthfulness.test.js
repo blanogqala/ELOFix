@@ -132,6 +132,7 @@ async function run() {
   const origVerify = paystack.verifyTransaction;
   const origList = paystack.listSettlements;
   const origTx = paystack.getSettlementTransactions;
+  const origExport = paystack.getSettlementTransactionsViaExport;
   const origConfigured = paystack.isConfigured;
   const origResolve = paystack.resolvePaystackSubaccountId;
   let verifyCalls = 0;
@@ -157,6 +158,7 @@ async function run() {
   };
   paystack.listSettlements = async () => ({ settlements: [] });
   paystack.getSettlementTransactions = async () => ({ transactions: [] });
+  paystack.getSettlementTransactionsViaExport = async () => ({ transactions: [] });
 
   try {
     const repaired = await rec.repairFalseChargeTimeProcessing([repairable.intent, keep.intent]);
@@ -272,6 +274,7 @@ async function run() {
     paystack.verifyTransaction = origVerify;
     paystack.listSettlements = origList;
     paystack.getSettlementTransactions = origTx;
+    paystack.getSettlementTransactionsViaExport = origExport;
     paystack.isConfigured = origConfigured;
     paystack.resolvePaystackSubaccountId = origResolve;
     rec.resetProviderPayoutRefreshThrottleForTests();
