@@ -550,6 +550,16 @@ async function getSettlementTransactions(settlementId, { page = 1, perPage = 100
   return { transactions, meta: lastMeta };
 }
 
+/**
+ * Compatibility parser for settlement.* payloads if they ever arrive.
+ *
+ * Paystack's current documented supported webhook event list does not include
+ * settlement.* events. EloFix does not rely on this webhook for payout finality.
+ * Authoritative payout status comes from Settlement API polling/reconciliation
+ * (cron, admin reconcile, provider earnings refresh). Keep this parser only so
+ * an unexpected settlement.* payload can still be scoped and applied without
+ * replacing polling.
+ */
 async function verifySettlementWebhook(payload) {
   const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   const event = String(body.event || "").trim().toLowerCase();

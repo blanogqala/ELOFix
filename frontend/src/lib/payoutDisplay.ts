@@ -14,6 +14,7 @@ export type PayoutBreakdownAmounts = {
   processorFeeAmount?: number | null;
   expectedBankSettlementAmount?: number | null;
   payoutSettlementStatus?: string | null;
+  payoutSettlementId?: string | null;
   payoutSettledAt?: string | null;
   paymentState?: string | null;
 };
@@ -26,6 +27,19 @@ export function normalizePayoutStatus(
   return s;
 }
 
+export function hasAuthoritativePayoutSettlementId(
+  payoutSettlementId?: string | null
+): boolean {
+  return Boolean(String(payoutSettlementId || '').trim());
+}
+
+export function isAwaitingPaystackPayoutRecord(
+  status: string | null | undefined,
+  payoutSettlementId?: string | null
+): boolean {
+  return normalizePayoutStatus(status) === 'PENDING' && !hasAuthoritativePayoutSettlementId(payoutSettlementId);
+}
+
 export function paymentConfirmedLabel(paymentState?: string | null): string {
   const s = String(paymentState || '').toUpperCase();
   if (s === 'PAID') return 'Payment confirmed';
@@ -36,16 +50,21 @@ export function paymentConfirmedLabel(paymentState?: string | null): string {
   return 'Payment confirmed';
 }
 
-export function settlementStatusLabel(status: string | null | undefined): string {
+export function settlementStatusLabel(
+  status: string | null | undefined,
+  payoutSettlementId?: string | null
+): string {
   switch (normalizePayoutStatus(status)) {
     case 'SETTLED':
       return 'Settled by Paystack';
     case 'PROCESSING':
       return 'Processing';
     case 'PENDING':
-      return 'Pending';
+      return isAwaitingPaystackPayoutRecord(status, payoutSettlementId)
+        ? 'Awaiting Paystack payout record'
+        : 'Pending at Paystack';
     case 'FAILED':
-      return 'Failed';
+      return 'Settlement issue';
     case 'REVERSED':
       return 'Reversed';
     case 'NOT_SUPPORTED':
@@ -59,7 +78,8 @@ export function settlementStatusLabel(status: string | null | undefined): string
 
 export function settlementStatusDescription(
   status: string | null | undefined,
-  settledAt?: string | null
+  settledAt?: string | null,
+  payoutSettlementId?: string | null
 ): string {
   switch (normalizePayoutStatus(status)) {
     case 'PROCESSING':
@@ -75,7 +95,9 @@ export function settlementStatusDescription(
         : 'Paystack has completed this payout. Bank reflection time can vary.';
     }
     case 'PENDING':
-      return 'Payment confirmed. This payout is waiting for Paystack settlement processing.';
+      return isAwaitingPaystackPayoutRecord(status, payoutSettlementId)
+        ? 'Payment confirmed. EloFix has not yet received or matched the Paystack settlement record.'
+        : 'Payment confirmed. This payout is pending at Paystack.';
     case 'FAILED':
       return 'This payout could not be completed. EloFix is checking the settlement.';
     case 'REVERSED':

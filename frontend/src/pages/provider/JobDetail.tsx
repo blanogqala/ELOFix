@@ -1381,6 +1381,7 @@ export default function ProviderJobDetail() {
                           processorFeeAmount={row.processorFeeAmount}
                           expectedBankSettlementAmount={row.expectedBankSettlementAmount}
                           payoutSettlementStatus={row.payoutSettlementStatus}
+                          payoutSettlementId={row.payoutSettlementId}
                           payoutSettledAt={row.payoutSettledAt}
                           recipientLabel="Provider gross share (93%)"
                           showExpectedBankSettlement={false}

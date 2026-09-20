@@ -10,6 +10,7 @@ import {
 import { formatZar, paymentModeLabel } from '@/lib/paymentSchedule';
 import type { Job, JobPayoutReconciliation } from '@/types';
 import { PayoutBreakdown } from '@/components/payments/PayoutBreakdown';
+import { AdminPaystackSettlementDiagnostic } from '@/components/admin/AdminPaystackSettlementDiagnostic';
 import { DollarSign } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -262,8 +263,14 @@ export function AdminJobPaymentBreakdownCard({
                   processorFeeAmount={row.processorFeeAmount}
                   expectedBankSettlementAmount={row.expectedBankSettlementAmount}
                   payoutSettlementStatus={row.payoutSettlementStatus}
+                  payoutSettlementId={row.payoutSettlementId}
                   payoutSettledAt={row.payoutSettledAt}
                   recipientLabel="Recipient gross share"
+                />
+                <AdminPaystackSettlementDiagnostic
+                  merchantReference={row.merchantReference}
+                  paymentIntentId={row.paymentIntentId}
+                  gateway={row.gateway}
                 />
               </div>
             ))}

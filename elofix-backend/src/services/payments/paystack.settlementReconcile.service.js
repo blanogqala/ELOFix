@@ -16,6 +16,7 @@ const {
   isMarketplaceSplitKind,
   isPaystackRecipientUsableInCurrentMode,
 } = require("./paystack.payload");
+const { sanitizePaystackFailure } = require("./paystack.client");
 
 function toDecimal(value) {
   return new Prisma.Decimal(String(Number(Number(value || 0).toFixed(2))));
@@ -74,6 +75,24 @@ function markRefreshAttempt(key, now = Date.now()) {
 
 function normalizeAcct(value) {
   return safePaystackSubaccountCode(value);
+}
+
+function logPaystackSettlement(event, fields = {}) {
+  const parts = Object.entries(fields)
+    .filter(([, value]) => value !== undefined && value !== "")
+    .map(([key, value]) => `${key}=${value}`);
+  console.info(`[paystack-settlement] ${event}${parts.length ? ` ${parts.join(" ")}` : ""}`);
+}
+
+function summarizeSettlementStatuses(rows) {
+  const counts = {};
+  for (const row of rows || []) {
+    const status = String(row?.status || "unknown").trim().toLowerCase() || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .map(([status, n]) => `${status}:${n}`)
+    .join(",") || "none";
 }
 
 function sameAcct(a, b) {
@@ -154,29 +173,49 @@ async function listKnownRecipientPaystackSubaccounts() {
   return [...codes.values()];
 }
 
-async function listSettlementsForSubaccount(paystack, { subaccount, from, to, maxPages = 3 } = {}) {
-  if (isMainAccountScope(subaccount)) return [];
+async function listSettlementsForSubaccountDetailed(paystack, { subaccount, from, to, maxPages = 3 } = {}) {
+  const empty = {
+    rows: [],
+    numericId: null,
+    pagesChecked: 0,
+    from: from || null,
+    to: to || null,
+    acct: normalizeAcct(subaccount),
+    error: null,
+    skipReason: null,
+  };
+  if (isMainAccountScope(subaccount)) {
+    return { ...empty, skipReason: "subaccount_mismatch" };
+  }
   const code = normalizeAcct(subaccount);
-  if (!code) return [];
+  if (!code) {
+    return { ...empty, skipReason: "subaccount_mismatch" };
+  }
+  empty.acct = code;
   let numericId = null;
   try {
     if (typeof paystack.resolvePaystackSubaccountId === "function") {
       numericId = await paystack.resolvePaystackSubaccountId(code);
     }
   } catch (err) {
+    const error = sanitizePaystackFailure(err, "subaccount_fetch_failed");
     console.warn(
       "[paystack-settlement-reconcile] subaccount id lookup failed; skipping scoped list",
-      err?.message || err
+      error.message
     );
-    return [];
+    return { ...empty, error, skipReason: "API_error" };
   }
   if (numericId == null) {
     console.warn("[paystack-settlement-reconcile] subaccount id unresolved; skipping scoped list");
-    return [];
+    return { ...empty, skipReason: "subaccount_mismatch" };
   }
+  logPaystackSettlement("recipient resolved", { acct: code, subaccountId: numericId });
+
   const rows = [];
   let page = 1;
-  while (page <= maxPages) {
+  let pagesChecked = 0;
+  const pageCap = Math.max(1, Number(maxPages) || 3);
+  while (page <= pageCap) {
     let settlements = [];
     let meta = null;
     try {
@@ -190,16 +229,48 @@ async function listSettlementsForSubaccount(paystack, { subaccount, from, to, ma
       settlements = listed?.settlements;
       meta = listed?.meta;
     } catch (err) {
-      console.warn("[paystack-settlement-reconcile] scoped settlement list failed", err?.message || err);
-      break;
+      const error = sanitizePaystackFailure(err, "settlement_list_failed");
+      console.warn("[paystack-settlement-reconcile] scoped settlement list failed", error.message);
+      return {
+        rows,
+        numericId,
+        pagesChecked,
+        from: from || null,
+        to: to || null,
+        acct: code,
+        error,
+        skipReason: "API_error",
+      };
     }
+    pagesChecked = page;
     if (!settlements || settlements.length === 0) break;
     rows.push(...settlements);
     const pageCount = Number(meta?.pageCount || meta?.page_count || 1);
     if (page >= pageCount) break;
     page += 1;
   }
-  return rows;
+  logPaystackSettlement("list complete", {
+    acct: code,
+    subaccountId: numericId,
+    rows: rows.length,
+    statuses: summarizeSettlementStatuses(rows),
+    pagesChecked,
+  });
+  return {
+    rows,
+    numericId,
+    pagesChecked,
+    from: from || null,
+    to: to || null,
+    acct: code,
+    error: null,
+    skipReason: rows.length === 0 ? "no_settlements_returned" : null,
+  };
+}
+
+async function listSettlementsForSubaccount(paystack, { subaccount, from, to, maxPages = 3 } = {}) {
+  const listed = await listSettlementsForSubaccountDetailed(paystack, { subaccount, from, to, maxPages });
+  return listed.rows;
 }
 
 async function notifyPayoutTransition({ intent, fromStatus, toStatus, settlementId, notify }) {
@@ -319,6 +390,10 @@ async function applyPaystackSettlementRow(row, opts = {}) {
         { externalId }
       );
     }
+    logPaystackSettlement("intent not linked", {
+      settlementId: externalId,
+      reason: "unknown_settlement_status",
+    });
     return { skipped: true, reason: "unknown_status", externalId };
   }
 
@@ -333,13 +408,33 @@ async function applyPaystackSettlementRow(row, opts = {}) {
     txnByRef.set(ref, txn);
   }
   if (refs.length === 0) {
+    logPaystackSettlement("settlement scanned", {
+      settlementId: externalId,
+      status: row.status,
+      transactions: 0,
+      matched: 0,
+    });
+    logPaystackSettlement("intent not linked", {
+      settlementId: externalId,
+      reason: "no_transactions",
+    });
     return { skipped: true, reason: "no_transactions", externalId };
   }
 
   const candidates = await prisma.paymentIntent.findMany({
     where: { provider: "PAYSTACK", merchantReference: { in: refs } },
   });
+  logPaystackSettlement("settlement scanned", {
+    settlementId: externalId,
+    status: row.status,
+    transactions: refs.length,
+    matched: candidates.length,
+  });
   if (candidates.length === 0) {
+    logPaystackSettlement("intent not linked", {
+      reference: refs[0],
+      reason: "reference_not_found",
+    });
     return { skipped: true, reason: "no_matching_intents", externalId };
   }
 
@@ -350,6 +445,10 @@ async function applyPaystackSettlementRow(row, opts = {}) {
     const intended = await resolveIntendedPaystackSubaccount(intent);
     if (!intended) continue;
     if (!sameAcct(intended, trustedSubaccount)) {
+      logPaystackSettlement("intent not linked", {
+        reference: intent.merchantReference,
+        reason: "subaccount_mismatch",
+      });
       return {
         skipped: true,
         reason: "mixed_or_mismatched_recipient_subaccount",
@@ -359,6 +458,10 @@ async function applyPaystackSettlementRow(row, opts = {}) {
     intents.push(intent);
   }
   if (intents.length === 0) {
+    logPaystackSettlement("intent not linked", {
+      reference: candidates[0]?.merchantReference,
+      reason: "subaccount_mismatch",
+    });
     return { skipped: true, reason: "no_matching_intents_for_subaccount", externalId };
   }
 
@@ -908,6 +1011,7 @@ module.exports = {
   notifyChargeTimeProcessing,
   notifyPayoutTransition,
   listKnownRecipientPaystackSubaccounts,
+  listSettlementsForSubaccountDetailed,
   resolveTrustedSubaccountScope,
   resetProviderPayoutRefreshThrottleForTests,
   PROVIDER_PAYOUT_REFRESH_THROTTLE_MS,

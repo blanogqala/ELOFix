@@ -38,5 +38,21 @@ describe('PayoutBreakdown', () => {
       />
     );
     expect(screen.getByText('Expected bank settlement')).toBeInTheDocument();
+    expect(screen.getByText('Awaiting Paystack payout record')).toBeInTheDocument();
+  });
+
+  it('labels PENDING with a settlement id as pending at Paystack', () => {
+    render(
+      <PayoutBreakdown
+        customerAmount={50}
+        commissionAmount={3.5}
+        recipientGrossShare={46.5}
+        processorFeeAmount={2.82}
+        expectedBankSettlementAmount={43.68}
+        payoutSettlementStatus="PENDING"
+        payoutSettlementId="gps_1"
+      />
+    );
+    expect(screen.getByText('Pending at Paystack')).toBeInTheDocument();
   });
 });

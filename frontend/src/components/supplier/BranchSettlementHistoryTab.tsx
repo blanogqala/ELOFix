@@ -61,7 +61,10 @@ export function BranchSettlementHistoryTab({
           row.expectedBankSettlementAmount == null
             ? 'Pending confirmation'
             : Number(row.expectedBankSettlementAmount || 0),
-        Status: settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus),
+        Status: settlementStatusLabel(
+          row.payoutSettlementStatus || row.settlementStatus,
+          row.payoutSettlementId
+        ),
         Gateway: row.gatewayReference || row.gatewaySettlementId || '—',
       })),
     [rows]
@@ -88,7 +91,7 @@ export function BranchSettlementHistoryTab({
         Number(row.grossAmount || 0).toFixed(2),
         Number(row.commissionAmount || 0).toFixed(2),
         Number(row.netAmount || 0).toFixed(2),
-        settlementStatusLabel(row.settlementStatus),
+        settlementStatusLabel(row.payoutSettlementStatus || row.settlementStatus, row.payoutSettlementId),
         row.gatewayReference || row.gatewaySettlementId || '—',
       ]),
       styles: { fontSize: 8, cellPadding: 2 },
@@ -187,7 +190,10 @@ export function BranchSettlementHistoryTab({
                             : formatCurrency(row.expectedBankSettlementAmount)}
                         </td>
                         <td className="px-3 py-2">
-                          <SettlementStatusBadge status={row.payoutSettlementStatus || row.settlementStatus} />
+                          <SettlementStatusBadge
+                            status={row.payoutSettlementStatus || row.settlementStatus}
+                            payoutSettlementId={row.payoutSettlementId}
+                          />
                         </td>
                         <td className="px-3 py-2 font-mono text-xs break-all">
                           {row.gatewayReference || row.gatewaySettlementId || '—'}

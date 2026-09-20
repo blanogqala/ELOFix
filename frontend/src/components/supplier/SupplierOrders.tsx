@@ -1290,7 +1290,12 @@ function DetailPanel({
               <span>Settlement</span>
               <span className="font-medium">
                 {order.paymentStatus === 'paid'
-                  ? settlementStatusLabel((order as { settlementStatus?: string }).settlementStatus)
+                  ? settlementStatusLabel(
+                      (order as { settlementStatus?: string }).settlementStatus,
+                      (order as { payoutSettlementId?: string | null; gatewaySettlementId?: string | null })
+                        .payoutSettlementId ||
+                        (order as { gatewaySettlementId?: string | null }).gatewaySettlementId
+                    )
                   : '—'}
               </span>
             </div>

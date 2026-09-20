@@ -71,6 +71,8 @@ async function paystackRequest(method, apiPath, body, env = process.env) {
     err.paystack = redactDeep({
       status: json?.status,
       message: json?.message,
+      code: json?.code,
+      type: json?.type,
       httpStatus: res.status,
       keyPrefix,
     });
@@ -80,9 +82,47 @@ async function paystackRequest(method, apiPath, body, env = process.env) {
   return { httpStatus: res.status, json };
 }
 
+function stripSecretFragments(value) {
+  return String(value || "")
+    .replace(/Bearer\s+\S+/gi, "[redacted]")
+    .replace(/sk_(live|test)_[A-Za-z0-9]+/gi, "[redacted]")
+    .replace(/pk_(live|test)_[A-Za-z0-9]+/gi, "[redacted]")
+    .replace(/authorization[^\s,;]*/gi, "[redacted]");
+}
+
+/**
+ * Sanitized Paystack failure for logs/diagnostics. Never includes Authorization or secrets.
+ * @param {unknown} err
+ * @param {string} category
+ */
+function sanitizePaystackFailure(err, category) {
+  const raw = err && typeof err === "object" ? err : {};
+  const paystack = raw.paystack && typeof raw.paystack === "object" ? raw.paystack : {};
+  const message = stripSecretFragments(
+    paystack.message || raw.message || "Paystack request failed"
+  ).slice(0, 300);
+  const paystackErrorCode =
+    paystack.code != null && String(paystack.code).trim() !== "" && String(paystack.code) !== "PAYSTACK_HTTP"
+      ? String(paystack.code)
+      : raw.code && String(raw.code) !== "PAYSTACK_HTTP"
+        ? String(raw.code)
+        : null;
+  return {
+    category: String(category || "API_error"),
+    httpStatus: Number.isFinite(Number(raw.httpStatus))
+      ? Number(raw.httpStatus)
+      : Number.isFinite(Number(paystack.httpStatus))
+        ? Number(paystack.httpStatus)
+        : null,
+    paystackErrorCode,
+    message,
+  };
+}
+
 module.exports = {
   maskAccountNumber,
   redactDeep,
   readSecret,
   paystackRequest,
+  sanitizePaystackFailure,
 };

@@ -138,5 +138,9 @@ router.post(
 );
 
 router.post("/payout-settlements/reconcile", asyncHandler(adminController.reconcilePayoutSettlements));
+router.get(
+  "/payments/paystack/settlement-diagnostic",
+  asyncHandler(adminController.getPaystackSettlementDiagnostic)
+);
 
 module.exports = router;

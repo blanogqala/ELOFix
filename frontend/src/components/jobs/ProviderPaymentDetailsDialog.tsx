@@ -180,6 +180,7 @@ export function ProviderPaymentDetailsDialog({ open, onOpenChange, job }: Props)
                     processorFeeAmount={row.processorFeeAmount}
                     expectedBankSettlementAmount={row.expectedBankSettlementAmount}
                     payoutSettlementStatus={row.payoutSettlementStatus}
+                    payoutSettlementId={row.payoutSettlementId}
                     payoutSettledAt={row.payoutSettledAt}
                     showExpectedBankSettlement={false}
                   />
