@@ -1,5 +1,6 @@
 const AppError = require("../utils/AppError");
 const { registerUploadedFile } = require("../services/fileStorage.service");
+const { filePathToPublicUrl } = require("../middleware/upload.middleware");
 const { validateUploadedImageFile } = require("../utils/uploadSecurity.util");
 const supplierService = require("../services/supplier.service");
 const materialOrderService = require("../services/materialOrder.service");
@@ -280,6 +281,11 @@ async function patchProfile(req, res) {
   res.json({ success: true, profile });
 }
 
+function publicCatalogImageUrl(file, stored) {
+  const pub = file?.path ? filePathToPublicUrl(file.path) : null;
+  return pub || stored.url;
+}
+
 async function uploadProductImage(req, res) {
   if (!req.file) {
     throw new AppError("File is required", 400);
@@ -289,7 +295,7 @@ async function uploadProductImage(req, res) {
     ownerUserId: req.user.userId,
     type: "supplier_product",
   });
-  res.json({ success: true, fileId: stored.fileId, url: stored.url });
+  res.json({ success: true, fileId: stored.fileId, url: publicCatalogImageUrl(req.file, stored) });
 }
 
 async function uploadCategoryImage(req, res) {
@@ -301,7 +307,7 @@ async function uploadCategoryImage(req, res) {
     ownerUserId: req.user.userId,
     type: "supplier_category",
   });
-  res.json({ success: true, fileId: stored.fileId, url: stored.url });
+  res.json({ success: true, fileId: stored.fileId, url: publicCatalogImageUrl(req.file, stored) });
 }
 
 async function uploadLogo(req, res) {

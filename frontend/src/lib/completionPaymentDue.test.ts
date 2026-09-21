@@ -86,6 +86,23 @@ describe('completionPaymentDue', () => {
     expect(isAdminRequiredCompletionPayment(j)).toBe(false);
   });
 
+  it('does not treat an open dispute as an outstanding or admin-required payment', () => {
+    const j = job({
+      status: 'DISPUTED',
+      completionPaymentDue: {
+        amountDue: 600,
+        dueAt: new Date().toISOString(),
+        status: 'OVERDUE',
+        source: 'COMPLETION_WORKFLOW',
+      },
+      paymentProgress: 'FIRST_PAID',
+    });
+    expect(hasOutstandingCompletionPayment(j)).toBe(false);
+    expect(isAdminRequiredCompletionPayment(j)).toBe(false);
+    expect(isCompletionPaymentOverdue(j)).toBe(false);
+    expect(getCompletionPaymentDueSummaryLine(j)).toBeNull();
+  });
+
   it('detects overdue status', () => {
     const j = job({
       completionPaymentDue: { amountDue: 600, dueAt: new Date().toISOString(), status: 'OVERDUE' },

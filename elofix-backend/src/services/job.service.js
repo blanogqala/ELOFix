@@ -1170,23 +1170,30 @@ async function finalizeJob(job, meta) {
   }
 
   const base = enrichJob(workingJob, workingMeta);
+  const frontendStatus = String(toFrontendStatus(workingJob.status, workingMeta) || "").toUpperCase();
   let completionPaymentDue = base.completionPaymentDue;
   try {
     const obligationService = require("./customerPaymentObligation.service");
-    const row = await obligationService.getOpenObligationForJob(workingJob.id);
-    if (row) {
-      const display = obligationService.deriveDisplayStatus(row);
-      completionPaymentDue = {
-        ...(completionPaymentDue || {}),
-        amountDue: Number(row.amount),
-        dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
-        status: display,
-        obligationId: row.id,
-        source: row.source,
-      };
+    if (frontendStatus === "DISPUTED") {
+      await obligationService.cancelWorkflowObligationForOpenCase(workingJob.id, workingJob.customerId);
+      completionPaymentDue = null;
+    } else {
+      const row = await obligationService.getOpenObligationForJob(workingJob.id);
+      if (row) {
+        const display = obligationService.deriveDisplayStatus(row);
+        completionPaymentDue = {
+          ...(completionPaymentDue || {}),
+          amountDue: Number(row.amount),
+          dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
+          status: display,
+          obligationId: row.id,
+          source: row.source,
+        };
+      }
     }
   } catch (_e) {
     /* table may be absent before migration */
+    if (frontendStatus === "DISPUTED") completionPaymentDue = null;
   }
   const slug = String(base.category || "").trim();
   const {

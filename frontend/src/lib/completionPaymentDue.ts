@@ -15,10 +15,12 @@ export type CompletionPaymentDueFields = {
 };
 
 export function isCompletionPaymentOverdue(job: CompletionPaymentDueFields): boolean {
+  if (String(job.status || '').toUpperCase() === 'DISPUTED') return false;
   return String(job.completionPaymentDue?.status || '').toUpperCase() === 'OVERDUE';
 }
 
 export function hasOutstandingCompletionPayment(job: CompletionPaymentDueFields): boolean {
+  if (String(job.status || '').toUpperCase() === 'DISPUTED') return false;
   const due = job.completionPaymentDue;
   if (!due || !(Number(due.amountDue) > 0)) return false;
   if (job.completionPayment) return false;

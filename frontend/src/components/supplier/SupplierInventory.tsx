@@ -596,14 +596,17 @@ export function SupplierInventory({ userId }: { userId: string }) {
           />
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={openAddCategory}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add category
-          </Button>
-          <Button type="button" className="btn-accent" onClick={openNew}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add item
-          </Button>
+          {expandedCategory ? (
+            <Button type="button" className="btn-accent" onClick={openNew}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add item
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" onClick={openAddCategory}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add category
+            </Button>
+          )}
         </div>
       </div>
 
