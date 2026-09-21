@@ -1170,11 +1170,10 @@ async function finalizeJob(job, meta) {
   }
 
   const base = enrichJob(workingJob, workingMeta);
-  const frontendStatus = String(toFrontendStatus(workingJob.status, workingMeta) || "").toUpperCase();
   let completionPaymentDue = base.completionPaymentDue;
   try {
     const obligationService = require("./customerPaymentObligation.service");
-    if (frontendStatus === "DISPUTED") {
+    if (await obligationService.isJobUnderOpenCase(workingJob.id)) {
       await obligationService.cancelWorkflowObligationForOpenCase(workingJob.id, workingJob.customerId);
       completionPaymentDue = null;
     } else {
@@ -1193,7 +1192,6 @@ async function finalizeJob(job, meta) {
     }
   } catch (_e) {
     /* table may be absent before migration */
-    if (frontendStatus === "DISPUTED") completionPaymentDue = null;
   }
   const slug = String(base.category || "").trim();
   const {

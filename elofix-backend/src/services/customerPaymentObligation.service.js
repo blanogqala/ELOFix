@@ -248,17 +248,10 @@ async function cancelWorkflowObligationForOpenCase(jobId, customerId, tx = prism
 }
 
 async function isJobUnderOpenCase(jobId, tx = prisma) {
-  const job = await tx.job.findUnique({
-    where: { id: String(jobId) },
-    select: { status: true, meta: true },
-  });
-  if (!job) return false;
-  const { toFrontendStatus } = require("../utils/jobStatus.util");
-  if (String(toFrontendStatus(job.status, job.meta) || "").toUpperCase() === "DISPUTED") {
-    return true;
-  }
+  const id = String(jobId || "").trim();
+  if (!id) return false;
   const openCase = await tx.jobDispute.findFirst({
-    where: { jobId: String(jobId), status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
+    where: { jobId: id, status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
     select: { id: true },
   });
   return Boolean(openCase);
