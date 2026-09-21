@@ -68,6 +68,7 @@ function decideSkipReason({
     "recipient_scope_mismatch",
     "missing_recipient_net",
     "payment_after_settlement",
+    "payment_outside_settlement_window",
     "amount_mismatch",
     "no_transactions_and_no_amount",
     "no_transactions",
@@ -334,6 +335,7 @@ async function diagnoseAmountFallback({ intent, historicalSubaccountCode, scanne
     currency: scanned.currency,
     settlementDate: scanned.settlementDate,
     existingSettlementId: null,
+    persistAccounting: false,
   });
   const decision = decideAmountFallback({
     collected,

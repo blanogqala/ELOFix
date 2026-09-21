@@ -469,6 +469,29 @@ async function run() {
     await assertUnchangedAmounts(amountDiag.intent.id, amountDiag.intent);
     assert.strictEqual(applyCalls, 0, "diagnostic must never apply settlement rows");
 
+    const bystander = await seedIntent("bystander", {
+      subaccount: "ACCT_DIAG_AMT",
+      paidAt: new Date("2026-09-10T12:00:00.000Z"),
+    });
+    fixtures.push(bystander);
+    await prisma.paymentIntent.update({
+      where: { id: bystander.intent.id },
+      data: {
+        kind: "JOB_STORE_ORDER",
+        paymentType: "JOB_STORE_ORDER",
+        recipientAmount: new Prisma.Decimal("0.00"),
+        commissionAmount: new Prisma.Decimal("0.00"),
+        processorFeeAmount: null,
+        expectedBankSettlementAmount: null,
+      },
+    });
+    bystander.intent = await prisma.paymentIntent.findUnique({ where: { id: bystander.intent.id } });
+    const amountOutAgain = await diagnostic.diagnosePaystackSettlement({
+      reference: amountDiag.intent.merchantReference,
+    });
+    assert.strictEqual(amountOutAgain.settlements[0].matchingStrategy, "settlement_amount_single");
+    await assertUnchangedAmounts(bystander.intent.id, bystander.intent);
+
     paystack.listSettlements = async () => ({ settlements: [], meta: { pageCount: 1 } });
     const listed = await rec.listSettlementsForSubaccountDetailed(paystack, {
       subaccount: ACCT,
