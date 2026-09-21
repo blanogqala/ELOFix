@@ -42,6 +42,41 @@ function safeJsonClone(value) {
   }
 }
 
+const INVENTORY_CATEGORIES_INCLUDE = {
+  inventoryCategories: {
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  },
+};
+
+function branchCatalogInclude(extra = {}) {
+  return {
+    ...extra,
+    ...INVENTORY_CATEGORIES_INCLUDE,
+  };
+}
+
+function mapInventoryCategories(branch, { omitInternal = true } = {}) {
+  const rows = Array.isArray(branch?.inventoryCategories) ? branch.inventoryCategories : [];
+  const out = [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    if (omitInternal && r.isActive === false) continue;
+    const imageUrl =
+      r.imageUrl != null && String(r.imageUrl).trim() ? String(r.imageUrl).trim() : undefined;
+    const item = {
+      id: String(r.id),
+      name: String(r.name || ""),
+      sortOrder: Number.isFinite(Number(r.sortOrder)) ? Number(r.sortOrder) : 0,
+    };
+    if (imageUrl) item.imageUrl = imageUrl;
+    if (!omitInternal) {
+      item.isActive = r.isActive !== false;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
 function branchToPublicApi(branch, supplierRow, { omitInternal = true } = {}) {
   const rawProducts = Array.isArray(branch.products) ? branch.products : [];
   const products = [];
@@ -99,6 +134,7 @@ function branchToPublicApi(branch, supplierRow, { omitInternal = true } = {}) {
     contactEmail: contactEmail || undefined,
     latitude: Number.isFinite(latNum) ? latNum : undefined,
     longitude: Number.isFinite(lngNum) ? lngNum : undefined,
+    inventoryCategories: mapInventoryCategories(branch, { omitInternal }),
   };
   if (!omitInternal) {
     base.isActive = Boolean(branch.isActive);
@@ -146,7 +182,7 @@ async function listBranchesForLocation(query = {}) {
 
   const branches = await prisma.branch.findMany({
     where: { isActive: true },
-    include: { supplier: true },
+    include: branchCatalogInclude({ supplier: true }),
     orderBy: { name: "asc" },
   });
 
@@ -216,7 +252,7 @@ async function listBranchesForLocation(query = {}) {
 async function getBranchByIdWithSupplier(branchId) {
   return prisma.branch.findUnique({
     where: { id: String(branchId || "") },
-    include: { supplier: true },
+    include: branchCatalogInclude({ supplier: true }),
   });
 }
 
@@ -230,7 +266,7 @@ async function getBranchProductsById(branchId) {
 async function assertBranchOwnedByUser(branchId, userId) {
   const b = await prisma.branch.findUnique({
     where: { id: String(branchId || "") },
-    include: { supplier: true },
+    include: branchCatalogInclude({ supplier: true }),
   });
   if (!b) throw new AppError("Branch not found", 404);
   if (String(b.supplier.userId || "") !== String(userId || "")) {
@@ -292,6 +328,7 @@ async function listBranchesForSupplierUser(userId) {
   const rows = await prisma.branch.findMany({
     where: { supplierId: sup.id },
     orderBy: { createdAt: "asc" },
+    include: INVENTORY_CATEGORIES_INCLUDE,
   });
   return rows.map((b) => branchToPublicApi(b, sup, { omitInternal: false }));
 }
@@ -416,8 +453,12 @@ async function updateBranchForSupplierUser(userId, branchId, body = {}) {
       ? await prisma.branch.update({
           where: { id: b.id },
           data,
+          include: INVENTORY_CATEGORIES_INCLUDE,
         })
-      : await prisma.branch.findUnique({ where: { id: b.id } });
+      : await prisma.branch.findUnique({
+          where: { id: b.id },
+          include: INVENTORY_CATEGORIES_INCLUDE,
+        });
   return branchToPublicApi(updated, sup, { omitInternal: false });
 }
 
@@ -425,6 +466,9 @@ module.exports = {
   haversineKm,
   branchPublicDisplay,
   branchToPublicApi,
+  mapInventoryCategories,
+  branchCatalogInclude,
+  INVENTORY_CATEGORIES_INCLUDE,
   listBranchesForLocation,
   getBranchByIdWithSupplier,
   getBranchProductsById,

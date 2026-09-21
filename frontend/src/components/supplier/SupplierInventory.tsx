@@ -7,11 +7,12 @@ import {
   patchSupplierProduct,
   postSupplierInventoryCategory,
   postSupplierProduct,
+  uploadSupplierCategoryImage,
   uploadSupplierProductImage,
 } from '@/lib/api/supplierPortal';
 import type { Product } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -35,27 +36,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { formatCurrency } from '@/lib/formatCurrency';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
-import { Plus, Trash2, Pencil, ChevronDown, Search, ArrowLeft, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, ChevronDown, Loader2 } from 'lucide-react';
 import { ProductCardSkeleton } from '@/components/common/loading';
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  CatalogBreadcrumbs,
+  CatalogCategoryCard,
+  CatalogCategoryGrid,
+  CatalogProductCard,
+  CatalogProductGrid,
+  CatalogToolbar,
+  canonicalInventoryCategory,
+  filterAndSortProducts,
+  filterCatalogCategories,
+  formatCategoryLabel,
+  mergeCatalogCategories,
+  resolveCategoryImageUrl,
+  type CatalogProductFilters,
+} from '@/components/catalog';
 
 const CATEGORY_NEW = '__create_new__';
-
-/** Canonical key for grouping; matches backend normalization (lowercase, trimmed). */
-function canonicalInventoryCategory(cat: string): string {
-  const s = cat.trim().toLowerCase();
-  return s.length ? s : 'general';
-}
-
-function formatCategoryLabel(cat: string): string {
-  const t = cat.trim();
-  if (!t) return 'General';
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
 
 export function SupplierInventory({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
@@ -65,13 +67,21 @@ export function SupplierInventory({ userId }: { userId: string }) {
   const [selectedBranchId, setSelectedBranchId] = useState<string>('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const categoryFileInputRef = useRef<HTMLInputElement>(null);
   const lastPositiveQtyRef = useRef<Map<string, number>>(new Map());
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [categorySelect, setCategorySelect] = useState('general');
   const [newCategoryDraft, setNewCategoryDraft] = useState('');
-  const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
+    search: '',
+    category: 'all',
+    availability: 'all',
+    qualityTier: 'all',
+    special: 'all',
+    sort: 'name_asc',
+  });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [form, setForm] = useState({
     name: '',
@@ -85,6 +95,10 @@ export function SupplierInventory({ userId }: { userId: string }) {
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categoryImageFile, setCategoryImageFile] = useState<File | null>(null);
+  const [categoryPreviewUrl, setCategoryPreviewUrl] = useState<string | null>(null);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -93,6 +107,14 @@ export function SupplierInventory({ userId }: { userId: string }) {
       }
     };
   }, [imagePreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (categoryPreviewUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(categoryPreviewUrl);
+      }
+    };
+  }, [categoryPreviewUrl]);
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['supplier', 'profile', userId],
@@ -115,10 +137,14 @@ export function SupplierInventory({ userId }: { userId: string }) {
     });
   }, [branches, isBranchStaff, user]);
 
+  const selectedBranch = useMemo(
+    () => branches.find((x) => x.id === selectedBranchId),
+    [branches, selectedBranchId]
+  );
+
   const branchProducts = useMemo(() => {
-    const b = branches.find((x) => x.id === selectedBranchId);
-    return b?.products?.length ? b.products : profile?.products ?? [];
-  }, [branches, selectedBranchId, profile?.products]);
+    return selectedBranch?.products?.length ? selectedBranch.products : profile?.products ?? [];
+  }, [selectedBranch, profile?.products]);
 
   const { data: inventoryCategories = [] } = useQuery({
     queryKey: ['supplier', 'inventoryCategories', userId, selectedBranchId],
@@ -136,26 +162,52 @@ export function SupplierInventory({ userId }: { userId: string }) {
     }
   }, [branchProducts]);
 
+  useEffect(() => {
+    setExpandedCategory(null);
+    setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
+  }, [selectedBranchId]);
+
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['supplier', 'profile', userId] });
     void queryClient.invalidateQueries({ queryKey: ['supplier', 'inventoryCategories', userId] });
   };
 
-  /** Unique canonical category keys for filters + picker (inventory API + existing products). */
-  const mergedCategoryKeys = useMemo(() => {
-    const keys = new Set<string>();
-    keys.add('general');
-    for (const c of inventoryCategories) {
-      keys.add(canonicalInventoryCategory(c.name));
-    }
-    for (const p of branchProducts) {
-      keys.add(canonicalInventoryCategory(String(p.category ?? 'general')));
-    }
-    return [...keys].sort((a, b) => a.localeCompare(b));
-  }, [inventoryCategories, branchProducts]);
+  const catalogCategories = useMemo(
+    () =>
+      mergeCatalogCategories(
+        inventoryCategories.length ? inventoryCategories : selectedBranch?.inventoryCategories,
+        branchProducts,
+        { includeInactive: true }
+      ),
+    [inventoryCategories, selectedBranch?.inventoryCategories, branchProducts]
+  );
 
-  /** Alias kept for parity with cached HMR/old bundles that referenced `categoryOptions`. Same as mergedCategoryKeys. */
+  const mergedCategoryKeys = useMemo(() => {
+    const keys = new Set<string>(catalogCategories.map((c) => c.key));
+    keys.add('general');
+    return [...keys].sort((a, b) => a.localeCompare(b));
+  }, [catalogCategories]);
+
   const categoryOptions = mergedCategoryKeys;
+
+  const productsFiltered = useMemo(() => {
+    const inView = expandedCategory
+      ? branchProducts.filter((p) => canonicalInventoryCategory(p.category) === expandedCategory)
+      : branchProducts;
+    return filterAndSortProducts(inView, {
+      ...catalogFilters,
+      category: expandedCategory ? expandedCategory : catalogFilters.category,
+    });
+  }, [branchProducts, catalogFilters, expandedCategory]);
+
+  const visibleCategories = useMemo(() => {
+    const q = catalogFilters.search ?? '';
+    let list = filterCatalogCategories(catalogCategories, q, branchProducts);
+    if (catalogFilters.category && catalogFilters.category !== 'all') {
+      list = list.filter((c) => c.key === catalogFilters.category);
+    }
+    return list;
+  }, [catalogCategories, catalogFilters.search, catalogFilters.category, branchProducts]);
 
   const mutPatch = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<Product> }) =>
@@ -176,7 +228,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
     onError: (e: Error) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
-  const resetForm = () => {
+  const resetForm = (preselectCategory?: string | null) => {
     setEditId(null);
     setFormErrors({});
     setImageFile(null);
@@ -185,9 +237,10 @@ export function SupplierInventory({ userId }: { userId: string }) {
     }
     setImagePreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    const cat = canonicalInventoryCategory(preselectCategory || 'general');
     setForm({
       name: '',
-      category: 'general',
+      category: cat,
       price: '',
       unit: 'unit',
       quantity: '1',
@@ -195,12 +248,12 @@ export function SupplierInventory({ userId }: { userId: string }) {
       imageUrlOverride: '',
       qualityTier: 'medium',
     });
-    setCategorySelect('general');
+    setCategorySelect(cat);
     setNewCategoryDraft('');
   };
 
   const openNew = () => {
-    resetForm();
+    resetForm(expandedCategory);
     setDialogOpen(true);
   };
 
@@ -209,7 +262,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
     setFormErrors({});
     setImageFile(null);
     if (imagePreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(imagePreviewUrl);
-    setImagePreviewUrl(resolveUploadUrl(p.image) || null);
+    setImagePreviewUrl(p.image ? p.image : null);
     const rawQty = p.quantity ?? (p.inStock ? 1 : 0);
     const saneQty =
       typeof rawQty === 'number' && rawQty >= 500_000 ? lastPositiveQtyRef.current.get(p.id) ?? 1 : rawQty;
@@ -334,7 +387,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
       }
       invalidate();
       setDialogOpen(false);
-      resetForm();
+      resetForm(expandedCategory);
     } catch (e) {
       toast({
         title: 'Error',
@@ -345,40 +398,6 @@ export function SupplierInventory({ userId }: { userId: string }) {
       setIsSaving(false);
     }
   };
-
-  const productsFiltered = useMemo(() => {
-    const raw = branchProducts;
-    const q = search.trim().toLowerCase();
-    return raw.filter((p) => {
-      const cat = canonicalInventoryCategory(String(p.category ?? 'general'));
-      if (categoryFilter !== 'all' && cat !== categoryFilter) return false;
-      if (!q) return true;
-      const hay = `${p.name} ${cat}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [branchProducts, search, categoryFilter]);
-
-  const byCategory = useMemo(() => {
-    const m = new Map<string, Product[]>();
-    for (const p of productsFiltered) {
-      const c = canonicalInventoryCategory(String(p.category ?? 'general'));
-      const list = m.get(c) || [];
-      list.push(p);
-      m.set(c, list);
-    }
-    return m;
-  }, [productsFiltered]);
-
-  const categoriesSorted = useMemo(
-    () => [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0])),
-    [byCategory]
-  );
-
-  useEffect(() => {
-    if (expandedCategory && !byCategory.has(expandedCategory)) {
-      setExpandedCategory(null);
-    }
-  }, [expandedCategory, byCategory]);
 
   const handleStockSwitch = (p: Product, inStockNext: boolean) => {
     if (inStockNext) {
@@ -397,49 +416,74 @@ export function SupplierInventory({ userId }: { userId: string }) {
     }
   };
 
+  const resetCategoryDialog = () => {
+    setNewCategoryName('');
+    setCategoryImageFile(null);
+    if (categoryPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(categoryPreviewUrl);
+    setCategoryPreviewUrl(null);
+    if (categoryFileInputRef.current) categoryFileInputRef.current.value = '';
+  };
+
+  const handleCreateCategory = async () => {
+    const raw = newCategoryName.trim();
+    if (!raw) {
+      toast({ title: 'Category name is required', variant: 'destructive' });
+      return;
+    }
+    if (!selectedBranchId) {
+      toast({ title: 'Select a branch', variant: 'destructive' });
+      return;
+    }
+    setIsSavingCategory(true);
+    try {
+      let imageUrl: string | undefined;
+      if (categoryImageFile) {
+        const uploaded = await uploadSupplierCategoryImage(categoryImageFile);
+        imageUrl = uploaded.url;
+      }
+      await postSupplierInventoryCategory(raw, selectedBranchId, imageUrl ? { imageUrl } : undefined);
+      toast({ title: 'Category created' });
+      invalidate();
+      setCategoryDialogOpen(false);
+      resetCategoryDialog();
+    } catch (e) {
+      toast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Could not create category',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingCategory(false);
+    }
+  };
+
   const renderProductCard = (p: Product) => (
-    <Card className="card-elevated h-full overflow-hidden">
-      <div
-        className={cn(
-          'aspect-video bg-muted flex items-center justify-center text-xs text-muted-foreground overflow-hidden',
-        )}
-      >
-        {p.image ? (
-          <img src={resolveUploadUrl(p.image)} alt="" className="h-full w-full object-cover" />
-        ) : (
-          'No image'
-        )}
-      </div>
-      <CardHeader className="space-y-1 py-3">
-        <p className="text-xs text-muted-foreground">{formatCategoryLabel(String(p.category || 'general'))}</p>
-        <CardTitle className="text-base leading-tight">{p.name}</CardTitle>
-        {p.description ? (
-          <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
-        ) : null}
-        <p className="text-lg font-bold">{formatCurrency(p.price)}</p>
-        <p className="text-xs text-muted-foreground">Qty: {p.inStock ? p.quantity ?? '—' : 0}</p>
-      </CardHeader>
-      <CardContent className="space-y-3 pb-4">
-        <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
-          <span className="text-sm text-muted-foreground">In stock</span>
-          <Switch
-            checked={Boolean(p.inStock)}
-            disabled={mutPatch.isPending}
-            onCheckedChange={(v) => handleStockSwitch(p, v)}
-            aria-label={p.inStock ? 'Mark out of stock' : 'Mark in stock'}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <CatalogProductCard
+      product={p}
+      details={
+        <p className="mt-2 text-xs text-muted-foreground">Qty: {p.inStock ? p.quantity ?? '—' : 0}</p>
+      }
+      actions={
+        <>
+          <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1">
+            <span className="text-[10px] text-muted-foreground">Stock</span>
+            <Switch
+              checked={Boolean(p.inStock)}
+              disabled={mutPatch.isPending}
+              onCheckedChange={(v) => handleStockSwitch(p, v)}
+              aria-label={p.inStock ? 'Mark out of stock' : 'Mark in stock'}
+            />
+          </div>
           <Button type="button" variant="outline" size="sm" onClick={() => openEdit(p)}>
             <Pencil className="mr-1 h-3 w-3" />
             Edit
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => mutDel.mutate(p.id)}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => mutDel.mutate(p.id)} aria-label={`Delete ${p.name}`}>
             <Trash2 className="h-4 w-4 text-destructive" />
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </>
+      }
+    />
   );
 
   if (isLoading || !profile) {
@@ -478,109 +522,150 @@ export function SupplierInventory({ userId }: { userId: string }) {
         <p className="text-xs text-muted-foreground">You can only edit inventory for your assigned branch.</p>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:max-w-md sm:flex-row sm:items-center sm:gap-3">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by name or category"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-              aria-label="Search inventory"
-            />
-          </div>
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-full sm:w-[200px]">
-              <SelectValue placeholder="Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {categoryOptions.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {formatCategoryLabel(c)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <CatalogToolbar
+            filters={catalogFilters}
+            onChange={setCatalogFilters}
+            categoryKeys={mergedCategoryKeys}
+            hideCategory={Boolean(expandedCategory)}
+            searchPlaceholder={
+              expandedCategory ? 'Search products in this category' : 'Search categories or products'
+            }
+          />
         </div>
-        <Button type="button" className="btn-accent shrink-0" onClick={openNew}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add item
-        </Button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => setCategoryDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add category
+          </Button>
+          <Button type="button" className="btn-accent" onClick={openNew}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add item
+          </Button>
+        </div>
       </div>
 
-      {byCategory.size === 0 && (
+      {expandedCategory ? (
+        <div className="space-y-4">
+          <CatalogBreadcrumbs
+            backLabel="Back to categories"
+            onBack={() => setExpandedCategory(null)}
+            items={[
+              { label: 'Categories', onClick: () => setExpandedCategory(null) },
+              { label: formatCategoryLabel(expandedCategory) },
+            ]}
+          />
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
+            {formatCategoryLabel(expandedCategory)}
+          </h2>
+          {productsFiltered.length === 0 ? (
+            <Card className="card-elevated border-dashed">
+              <CardHeader>
+                <CardTitle className="text-base">0 products</CardTitle>
+                <p className="text-sm text-muted-foreground">Add the first item in this category.</p>
+              </CardHeader>
+            </Card>
+          ) : (
+            <CatalogProductGrid>
+              {productsFiltered.map((p) => (
+                <div key={p.id} className="h-full">
+                  {renderProductCard(p)}
+                </div>
+              ))}
+            </CatalogProductGrid>
+          )}
+        </div>
+      ) : visibleCategories.length === 0 ? (
         <Card className="card-elevated border-dashed">
           <CardHeader>
-            <CardTitle className="text-base">No items match</CardTitle>
+            <CardTitle className="text-base">No categories yet</CardTitle>
             <p className="text-sm text-muted-foreground">
-              {branchProducts.length
-                ? 'Try another search or category.'
-                : 'Add your first SKU to appear in the customer storefront.'}
+              {catalogFilters.search?.trim()
+                ? 'Try another search.'
+                : 'Create a category, then add products to your storefront.'}
             </p>
           </CardHeader>
         </Card>
+      ) : (
+        <CatalogCategoryGrid>
+          {visibleCategories.map((cat) => (
+            <CatalogCategoryCard
+              key={cat.id || cat.key}
+              name={cat.name}
+              imageUrl={resolveCategoryImageUrl(cat, branchProducts)}
+              productCount={cat.productCount}
+              unavailable={cat.productCount === 0}
+              onSelect={() => setExpandedCategory(cat.key)}
+            />
+          ))}
+        </CatalogCategoryGrid>
       )}
 
-      {expandedCategory && byCategory.has(expandedCategory) && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="-ml-2 gap-1 text-muted-foreground"
-              onClick={() => setExpandedCategory(null)}
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to inventory
+      <Dialog
+        open={categoryDialogOpen}
+        onOpenChange={(v) => {
+          if (!v) {
+            resetCategoryDialog();
+            setCategoryDialogOpen(false);
+          } else {
+            setCategoryDialogOpen(true);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add category</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="supplier-new-cat-name">Category name</Label>
+              <Input
+                id="supplier-new-cat-name"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                placeholder="e.g. Tiles"
+              />
+            </div>
+            <div>
+              <Label htmlFor="supplier-new-cat-image">Category image</Label>
+              <Input
+                id="supplier-new-cat-image"
+                ref={categoryFileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="mt-1 cursor-pointer"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  setCategoryImageFile(f);
+                  const blob = URL.createObjectURL(f);
+                  if (categoryPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(categoryPreviewUrl);
+                  setCategoryPreviewUrl(blob);
+                }}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">JPEG, PNG, WebP, or GIF · up to 8 MB.</p>
+              <div className="mt-2 aspect-[4/3] max-h-48 overflow-hidden rounded-md border border-border bg-muted">
+                {categoryPreviewUrl ? (
+                  <img src={categoryPreviewUrl} alt="Category preview" className="h-full w-full object-cover" />
+                ) : (
+                  <p className="flex h-full items-center justify-center text-xs text-muted-foreground">Preview</p>
+                )}
+              </div>
+            </div>
+            <Button type="button" className="btn-accent w-full" disabled={isSavingCategory} onClick={() => void handleCreateCategory()}>
+              {isSavingCategory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              {isSavingCategory ? 'Creating…' : 'Create'}
             </Button>
           </div>
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">{formatCategoryLabel(expandedCategory)}</h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {(byCategory.get(expandedCategory) ?? []).map((p) => (
-              <div key={p.id} className="h-full">
-                {renderProductCard(p)}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!expandedCategory &&
-        categoriesSorted.map(([cat, products]) => {
-          const preview = products.slice(0, 3);
-          const hasMore = products.length > 3;
-          return (
-            <div key={cat} className="space-y-2 transition-opacity duration-200">
-              <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 pb-1">
-                <h2 className="text-lg font-semibold tracking-tight text-foreground">{formatCategoryLabel(cat)}</h2>
-                <span className="text-xs text-muted-foreground tabular-nums">{products.length} item(s)</span>
-              </div>
-              <div className="relative">
-                <div className="-mx-1 flex gap-4 overflow-x-auto pb-3 pt-1 px-1 scroll-smooth">
-                  {preview.map((p) => (
-                    <div key={p.id} className="w-[min(100%,268px)] min-w-[240px] flex-shrink-0 snap-start">
-                      {renderProductCard(p)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              {hasMore && (
-                <Button type="button" variant="outline" size="sm" className="mt-1" onClick={() => setExpandedCategory(cat)}>
-                  View more ({products.length} items)
-                </Button>
-              )}
-            </div>
-          );
-        })}
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={dialogOpen}
         onOpenChange={(v) => {
           if (!v) {
-            resetForm();
+            resetForm(expandedCategory);
             setDialogOpen(false);
           }
         }}

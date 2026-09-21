@@ -1,5 +1,5 @@
 import apiClient from '@/api/client';
-import type { MaterialFulfillmentStatus, Product, SupplierAccountProfile, SupplierBranchProfile } from '@/types';
+import type { InventoryCategory, MaterialFulfillmentStatus, Product, SupplierAccountProfile, SupplierBranchProfile } from '@/types';
 
 export interface SupplierMaterialOrderLine {
   id: string;
@@ -306,7 +306,7 @@ export async function deleteSupplierProduct(productId: string, branchId: string)
   return data?.supplier ?? null;
 }
 
-export interface SupplierInventoryCategoryRow {
+export interface SupplierInventoryCategoryRow extends InventoryCategory {
   id: string;
   /** normalized lowercase unique name */
   name: string;
@@ -322,15 +322,41 @@ export async function getSupplierInventoryCategories(branchId: string): Promise<
 
 export async function postSupplierInventoryCategory(
   name: string,
-  branchId: string
+  branchId: string,
+  extras?: { imageUrl?: string; sortOrder?: number }
 ): Promise<SupplierInventoryCategoryRow> {
   const { data } = await apiClient.post<{ success: boolean; category: SupplierInventoryCategoryRow }>(
     '/supplier/inventory/categories',
-    { name },
+    { name, ...(extras?.imageUrl ? { imageUrl: extras.imageUrl } : {}), ...(extras?.sortOrder != null ? { sortOrder: extras.sortOrder } : {}) },
     { params: { branchId } }
   );
   if (!data?.category) throw new Error('Failed to create category');
   return data.category;
+}
+
+export async function patchSupplierInventoryCategory(
+  categoryId: string,
+  patch: { imageUrl?: string | null; sortOrder?: number; isActive?: boolean },
+  branchId: string
+): Promise<SupplierInventoryCategoryRow> {
+  const { data } = await apiClient.patch<{ success: boolean; category: SupplierInventoryCategoryRow }>(
+    `/supplier/inventory/categories/${encodeURIComponent(categoryId)}`,
+    patch,
+    { params: { branchId } }
+  );
+  if (!data?.category) throw new Error('Failed to update category');
+  return data.category;
+}
+
+export async function uploadSupplierCategoryImage(file: File): Promise<{ fileId: string; url: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const { data } = await apiClient.post<{ success: boolean; fileId: string; url: string }>(
+    '/supplier/inventory/categories/upload-image',
+    fd
+  );
+  if (!data?.url) throw new Error('Upload failed');
+  return { fileId: data.fileId, url: data.url };
 }
 
 export interface SupplierBranchCreateBody {
@@ -577,24 +603,32 @@ export interface SupplierBranchInventoryInsightProduct {
   price: number;
   unitsSold: number;
   unitsAddedApprox: number | null;
+  inStock?: boolean;
+  unit?: string;
+  qualityTier?: string;
+  description?: string;
+  image?: string;
 }
 
 export async function getSupplierAnalyticsBranchInventory(branchId: string): Promise<{
   branchId: string;
   products: SupplierBranchInventoryInsightProduct[];
   categories: string[];
+  inventoryCategories?: InventoryCategory[];
 } | null> {
   const { data } = await apiClient.get<{
     success: boolean;
     branchId: string;
     products: SupplierBranchInventoryInsightProduct[];
     categories: string[];
+    inventoryCategories?: InventoryCategory[];
   }>(`/supplier/analytics/branch/${encodeURIComponent(branchId)}/inventory`);
   if (!data?.success) return null;
   return {
     branchId: data.branchId,
     products: data.products ?? [],
     categories: data.categories ?? [],
+    inventoryCategories: data.inventoryCategories ?? [],
   };
 }
 

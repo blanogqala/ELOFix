@@ -21,6 +21,7 @@ const PUBLIC_FILE_TYPES = new Set([
   "userAvatar",
   "supplier_product",
   "supplier_logo",
+  "supplier_category",
 ]);
 
 function normalizeUploadRelPath(relPath) {
