@@ -19,6 +19,26 @@ export function isPaymentInvoice(invoice: Invoice): boolean {
   return !isRefundInvoice(invoice);
 }
 
+/**
+ * Match an invoice from a Payments deep-link (`?payment=`).
+ * Prefer stable ids (paymentIntentId, invoice id, merchantReference) over amount/date.
+ */
+export function invoiceMatchesPaymentLocator(invoice: Invoice, locator: string): boolean {
+  const q = trimId(locator);
+  if (!q) return false;
+  const invoiceId = trimId(invoice.id);
+  const intentId = trimId(invoice.paymentIntentId) || metaString(invoice, 'paymentIntentId');
+  const merchantRef =
+    metaString(invoice, 'merchantReference') || metaString(invoice, 'paymentRef');
+  if (invoiceId === q || intentId === q || merchantRef === q) return true;
+  if (invoiceId === `INV-PI-${q}` || invoiceId === q) return true;
+  if (q.startsWith('INV-PI-')) {
+    const fromSynth = q.slice('INV-PI-'.length);
+    if (fromSynth && (intentId === fromSynth || invoiceId === q)) return true;
+  }
+  return false;
+}
+
 function trimId(value: unknown): string {
   return value == null ? '' : String(value).trim();
 }

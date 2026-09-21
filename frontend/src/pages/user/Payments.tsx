@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ import { format, parseISO } from 'date-fns';
 import {
   groupPaymentInvoices,
   invoiceDisplayLabel,
+  invoiceMatchesPaymentLocator,
   invoiceStatusLabel,
   isPaymentInvoice,
   isRefundInvoice,
@@ -41,7 +42,9 @@ function safePaidAt(iso: string): string {
 
 export default function UserPayments() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const userId = user?.id;
+  const paymentLocator = (searchParams.get('payment') || searchParams.get('invoice') || '').trim();
   const [activeTab, setActiveTab] = useState<TabType>('payments');
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [jobs, setJobs] = useState<{ id: string; categoryName: string }[]>([]);
@@ -71,6 +74,14 @@ export default function UserPayments() {
       void loadData();
     }
   }, [userId, loadData]);
+
+  useEffect(() => {
+    if (!paymentLocator || invoices.length === 0) return;
+    const match = invoices.find((invoice) => invoiceMatchesPaymentLocator(invoice, paymentLocator));
+    if (!match) return;
+    setActiveTab(isRefundInvoice(match) ? 'refunds' : 'payments');
+    setSelectedInvoice(match);
+  }, [paymentLocator, invoices]);
 
   const paymentInvoices = useMemo(() => invoices.filter(isPaymentInvoice), [invoices]);
   const refundInvoices = useMemo(() => invoices.filter(isRefundInvoice), [invoices]);
@@ -199,10 +210,17 @@ export default function UserPayments() {
         </div>
       </div>
       <div className="divide-y divide-border">
-        {group.invoices.map((invoice) => (
+        {group.invoices.map((invoice) => {
+          const isHighlighted =
+            Boolean(paymentLocator) && invoiceMatchesPaymentLocator(invoice, paymentLocator);
+          return (
           <div
             key={invoice.id}
-            className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between"
+            className={cn(
+              'flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between',
+              isHighlighted && 'bg-secondary/70 ring-2 ring-inset ring-primary/30'
+            )}
+            aria-current={isHighlighted ? 'true' : undefined}
             onClick={() => setSelectedInvoice(invoice)}
           >
             <div className="flex min-w-0 items-start gap-3">
@@ -256,7 +274,8 @@ export default function UserPayments() {
               <ChevronRight className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

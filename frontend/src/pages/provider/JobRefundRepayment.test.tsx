@@ -7,11 +7,13 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import ProviderJobRefundRepayment from '@/pages/provider/JobRefundRepayment';
 import type { ProviderJobRefundObligation } from '@/lib/api/providerAccount';
+import type { PaymentIntent } from '@/lib/api/payments';
 
 const getProviderJobRefundObligation = vi.fn();
 const createProviderRefundRepaymentCheckout = vi.fn();
 const submitProviderRefundRepayment = vi.fn();
 const getPaymentProviders = vi.fn();
+const getPaymentIntent = vi.fn();
 const toast = vi.fn();
 
 vi.mock('@/lib/api/providerAccount', () => ({
@@ -26,6 +28,7 @@ vi.mock('@/lib/api/payments', async () => {
   return {
     ...actual,
     getPaymentProviders: (...args: unknown[]) => getPaymentProviders(...args),
+    getPaymentIntent: (...args: unknown[]) => getPaymentIntent(...args),
   };
 });
 
@@ -72,6 +75,7 @@ function renderPage(search = '') {
     <MemoryRouter initialEntries={[`/provider/jobs/job-1/refund${search}`]}>
       <Routes>
         <Route path="/provider/jobs/:id/refund" element={<ProviderJobRefundRepayment />} />
+        <Route path="/payments/return" element={<div>Payment return page</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -81,6 +85,7 @@ describe('JobRefundRepayment gateway selection + retry CTA', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getPaymentProviders.mockResolvedValue(['PAYFAST', 'PAYSTACK']);
+    getPaymentIntent.mockRejectedValue(new Error('Payment not found'));
     getProviderJobRefundObligation.mockResolvedValue({
       success: true,
       obligation: obligation(),
@@ -318,10 +323,108 @@ describe('JobRefundRepayment gateway selection + retry CTA', () => {
     });
   });
 
+  it('redirects Paystack return intentId to the payment success screen', async () => {
+    renderPage('?intentId=pi-rr-1');
+    expect(await screen.findByText('Payment return page')).toBeInTheDocument();
+  });
+
   it('keeps the R232.50 provider-liability amount unchanged', async () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getAllByText(/232[.,]50/).length).toBeGreaterThan(0);
     });
+    expect(getPaymentIntent).not.toHaveBeenCalled();
+  });
+});
+
+function repaymentIntent(over: Partial<PaymentIntent> = {}): PaymentIntent {
+  return {
+    id: 'pi-rr',
+    merchantReference: 'EF-RR-RECEIPT-1',
+    provider: 'PAYSTACK',
+    kind: 'PROVIDER_REFUND_REPAYMENT',
+    paymentType: 'PROVIDER_REFUND_REPAYMENT',
+    userId: 'provider-1',
+    jobId: 'job-1',
+    amount: 50,
+    currency: 'ZAR',
+    state: 'PAID',
+    escrowStatus: 'NONE',
+    providerPayoutStatus: 'PENDING',
+    paidAt: '2026-09-21T07:52:00.000Z',
+    ...over,
+  };
+}
+
+describe('JobRefundRepayment receipt deep-link', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getPaymentProviders.mockResolvedValue(['PAYFAST', 'PAYSTACK']);
+    getProviderJobRefundObligation.mockResolvedValue({
+      success: true,
+      obligation: obligation(),
+    });
+  });
+
+  it('opens the exact repayment receipt from ?payment=<intentId>', async () => {
+    getPaymentIntent.mockResolvedValue(repaymentIntent());
+    renderPage('?payment=pi-rr');
+
+    const receipt = await screen.findByRole('region', { name: 'Refund repayment receipt' });
+    expect(getPaymentIntent).toHaveBeenCalledWith('pi-rr');
+    expect(receipt).toHaveTextContent(/Refund repayment/);
+    expect(receipt).toHaveTextContent(/R\s*50,00/);
+    expect(receipt).toHaveTextContent('EF-RR-RECEIPT-1');
+    expect(receipt).toHaveTextContent(/^[\s\S]*Status[\s\S]*Paid/);
+    expect(receipt).toHaveTextContent('Paid');
+    expect(receipt).toHaveTextContent('Paystack');
+    expect(screen.getByRole('button', { name: /Pay/i })).toBeInTheDocument();
+  });
+
+  it('does not render a repayment receipt for the wrong payment kind', async () => {
+    getPaymentIntent.mockResolvedValue(
+      repaymentIntent({ kind: 'LABOR', paymentType: 'DEPOSIT' })
+    );
+    renderPage('?payment=pi-labor');
+
+    await waitFor(() => {
+      expect(getPaymentIntent).toHaveBeenCalledWith('pi-labor');
+    });
+    expect(screen.queryByRole('region', { name: 'Refund repayment receipt' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Refund repayment' })).toBeInTheDocument();
+  });
+
+  it('does not render a successful receipt while the intent is PROCESSING', async () => {
+    getPaymentIntent.mockResolvedValue(repaymentIntent({ state: 'PROCESSING', paidAt: null }));
+    renderPage('?payment=pi-rr');
+
+    await waitFor(() => {
+      expect(getPaymentIntent).toHaveBeenCalledWith('pi-rr');
+    });
+    expect(screen.queryByRole('region', { name: 'Refund repayment receipt' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Paid$/)).not.toBeInTheDocument();
+  });
+
+  it('does not render a receipt when the intent jobId does not match the page', async () => {
+    getPaymentIntent.mockResolvedValue(repaymentIntent({ jobId: 'job-other' }));
+    renderPage('?payment=pi-rr');
+
+    await waitFor(() => {
+      expect(getPaymentIntent).toHaveBeenCalledWith('pi-rr');
+    });
+    expect(screen.queryByRole('region', { name: 'Refund repayment receipt' })).not.toBeInTheDocument();
+  });
+
+  it('does not show a receipt when the payment cannot be loaded', async () => {
+    getPaymentIntent.mockRejectedValue(new Error('Forbidden'));
+    renderPage('?payment=pi-missing');
+
+    await waitFor(() => {
+      expect(getPaymentIntent).toHaveBeenCalledWith('pi-missing');
+    });
+    expect(screen.queryByRole('region', { name: 'Refund repayment receipt' })).not.toBeInTheDocument();
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Receipt not found', variant: 'destructive' })
+    );
   });
 });
