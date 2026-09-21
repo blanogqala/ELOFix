@@ -163,4 +163,5 @@ function startRefundDebtEnforcementJob() {
 module.exports = {
   startRefundDebtEnforcementJob,
   processRefundDebtEnforcement,
+  REFUND_DEBT_BLOCK_REASON,
 };

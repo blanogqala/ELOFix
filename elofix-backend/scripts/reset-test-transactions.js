@@ -17,9 +17,28 @@
  */
 require("dotenv").config();
 
+const {
+  recomputeTrustMetricsFromHistory,
+  rebuildHistoryScoreChain,
+} = require("../src/utils/trustScoreHistory.util");
+
 const CONFIRM_TOKEN = "DELETE-TEST-TRANSACTIONS";
 
-const ORPHAN_PAYMENT_KINDS = ["LABOR", "MATERIAL_ORDER", "JOB_STORE_ORDER", "PROVIDER_REFUND_REPAYMENT"];
+// Must match src/jobs/refundDebtEnforcement.job.js REFUND_DEBT_BLOCK_REASON.
+const REFUND_DEBT_BLOCK_REASON =
+  "Outstanding refund debt payment is overdue. Pay the amount owed and contact support, or submit repayment for admin review.";
+
+const ACTIVE_REFUND_RECOVERY_STATUSES = ["PENDING", "PARTIALLY_RECOVERED", "OVERDUE"];
+
+const JOB_TRANSACTION_TRUST_REASONS = new Set([
+  "job_completed",
+  "dispute_lost",
+  "refund_request",
+  "partial_refund",
+  "full_refund",
+  "positive_review",
+  "five_star_review",
+]);
 
 function parseArgs(argv = process.argv) {
   const args = argv.slice(2).filter((a) => a != null && String(a).trim() !== "");
@@ -123,14 +142,172 @@ async function deleteManyByField(delegate, field, ids) {
   return total;
 }
 
+function extractPayloadIds(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { jobId: null, materialOrderId: null, deliveryRequestId: null };
+  }
+  const nested = [
+    payload,
+    payload.metadata && typeof payload.metadata === "object" ? payload.metadata : null,
+    payload.meta && typeof payload.meta === "object" ? payload.meta : null,
+  ].filter(Boolean);
+
+  function firstId(keys) {
+    for (const obj of nested) {
+      for (const key of keys) {
+        const raw = obj[key];
+        if (raw != null && String(raw).trim()) return String(raw).trim();
+      }
+    }
+    return null;
+  }
+
+  return {
+    jobId: firstId(["jobId", "job_id"]),
+    materialOrderId: firstId(["materialOrderId", "material_order_id", "orderId", "order_id"]),
+    deliveryRequestId: firstId(["deliveryRequestId", "delivery_request_id"]),
+  };
+}
+
 function extractDeliveryRequestId(payload) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const raw =
-    payload.deliveryRequestId ||
-    payload.metadata?.deliveryRequestId ||
-    payload.meta?.deliveryRequestId;
-  const id = raw != null ? String(raw).trim() : "";
-  return id || null;
+  return extractPayloadIds(payload).deliveryRequestId;
+}
+
+function filterPreservedTrustHistory(history) {
+  return (Array.isArray(history) ? history : []).filter((entry) => {
+    const reason = String(entry?.reason || "").trim();
+    return reason && !JOB_TRANSACTION_TRUST_REASONS.has(reason);
+  });
+}
+
+function trustScoreNeedsRebuild(row) {
+  const original = Array.isArray(row.history) ? row.history : [];
+  const preserved = filterPreservedTrustHistory(original);
+  if (preserved.length !== original.length) return true;
+  const metrics = recomputeTrustMetricsFromHistory(preserved);
+  return (
+    Number(row.completedJobs) !== metrics.completedJobs ||
+    Number(row.disputeCount) !== metrics.disputeCount ||
+    Number(row.refundCount) !== metrics.refundCount ||
+    Number(row.positiveReviews) !== metrics.positiveReviews ||
+    Number(row.score) !== metrics.score
+  );
+}
+
+async function collectTrustScorePlan(db) {
+  const rows = await db.providerTrustScore.findMany({
+    select: {
+      id: true,
+      providerId: true,
+      history: true,
+      score: true,
+      disputeCount: true,
+      refundCount: true,
+      completedJobs: true,
+      positiveReviews: true,
+    },
+  });
+  const toRebuild = rows.filter(trustScoreNeedsRebuild);
+  return {
+    providerIds: toRebuild.map((r) => r.providerId),
+    count: toRebuild.length,
+    total: rows.length,
+  };
+}
+
+async function collectRefundDebtUnblockPlan(db, refundRecoveryIds) {
+  const blocked = await db.provider.findMany({
+    where: { refundDebtBlockedAt: { not: null } },
+    select: {
+      id: true,
+      blocked: true,
+      blockedReason: true,
+      blockedAt: true,
+      refundDebtBlockedAt: true,
+    },
+  });
+  if (!blocked.length) return { providerIds: [], count: 0 };
+
+  const deleting = new Set(refundRecoveryIds);
+  const active = await db.refundRecovery.findMany({
+    where: {
+      providerId: { in: blocked.map((p) => p.id) },
+      status: { in: ACTIVE_REFUND_RECOVERY_STATUSES },
+    },
+    select: { id: true, providerId: true },
+  });
+  const remainingByProvider = new Map();
+  for (const row of active) {
+    if (deleting.has(row.id)) continue;
+    remainingByProvider.set(row.providerId, (remainingByProvider.get(row.providerId) || 0) + 1);
+  }
+
+  const toClear = blocked.filter((p) => !remainingByProvider.get(p.id));
+  return { providerIds: toClear.map((p) => p.id), count: toClear.length };
+}
+
+async function rebuildTrustScores(db, providerIds) {
+  if (!providerIds.length) return 0;
+  const rows = await db.providerTrustScore.findMany({
+    where: { providerId: { in: providerIds } },
+  });
+  const now = new Date();
+  let updated = 0;
+  for (const row of rows) {
+    const preserved = filterPreservedTrustHistory(row.history);
+    const history = rebuildHistoryScoreChain(preserved);
+    const metrics = recomputeTrustMetricsFromHistory(history);
+    await db.providerTrustScore.update({
+      where: { id: row.id },
+      data: {
+        score: metrics.score,
+        disputeCount: metrics.disputeCount,
+        refundCount: metrics.refundCount,
+        completedJobs: metrics.completedJobs,
+        positiveReviews: metrics.positiveReviews,
+        history,
+        lastCalculatedAt: now,
+      },
+    });
+    updated += 1;
+  }
+  return updated;
+}
+
+async function clearRefundDebtBlocks(db, providerIds) {
+  if (!providerIds.length) return 0;
+  const providers = await db.provider.findMany({
+    where: { id: { in: providerIds } },
+    select: {
+      id: true,
+      blocked: true,
+      blockedReason: true,
+      blockedAt: true,
+      refundDebtBlockedAt: true,
+    },
+  });
+  let cleared = 0;
+  for (const provider of providers) {
+    const stillActive = await db.refundRecovery.findFirst({
+      where: {
+        providerId: provider.id,
+        status: { in: ACTIVE_REFUND_RECOVERY_STATUSES },
+      },
+      select: { id: true },
+    });
+    if (stillActive) continue;
+    if (!provider.refundDebtBlockedAt) continue;
+
+    const data = { refundDebtBlockedAt: null };
+    if (String(provider.blockedReason || "") === REFUND_DEBT_BLOCK_REASON) {
+      data.blocked = false;
+      data.blockedReason = null;
+      data.blockedAt = null;
+    }
+    await db.provider.update({ where: { id: provider.id }, data });
+    cleared += 1;
+  }
+  return cleared;
 }
 
 async function countPreserved(db) {
@@ -192,24 +369,20 @@ async function collectPlan(db) {
 
   const linkedIntents = await db.paymentIntent.findMany({
     where: {
-      OR: [
-        { jobId: { not: null } },
-        { materialOrderId: { not: null } },
-        {
-          AND: [{ jobId: null }, { materialOrderId: null }, { kind: { in: ORPHAN_PAYMENT_KINDS } }],
-        },
-      ],
+      OR: [{ jobId: { not: null } }, { materialOrderId: { not: null } }],
     },
     select: { id: true, gatewayPayload: true, kind: true, jobId: true, materialOrderId: true },
   });
 
   const paymentIntentIdSet = new Set(linkedIntents.map((r) => r.id));
+  const jobIdSet = new Set(jobIds);
+  const materialOrderIdSet = new Set(materialOrderIds);
+  const deliveryRequestIdSet = new Set(deliveryRequestIds);
 
   const deliveryFeeCandidates = await db.paymentIntent.findMany({
     where: { kind: "DELIVERY_FEE" },
     select: { id: true, gatewayPayload: true, jobId: true, materialOrderId: true },
   });
-  const deliveryRequestIdSet = new Set(deliveryRequestIds);
   for (const intent of deliveryFeeCandidates) {
     if (intent.jobId || intent.materialOrderId) {
       paymentIntentIdSet.add(intent.id);
@@ -219,18 +392,68 @@ async function collectPlan(db) {
     if (drId && deliveryRequestIdSet.has(drId)) paymentIntentIdSet.add(intent.id);
   }
 
+  const legalLinkedIntents =
+    jobIds.length || materialOrderIds.length
+      ? await db.legalAcceptanceEvent.findMany({
+          where: {
+            paymentIntentId: { not: null },
+            OR: [
+              ...(jobIds.length ? [{ jobId: { in: jobIds } }] : []),
+              ...(materialOrderIds.length ? [{ materialOrderId: { in: materialOrderIds } }] : []),
+            ],
+          },
+          select: { paymentIntentId: true },
+        })
+      : [];
+  for (const row of legalLinkedIntents) {
+    if (row.paymentIntentId) paymentIntentIdSet.add(row.paymentIntentId);
+  }
+
+  const ledgerLinkedIntents = jobIds.length
+    ? await db.commissionLedger.findMany({
+        where: { paymentIntentId: { not: null }, jobId: { in: jobIds } },
+        select: { paymentIntentId: true },
+      })
+    : [];
+  for (const row of ledgerLinkedIntents) {
+    if (row.paymentIntentId) paymentIntentIdSet.add(row.paymentIntentId);
+  }
+
+  const settlementLinkedIntents = materialOrderIds.length
+    ? await db.branchSettlementEvent.findMany({
+        where: { paymentIntentId: { not: null }, materialOrderId: { in: materialOrderIds } },
+        select: { paymentIntentId: true },
+      })
+    : [];
+  for (const row of settlementLinkedIntents) {
+    if (row.paymentIntentId) paymentIntentIdSet.add(row.paymentIntentId);
+  }
+
   const repayments = await db.providerRefundRepayment.findMany({
     where: {
       OR: [
         ...(jobIds.length ? [{ jobId: { in: jobIds } }] : []),
         ...(paymentIntentIdSet.size ? [{ paymentIntentId: { in: [...paymentIntentIdSet] } }] : []),
-        { jobId: { not: null } },
       ],
     },
     select: { id: true, paymentIntentId: true },
   });
   for (const row of repayments) {
     if (row.paymentIntentId) paymentIntentIdSet.add(row.paymentIntentId);
+  }
+
+  const orphans = await db.paymentIntent.findMany({
+    where: { jobId: null, materialOrderId: null },
+    select: { id: true, gatewayPayload: true },
+  });
+  for (const intent of orphans) {
+    if (paymentIntentIdSet.has(intent.id)) continue;
+    const ids = extractPayloadIds(intent.gatewayPayload);
+    const proven =
+      (ids.jobId && jobIdSet.has(ids.jobId)) ||
+      (ids.materialOrderId && materialOrderIdSet.has(ids.materialOrderId)) ||
+      (ids.deliveryRequestId && deliveryRequestIdSet.has(ids.deliveryRequestId));
+    if (proven) paymentIntentIdSet.add(intent.id);
   }
 
   const paymentIntentIds = [...paymentIntentIdSet];
@@ -377,6 +600,9 @@ async function collectPlan(db) {
     db.branchInventoryCategory.count(),
   ]);
 
+  const trustPlan = await collectTrustScorePlan(db);
+  const refundDebtPlan = await collectRefundDebtUnblockPlan(db, refundRecoveryIds);
+
   const extraPreserved = {
     paymentWebhookEvents: webhookEventCount,
     paystackWebhookEvents: paystackWebhookCount,
@@ -384,6 +610,7 @@ async function collectPlan(db) {
     accountLevelLegalAcceptanceEvents: legalAccountCount,
     workPosts: workPostCount,
     branchInventoryCategories: inventoryCategoryCount,
+    providerTrustScores: trustPlan.total,
   };
 
   return {
@@ -396,6 +623,8 @@ async function collectPlan(db) {
       disputeIds,
       refundRecoveryIds,
       providerRefundRepaymentIds,
+      trustScoreProviderIds: trustPlan.providerIds,
+      refundDebtClearProviderIds: refundDebtPlan.providerIds,
     },
     counts: {
       jobs: jobIds.length,
@@ -426,6 +655,8 @@ async function collectPlan(db) {
       refundRecoveries: refundRecoveryIds.length,
       providerRefundRepayments: providerRefundRepaymentIds.length,
       legalAcceptanceEventsTransactional: legalTxnCount,
+      trustScoresToRebuild: trustPlan.count,
+      refundDebtBlocksToClear: refundDebtPlan.count,
     },
     extraPreserved,
   };
@@ -445,6 +676,7 @@ function printCounts(title, preserved, counts, extraPreserved) {
   console.log(`Categories preserved: ${preserved.categories}`);
   console.log(`Work posts preserved: ${extraPreserved.workPosts}`);
   console.log(`Branch inventory categories preserved: ${extraPreserved.branchInventoryCategories}`);
+  console.log(`Provider trust scores preserved: ${extraPreserved.providerTrustScores ?? 0}`);
   console.log(`PaymentWebhookEvent preserved: ${extraPreserved.paymentWebhookEvents}`);
   console.log(`PaystackWebhookEvent preserved: ${extraPreserved.paystackWebhookEvents}`);
   console.log(`GatewayPayoutSettlement batches preserved: ${extraPreserved.gatewayPayoutSettlements}`);
@@ -480,6 +712,8 @@ function printCounts(title, preserved, counts, extraPreserved) {
   console.log(`Refund recoveries: ${counts.refundRecoveries}`);
   console.log(`Provider refund repayments: ${counts.providerRefundRepayments}`);
   console.log(`Transactional legal acceptance events: ${counts.legalAcceptanceEventsTransactional}`);
+  console.log(`Provider trust scores to rebuild: ${counts.trustScoresToRebuild}`);
+  console.log(`Refund-debt provider blocks to clear: ${counts.refundDebtBlocksToClear}`);
 }
 
 function assertPreservedUnchanged(before, after) {
@@ -644,21 +878,16 @@ async function executeDeletes(db, plan) {
 
   deleted.deliveryRequests = await deleteManyByIds(db.deliveryRequest, deliveryRequestIds);
 
-  // PaymentIntent.job / .materialOrder are onDelete: SetNull — delete intents explicitly.
+  // PaymentIntent.job / .materialOrder are onDelete: SetNull — delete proven intents explicitly.
+  // Ambiguous orphans (both FKs null with no payload/related proof) are preserved.
   // PaymentWebhookEvent is onDelete: SetNull and is intentionally preserved.
   deleted.paymentIntents = await deleteManyByIds(db.paymentIntent, paymentIntentIds);
-  const sweptIntents = await db.paymentIntent.deleteMany({
+  const leftoverLinkedIntents = await db.paymentIntent.deleteMany({
     where: {
-      OR: [
-        { jobId: { not: null } },
-        { materialOrderId: { not: null } },
-        {
-          AND: [{ jobId: null }, { materialOrderId: null }, { kind: { in: ORPHAN_PAYMENT_KINDS } }],
-        },
-      ],
+      OR: [{ jobId: { not: null } }, { materialOrderId: { not: null } }],
     },
   });
-  deleted.paymentIntents += Number(sweptIntents.count) || 0;
+  deleted.paymentIntents += Number(leftoverLinkedIntents.count) || 0;
 
   // Wipe all remaining jobs/orders. Related SetNull rows were already deleted above
   // so Job/MaterialOrder delete cannot leave stale PaymentIntent FKs.
@@ -684,15 +913,6 @@ async function verifyCleanup(db, deletedJobIds, deletedOrderIds) {
   if (staleIntents !== 0) {
     throw new Error(
       `Post-delete verification failed: ${staleIntents} PaymentIntent row(s) still reference a job or material order`
-    );
-  }
-
-  const leftoverTransactionalIntents = await db.paymentIntent.count({
-    where: { kind: { in: ORPHAN_PAYMENT_KINDS } },
-  });
-  if (leftoverTransactionalIntents !== 0) {
-    throw new Error(
-      `Post-delete verification failed: ${leftoverTransactionalIntents} leftover LABOR/MATERIAL_ORDER/JOB_STORE_ORDER/PROVIDER_REFUND_REPAYMENT PaymentIntent row(s)`
     );
   }
 
@@ -793,6 +1013,8 @@ function printDeletedCounts(deleted) {
   for (const [key, label] of labels) {
     console.log(`${label} deleted: ${deleted[key] ?? 0}`);
   }
+  console.log(`Provider trust scores rebuilt: ${deleted.trustScoresRebuilt ?? 0}`);
+  console.log(`Refund-debt provider blocks cleared: ${deleted.refundDebtBlocksCleared ?? 0}`);
 }
 
 async function runReset(options = {}) {
@@ -833,6 +1055,11 @@ async function runReset(options = {}) {
   const deleted = await prisma.$transaction(
     async (tx) => {
       const result = await executeDeletes(tx, plan);
+      result.trustScoresRebuilt = await rebuildTrustScores(tx, plan.ids.trustScoreProviderIds);
+      result.refundDebtBlocksCleared = await clearRefundDebtBlocks(
+        tx,
+        plan.ids.refundDebtClearProviderIds
+      );
       const preservedAfterTx = await countPreserved(tx);
       assertPreservedUnchanged(preservedBefore, preservedAfterTx);
       await verifyCleanup(tx, plan.ids.jobIds, plan.ids.materialOrderIds);
@@ -901,6 +1128,7 @@ async function main() {
 
 module.exports = {
   CONFIRM_TOKEN,
+  REFUND_DEBT_BLOCK_REASON,
   parseArgs,
   describeDatabaseTarget,
   countPreserved,

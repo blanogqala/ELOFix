@@ -17,7 +17,7 @@ const { randomUUID } = require("crypto");
 const { spawnSync } = require("child_process");
 const path = require("path");
 const { Client } = require("pg");
-const { parseArgs, CONFIRM_TOKEN } = require("./reset-test-transactions");
+const { parseArgs, CONFIRM_TOKEN, REFUND_DEBT_BLOCK_REASON } = require("./reset-test-transactions");
 
 const DISPOSABLE_DB = "elofix_reset_tx_test";
 const PASSWORD = "ResetTx#Pass1";
@@ -185,6 +185,29 @@ async function seedFixtures(prisma) {
     },
   });
 
+  await prisma.providerTrustScore.create({
+    data: {
+      providerId: provider.id,
+      score: 74,
+      disputeCount: 1,
+      refundCount: 1,
+      completedJobs: 1,
+      positiveReviews: 1,
+      history: [
+        { reason: "verified_id", delta: 10, at: "2026-01-01T00:00:00.000Z" },
+        { reason: "verified_company", delta: 10, at: "2026-01-02T00:00:00.000Z" },
+        { reason: "verified_bank", delta: 10, at: "2026-01-03T00:00:00.000Z" },
+        { reason: "job_completed", delta: 2, at: "2026-02-01T00:00:00.000Z" },
+        { reason: "positive_review", delta: 2, at: "2026-02-02T00:00:00.000Z" },
+        { reason: "five_star_review", delta: 3, at: "2026-02-03T00:00:00.000Z" },
+        { reason: "dispute_lost", delta: -15, at: "2026-03-01T00:00:00.000Z" },
+        { reason: "refund_request", delta: -10, at: "2026-03-02T00:00:00.000Z" },
+        { reason: "partial_refund", delta: -10, at: "2026-03-03T00:00:00.000Z" },
+        { reason: "full_refund", delta: -25, at: "2026-03-04T00:00:00.000Z" },
+      ],
+    },
+  });
+
   const providerBank = await prisma.providerWithdrawalProfile.create({
     data: {
       providerId: provider.id,
@@ -240,6 +263,75 @@ async function seedFixtures(prisma) {
       email: `reset.tx.staff.${suffix}@example.com`,
       password: hashed,
       role: "MANAGER",
+    },
+  });
+
+  const debtProviderUser = await prisma.user.create({
+    data: {
+      email: `reset.tx.debt.${suffix}@example.com`,
+      password: hashed,
+      name: "Reset Tx Debt Provider",
+      role: "PROVIDER",
+    },
+  });
+  const debtProvider = await prisma.provider.create({
+    data: {
+      userId: debtProviderUser.id,
+      skills: ["plumbing"],
+      location: "Cape Town",
+      approved: true,
+      profileCompleted: true,
+      businessName: "Reset Tx Debt Plumbing",
+      blocked: true,
+      blockedReason: REFUND_DEBT_BLOCK_REASON,
+      blockedAt: new Date("2026-03-01T00:00:00.000Z"),
+      refundDebtBlockedAt: new Date("2026-03-01T00:00:00.000Z"),
+    },
+  });
+  const debtJob = await prisma.job.create({
+    data: {
+      title: "Reset Tx Debt Job",
+      category: "plumbing",
+      location: "Cape Town",
+      description: "Job that created refund-debt block",
+      status: "CANCELLED",
+      price: 200,
+      customerId: customer.id,
+      providerId: debtProviderUser.id,
+    },
+  });
+  await prisma.refundRecovery.create({
+    data: {
+      providerId: debtProvider.id,
+      customerId: customer.id,
+      jobId: debtJob.id,
+      totalPending: 80,
+      status: "OVERDUE",
+      dueAt: new Date("2026-03-01T00:00:00.000Z"),
+      reference: `RR-DEBT-${suffix}`,
+    },
+  });
+
+  const fraudProviderUser = await prisma.user.create({
+    data: {
+      email: `reset.tx.fraud.${suffix}@example.com`,
+      password: hashed,
+      name: "Reset Tx Fraud Provider",
+      role: "PROVIDER",
+    },
+  });
+  const fraudProvider = await prisma.provider.create({
+    data: {
+      userId: fraudProviderUser.id,
+      skills: ["plumbing"],
+      location: "Cape Town",
+      approved: false,
+      profileCompleted: true,
+      businessName: "Reset Tx Fraud Plumbing",
+      blocked: true,
+      blockedReason: "Admin fraud review — fake documentation",
+      blockedAt: new Date("2026-04-01T00:00:00.000Z"),
+      refundDebtBlockedAt: null,
     },
   });
 
@@ -314,6 +406,20 @@ async function seedFixtures(prisma) {
       jobId: job.id,
       amount: 50,
       state: "PAID",
+    },
+  });
+  const ambiguousIntent = await prisma.paymentIntent.create({
+    data: {
+      merchantReference: `EF-RESET-AMBIG-${suffix}`,
+      provider: "PAYSTACK",
+      kind: "LABOR",
+      paymentType: "DEPOSIT",
+      userId: customer.id,
+      jobId: null,
+      materialOrderId: null,
+      amount: 25,
+      state: "FAILED",
+      gatewayPayload: { note: "ambiguous orphan — no job/order proof" },
     },
   });
 
@@ -576,8 +682,11 @@ async function seedFixtures(prisma) {
       jobId: job.id,
       orderId: order.id,
       laborIntentId: laborIntent.id,
+      ambiguousIntentId: ambiguousIntent.id,
       payoutBatchId: payoutBatch.id,
       standaloneDeliveryId: standaloneDelivery.id,
+      debtProviderId: debtProvider.id,
+      fraudProviderId: fraudProvider.id,
     },
     inventoryProducts,
     documents: provider.documents,
@@ -609,6 +718,12 @@ async function runWorker() {
 async function runWorkerBody(prisma) {
   const { runReset } = require("./reset-test-transactions");
   const authService = require("../src/services/auth.service");
+  const { REFUND_DEBT_BLOCK_REASON: JOB_REFUND_DEBT_BLOCK_REASON } = require("../src/jobs/refundDebtEnforcement.job");
+  assert.strictEqual(
+    REFUND_DEBT_BLOCK_REASON,
+    JOB_REFUND_DEBT_BLOCK_REASON,
+    "reset script refund-debt reason must match enforcement job"
+  );
 
   const fixtures = await seedFixtures(prisma);
 
@@ -618,6 +733,18 @@ async function runWorkerBody(prisma) {
   assert.ok(dry.plan.counts.jobs >= 1, "dry-run should count the seeded job");
   assert.ok(dry.plan.counts.materialOrders >= 1, "dry-run should count the seeded material order");
   assert.ok(dry.plan.counts.paymentIntents >= 3, "dry-run should count seeded payment intents");
+  assert.ok(
+    dry.plan.counts.trustScoresToRebuild >= 1,
+    "dry-run should count provider trust scores to rebuild"
+  );
+  assert.ok(
+    dry.plan.counts.refundDebtBlocksToClear >= 1,
+    "dry-run should count refund-debt blocks to clear"
+  );
+  assert.ok(
+    !dry.plan.ids.paymentIntentIds.includes(fixtures.ids.ambiguousIntentId),
+    "ambiguous orphan PaymentIntent must not be in the delete plan"
+  );
 
   const jobStillThere = await prisma.job.findUnique({ where: { id: fixtures.ids.jobId } });
   assert.ok(jobStillThere, "dry-run must not delete the job");
@@ -664,6 +791,55 @@ async function runWorkerBody(prisma) {
     where: { id: fixtures.ids.standaloneDeliveryId },
   });
   assert.ok(standalone, "standalone delivery request must be preserved");
+
+  const ambiguousIntent = await prisma.paymentIntent.findUnique({
+    where: { id: fixtures.ids.ambiguousIntentId },
+  });
+  assert.ok(ambiguousIntent, "ambiguous orphan PaymentIntent must be preserved");
+  assert.strictEqual(ambiguousIntent.kind, "LABOR");
+  assert.strictEqual(ambiguousIntent.jobId, null);
+  assert.strictEqual(ambiguousIntent.materialOrderId, null);
+
+  const trust = await prisma.providerTrustScore.findUnique({
+    where: { providerId: fixtures.ids.providerId },
+  });
+  assert.ok(trust, "ProviderTrustScore row must remain");
+  const trustReasons = (Array.isArray(trust.history) ? trust.history : []).map((e) => e.reason);
+  assert.ok(trustReasons.includes("verified_id"), "verified_id trust event must remain");
+  assert.ok(trustReasons.includes("verified_company"), "verified_company trust event must remain");
+  assert.ok(trustReasons.includes("verified_bank"), "verified_bank trust event must remain");
+  for (const reason of [
+    "job_completed",
+    "dispute_lost",
+    "refund_request",
+    "partial_refund",
+    "full_refund",
+    "positive_review",
+    "five_star_review",
+  ]) {
+    assert.ok(!trustReasons.includes(reason), `${reason} trust event must be removed`);
+  }
+  assert.strictEqual(trust.completedJobs, 0);
+  assert.strictEqual(trust.disputeCount, 0);
+  assert.strictEqual(trust.refundCount, 0);
+  assert.strictEqual(trust.positiveReviews, 0);
+
+  const debtProviderAfter = await prisma.provider.findUnique({
+    where: { id: fixtures.ids.debtProviderId },
+  });
+  assert.ok(debtProviderAfter, "refund-debt provider account must remain");
+  assert.strictEqual(debtProviderAfter.refundDebtBlockedAt, null);
+  assert.strictEqual(debtProviderAfter.blocked, false);
+  assert.strictEqual(debtProviderAfter.blockedReason, null);
+  assert.strictEqual(debtProviderAfter.blockedAt, null);
+
+  const fraudProviderAfter = await prisma.provider.findUnique({
+    where: { id: fixtures.ids.fraudProviderId },
+  });
+  assert.ok(fraudProviderAfter, "fraud-blocked provider account must remain");
+  assert.strictEqual(fraudProviderAfter.blocked, true);
+  assert.strictEqual(fraudProviderAfter.blockedReason, "Admin fraud review — fake documentation");
+  assert.ok(fraudProviderAfter.blockedAt, "unrelated admin/fraud block timestamp must remain");
 
   const customer = await prisma.user.findUnique({ where: { id: fixtures.ids.customerId } });
   const providerUser = await prisma.user.findUnique({ where: { id: fixtures.ids.providerUserId } });
