@@ -228,7 +228,7 @@ test.describe.serial('Customer ↔ Provider critical lifecycle', () => {
       },
     });
     await expect(page.getByText('Verifying information...')).toBeHidden({ timeout: 60_000 }).catch(() => {});
-    await expect(page.getByText(/Payment confirmed|pending confirmation/i).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: /Deposit payment successful/i })).toBeVisible({
       timeout: 60_000,
     });
     await page.goto(`/user/jobs/${jobId}`);
@@ -275,7 +275,7 @@ test.describe.serial('Customer ↔ Provider critical lifecycle', () => {
       },
     });
     await expect(page.getByText('Verifying information...')).toBeHidden({ timeout: 60_000 }).catch(() => {});
-    await expect(page.getByText(/Payment confirmed|pending confirmation/i).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: /Completion payment successful/i })).toBeVisible({
       timeout: 60_000,
     });
     await page.goto(`/user/jobs/${jobId}`);
