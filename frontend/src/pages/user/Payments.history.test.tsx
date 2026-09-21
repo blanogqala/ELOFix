@@ -138,4 +138,28 @@ describe.sequential('/user/payments history', () => {
     expect(screen.getAllByText(/186/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Partially Refunded/i)).not.toBeInTheDocument();
   });
+
+  it('opens the exact invoice when landed with ?payment=<paymentIntentId>', async () => {
+    getInvoices.mockResolvedValue([
+      invoice({
+        id: 'pay-1',
+        type: 'labor',
+        paymentType: 'DEPOSIT',
+        paymentIntentId: 'pi-abc',
+        totalAmount: 50,
+      }),
+      invoice({ id: 'pay-2', type: 'labor', paymentIntentId: 'pi-other', totalAmount: 80 }),
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={['/user/payments?payment=pi-abc']}>
+        <UserPayments />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Invoice Details')).toBeInTheDocument();
+    expect(screen.getByText('pay-1')).toBeInTheDocument();
+    expect(screen.getByText('Service deposit')).toBeInTheDocument();
+    expect(document.querySelector('[aria-current="true"]')).toBeTruthy();
+  });
 });

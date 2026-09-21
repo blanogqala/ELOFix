@@ -3,7 +3,12 @@ import apiClient from '@/api/client';
 
 export const PAYMENT_PROVIDERS = ['PAYFAST', 'PAYFLEX', 'PAYJUSTNOW', 'PAYSTACK'] as const;
 export type PaymentProvider = (typeof PAYMENT_PROVIDERS)[number];
-export type PaymentIntentKind = 'LABOR' | 'MATERIAL_ORDER' | 'JOB_STORE_ORDER' | 'DELIVERY_FEE';
+export type PaymentIntentKind =
+  | 'LABOR'
+  | 'MATERIAL_ORDER'
+  | 'JOB_STORE_ORDER'
+  | 'DELIVERY_FEE'
+  | 'PROVIDER_REFUND_REPAYMENT';
 
 export function isPaymentProvider(value: string): value is PaymentProvider {
   return (PAYMENT_PROVIDERS as readonly string[]).includes(value);
@@ -19,6 +24,8 @@ export interface PaymentIntent {
   merchantReference: string;
   provider: PaymentProvider;
   kind: PaymentIntentKind;
+  /** Server-authoritative payment stage (DEPOSIT, COMPLETION, MATERIAL_ORDER, …). */
+  paymentType?: string | null;
   userId: string;
   jobId?: string | null;
   materialOrderId?: string | null;

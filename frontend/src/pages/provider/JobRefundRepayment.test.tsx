@@ -72,6 +72,7 @@ function renderPage(search = '') {
     <MemoryRouter initialEntries={[`/provider/jobs/job-1/refund${search}`]}>
       <Routes>
         <Route path="/provider/jobs/:id/refund" element={<ProviderJobRefundRepayment />} />
+        <Route path="/payments/return" element={<div>Payment return page</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -316,6 +317,11 @@ describe('JobRefundRepayment gateway selection + retry CTA', () => {
       expect(getProviderJobRefundObligation.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(screen.getByRole('button', { name: /Continue payment/i })).toBeInTheDocument();
     });
+  });
+
+  it('redirects Paystack return intentId to the payment success screen', async () => {
+    renderPage('?intentId=pi-rr-1');
+    expect(await screen.findByText('Payment return page')).toBeInTheDocument();
   });
 
   it('keeps the R232.50 provider-liability amount unchanged', async () => {

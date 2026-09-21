@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -89,6 +89,7 @@ function redirectCheckout(checkout: {
 export default function ProviderJobRefundRepayment() {
   const { id: jobId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [obligation, setObligation] = useState<ProviderJobRefundObligation | null>(null);
@@ -148,11 +149,11 @@ export default function ProviderJobRefundRepayment() {
       });
       void load();
     } else if (searchParams.get('intentId')) {
-      toast({
-        title: 'Payment submitted',
-        description: 'If payment succeeded, EloFix will verify it shortly.',
-      });
-      void load();
+      const returnedIntentId = String(searchParams.get('intentId') || '').trim();
+      if (returnedIntentId) {
+        navigate(`/payments/return?intentId=${encodeURIComponent(returnedIntentId)}`, { replace: true });
+        return;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);

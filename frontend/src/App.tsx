@@ -82,7 +82,7 @@ const App = () => (
             <Route path="/user/jobs/:id/suggest-materials" element={<AuthGuard allowedRoles={['user']}><RouteSuspense><Pages.UserJobSuggestMaterials /></RouteSuspense></AuthGuard>} />
             <Route path="/user/jobs/:id" element={<AuthGuard allowedRoles={['user']}><RouteSuspense><Pages.JobDetail /></RouteSuspense></AuthGuard>} />
             <Route path="/user/payments" element={<AuthGuard allowedRoles={['user']}><RouteSuspense><Pages.UserPayments /></RouteSuspense></AuthGuard>} />
-            <Route path="/payments/return" element={<AuthGuard allowedRoles={['user']}><RouteSuspense><Pages.PaymentReturn /></RouteSuspense></AuthGuard>} />
+            <Route path="/payments/return" element={<AuthGuard allowedRoles={['user', 'provider']}><RouteSuspense><Pages.PaymentReturn /></RouteSuspense></AuthGuard>} />
             <Route path="/payments/cancel" element={<AuthGuard allowedRoles={['user']}><RouteSuspense><Pages.PaymentCancel /></RouteSuspense></AuthGuard>} />
             <Route path="/user/disputes" element={<Navigate to="/user/jobs?view=review" replace />} />
             <Route path="/user/disputes/:id" element={<AuthGuard allowedRoles={['user']}><RouteSuspense><Pages.UserDisputeDetail /></RouteSuspense></AuthGuard>} />

@@ -3,6 +3,7 @@ import type { Invoice } from '@/types';
 import {
   groupPaymentInvoices,
   invoiceDisplayLabel,
+  invoiceMatchesPaymentLocator,
   isPaymentInvoice,
   isRefundInvoice,
   paymentGroupKey,
@@ -173,5 +174,18 @@ describe('customerPaymentHistory', () => {
     expect(groups[0].invoices[0].id).toBe('legacy');
     expect(invoiceDisplayLabel(old, 'job')).toBe('Service payment');
     expect(paymentGroupKey(old).kind).toBe('job');
+  });
+
+  it('matches a Payments deep-link by paymentIntentId, invoice id, or merchant reference', () => {
+    const row = inv({
+      id: 'inv-99',
+      paymentIntentId: 'pi-abc',
+      meta: { merchantReference: 'EF-REF-1' },
+    });
+    expect(invoiceMatchesPaymentLocator(row, 'pi-abc')).toBe(true);
+    expect(invoiceMatchesPaymentLocator(row, 'inv-99')).toBe(true);
+    expect(invoiceMatchesPaymentLocator(row, 'EF-REF-1')).toBe(true);
+    expect(invoiceMatchesPaymentLocator(row, 'INV-PI-pi-abc')).toBe(true);
+    expect(invoiceMatchesPaymentLocator(row, 'other')).toBe(false);
   });
 });
