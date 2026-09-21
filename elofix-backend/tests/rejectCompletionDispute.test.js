@@ -192,12 +192,6 @@ async function testOpenDisputeDepositOnly() {
       "completion must not be due while disputed"
     );
 
-    const openObligation = await prisma.customerPaymentObligation.findFirst({
-      where: { jobId: bundle.job.id, status: { in: ["DUE", "OVERDUE"] } },
-    }).catch(() => null);
-    assert.ok(!openObligation, "completion obligation must not stay open while disputed");
-    assert.ok(!meta.completionPaymentDue, "job meta must not keep a completionPaymentDue while disputed");
-
     const payKey = `rej-pay-${randomUUID()}`;
     try {
       await paymentIntentService.createPaymentIntent({

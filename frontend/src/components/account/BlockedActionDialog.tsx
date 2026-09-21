@@ -1,14 +1,21 @@
 import { Link } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 export interface BlockedActionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   blockedReason?: string;
   supportHref: string;
-  profileHref?: string;
+  profileHref: string;
   payBalanceHref?: string;
   showPayBalance?: boolean;
 }
@@ -18,39 +25,45 @@ export function BlockedActionDialog({
   onOpenChange,
   blockedReason,
   supportHref,
+  profileHref,
   payBalanceHref,
   showPayBalance,
 }: BlockedActionDialogProps) {
-  const reason =
-    blockedReason?.trim() ||
-    'Your account has been restricted. You can still browse the app, but this action is not available.';
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-sm overflow-hidden p-5 sm:p-6">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
             <AlertCircle className="h-6 w-6 text-destructive" aria-hidden />
           </div>
-          <DialogTitle>Action restricted</DialogTitle>
-          <p className="max-w-full text-sm leading-relaxed text-muted-foreground break-words whitespace-normal">
-            {reason}
-          </p>
-        </div>
-        <div className="mt-4 flex min-w-0 flex-col gap-2">
+          <DialogTitle className="text-center">Action restricted</DialogTitle>
+          <DialogDescription className="text-center">
+            {blockedReason?.trim() ||
+              'Your account has been restricted. You can still browse the app, but this action is not available.'}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-col gap-2 sm:flex-col">
+          <Button asChild className="w-full">
+            <Link to={supportHref} onClick={() => onOpenChange(false)}>
+              Contact support
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className="w-full">
+            <Link to={profileHref} onClick={() => onOpenChange(false)}>
+              View profile
+            </Link>
+          </Button>
           {showPayBalance && payBalanceHref ? (
-            <Button asChild className="w-full">
+            <Button asChild variant="secondary" className="w-full">
               <Link to={payBalanceHref} onClick={() => onOpenChange(false)}>
                 Pay outstanding balance
               </Link>
             </Button>
           ) : null}
-          <Button asChild variant="outline" className="w-full">
-            <Link to={supportHref} onClick={() => onOpenChange(false)}>
-              Contact support
-            </Link>
+          <Button variant="ghost" className="w-full" onClick={() => onOpenChange(false)}>
+            Close
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

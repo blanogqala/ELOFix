@@ -288,9 +288,7 @@ const uploadSupplierLogo = multer({
 
 /** Public URL path (same host as API) for stored files */
 function filePathToPublicUrl(absolutePath) {
-  if (!absolutePath) return null;
   const rel = path.relative(UPLOAD_ROOT, absolutePath).split(path.sep).join("/");
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
   return `/uploads/${rel}`;
 }
 

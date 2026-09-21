@@ -24,7 +24,7 @@ async function processCustomerPaymentObligations() {
       take: BATCH_SIZE,
       orderBy: { dueAt: "asc" },
       include: {
-        job: { select: { id: true, title: true, customerId: true, status: true, meta: true } },
+        job: { select: { id: true, title: true, customerId: true } },
       },
     });
   } catch (e) {
@@ -37,10 +37,6 @@ async function processCustomerPaymentObligations() {
     try {
       const amount = Number(row.amount);
       if (!(amount > 0.01)) continue;
-      if (row.jobId && (await obligationService.isJobUnderOpenCase(row.jobId))) {
-        await obligationService.cancelWorkflowObligationForOpenCase(row.jobId, row.customerId);
-        continue;
-      }
       const dueAt = new Date(row.dueAt);
       const daysLeft = daysBetween(now, dueAt);
 

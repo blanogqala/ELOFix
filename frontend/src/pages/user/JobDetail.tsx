@@ -1452,8 +1452,11 @@ export default function JobDetail() {
                             {(provider.totalReviews ?? provider.reviews?.length ?? 0).toLocaleString()} review
                             {(provider.totalReviews ?? provider.reviews?.length ?? 0) === 1 ? '' : 's'}
                           </span>
+                          <span className="text-muted-foreground">· View full profile</span>
                         </p>
-                      ) : null}
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Click to view profile</p>
+                      )}
                     </div>
                   </div>
 
@@ -1489,6 +1492,164 @@ export default function JobDetail() {
                       </Button>
                     ) : null}
 
+                    {(awaitingUserConfirmation || jobDisputed) && (
+                      <div className="space-y-3 border-t pt-4">
+                        {jobDisputed ? (
+                          <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                            <Clock className="h-5 w-5 shrink-0 text-destructive mt-0.5" aria-hidden />
+                            <div>
+                              <p className="font-medium text-sm text-destructive">
+                                {isCancellationReview
+                                  ? 'Cancellation opened — under EloFix review'
+                                  : 'Dispute opened — under EloFix review'}
+                              </p>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {isCancellationReview
+                                  ? 'EloFix is reviewing this cancellation. View updates in your Review Center.'
+                                  : 'You rejected the provider’s completion claim. EloFix is reviewing the case. Your remaining payment is not charged while the dispute is open.'}
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="mt-2"
+                                onClick={() => {
+                                  if (job.disputeId) {
+                                    navigate(
+                                      isCancellationReview
+                                        ? `/user/cancellations/${job.disputeId}`
+                                        : `/user/disputes/${job.disputeId}`
+                                    );
+                                  } else {
+                                    navigate('/user/jobs?view=review');
+                                  }
+                                }}
+                              >
+                                View case
+                              </Button>
+                            </div>
+                          </div>
+                        ) : isAdminRequiredCompletionPayment(job) ? (
+                          <AdminRequiredCompletionPaymentBlock
+                            job={job}
+                            providerName={job.providerName || provider?.name || 'your provider'}
+                            paymentProgress={paymentProgress}
+                            showPayCta={showLaborPayCta}
+                            paymentBlocked={jobPaymentBlocked}
+                            disabled={isActionPending}
+                            onPay={() => {
+                              if (jobPaymentBlocked) return;
+                              setPayLaborModalOpen(true);
+                            }}
+                          />
+                        ) : (
+                          <>
+                            <div className="space-y-1">
+                              <p className="font-semibold text-sm">Job completion confirmation</p>
+                              <p className="text-sm text-muted-foreground">
+                                The provider has marked this job as complete. Is the job completed
+                                correctly? Review the work before making your final payment.
+                              </p>
+                            </div>
+                            <ConfirmationCountdown deadlineAt={confirmationDeadlineAt} />
+                            {(() => {
+                              const fin = buildJobCancellationFinancials(job);
+                              const showProgress =
+                                fin.depositStage != null || fin.completionStage != null;
+                              if (!showProgress && paymentProgress !== 'FIRST_PAID') return null;
+                              return (
+                                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2 text-sm">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Payment progress
+                                  </p>
+                                  {fin.depositStage ? (
+                                    <p className="flex justify-between gap-2">
+                                      <span>
+                                        {fin.depositStage.status === 'PAID' ? '✓ ' : '○ '}
+                                        Deposit paid
+                                      </span>
+                                      <span className="tabular-nums font-medium">
+                                        {formatCurrency(fin.depositStage.amount, { decimals: 2 })}
+                                      </span>
+                                    </p>
+                                  ) : paymentProgress === 'FIRST_PAID' ||
+                                    paymentProgress === 'FULLY_PAID' ? (
+                                    <Badge className="bg-success text-success-foreground">
+                                      50% Deposit Paid
+                                    </Badge>
+                                  ) : null}
+                                  {fin.completionStage ? (
+                                    <p className="flex justify-between gap-2 text-muted-foreground">
+                                      <span>
+                                        {fin.completionStage.status === 'PAID' ? '✓ ' : '○ '}
+                                        Final payment
+                                      </span>
+                                      <span className="tabular-nums font-medium text-foreground">
+                                        {formatCurrency(fin.completionStage.amount, { decimals: 2 })}
+                                      </span>
+                                    </p>
+                                  ) : null}
+                                </div>
+                              );
+                            })()}
+                            {hasOutstandingCompletionPayment(job) &&
+                            !isAdminRequiredCompletionPayment(job) &&
+                            job.completionPaymentDue?.dueAt ? (
+                              <p className="text-xs text-muted-foreground">
+                                Remaining balance due by{' '}
+                                {new Date(job.completionPaymentDue.dueAt).toLocaleDateString('en-ZA', {
+                                  dateStyle: 'medium',
+                                })}
+                                .
+                              </p>
+                            ) : null}
+                            <div className="flex flex-col gap-2">
+                              {laborPayDueBeforeConfirm && showLaborPayCta ? (
+                                <Button
+                                  type="button"
+                                  className="btn-accent w-full"
+                                  disabled={jobPaymentBlocked || isActionPending}
+                                  onClick={() => {
+                                    if (jobPaymentBlocked) return;
+                                    setPayLaborModalOpen(true);
+                                  }}
+                                >
+                                  {laborPayButtonLabel(job)}
+                                </Button>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  className="btn-accent w-full"
+                                  disabled={isActionPending}
+                                  onClick={() => setEvidenceDialogOpen(true)}
+                                >
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Yes, completed
+                                </Button>
+                              )}
+                              <div className="space-y-1.5 pt-1">
+                                <p className="text-sm text-muted-foreground">
+                                  Not satisfied with the work?
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="w-full border-destructive text-destructive hover:bg-accent/60"
+                                  disabled={isActionPending}
+                                  onClick={() => setDisputeDialogOpen(true)}
+                                >
+                                  Reject Completion
+                                </Button>
+                                <p className="text-xs text-muted-foreground">
+                                  Your remaining payment will not be charged while a dispute is being
+                                  reviewed.
+                                </p>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {showPostCompleteReviewForm ? (
                       <div className="border-t pt-4">
@@ -1508,176 +1669,6 @@ export default function JobDetail() {
                 )}
               </CardContent>
             </Card>
-
-            {(awaitingUserConfirmation || jobDisputed) && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">
-                    {jobDisputed
-                      ? isCancellationReview
-                        ? 'Cancellation review'
-                        : 'Dispute review'
-                      : 'Job completion'}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {jobDisputed ? (
-                    <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
-                      <Clock className="h-5 w-5 shrink-0 text-destructive mt-0.5" aria-hidden />
-                      <div>
-                        <p className="font-medium text-sm text-destructive">
-                          {isCancellationReview
-                            ? 'Cancellation opened — under EloFix review'
-                            : 'Dispute opened — under EloFix review'}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {isCancellationReview
-                            ? 'EloFix is reviewing this cancellation. Remaining payment is not due until this case is resolved.'
-                            : 'You rejected the provider’s completion claim. EloFix is reviewing the case. Your remaining payment is not charged while the dispute is open.'}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="mt-2"
-                          onClick={() => {
-                            if (job.disputeId) {
-                              navigate(
-                                isCancellationReview
-                                  ? `/user/cancellations/${job.disputeId}`
-                                  : `/user/disputes/${job.disputeId}`
-                              );
-                            } else {
-                              navigate('/user/jobs?view=review');
-                            }
-                          }}
-                        >
-                          View case
-                        </Button>
-                      </div>
-                    </div>
-                  ) : isAdminRequiredCompletionPayment(job) ? (
-                    <AdminRequiredCompletionPaymentBlock
-                      job={job}
-                      providerName={job.providerName || provider?.name || 'your provider'}
-                      paymentProgress={paymentProgress}
-                      showPayCta={showLaborPayCta}
-                      paymentBlocked={jobPaymentBlocked}
-                      disabled={isActionPending}
-                      onPay={() => {
-                        if (jobPaymentBlocked) return;
-                        setPayLaborModalOpen(true);
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <div className="space-y-1">
-                        <p className="font-semibold text-sm">Job completion confirmation</p>
-                        <p className="text-sm text-muted-foreground">
-                          The provider has marked this job as complete. Is the job completed
-                          correctly? Review the work before making your final payment.
-                        </p>
-                      </div>
-                      <ConfirmationCountdown deadlineAt={confirmationDeadlineAt} />
-                      {(() => {
-                        const fin = buildJobCancellationFinancials(job);
-                        const showProgress =
-                          fin.depositStage != null || fin.completionStage != null;
-                        if (!showProgress && paymentProgress !== 'FIRST_PAID') return null;
-                        return (
-                          <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2 text-sm">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Payment progress
-                            </p>
-                            {fin.depositStage ? (
-                              <p className="flex justify-between gap-2">
-                                <span>
-                                  {fin.depositStage.status === 'PAID' ? '✓ ' : '○ '}
-                                  Deposit paid
-                                </span>
-                                <span className="tabular-nums font-medium">
-                                  {formatCurrency(fin.depositStage.amount, { decimals: 2 })}
-                                </span>
-                              </p>
-                            ) : paymentProgress === 'FIRST_PAID' ||
-                              paymentProgress === 'FULLY_PAID' ? (
-                              <Badge className="bg-success text-success-foreground">
-                                50% Deposit Paid
-                              </Badge>
-                            ) : null}
-                            {fin.completionStage ? (
-                              <p className="flex justify-between gap-2 text-muted-foreground">
-                                <span>
-                                  {fin.completionStage.status === 'PAID' ? '✓ ' : '○ '}
-                                  Final payment
-                                </span>
-                                <span className="tabular-nums font-medium text-foreground">
-                                  {formatCurrency(fin.completionStage.amount, { decimals: 2 })}
-                                </span>
-                              </p>
-                            ) : null}
-                          </div>
-                        );
-                      })()}
-                      {hasOutstandingCompletionPayment(job) &&
-                      !isAdminRequiredCompletionPayment(job) &&
-                      job.completionPaymentDue?.dueAt ? (
-                        <p className="text-xs text-muted-foreground">
-                          Remaining balance due by{' '}
-                          {new Date(job.completionPaymentDue.dueAt).toLocaleDateString('en-ZA', {
-                            dateStyle: 'medium',
-                          })}
-                          .
-                        </p>
-                      ) : null}
-                      <div className="flex flex-col gap-2">
-                        {laborPayDueBeforeConfirm && showLaborPayCta ? (
-                          <Button
-                            type="button"
-                            className="btn-accent w-full"
-                            disabled={jobPaymentBlocked || isActionPending}
-                            onClick={() => {
-                              if (jobPaymentBlocked) return;
-                              setPayLaborModalOpen(true);
-                            }}
-                          >
-                            {laborPayButtonLabel(job)}
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            className="btn-accent w-full"
-                            disabled={isActionPending}
-                            onClick={() => setEvidenceDialogOpen(true)}
-                          >
-                            <CheckCircle className="mr-2 h-4 w-4" />
-                            Yes, completed
-                          </Button>
-                        )}
-                        <div className="space-y-1.5 pt-1">
-                          <p className="text-sm text-muted-foreground">
-                            Not satisfied with the work?
-                          </p>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="w-full border-destructive text-destructive hover:bg-accent/60"
-                            disabled={isActionPending}
-                            onClick={() => setDisputeDialogOpen(true)}
-                          >
-                            Reject Completion
-                          </Button>
-                          <p className="text-xs text-muted-foreground">
-                            Your remaining payment will not be charged while a dispute is being
-                            reviewed.
-                          </p>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            )}
 
             {/* Measurements / Requirements */}
             {showSpecsCard ? (
