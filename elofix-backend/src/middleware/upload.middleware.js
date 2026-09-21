@@ -253,8 +253,29 @@ function supplierLogoStorage() {
   });
 }
 
+function supplierCategoryImageStorage() {
+  return multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uid = String(req.user?.userId || req.user?.id || "").trim() || "anonymous";
+      const dir = path.join(UPLOAD_ROOT, "suppliers", uid, "category-images");
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
+      cb(null, `category-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
 const uploadSupplierProductImage = multer({
   storage: supplierProductImageStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
+});
+
+const uploadSupplierCategoryImage = multer({
+  storage: supplierCategoryImageStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: imageFileFilter,
 });
@@ -281,6 +302,7 @@ module.exports = {
   uploadJobCompletionMedia,
   uploadJobQuotation,
   uploadSupplierProductImage,
+  uploadSupplierCategoryImage,
   uploadSupplierLogo,
   filePathToPublicUrl,
 };

@@ -1,4 +1,4 @@
-import type { Supplier } from '@/types';
+import type { InventoryCategory, Supplier } from '@/types';
 import apiClient from '@/api/client';
 
 export type StoreRow = Supplier & {
@@ -9,6 +9,7 @@ export type StoreRow = Supplier & {
   supplierId?: string;
   branchId?: string;
   distanceKm?: number | null;
+  inventoryCategories?: InventoryCategory[];
 };
 
 interface BranchesNearbyResponse {

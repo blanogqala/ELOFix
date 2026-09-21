@@ -22,6 +22,10 @@ import { formatCurrency } from '@/lib/formatCurrency';
 import { categoryKeysMatch } from '@/lib/categoryKey';
 import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
+import {
+  CatalogProductCard,
+  CatalogProductGrid,
+} from '@/components/catalog';
 
 interface Step4MaterialSelectionProps {
   selectedCategory: string;
@@ -495,92 +499,61 @@ export function Step4MaterialSelection({
         </div>
 
         {/* Products List */}
-        <div className="space-y-3">
-          {getTabProducts().length > 0 ? (
-            getTabProducts().map(product => {
-              const inCart = materials.find(m => m.productId === product.id);
+        {getTabProducts().length > 0 ? (
+          <CatalogProductGrid>
+            {getTabProducts().map((product) => {
+              const inCart = materials.find((m) => m.productId === product.id);
               return (
-                <div 
+                <CatalogProductCard
                   key={product.id}
-                  className={cn(
-                    "flex items-center gap-4 p-4 border rounded-lg transition-colors",
-                    inCart ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"
-                  )}
-                >
-                  {/* Product Image */}
-                  <div className="h-16 w-16 rounded-lg bg-muted flex items-center justify-center shrink-0 overflow-hidden">
-                    {product.image ? (
-                      <img 
-                        src={resolveUploadUrl(product.image)} 
-                        alt={product.name}
-                        className="h-full w-full object-cover"
-                      />
+                  product={product}
+                  selected={Boolean(inCart)}
+                  actions={
+                    inCart ? (
+                      <>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8"
+                          onClick={() => handleUpdateQty(product.id, -1)}
+                          aria-label="Remove one"
+                        >
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <span className="w-8 text-center font-medium">{inCart.qty}</span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8"
+                          onClick={() => handleUpdateQty(product.id, 1)}
+                          aria-label="Add one"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      </>
                     ) : (
-                      <Package className="h-6 w-6 text-muted-foreground" />
-                    )}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium">{product.name}</p>
-                      {product.special && (
-                        <Badge className="bg-accent text-accent-foreground text-xs">
-                          Special
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {formatCurrency(product.price, { decimals: 2 })}/{product.unit} • {product.qualityTier} quality
-                    </p>
-                    {product.description ? (
-                      <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-                    ) : null}
-                  </div>
-
-                  {inCart ? (
-                    <div className="flex items-center gap-2">
-                      <Button 
-                        size="icon" 
-                        variant="outline" 
-                        className="h-8 w-8"
-                        onClick={() => handleUpdateQty(product.id, -1)}
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          handleAddMaterial(
+                            product,
+                            selectedSupplier,
+                            !categoryKeysMatch(product.category, selectedCategory)
+                          )
+                        }
                       >
-                        <Minus className="h-3 w-3" />
+                        <Plus className="h-4 w-4 mr-1" />
+                        Add
                       </Button>
-                      <span className="w-8 text-center font-medium">{inCart.qty}</span>
-                      <Button 
-                        size="icon" 
-                        variant="outline" 
-                        className="h-8 w-8"
-                        onClick={() => handleUpdateQty(product.id, 1)}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button 
-                      size="sm"
-                      onClick={() =>
-                        handleAddMaterial(
-                          product,
-                          selectedSupplier,
-                          !categoryKeysMatch(product.category, selectedCategory)
-                        )
-                      }
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add
-                    </Button>
-                  )}
-                </div>
+                    )
+                  }
+                />
               );
-            })
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No products in this category
-            </div>
-          )}
-        </div>
+            })}
+          </CatalogProductGrid>
+        ) : (
+          <div className="text-center py-8 text-muted-foreground">No products in this category</div>
+        )}
 
         {/* Cart Summary */}
         {materials.length > 0 && (
@@ -644,62 +617,53 @@ export function Step4MaterialSelection({
         </div>
 
         {/* Products */}
-        <div className="space-y-3 max-h-96 overflow-y-auto">
-          {filteredProducts.map(product => {
-            const inCart = materials.find(m => m.productId === product.id);
-            return (
-              <div 
-                key={product.id}
-                className={cn(
-                  "flex items-center gap-4 p-3 border rounded-lg transition-colors",
-                  inCart ? "border-primary bg-primary/5" : "border-border"
-                )}
-              >
-                <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                  <Package className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm">{product.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {product.supplier.name} • {formatCurrency(product.price, { decimals: 2 })}/{product.unit} • {product.category}
-                  </p>
-                  {product.description ? (
-                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-                  ) : null}
-                </div>
-                {inCart ? (
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      size="icon" 
-                      variant="outline" 
-                      className="h-7 w-7"
-                      onClick={() => handleUpdateQty(product.id, -1)}
-                    >
-                      <Minus className="h-3 w-3" />
-                    </Button>
-                    <span className="w-6 text-center text-sm">{inCart.qty}</span>
-                    <Button 
-                      size="icon" 
-                      variant="outline" 
-                      className="h-7 w-7"
-                      onClick={() => handleUpdateQty(product.id, 1)}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ) : (
-                  <Button 
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleAddMaterial(product, product.supplier, true)}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        {filteredProducts.length > 0 ? (
+          <CatalogProductGrid>
+            {filteredProducts.map((product) => {
+              const inCart = materials.find((m) => m.productId === product.id);
+              return (
+                <CatalogProductCard
+                  key={product.id}
+                  product={product}
+                  selected={Boolean(inCart)}
+                  details={<p className="mt-1 text-xs text-muted-foreground">{product.supplier.name}</p>}
+                  actions={
+                    inCart ? (
+                      <>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7"
+                          onClick={() => handleUpdateQty(product.id, -1)}
+                          aria-label="Remove one"
+                        >
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <span className="w-6 text-center text-sm">{inCart.qty}</span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7"
+                          onClick={() => handleUpdateQty(product.id, 1)}
+                          aria-label="Add one"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => handleAddMaterial(product, product.supplier, true)}>
+                        <Plus className="h-3 w-3 mr-1" />
+                        Add
+                      </Button>
+                    )
+                  }
+                />
+              );
+            })}
+          </CatalogProductGrid>
+        ) : (
+          <p className="py-8 text-center text-sm text-muted-foreground">No extra materials match this search.</p>
+        )}
       </div>
     );
   }

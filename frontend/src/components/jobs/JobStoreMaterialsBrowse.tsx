@@ -4,13 +4,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Supplier, Product, MaterialLine, JobLocation } from '@/types';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
@@ -29,6 +22,22 @@ import {
   Lightbulb,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  CatalogBreadcrumbs,
+  CatalogCategoryCard,
+  CatalogCategoryGrid,
+  CatalogProductCard,
+  CatalogProductGrid,
+  CatalogToolbar,
+  canonicalInventoryCategory,
+  filterAndSortProducts,
+  filterCatalogCategories,
+  formatCategoryLabel,
+  mergeCatalogCategories,
+  prioritizeCategoryKey,
+  resolveCategoryImageUrl,
+  type CatalogProductFilters,
+} from '@/components/catalog';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { categoryKeysMatch } from '@/lib/categoryKey';
 import { formatDistanceKm, haversineKm } from '@/lib/geo/haversine';
@@ -38,8 +47,6 @@ import {
   distanceProximityCardClass,
   distanceProximityLabel,
 } from '@/lib/geo/distanceProximity';
-
-const ALL_CATEGORIES_VALUE = '__all__';
 
 export type JobStoreMaterialsBrowseVariant = 'provider_cart' | 'user_suggestion';
 
@@ -60,59 +67,23 @@ export type JobStoreMaterialsBrowseProps =
       onSendSuggestion: (materials: MaterialLine[], message: string) => Promise<void>;
     };
 
-/** Mirrors AddMaterialsModal + SuggestAlternativeMaterialsModal filtering before category dropdown. */
-function computeBrowseCore(
-  selectedSupplier: Supplier | null,
-  jobCategory: string,
-  variant: JobStoreMaterialsBrowseVariant,
-  searchRaw: string
-): { core: Product[]; showingCategoryFallback: boolean } {
-  if (!selectedSupplier) return { core: [], showingCategoryFallback: false };
-
-  const q = searchRaw.trim().toLowerCase();
-  const bySearch = (p: Product) =>
-    !q || p.name.toLowerCase().includes(q) || String(p.category ?? '').toLowerCase().includes(q);
-  const byCat = (p: Product) => categoryKeysMatch(p.category, jobCategory);
-
-  if (variant === 'user_suggestion') {
-    const strict = selectedSupplier.products.filter((p) => bySearch(p) && byCat(p) && p.inStock);
-    if (strict.length > 0) return { core: strict, showingCategoryFallback: false };
-    if (!searchRaw.trim()) {
-      return {
-        core: selectedSupplier.products.filter((p) => p.inStock !== false),
-        showingCategoryFallback: true,
-      };
-    }
-    return {
-      core: selectedSupplier.products.filter((p) => bySearch(p) && p.inStock !== false),
-      showingCategoryFallback: true,
-    };
-  }
-
-  const strict = selectedSupplier.products.filter((p) => bySearch(p) && byCat(p));
-  if (strict.length > 0) return { core: strict, showingCategoryFallback: false };
-  if (!searchRaw.trim()) {
-    return {
-      core: selectedSupplier.products.filter((p) => p.inStock !== false),
-      showingCategoryFallback: true,
-    };
-  }
-  return {
-    core: selectedSupplier.products.filter(bySearch),
-    showingCategoryFallback: true,
-  };
-}
-
 export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const { variant, jobLocation, jobCategory, onBack } = props;
   const incomingMaterials = variant === 'provider_cart' ? props.existingMaterials : undefined;
   const existingMaterials = useMemo(() => incomingMaterials ?? [], [incomingMaterials]);
   const saveCartFn = variant === 'provider_cart' ? props.onSaveCart : undefined;
   const suggestFn = variant === 'user_suggestion' ? props.onSendSuggestion : undefined;
-  const [view, setView] = useState<'stores' | 'products'>('stores');
+  const [view, setView] = useState<'stores' | 'categories' | 'products'>('stores');
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORIES_VALUE);
+  const [selectedInventoryCategory, setSelectedInventoryCategory] = useState<string | null>(null);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
+    search: '',
+    category: 'all',
+    availability: 'all',
+    qualityTier: 'all',
+    special: 'all',
+    sort: 'name_asc',
+  });
   const [storeSearch, setStoreSearch] = useState('');
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
@@ -228,8 +199,15 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   }, [variant, jobCategory, existingMaterials]);
 
   const resetProductsUi = useCallback(() => {
-    setSearchQuery('');
-    setCategoryFilter(ALL_CATEGORIES_VALUE);
+    setCatalogFilters({
+      search: '',
+      category: 'all',
+      availability: 'all',
+      qualityTier: 'all',
+      special: 'all',
+      sort: 'name_asc',
+    });
+    setSelectedInventoryCategory(null);
     setMessage('');
     if (variant === 'user_suggestion') {
       setCart({});
@@ -238,7 +216,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
 
   const handleSelectSupplier = (supplier: Supplier) => {
     setSelectedSupplier(supplier);
-    setView('products');
+    setView('categories');
     resetProductsUi();
     if (variant === 'user_suggestion') {
       setCart({});
@@ -247,29 +225,34 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
 
   const storeTitle = (s: StoreRow) => s.displayName || s.name;
 
-  const filteredProductsResult = useMemo(() => {
-    const browse = computeBrowseCore(selectedSupplier, jobCategory, variant, searchQuery);
-    let list = browse.core;
-    if (categoryFilter !== ALL_CATEGORIES_VALUE) {
-      list = list.filter((p) => categoryKeysMatch(p.category, categoryFilter) || p.category === categoryFilter);
+  const filteredProducts = useMemo(() => {
+    if (!selectedSupplier) return [] as Product[];
+    const stockOk = variant === 'user_suggestion' ? (p: Product) => p.inStock !== false : () => true;
+    let list = selectedSupplier.products.filter(stockOk);
+    if (selectedInventoryCategory) {
+      list = list.filter(
+        (p) => canonicalInventoryCategory(p.category) === canonicalInventoryCategory(selectedInventoryCategory)
+      );
     }
-    return { products: list, showingCategoryFallback: browse.showingCategoryFallback };
-  }, [selectedSupplier, jobCategory, variant, categoryFilter, searchQuery]);
+    return filterAndSortProducts(list, {
+      ...catalogFilters,
+      category: selectedInventoryCategory || 'all',
+    });
+  }, [selectedSupplier, variant, catalogFilters, selectedInventoryCategory]);
 
-  const filteredProducts = filteredProductsResult.products;
-  const showingCategoryFallback = filteredProductsResult.showingCategoryFallback;
-
-  const categoryOptions = useMemo(() => {
-    if (!selectedSupplier) return [] as string[];
+  const catalogCategories = useMemo(() => {
+    if (!selectedSupplier) return [];
     const ok = variant === 'user_suggestion' ? (p: Product) => p.inStock !== false : () => true;
-    const keys = new Set<string>();
-    for (const p of selectedSupplier.products) {
-      if (!ok(p)) continue;
-      const c = String(p.category ?? '').trim() || 'general';
-      keys.add(c);
-    }
-    return [...keys].sort((a, b) => a.localeCompare(b));
-  }, [selectedSupplier, variant]);
+    const products = selectedSupplier.products.filter(ok);
+    const merged = mergeCatalogCategories(selectedSupplier.inventoryCategories, products, {
+      includeInactive: false,
+    });
+    return prioritizeCategoryKey(merged, jobCategory);
+  }, [selectedSupplier, variant, jobCategory]);
+
+  const visibleCategories = useMemo(() => {
+    return filterCatalogCategories(catalogCategories, catalogFilters.search ?? '', selectedSupplier?.products);
+  }, [catalogCategories, catalogFilters.search, selectedSupplier?.products]);
 
   const handleAddToCart = (product: Product, supplier: Supplier) => {
     const key = `${supplier.id}-${product.id}`;
@@ -349,52 +332,52 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
     }
   };
 
-  const getQualityColor = (tier: string) => {
-    switch (tier) {
-      case 'high':
-        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-100';
-      case 'medium':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-100';
-      default:
-        return 'bg-muted text-muted-foreground';
-    }
-  };
-
   const headline =
     variant === 'provider_cart'
       ? view === 'stores'
         ? 'Choose a store branch'
-        : storeTitle(selectedSupplier as StoreRow)
+        : view === 'categories'
+          ? storeTitle(selectedSupplier as StoreRow)
+          : formatCategoryLabel(selectedInventoryCategory || jobCategory)
       : view === 'stores'
         ? 'Suggest alternative materials'
-        : storeTitle(selectedSupplier as StoreRow);
+        : view === 'categories'
+          ? storeTitle(selectedSupplier as StoreRow)
+          : formatCategoryLabel(selectedInventoryCategory || jobCategory);
 
   const subline =
     view === 'stores'
       ? variant === 'provider_cart'
         ? 'Branches are ranked near the job site — search anywhere to widen results.'
         : 'Pick an in-stock branch near the job. Your provider will review your suggestion.'
-      : variant === 'provider_cart'
-        ? 'Search and filter by category, then add items to send to your customer.'
-        : 'Add items with quantities, then send your suggestion to the provider.';
+      : view === 'categories'
+        ? 'Choose a category to browse products. Other valid categories stay available for extra materials.'
+        : variant === 'provider_cart'
+          ? 'Search and filter, then add items to send to your customer.'
+          : 'Add items with quantities, then send your suggestion to the provider.';
 
   return (
     <>
       <div className="relative mx-auto w-full max-w-5xl pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] sm:pb-[calc(8rem+env(safe-area-inset-bottom,0px))]">
       <header className="border-b border-border pb-4 space-y-1">
         <div className="flex items-start gap-2">
-          {view === 'products' ? (
+          {view !== 'stores' ? (
             <Button
               type="button"
               variant="ghost"
               size="icon"
               className="shrink-0 mt-0.5"
               onClick={() => {
+                if (view === 'products') {
+                  setView('categories');
+                  setSelectedInventoryCategory(null);
+                  return;
+                }
                 setView('stores');
                 setSelectedSupplier(null);
                 resetProductsUi();
               }}
-              aria-label="Back to branches"
+              aria-label={view === 'products' ? 'Back to categories' : 'Back to branches'}
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -512,62 +495,102 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
           </>
         )}
 
+        {view === 'categories' && selectedSupplier && (
+          <div className="space-y-4 pb-4">
+            <CatalogToolbar
+              mode="categories"
+              filters={catalogFilters}
+              onChange={setCatalogFilters}
+              hideCategory
+              searchPlaceholder="Search categories or products"
+            />
+            {visibleCategories.length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-16">No categories match this search.</p>
+            ) : (
+              <CatalogCategoryGrid>
+                {visibleCategories.map((cat) => (
+                  <CatalogCategoryCard
+                    key={cat.id || cat.key}
+                    name={cat.name}
+                    imageUrl={resolveCategoryImageUrl(cat, selectedSupplier.products)}
+                    productCount={cat.productCount}
+                    highlighted={canonicalInventoryCategory(jobCategory) === cat.key}
+                    unavailable={cat.productCount === 0}
+                    onSelect={() => {
+                      setSelectedInventoryCategory(cat.key);
+                      setView('products');
+                    }}
+                  />
+                ))}
+              </CatalogCategoryGrid>
+            )}
+          </div>
+        )}
+
         {view === 'products' && selectedSupplier && (
           <div className="space-y-4 pb-4">
-            {/* {showingCategoryFallback && (
-              <p className="text-xs text-muted-foreground rounded-xl border bg-muted/30 px-4 py-3 leading-relaxed">
-                No catalog entries match your job category exactly — showing this branch&apos;s full catalog. Items outside the job category
-                will be flagged as extras when saved.
-              </p>
-            )} */}
-
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1 min-w-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  placeholder="Search by product name or category…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 h-11 rounded-xl bg-muted/40 border-transparent"
-                />
-              </div>
-              <div className="w-36 sm:w-52 shrink-0">
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="h-11 rounded-xl bg-muted/40 border-transparent">
-                    <SelectValue placeholder="Category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_CATEGORIES_VALUE}>All categories</SelectItem>
-                    {categoryOptions.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <CatalogBreadcrumbs
+              backLabel="Back to categories"
+              onBack={() => {
+                setView('categories');
+                setSelectedInventoryCategory(null);
+              }}
+              items={[
+                {
+                  label: storeTitle(selectedSupplier as StoreRow),
+                  onClick: () => {
+                    setView('categories');
+                    setSelectedInventoryCategory(null);
+                  },
+                },
+                { label: formatCategoryLabel(selectedInventoryCategory || 'all') },
+              ]}
+            />
+            <CatalogToolbar
+              mode="products"
+              filters={catalogFilters}
+              onChange={setCatalogFilters}
+              hideCategory
+              searchPlaceholder="Search products in this category"
+            />
 
             {filteredProducts.length === 0 && (
               <p className="text-center text-muted-foreground py-16 text-sm">
-                {searchQuery.trim() || categoryFilter !== ALL_CATEGORIES_VALUE
-                  ? 'Nothing matches — try adjusting search or category.'
-                  : 'No products in this catalog.'}
+                {catalogFilters.search?.trim()
+                  ? 'Nothing matches — try adjusting search or filters.'
+                  : 'No products in this category.'}
               </p>
             )}
 
-            <ul className="m-0 grid list-none grid-cols-2 gap-3 p-0 sm:gap-4 lg:grid-cols-3">
-              {filteredProducts.map((product) => (
-                <ProductRowCart
-                  key={product.id}
-                  product={product}
-                  qty={getCartQty(product.id, selectedSupplier.id)}
-                  getQualityColor={getQualityColor}
-                  onAdd={() => handleAddToCart(product, selectedSupplier)}
-                  onRemove={() => handleRemoveFromCart(product, selectedSupplier)}
-                />
-              ))}
-            </ul>
+            <CatalogProductGrid>
+              {filteredProducts.map((product) => {
+                const qty = getCartQty(product.id, selectedSupplier.id);
+                return (
+                  <CatalogProductCard
+                    key={product.id}
+                    product={product}
+                    selected={qty > 0}
+                    actions={
+                      qty > 0 ? (
+                        <>
+                          <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={() => handleRemoveFromCart(product, selectedSupplier)} aria-label="Remove one">
+                            <Minus className="h-4 w-4" />
+                          </Button>
+                          <span className="w-8 text-center text-xs font-semibold tabular-nums">{qty}</span>
+                          <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={() => handleAddToCart(product, selectedSupplier)} aria-label="Add one">
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <Button type="button" size="sm" className="h-8 gap-1 px-3 text-xs" onClick={() => handleAddToCart(product, selectedSupplier)}>
+                          <Plus className="size-4" /> Add
+                        </Button>
+                      )
+                    }
+                  />
+                );
+              })}
+            </CatalogProductGrid>
 
             {variant === 'user_suggestion' && cartItemCount > 0 && (
               <section className="rounded-xl border border-border bg-muted/20 p-4 space-y-4 mt-8">
@@ -612,7 +635,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
         }}
       >
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-        {variant === 'provider_cart' && view === 'products' ? (
+        {variant === 'provider_cart' && view !== 'stores' ? (
           <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-h-[2.5rem] flex-1 flex-wrap items-center gap-2 text-sm text-muted-foreground sm:max-w-xl">
               {cartItemCount > 0 ? (
@@ -636,7 +659,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
               </Button>
             </div>
           </div>
-        ) : variant === 'user_suggestion' && view === 'products' ? (
+        ) : variant === 'user_suggestion' && view !== 'stores' ? (
           <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-h-[2.5rem] flex-1 flex-wrap items-center gap-2 text-sm text-muted-foreground sm:max-w-xl">
               {cartItemCount > 0 ? (
@@ -684,81 +707,3 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   );
 }
 
-function ProductRowCart({
-  product,
-  qty,
-  getQualityColor,
-  onAdd,
-  onRemove,
-}: {
-  product: Product;
-  qty: number;
-  getQualityColor: (t: string) => string;
-  onAdd: () => void;
-  onRemove: () => void;
-}) {
-  return (
-    <li className="flex h-full min-h-0 list-none">
-      <div
-        className={cn(
-          'flex h-full min-h-[260px] w-full flex-col overflow-hidden rounded-xl border-2 bg-card shadow-sm ring-1 ring-border transition-[box-shadow,border-color]',
-          qty > 0 ? 'border-primary ring-primary/25 shadow-md' : 'border-primary hover:border-primary'
-        )}
-      >
-        <div className="relative aspect-square w-full shrink-0 bg-muted">
-          {product.image ? (
-            <img src={resolveUploadUrl(product.image)} alt="" className="absolute inset-0 size-full object-cover" />
-          ) : (
-            <div className="flex size-full items-center justify-center p-3 text-center text-[10px] text-muted-foreground">No image</div>
-          )}
-          {product.special && (
-            <Badge className="absolute right-2 top-2 gap-0.5 bg-accent px-2 text-[10px] text-accent-foreground shadow-sm">
-              <Sparkles className="size-3" /> Deal
-            </Badge>
-          )}
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-          <div className="min-h-0 flex-1">
-            <p className="text-sm font-medium leading-snug line-clamp-2">{product.name}</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              <Badge variant="outline" className={cn('text-[10px] font-normal', getQualityColor(product.qualityTier))}>
-                {product.qualityTier}
-              </Badge>
-              <Badge variant="secondary" className="truncate text-[10px] font-normal">
-                <span className="max-w-[7rem] truncate sm:max-w-[9rem]" title={product.category}>
-                  {product.category}
-                </span>
-              </Badge>
-            </div>
-            {product.description ? (
-              <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-            ) : null}
-          </div>
-          <div className="mt-auto flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border pt-3">
-            <div className="min-w-0">
-              <p className="text-sm font-bold tabular-nums leading-none">{formatCurrency(product.price, { decimals: 2 })}</p>
-              <p className="text-[10px] text-muted-foreground">per {product.unit}</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {qty > 0 ? (
-                <>
-                  <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={onRemove} aria-label="Remove one">
-                    <Minus className="h-4 w-4" />
-                  </Button>
-                  <span className="w-8 text-center text-xs font-semibold tabular-nums">{qty}</span>
-                  <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={onAdd} aria-label="Add one">
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </>
-              ) : (
-                <Button type="button" size="sm" className="h-8 gap-1 px-3 text-xs" onClick={onAdd}>
-                  <Plus className="size-4" /> Add
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </li>
-  );
-}

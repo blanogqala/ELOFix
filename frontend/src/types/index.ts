@@ -225,6 +225,7 @@ export interface SupplierBranchProfile {
   updatedAt?: string;
   latitude?: number;
   longitude?: number;
+  inventoryCategories?: InventoryCategory[];
 }
 
 /** Supplier storefront + inventory (from GET /supplier/me or nested in /auth/me). */
@@ -350,6 +351,15 @@ export interface Product {
   image?: string;
 }
 
+/** Branch-scoped inventory category (not the service Category model). */
+export interface InventoryCategory {
+  id: string;
+  name: string;
+  imageUrl?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
 export interface Supplier {
   id: string;
   name: string;
@@ -389,6 +399,7 @@ export interface Supplier {
   /** Branch id — same as `id` on branch listing / stores. */
   branchId?: string;
   distanceKm?: number | null;
+  inventoryCategories?: InventoryCategory[];
 }
 
 export type MaterialFulfillmentStatus =

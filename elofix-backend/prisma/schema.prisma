@@ -1268,10 +1268,15 @@ model BranchInventoryCategory {
   branchId  String
   branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
   name      String
+  imageUrl  String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@unique([branchId, name])
   @@index([branchId])
+  @@index([branchId, sortOrder])
 }
 
 model MaterialOrder {

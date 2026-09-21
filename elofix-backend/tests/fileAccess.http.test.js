@@ -52,6 +52,7 @@ async function testPublicStaticStillOpen(baseUrl) {
     "providers/user-a/work-posts/work-1.jpg",
     "suppliers/sup-a/product-images/prod-1.jpg",
     "suppliers/sup-a/store-logo/logo-1.jpg",
+    "suppliers/sup-a/category-images/cat-1.jpg",
   ];
   for (const rel of files) {
     await writeUpload(rel);

@@ -6,7 +6,7 @@ const supplierBranch = require("../controllers/supplierBranch.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeSupplierPortal } = require("../middleware/auth.middleware");
 const financialIdem = require("../middleware/financialIdempotency.middleware");
-const { uploadSupplierProductImage, uploadSupplierLogo } = require("../middleware/upload.middleware");
+const { uploadSupplierProductImage, uploadSupplierLogo, uploadSupplierCategoryImage } = require("../middleware/upload.middleware");
 const { uploadRateLimit } = require("../middleware/uploadRateLimit.middleware");
 const { UPLOAD_CATEGORIES } = require("../services/uploadRateLimit.service");
 
@@ -55,6 +55,13 @@ router.patch("/branches/:branchId/users/:branchUserId", ownerOnly, asyncHandler(
 router.delete("/branches/:branchId/users/:branchUserId", ownerOnly, asyncHandler(supplierBranch.deleteBranchUser));
 router.get("/inventory/categories", asyncHandler(portal.getInventoryCategories));
 router.post("/inventory/categories", asyncHandler(portal.postInventoryCategory));
+router.post(
+  "/inventory/categories/upload-image",
+  uploadSupplierCategoryImage.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.SUPPLIER_IMAGE),
+  asyncHandler(portal.uploadCategoryImage)
+);
+router.patch("/inventory/categories/:categoryId", asyncHandler(portal.patchInventoryCategory));
 router.get("/orders", asyncHandler(portal.getOrders));
 router.get("/orders/export", asyncHandler(portal.getOrdersExport));
 router.patch("/orders/:orderId/fulfillment", asyncHandler(portal.patchFulfillment));

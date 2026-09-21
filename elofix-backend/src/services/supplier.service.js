@@ -30,11 +30,36 @@ async function ensureInventoryCategory(tx, branchId, rawOrNormalized) {
   const id = randomUUID();
   const prismaLike = tx && typeof tx.$executeRaw === "function" ? tx : prisma;
   await prismaLike.$executeRaw`
-    INSERT INTO "BranchInventoryCategory" ("id", "branchId", "name", "createdAt")
-    VALUES (${id}, ${String(branchId)}, ${name}, NOW())
+    INSERT INTO "BranchInventoryCategory" ("id", "branchId", "name", "createdAt", "updatedAt", "sortOrder", "isActive")
+    VALUES (${id}, ${String(branchId)}, ${name}, NOW(), NOW(), 0, true)
     ON CONFLICT ("branchId", "name") DO NOTHING
   `;
   return name;
+}
+
+function serializeInventoryCategoryRow(row, { publicView = false } = {}) {
+  if (!row) return null;
+  const imageUrl =
+    row.imageUrl != null && String(row.imageUrl).trim() ? String(row.imageUrl).trim() : undefined;
+  const out = {
+    id: String(row.id),
+    name: String(row.name || ""),
+    sortOrder: Number.isFinite(Number(row.sortOrder)) ? Number(row.sortOrder) : 0,
+  };
+  if (imageUrl) out.imageUrl = imageUrl;
+  if (!publicView) {
+    out.isActive = row.isActive !== false;
+  }
+  return out;
+}
+
+function sanitizeOptionalImageUrl(raw) {
+  if (raw === undefined) return Symbol.for("omit");
+  if (raw === null || raw === "") return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.length > 2048) throw new AppError("imageUrl is too long", 400);
+  return s;
 }
 
 /**
@@ -281,13 +306,19 @@ async function findSupplierRecordByUserId(userId) {
 async function getSupplierProfileByUserId(userId) {
   const row = await findSupplierRecordByUserId(userId);
   if (!row) return null;
+  const initialBranches = await prisma.branch.findMany({
+    where: { supplierId: row.id },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  for (const b of initialBranches) {
+    await reconcileBranchInventoryCategories(userId, b.id);
+  }
   const branches = await prisma.branch.findMany({
     where: { supplierId: row.id },
     orderBy: { createdAt: "asc" },
+    include: branchService.INVENTORY_CATEGORIES_INCLUDE,
   });
-  for (const b of branches) {
-    await reconcileBranchInventoryCategories(userId, b.id);
-  }
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, email: true, name: true, phone: true, role: true, createdAt: true },
@@ -308,6 +339,7 @@ async function listSuppliersForPublicCatalog() {
   const allBranches = await prisma.branch.findMany({
     where: { isActive: true },
     orderBy: { name: "asc" },
+    include: branchService.INVENTORY_CATEGORIES_INCLUDE,
   });
   const bySup = new Map();
   for (const b of allBranches) {
@@ -335,7 +367,7 @@ async function getProductsByCategory(category) {
   const normalized = String(category || "").trim().toLowerCase();
   const branches = await prisma.branch.findMany({
     where: { isActive: true },
-    include: { supplier: true },
+    include: branchService.branchCatalogInclude({ supplier: true }),
     orderBy: [{ supplierId: "asc" }, { name: "asc" }],
   });
   const out = [];
@@ -368,6 +400,7 @@ async function getSupplierById(id) {
     branches = await prisma.branch.findMany({
       where: { supplierId: id, isActive: true },
       orderBy: { name: "asc" },
+      include: branchService.INVENTORY_CATEGORIES_INCLUDE,
     });
   } catch (err) {
     console.error("[getSupplierById] branch load failed", err.message);
@@ -392,6 +425,7 @@ async function listSuppliersForAdminDashboard() {
       const allBranches = await prisma.branch.findMany({
         where: { supplierId: { in: supplierIds } },
         orderBy: { createdAt: "asc" },
+        include: branchService.INVENTORY_CATEGORIES_INCLUDE,
       });
       for (const b of allBranches) {
         if (!branchesBySupplier.has(b.supplierId)) branchesBySupplier.set(b.supplierId, []);
@@ -512,6 +546,7 @@ async function getSupplierDetailsForAdmin(id) {
     branches = await prisma.branch.findMany({
       where: { supplierId: id },
       orderBy: { createdAt: "asc" },
+      include: branchService.INVENTORY_CATEGORIES_INCLUDE,
     });
   } catch (err) {
     console.error("[getSupplierDetailsForAdmin] branch load failed", err.message);
@@ -803,6 +838,14 @@ async function updateSupplierBusinessProfile(userId, body = {}) {
   return getSupplierProfileByUserId(userId);
 }
 
+const INVENTORY_CATEGORY_SELECT = {
+  id: true,
+  name: true,
+  imageUrl: true,
+  sortOrder: true,
+  isActive: true,
+};
+
 async function listInventoryCategoriesForPortal(reqUser, branchId) {
   const actor = await resolveInventoryActor(reqUser);
   const br = await assertBranchInventoryAccess(actor, branchId);
@@ -814,16 +857,13 @@ async function listInventoryCategoriesForPortal(reqUser, branchId) {
   if (ownerUserId) await reconcileBranchInventoryCategories(ownerUserId, br.id);
   const rows = await prisma.branchInventoryCategory.findMany({
     where: { branchId: br.id },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: INVENTORY_CATEGORY_SELECT,
   });
-  return rows.map((r) => ({
-    id: String(r.id),
-    name: String(r.name),
-  }));
+  return rows.map((r) => serializeInventoryCategoryRow(r));
 }
 
-async function createInventoryCategoryForPortal(reqUser, rawName, branchId) {
+async function createInventoryCategoryForPortal(reqUser, rawName, branchId, extras = {}) {
   const trimmed = String(rawName ?? "").trim();
   if (!trimmed) {
     throw new AppError("Category name is required", 400);
@@ -834,11 +874,70 @@ async function createInventoryCategoryForPortal(reqUser, rawName, branchId) {
   // Idempotent: create the category if missing, otherwise return the existing
   // one. Avoids a 409 when the name was already auto-derived from products.
   await ensureInventoryCategory(prisma, br.id, name);
+  const imageMark = sanitizeOptionalImageUrl(extras.imageUrl);
+  const data = {};
+  if (imageMark !== Symbol.for("omit")) data.imageUrl = imageMark;
+  if (extras.sortOrder !== undefined) {
+    const n = Number(extras.sortOrder);
+    if (!Number.isFinite(n) || n < 0 || n > 1_000_000) {
+      throw new AppError("sortOrder must be a non-negative number", 400);
+    }
+    data.sortOrder = Math.floor(n);
+  }
+  if (Object.keys(data).length > 0) {
+    await prisma.branchInventoryCategory.updateMany({
+      where: { branchId: br.id, name },
+      data,
+    });
+  }
   const row = await prisma.branchInventoryCategory.findFirst({
     where: { branchId: br.id, name },
-    select: { id: true, name: true },
+    select: INVENTORY_CATEGORY_SELECT,
   });
-  return { id: row ? String(row.id) : randomUUID(), name: row ? String(row.name) : name };
+  return serializeInventoryCategoryRow(row) || { id: randomUUID(), name, sortOrder: 0, isActive: true };
+}
+
+async function patchInventoryCategoryForPortal(reqUser, categoryId, patch = {}, branchId) {
+  const actor = await resolveInventoryActor(reqUser);
+  const cid = String(categoryId || "").trim();
+  if (!cid) throw new AppError("categoryId is required", 400);
+  const existing = await prisma.branchInventoryCategory.findUnique({
+    where: { id: cid },
+  });
+  if (!existing) throw new AppError("Category not found", 404);
+  const requestedBranch = String(branchId || "").trim();
+  if (requestedBranch && requestedBranch !== String(existing.branchId)) {
+    throw new AppError("Forbidden", 403);
+  }
+  await assertBranchInventoryAccess(actor, existing.branchId);
+  if (patch.name !== undefined && normalizeInventoryCategoryKey(patch.name) !== existing.name) {
+    throw new AppError("Category renaming is not supported", 400);
+  }
+  const data = {};
+  const imageMark = sanitizeOptionalImageUrl(patch.imageUrl);
+  if (imageMark !== Symbol.for("omit")) data.imageUrl = imageMark;
+  if (patch.sortOrder !== undefined) {
+    const n = Number(patch.sortOrder);
+    if (!Number.isFinite(n) || n < 0 || n > 1_000_000) {
+      throw new AppError("sortOrder must be a non-negative number", 400);
+    }
+    data.sortOrder = Math.floor(n);
+  }
+  if (patch.isActive !== undefined) {
+    data.isActive = Boolean(patch.isActive);
+  }
+  const row =
+    Object.keys(data).length > 0
+      ? await prisma.branchInventoryCategory.update({
+          where: { id: existing.id },
+          data,
+          select: INVENTORY_CATEGORY_SELECT,
+        })
+      : await prisma.branchInventoryCategory.findUnique({
+          where: { id: existing.id },
+          select: INVENTORY_CATEGORY_SELECT,
+        });
+  return serializeInventoryCategoryRow(row);
 }
 
 async function patchBranchForBranchStaff(branchUserId, body = {}) {
@@ -925,7 +1024,7 @@ async function patchBranchForBranchStaff(branchUserId, body = {}) {
 async function getBranchStaffPortalProfile(branchUserId) {
   const bu = await prisma.branchUser.findUnique({
     where: { id: String(branchUserId || "") },
-    include: { branch: { include: { supplier: true } } },
+    include: { branch: { include: branchService.branchCatalogInclude({ supplier: true }) } },
   });
   if (!bu) return null;
   const row = bu.branch.supplier;
@@ -933,8 +1032,14 @@ async function getBranchStaffPortalProfile(branchUserId) {
   if (supOwnerId) {
     await reconcileBranchInventoryCategories(supOwnerId, bu.branchId);
   }
+  const branchWithCats = await prisma.branch.findUnique({
+    where: { id: bu.branchId },
+    include: branchService.INVENTORY_CATEGORIES_INCLUDE,
+  });
   const pub = rowToPublicApi(row, { omitInternal: false });
-  pub.branches = [branchService.branchToPublicApi(bu.branch, row, { omitInternal: false })];
+  pub.branches = [
+    branchService.branchToPublicApi(branchWithCats || bu.branch, row, { omitInternal: false }),
+  ];
   return {
     ...pub,
     supplierLogo: row.logo || undefined,
@@ -977,6 +1082,8 @@ module.exports = {
   updateSupplierBusinessProfile,
   findSupplierRecordByUserId,
   normalizeInventoryCategoryKey,
+  serializeInventoryCategoryRow,
   listInventoryCategoriesForPortal,
   createInventoryCategoryForPortal,
+  patchInventoryCategoryForPortal,
 };

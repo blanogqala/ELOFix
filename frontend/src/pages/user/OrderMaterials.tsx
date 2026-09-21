@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
 import { PaymentModal } from '@/components/payments/PaymentModal';
+import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
 import { LoadingOverlay } from '@/components/common/loading';
 import { Supplier, Product, DeliveryProvider } from '@/types';
 import {
@@ -26,7 +27,6 @@ import {
   CreditCard,
   Lock,
   AlertCircle,
-  Package,
   MapPin,
   Loader2,
   Navigation,
@@ -41,6 +41,20 @@ import { getDeliveryProviders } from '@/lib/api/specials';
 import { reverseGeocode } from '@/lib/api/geocode';
 import { haversineKm, formatDistanceKm } from '@/lib/geo/haversine';
 import { readCachedUserCoords, writeCachedUserCoords } from '@/lib/geo/sessionUserLocation';
+import {
+  CatalogBreadcrumbs,
+  CatalogCategoryCard,
+  CatalogCategoryGrid,
+  CatalogProductCard,
+  CatalogProductGrid,
+  CatalogToolbar,
+  filterAndSortProducts,
+  filterCatalogCategories,
+  formatCategoryLabel,
+  mergeCatalogCategories,
+  resolveCategoryImageUrl,
+  type CatalogProductFilters,
+} from '@/components/catalog';
 
 interface CartItem {
   product: Product;
@@ -103,8 +117,15 @@ export default function OrderMaterials() {
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [selectedInventoryCategory, setSelectedInventoryCategory] = useState<string | null>(null);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
+    search: '',
+    category: 'all',
+    availability: 'in_stock',
+    qualityTier: 'all',
+    special: 'all',
+    sort: 'name_asc',
+  });
   const [cart, setCart] = useState<CartItem[]>([]);
   const [deliveryType, setDeliveryType] = useState<'SELF' | 'STORE_DELIVERY' | 'DELIVERY_PROVIDER'>('SELF');
   const [selectedDeliveryProvider, setSelectedDeliveryProvider] = useState('');
@@ -265,15 +286,26 @@ export default function OrderMaterials() {
     }
   }, [applyCoordsAndFillAddress, toast]);
 
-  const filteredProducts = selectedSupplier?.products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCat = categoryFilter === 'all' || p.category === categoryFilter;
-    return matchesSearch && matchesCat && p.inStock;
-  }) || [];
+  const catalogCategories = useMemo(() => {
+    if (!selectedSupplier) return [];
+    const inStock = selectedSupplier.products.filter((p) => p.inStock);
+    return mergeCatalogCategories(selectedSupplier.inventoryCategories, inStock, { includeInactive: false });
+  }, [selectedSupplier]);
 
-  const productCategories = selectedSupplier
-    ? [...new Set(selectedSupplier.products.map(p => p.category))]
-    : [];
+  const visibleCategories = useMemo(
+    () => filterCatalogCategories(catalogCategories, catalogFilters.search ?? '', selectedSupplier?.products),
+    [catalogCategories, catalogFilters.search, selectedSupplier?.products]
+  );
+
+  const filteredProducts = useMemo(() => {
+    if (!selectedSupplier) return [];
+    const list = selectedSupplier.products.filter((p) => p.inStock);
+    return filterAndSortProducts(list, {
+      ...catalogFilters,
+      category: selectedInventoryCategory || catalogFilters.category,
+      availability: 'in_stock',
+    });
+  }, [selectedSupplier, catalogFilters, selectedInventoryCategory]);
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -495,12 +527,16 @@ export default function OrderMaterials() {
                         tabIndex={0}
                         onClick={() => {
                           setSelectedSupplier(sup);
+                          setSelectedInventoryCategory(null);
+                          setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
                           setStep(2);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
                             setSelectedSupplier(sup);
+                            setSelectedInventoryCategory(null);
+                            setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
                             setStep(2);
                           }
                         }}
@@ -574,78 +610,87 @@ export default function OrderMaterials() {
                 )}
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search products..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-10" />
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <Button size="sm" variant={categoryFilter === 'all' ? 'default' : 'outline'} onClick={() => setCategoryFilter('all')}>All</Button>
-                  {productCategories.map(cat => (
-                    <Button key={cat} size="sm" variant={categoryFilter === cat ? 'default' : 'outline'} onClick={() => setCategoryFilter(cat)} className="capitalize">
-                      {cat}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-4">
-                {filteredProducts.map(product => {
-                  const inCart = cart.find(c => c.product.id === product.id);
-                  const productImageUrl = resolveUploadUrl(product.image);
-                  return (
-                    <div key={product.id} className="p-4 border border-border rounded-lg">
-                      <div className="flex items-start gap-3">
-                        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-muted">
-                          {productImageUrl ? (
-                            <img
-                              src={productImageUrl}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center">
-                              <Package className="h-6 w-6 text-muted-foreground" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm">{product.name}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="font-bold">{formatCurrency(product.price)}</span>
-                            <span className="text-xs text-muted-foreground">/{product.unit}</span>
-                            <Badge variant="secondary" className="text-xs capitalize">{product.qualityTier}</Badge>
-                            {product.special && <Badge className="bg-accent text-accent-foreground text-xs">Special</Badge>}
-                          </div>
-                          {product.description ? (
-                            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="mt-3 flex justify-end">
-                        {inCart ? (
-                          <div className="flex items-center gap-2">
-                            <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(product.id, -1)}>
-                              <Minus className="h-3 w-3" />
-                            </Button>
-                            <span className="w-6 text-center font-medium">{inCart.qty}</span>
-                            <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(product.id, 1)}>
-                              <Plus className="h-3 w-3" />
-                            </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => removeFromCart(product.id)}>
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <Button size="sm" variant="outline" onClick={() => addToCart(product)}>
-                            <Plus className="h-3 w-3 mr-1" /> Add
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              {selectedInventoryCategory ? (
+                <>
+                  <CatalogBreadcrumbs
+                    backLabel="Back to categories"
+                    onBack={() => setSelectedInventoryCategory(null)}
+                    items={[
+                      { label: 'Categories', onClick: () => setSelectedInventoryCategory(null) },
+                      { label: formatCategoryLabel(selectedInventoryCategory) },
+                    ]}
+                  />
+                  <CatalogToolbar
+                    mode="products"
+                    filters={catalogFilters}
+                    onChange={setCatalogFilters}
+                    hideCategory
+                    searchPlaceholder="Search products in this category"
+                  />
+                  {filteredProducts.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">No in-stock products match filters.</p>
+                  ) : (
+                    <CatalogProductGrid>
+                      {filteredProducts.map((product) => {
+                        const inCart = cart.find((c) => c.product.id === product.id);
+                        return (
+                          <CatalogProductCard
+                            key={product.id}
+                            product={product}
+                            selected={Boolean(inCart)}
+                            actions={
+                              inCart ? (
+                                <>
+                                  <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(product.id, -1)} aria-label="Remove one">
+                                    <Minus className="h-3 w-3" />
+                                  </Button>
+                                  <span className="w-6 text-center font-medium">{inCart.qty}</span>
+                                  <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => updateQty(product.id, 1)} aria-label="Add one">
+                                    <Plus className="h-3 w-3" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => removeFromCart(product.id)} aria-label="Remove from cart">
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button size="sm" variant="outline" onClick={() => addToCart(product)}>
+                                  <Plus className="h-3 w-3 mr-1" /> Add
+                                </Button>
+                              )
+                            }
+                          />
+                        );
+                      })}
+                    </CatalogProductGrid>
+                  )}
+                </>
+              ) : (
+                <>
+                  <CatalogToolbar
+                    mode="categories"
+                    filters={catalogFilters}
+                    onChange={setCatalogFilters}
+                    hideCategory
+                    searchPlaceholder="Search categories or products"
+                  />
+                  {visibleCategories.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">No categories match this search.</p>
+                  ) : (
+                    <CatalogCategoryGrid>
+                      {visibleCategories.map((cat) => (
+                        <CatalogCategoryCard
+                          key={cat.id || cat.key}
+                          name={cat.name}
+                          imageUrl={resolveCategoryImageUrl(cat, selectedSupplier.products)}
+                          productCount={cat.productCount}
+                          unavailable={cat.productCount === 0}
+                          onSelect={() => setSelectedInventoryCategory(cat.key)}
+                        />
+                      ))}
+                    </CatalogCategoryGrid>
+                  )}
+                </>
+              )}
 
               {cart.length > 0 && (
                 <div className="flex justify-between items-center pt-4 border-t border-border">

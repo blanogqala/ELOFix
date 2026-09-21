@@ -232,6 +232,11 @@ async function getBranchInventoryInsights(supplierOrgId, branchId) {
 
   const br = await prisma.branch.findFirst({
     where: { id: bid, supplierId: sid },
+    include: {
+      inventoryCategories: {
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      },
+    },
   });
   if (!br) throw new AppError("Branch not found", 404);
 
@@ -239,11 +244,16 @@ async function getBranchInventoryInsights(supplierOrgId, branchId) {
   const productRows = products
     .filter((p) => p && typeof p === "object")
     .map((p) => ({
-      id: String((p).id || ""),
-      name: String((p).name || ""),
-      category: String((p).category || "general"),
-      quantity: Number((p).quantity ?? 0) || 0,
-      price: Number((p).price ?? 0) || 0,
+      id: String(p.id || ""),
+      name: String(p.name || ""),
+      category: String(p.category || "general"),
+      quantity: Number(p.quantity ?? 0) || 0,
+      price: Number(p.price ?? 0) || 0,
+      inStock: p.inStock !== false,
+      unit: p.unit != null ? String(p.unit) : undefined,
+      qualityTier: p.qualityTier != null ? String(p.qualityTier) : undefined,
+      description: p.description != null ? String(p.description) : undefined,
+      image: p.image != null && String(p.image).trim() ? String(p.image).trim() : undefined,
     }));
 
   const orders = await prisma.materialOrder.findMany({
@@ -276,6 +286,13 @@ async function getBranchInventoryInsights(supplierOrgId, branchId) {
     branchId: br.id,
     products: enriched,
     categories: [...new Set(enriched.map((x) => x.category))].sort(),
+    inventoryCategories: (Array.isArray(br.inventoryCategories) ? br.inventoryCategories : []).map((r) => ({
+      id: String(r.id),
+      name: String(r.name || ""),
+      imageUrl: r.imageUrl != null && String(r.imageUrl).trim() ? String(r.imageUrl).trim() : undefined,
+      sortOrder: Number.isFinite(Number(r.sortOrder)) ? Number(r.sortOrder) : 0,
+      isActive: r.isActive !== false,
+    })),
   };
 }
 

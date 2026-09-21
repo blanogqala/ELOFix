@@ -1,42 +1,40 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { getAdminSupplierDetail } from '@/lib/api/admin';
-import type { Product } from '@/types';
-import { ArrowLeft, Building2, Layers } from 'lucide-react';
+import { ArrowLeft, Building2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatCurrency } from '@/lib/formatCurrency';
-
-function formatCategoryLabel(raw: string) {
-  const s = (raw || 'general').trim().replace(/_/g, ' ');
-  if (!s) return 'General';
-  return s.replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function groupProductsByCategory(products: Product[]): { label: string; items: Product[] }[] {
-  const m = new Map<string, Product[]>();
-  for (const p of products || []) {
-    const key = (p.category || 'general').trim().toLowerCase() || 'general';
-    const list = m.get(key) ?? [];
-    list.push(p);
-    m.set(key, list);
-  }
-  return [...m.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, items]) => ({
-      label: formatCategoryLabel(key),
-      items: items.sort((a, b) => (a.name || '').localeCompare(b.name || '')),
-    }));
-}
+import {
+  CatalogBreadcrumbs,
+  CatalogCategoryCard,
+  CatalogCategoryGrid,
+  CatalogProductCard,
+  CatalogProductGrid,
+  CatalogToolbar,
+  filterAndSortProducts,
+  filterCatalogCategories,
+  formatCategoryLabel,
+  mergeCatalogCategories,
+  resolveCategoryImageUrl,
+  type CatalogProductFilters,
+} from '@/components/catalog';
 
 export default function AdminSupplierBranchCatalogPage() {
   const { supplierId, branchId } = useParams<{ supplierId: string; branchId: string }>();
   const navigate = useNavigate();
   const sid = supplierId?.trim() ?? '';
   const bid = branchId?.trim() ?? '';
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
+    search: '',
+    category: 'all',
+    availability: 'all',
+    qualityTier: 'all',
+    special: 'all',
+    sort: 'name_asc',
+  });
 
   const detailQuery = useQuery({
     queryKey: ['admin', 'supplier', sid],
@@ -50,7 +48,23 @@ export default function AdminSupplierBranchCatalogPage() {
     () => (supplier?.branches ?? []).find((b) => b.id === bid),
     [supplier?.branches, bid]
   );
-  const catalogGroups = useMemo(() => groupProductsByCategory(branch?.products ?? []), [branch?.products]);
+
+  const catalogCategories = useMemo(
+    () => mergeCatalogCategories(branch?.inventoryCategories, branch?.products ?? [], { includeInactive: true }),
+    [branch?.inventoryCategories, branch?.products]
+  );
+
+  const visibleCategories = useMemo(
+    () => filterCatalogCategories(catalogCategories, catalogFilters.search ?? '', branch?.products),
+    [catalogCategories, catalogFilters.search, branch?.products]
+  );
+
+  const filteredProducts = useMemo(() => {
+    return filterAndSortProducts(branch?.products ?? [], {
+      ...catalogFilters,
+      category: selectedCategory || catalogFilters.category,
+    });
+  }, [branch?.products, catalogFilters, selectedCategory]);
 
   const displayBusiness = supplier?.businessName || supplier?.name || 'Supplier';
 
@@ -95,10 +109,14 @@ export default function AdminSupplierBranchCatalogPage() {
             variant="ghost"
             size="sm"
             className="-ml-3 w-fit gap-1 text-muted-foreground"
-            onClick={() => navigate(`/admin/suppliers/${encodeURIComponent(sid)}/catalog`)}
+            onClick={() =>
+              selectedCategory
+                ? setSelectedCategory(null)
+                : navigate(`/admin/suppliers/${encodeURIComponent(sid)}/catalog`)
+            }
           >
             <ArrowLeft className="h-4 w-4" />
-            All branches
+            {selectedCategory ? 'Back to categories' : 'All branches'}
           </Button>
           <div className="rounded-xl border-2 border-primary bg-card p-6 shadow-sm">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
@@ -111,43 +129,69 @@ export default function AdminSupplierBranchCatalogPage() {
                 <p className="text-sm text-muted-foreground">
                   {[branch?.address, branch?.city, branch?.area].filter(Boolean).join(' · ') || '—'}
                 </p>
+                {selectedCategory && (
+                  <Badge variant="secondary" className="font-normal">
+                    {formatCategoryLabel(selectedCategory)}
+                  </Badge>
+                )}
               </div>
             </div>
           </div>
         </div>
 
+        <CatalogToolbar
+          mode={selectedCategory ? 'products' : 'categories'}
+          filters={catalogFilters}
+          onChange={setCatalogFilters}
+          categoryKeys={catalogCategories.map((c) => c.key)}
+          hideCategory={Boolean(selectedCategory)}
+          searchPlaceholder={selectedCategory ? 'Search products' : 'Search categories or products'}
+        />
+
         {detailQuery.isLoading && <p className="text-sm text-muted-foreground">Loading catalog…</p>}
 
-        {!detailQuery.isLoading && catalogGroups.length === 0 && (
+        {!detailQuery.isLoading && !selectedCategory && visibleCategories.length === 0 && (
           <p className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
             No products listed for this branch yet.
           </p>
         )}
 
-        {catalogGroups.map((group) => (
-          <section key={group.label}>
-            <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold">
-              <Layers className="h-5 w-5 text-primary" />
-              {group.label}
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {group.items.map((p) => (
-                <Card key={p.id} className="overflow-hidden border-2 border-primary/70 shadow-sm">
-                  <CardHeader className="space-y-1 pb-2">
-                    <CardTitle className="text-base leading-snug">{p.name}</CardTitle>
-                    <p className="text-xs text-muted-foreground">{formatCategoryLabel(p.category || '')}</p>
-                  </CardHeader>
-                  <CardContent className="space-y-2 pb-4">
-                    <p className="text-lg font-semibold tabular-nums">{formatCurrency(p.price)}</p>
-                    <Badge variant={p.inStock ? 'default' : 'secondary'} className="font-normal">
-                      {p.inStock ? 'In stock' : 'Out of stock'}
-                    </Badge>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </section>
-        ))}
+        {!detailQuery.isLoading && !selectedCategory && (
+          <CatalogCategoryGrid>
+            {visibleCategories.map((cat) => (
+              <CatalogCategoryCard
+                key={cat.id || cat.key}
+                name={cat.name}
+                imageUrl={resolveCategoryImageUrl(cat, branch?.products ?? [])}
+                productCount={cat.productCount}
+                unavailable={cat.productCount === 0}
+                onSelect={() => setSelectedCategory(cat.key)}
+              />
+            ))}
+          </CatalogCategoryGrid>
+        )}
+
+        {selectedCategory && (
+          <div className="space-y-4">
+            <CatalogBreadcrumbs
+              backLabel="Back to categories"
+              onBack={() => setSelectedCategory(null)}
+              items={[
+                { label: branch?.displayName || branch?.name || 'Branch', onClick: () => setSelectedCategory(null) },
+                { label: formatCategoryLabel(selectedCategory) },
+              ]}
+            />
+            {filteredProducts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No products match filters.</p>
+            ) : (
+              <CatalogProductGrid>
+                {filteredProducts.map((p) => (
+                  <CatalogProductCard key={p.id} product={p} />
+                ))}
+              </CatalogProductGrid>
+            )}
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

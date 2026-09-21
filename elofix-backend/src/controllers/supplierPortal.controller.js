@@ -38,8 +38,27 @@ function assertBranchStaffCanMutateOrders(req) {
 
 async function postInventoryCategory(req, res) {
   const branchId = String(req.query.branchId || req.body?.branchId || "").trim();
-  const category = await supplierService.createInventoryCategoryForPortal(req.user, req.body?.name, branchId);
+  const category = await supplierService.createInventoryCategoryForPortal(
+    req.user,
+    req.body?.name,
+    branchId,
+    {
+      imageUrl: req.body?.imageUrl,
+      sortOrder: req.body?.sortOrder,
+    }
+  );
   return res.status(201).json({ success: true, category });
+}
+
+async function patchInventoryCategory(req, res) {
+  const branchId = String(req.query.branchId || req.body?.branchId || "").trim();
+  const category = await supplierService.patchInventoryCategoryForPortal(
+    req.user,
+    req.params.categoryId,
+    req.body || {},
+    branchId
+  );
+  res.json({ success: true, category });
 }
 
 async function getInventoryCategories(req, res) {
@@ -273,6 +292,18 @@ async function uploadProductImage(req, res) {
   res.json({ success: true, fileId: stored.fileId, url: stored.url });
 }
 
+async function uploadCategoryImage(req, res) {
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  await validateUploadedImageFile(req.file);
+  const stored = await registerUploadedFile(req.file, {
+    ownerUserId: req.user.userId,
+    type: "supplier_category",
+  });
+  res.json({ success: true, fileId: stored.fileId, url: stored.url });
+}
+
 async function uploadLogo(req, res) {
   if (!req.file) {
     throw new AppError("File is required", 400);
@@ -294,6 +325,7 @@ module.exports = {
   getAnalyticsBranchInventory,
   getInventoryCategories,
   postInventoryCategory,
+  patchInventoryCategory,
   getOrders,
   getOrdersExport,
   patchFulfillment,
@@ -307,5 +339,6 @@ module.exports = {
   deleteProduct,
   patchProfile,
   uploadProductImage,
+  uploadCategoryImage,
   uploadLogo,
 };

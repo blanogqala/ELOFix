@@ -9,8 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { formatCurrency } from '@/lib/formatCurrency';
-import { ArrowLeft, Building2, Search } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 import { ProductCardSkeleton } from '@/components/common/loading';
 import {
   Select,
@@ -19,23 +18,34 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-function groupByCategory(products: SupplierBranchInventoryInsightProduct[]) {
-  const m = new Map<string, SupplierBranchInventoryInsightProduct[]>();
-  for (const p of products) {
-    const c = p.category || 'general';
-    if (!m.has(c)) m.set(c, []);
-    m.get(c)!.push(p);
-  }
-  return m;
-}
+import {
+  CatalogBreadcrumbs,
+  CatalogCategoryCard,
+  CatalogCategoryGrid,
+  CatalogProductCard,
+  CatalogProductGrid,
+  CatalogToolbar,
+  filterAndSortProducts,
+  filterCatalogCategories,
+  formatCategoryLabel,
+  mergeCatalogCategories,
+  resolveCategoryImageUrl,
+  type CatalogProductFilters,
+} from '@/components/catalog';
 
 export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
   const [cityFilter, setCityFilter] = useState('');
   const [searchQ, setSearchQ] = useState('');
   const [pickedBranchId, setPickedBranchId] = useState<string | null>(null);
-  const [productSearch, setProductSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
+    search: '',
+    category: 'all',
+    availability: 'all',
+    qualityTier: 'all',
+    special: 'all',
+    sort: 'name_asc',
+  });
 
   const { data: branchRowsData } = useQuery({
     queryKey: ['supplier', 'analytics', 'branches', 'inv-ro', userId, cityFilter, searchQ],
@@ -63,21 +73,22 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
     enabled: Boolean(userId && pickedBranchId),
   });
 
+  const catalogCategories = useMemo(
+    () => mergeCatalogCategories(insight?.inventoryCategories, insight?.products ?? [], { includeInactive: true }),
+    [insight?.inventoryCategories, insight?.products]
+  );
+
+  const visibleCategories = useMemo(() => {
+    return filterCatalogCategories(catalogCategories, catalogFilters.search ?? '', insight?.products);
+  }, [catalogCategories, catalogFilters.search, insight?.products]);
+
   const filteredProducts = useMemo(() => {
     const list = insight?.products ?? [];
-    const q = productSearch.trim().toLowerCase();
-    return list.filter((p) => {
-      if (categoryFilter !== 'all' && String(p.category) !== categoryFilter) return false;
-      if (!q) return true;
-      return (
-        String(p.name || '')
-          .toLowerCase()
-          .includes(q) || String(p.category || '').toLowerCase().includes(q)
-      );
+    return filterAndSortProducts(list, {
+      ...catalogFilters,
+      category: expandedCategory || catalogFilters.category,
     });
-  }, [insight?.products, productSearch, categoryFilter]);
-
-  const byCat = useMemo(() => groupByCategory(filteredProducts), [filteredProducts]);
+  }, [insight?.products, catalogFilters, expandedCategory]);
 
   if (!pickedBranchId) {
     return (
@@ -141,81 +152,89 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-4">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="gap-1 -ml-2"
-        onClick={() => {
+      <CatalogBreadcrumbs
+        backLabel={expandedCategory ? 'Back to categories' : 'All branches'}
+        onBack={() => {
+          if (expandedCategory) {
+            setExpandedCategory(null);
+            return;
+          }
           setPickedBranchId(null);
-          setProductSearch('');
-          setCategoryFilter('all');
+          setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
         }}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        All branches
-      </Button>
+        items={[
+          {
+            label: 'Branches',
+            onClick: () => {
+              setPickedBranchId(null);
+              setExpandedCategory(null);
+            },
+          },
+          ...(expandedCategory ? [{ label: formatCategoryLabel(expandedCategory) }] : [{ label: 'Categories' }]),
+        ]}
+      />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <div className="relative max-w-md flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Search product or category"
-            value={productSearch}
-            onChange={(e) => setProductSearch(e.target.value)}
-          />
-        </div>
-        <div className="w-full sm:w-48">
-          <Label className="text-xs text-muted-foreground">Category</Label>
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="mt-1.5">
-              <SelectValue placeholder="Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {(insight?.categories ?? []).map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      <CatalogToolbar
+        mode={expandedCategory ? 'products' : 'categories'}
+        filters={catalogFilters}
+        onChange={setCatalogFilters}
+        categoryKeys={catalogCategories.map((c) => c.key)}
+        hideCategory={Boolean(expandedCategory)}
+        searchPlaceholder={expandedCategory ? 'Search products' : 'Search categories or products'}
+      />
 
       {insightLoading && <ProductCardSkeleton count={8} />}
 
-      {!insightLoading && filteredProducts.length === 0 && (
+      {!insightLoading && !expandedCategory && visibleCategories.length === 0 && (
+        <p className="text-sm text-muted-foreground">No categories match filters.</p>
+      )}
+
+      {!insightLoading && !expandedCategory && (
+        <CatalogCategoryGrid>
+          {visibleCategories.map((cat) => (
+            <CatalogCategoryCard
+              key={cat.id || cat.key}
+              name={cat.name}
+              imageUrl={resolveCategoryImageUrl(cat, insight?.products ?? [])}
+              productCount={cat.productCount}
+              unavailable={cat.productCount === 0}
+              onSelect={() => setExpandedCategory(cat.key)}
+            />
+          ))}
+        </CatalogCategoryGrid>
+      )}
+
+      {!insightLoading && expandedCategory && filteredProducts.length === 0 && (
         <p className="text-sm text-muted-foreground">No products match filters.</p>
       )}
 
-      <div className="space-y-6">
-        {[...byCat.entries()].map(([cat, items]) => (
-          <Card key={cat} className="card-elevated">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base capitalize">{cat}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {items.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 py-2 last:border-0 text-sm"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium">{p.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Stock: {p.quantity} · Sold (non-cancelled): {p.unitsSold}
-                      {p.unitsAddedApprox != null ? ` · Est. added: ${p.unitsAddedApprox}` : ''}
-                    </p>
-                  </div>
-                  <p className="tabular-nums font-medium">{formatCurrency(p.price)}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {!insightLoading && expandedCategory && (
+        <CatalogProductGrid>
+          {filteredProducts.map((p: SupplierBranchInventoryInsightProduct) => (
+            <CatalogProductCard
+              key={p.id}
+              product={{
+                id: p.id,
+                name: p.name,
+                category: p.category,
+                price: p.price,
+                unit: p.unit,
+                inStock: p.inStock,
+                quantity: p.quantity,
+                qualityTier: p.qualityTier as 'low' | 'medium' | 'high' | undefined,
+                image: p.image,
+                description: p.description,
+              }}
+              details={
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Stock: {p.quantity} · Sold (non-cancelled): {p.unitsSold}
+                  {p.unitsAddedApprox != null ? ` · Est. added: ${p.unitsAddedApprox}` : ''}
+                </p>
+              }
+            />
+          ))}
+        </CatalogProductGrid>
+      )}
     </div>
   );
 }
