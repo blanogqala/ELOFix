@@ -1173,17 +1173,22 @@ async function finalizeJob(job, meta) {
   let completionPaymentDue = base.completionPaymentDue;
   try {
     const obligationService = require("./customerPaymentObligation.service");
-    const row = await obligationService.getOpenObligationForJob(workingJob.id);
-    if (row) {
-      const display = obligationService.deriveDisplayStatus(row);
-      completionPaymentDue = {
-        ...(completionPaymentDue || {}),
-        amountDue: Number(row.amount),
-        dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
-        status: display,
-        obligationId: row.id,
-        source: row.source,
-      };
+    if (await obligationService.isJobUnderOpenCase(workingJob.id)) {
+      await obligationService.cancelWorkflowObligationForOpenCase(workingJob.id, workingJob.customerId);
+      completionPaymentDue = null;
+    } else {
+      const row = await obligationService.getOpenObligationForJob(workingJob.id);
+      if (row) {
+        const display = obligationService.deriveDisplayStatus(row);
+        completionPaymentDue = {
+          ...(completionPaymentDue || {}),
+          amountDue: Number(row.amount),
+          dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
+          status: display,
+          obligationId: row.id,
+          source: row.source,
+        };
+      }
     }
   } catch (_e) {
     /* table may be absent before migration */

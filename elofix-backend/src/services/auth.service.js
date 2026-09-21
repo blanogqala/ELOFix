@@ -350,8 +350,19 @@ async function getMe(ctx) {
 
   assertCustomerAccountActive(user);
 
-  const { password: _p, ...safe } = user;
-  const blockInfo = getBlockInfo(user);
+  try {
+    const obligationService = require("./customerPaymentObligation.service");
+    await obligationService.reconcileCustomerMarketplaceRestriction(ctx.userId);
+  } catch (_e) {
+    /* obligation table may be absent before migration */
+  }
+
+  const fresh = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: userPublicSelect,
+  });
+  const { password: _p, ...safe } = fresh || user;
+  const blockInfo = getBlockInfo(fresh || user);
   const { getLegalStatusForUser } = require("./legalAcceptance.service");
   const legalStatus = await getLegalStatusForUser(ctx.userId, "CUSTOMER");
   return {

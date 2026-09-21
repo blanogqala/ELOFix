@@ -3,6 +3,7 @@ const { pipeline } = require("stream/promises");
 const AppError = require("../utils/AppError");
 const { resolveFileForDownload } = require("../services/fileStorage.service");
 const { assertProtectedFileAccess } = require("../services/fileAccess.service");
+const { isPublicFileType } = require("../utils/fileAccessPolicy.util");
 const objectStorage = require("../services/objectStorage.service");
 
 function contentDispositionFilename(name) {
@@ -23,6 +24,11 @@ async function getFileById(req, res) {
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
   res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader(
+    "Cache-Control",
+    isPublicFileType(file.type) ? "public, max-age=86400" : "private, no-store"
+  );
 
   const streamed = await objectStorage.streamLocalOrRemote(file.relPath, file.absolutePath);
   if (!streamed) {

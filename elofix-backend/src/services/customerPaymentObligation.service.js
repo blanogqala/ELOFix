@@ -214,7 +214,12 @@ async function markObligationPaidForJob(jobId, tx = prisma) {
 
 async function cancelOpenObligationForJob(jobId, tx = prisma) {
   const open = await getOpenObligationForJob(jobId, tx);
-  if (!open) return null;
+  if (!open) {
+    await mutateJobMetaInTransaction(tx, jobId, (m) =>
+      m?.completionPaymentDue ? { ...m, completionPaymentDue: null } : m
+    );
+    return null;
+  }
   const cancelled = await tx.customerPaymentObligation.update({
     where: { id: open.id },
     data: { status: "CANCELLED" },
@@ -228,6 +233,46 @@ async function cancelOpenObligationForJob(jobId, tx = prisma) {
     userIds: [cancelled.customerId].filter(Boolean),
   });
   return cancelled;
+}
+
+/**
+ * Remaining labor is not payable while a dispute/cancellation case is open.
+ * Cancels a workflow obligation and lifts marketplace restriction if nothing else is overdue.
+ */
+async function cancelWorkflowObligationForOpenCase(jobId, customerId, tx = prisma) {
+  const cancelled = await cancelOpenObligationForJob(jobId, tx);
+  if (customerId) {
+    await clearCustomerMarketplaceRestrictionIfClear(customerId, tx);
+  }
+  return cancelled;
+}
+
+async function isJobUnderOpenCase(jobId, tx = prisma) {
+  const id = String(jobId || "").trim();
+  if (!id) return false;
+  const openCase = await tx.jobDispute.findFirst({
+    where: { jobId: id, status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
+    select: { id: true },
+  });
+  return Boolean(openCase);
+}
+
+/**
+ * Drop workflow obligations on jobs still in dispute, then lift restriction if nothing else is overdue.
+ */
+async function reconcileCustomerMarketplaceRestriction(customerId) {
+  const cid = String(customerId || "").trim();
+  if (!cid) return false;
+  const open = await prisma.customerPaymentObligation.findMany({
+    where: { customerId: cid, status: { in: OPEN_STATUSES } },
+    select: { jobId: true },
+  });
+  for (const row of open) {
+    if (await isJobUnderOpenCase(row.jobId)) {
+      await cancelWorkflowObligationForOpenCase(row.jobId, cid);
+    }
+  }
+  return clearCustomerMarketplaceRestrictionIfClear(cid);
 }
 
 async function applyCustomerMarketplaceRestriction(customerId, reason, tx = prisma) {
@@ -315,6 +360,7 @@ function assertCustomerMarketplaceNotRestricted(user) {
 }
 
 async function assertCustomerCanStartPaidTransaction(userId) {
+  await reconcileCustomerMarketplaceRestriction(userId);
   const user = await prisma.user.findUnique({
     where: { id: String(userId) },
     select: {
@@ -372,6 +418,9 @@ module.exports = {
   ensureObligationForJobIfPaymentDue,
   markObligationPaidForJob,
   cancelOpenObligationForJob,
+  cancelWorkflowObligationForOpenCase,
+  isJobUnderOpenCase,
+  reconcileCustomerMarketplaceRestriction,
   applyCustomerMarketplaceRestriction,
   clearCustomerMarketplaceRestrictionIfClear,
   afterObligationPaid,

@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
-import { Package, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatCurrency';
-import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { formatCategoryLabel, type CatalogProductLike } from './catalogUtils';
+import { CatalogMediaImage } from './CatalogMediaImage';
 
 function qualityClass(tier: string | undefined) {
   switch (tier) {
@@ -28,7 +28,6 @@ export function CatalogProductCard({
   details?: ReactNode;
   selected?: boolean;
 }) {
-  const src = resolveUploadUrl(product.image);
   return (
     <article
       className={cn(
@@ -36,14 +35,13 @@ export function CatalogProductCard({
         selected ? 'border-primary ring-primary/25 shadow-md' : 'border-primary/50 hover:border-primary'
       )}
     >
-      <div className="relative aspect-[4/3] w-full shrink-0 bg-muted">
-        {src ? (
-          <img src={src} alt={product.name} className="absolute inset-0 size-full object-cover" />
-        ) : (
-          <div className="flex size-full items-center justify-center bg-primary/5">
-            <Package className="h-8 w-8 text-primary/40" aria-hidden />
-          </div>
-        )}
+      <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted">
+        <CatalogMediaImage
+          src={product.image}
+          alt={product.name}
+          className="absolute inset-0 h-full w-full"
+          iconClassName="h-8 w-8 text-primary/40"
+        />
         {product.special && (
           <Badge className="absolute right-2 top-2 gap-0.5 bg-accent px-2 text-[10px] text-accent-foreground shadow-sm">
             <Sparkles className="size-3" /> Special
