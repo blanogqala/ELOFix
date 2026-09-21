@@ -90,10 +90,12 @@ export function mergeCatalogCategories(
 ): CatalogCategoryView[] {
   const includeInactive = options?.includeInactive !== false;
   const byKey = new Map<string, CatalogCategoryView>();
+  const inactiveKeys = new Set<string>();
 
   for (const row of persisted ?? []) {
     if (!row || typeof row !== 'object') continue;
     const key = canonicalInventoryCategory(row.name);
+    if (row.isActive === false) inactiveKeys.add(key);
     if (!includeInactive && row.isActive === false) continue;
     byKey.set(key, {
       key,
@@ -112,6 +114,7 @@ export function mergeCatalogCategories(
     const key = canonicalInventoryCategory(p.category);
     let row = byKey.get(key);
     if (!row) {
+      if (!includeInactive && inactiveKeys.has(key)) continue;
       row = {
         key,
         name: key,

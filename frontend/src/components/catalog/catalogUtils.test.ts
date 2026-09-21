@@ -69,6 +69,27 @@ describe('mergeCatalogCategories', () => {
     expect(mergeCatalogCategories(persisted, [], { includeInactive: false })).toHaveLength(0);
     expect(mergeCatalogCategories(persisted, [], { includeInactive: true })).toHaveLength(1);
   });
+
+  it('does not reconstruct an inactive category from a public payload that omitted it', () => {
+    const publicCats: InventoryCategory[] = [{ id: 'c1', name: 'tiles' }];
+    const publicProducts = [product({ name: 'Ceramic', category: 'tiles' })];
+    const merged = mergeCatalogCategories(publicCats, publicProducts, { includeInactive: false });
+    expect(merged.map((c) => c.key)).toEqual(['tiles']);
+    expect(merged.find((c) => c.key === 'hidden-cat')).toBeUndefined();
+  });
+
+  it('does not revive an explicitly inactive persisted category as a legacy product group', () => {
+    const persisted: InventoryCategory[] = [
+      { id: 'c1', name: 'tiles' },
+      { id: 'c2', name: 'hidden-cat', isActive: false },
+    ];
+    const products = [
+      product({ name: 'Ceramic', category: 'tiles' }),
+      product({ name: 'Secret', category: 'hidden-cat' }),
+    ];
+    const merged = mergeCatalogCategories(persisted, products, { includeInactive: false });
+    expect(merged.map((c) => c.key)).toEqual(['tiles']);
+  });
 });
 
 describe('category image fallback', () => {

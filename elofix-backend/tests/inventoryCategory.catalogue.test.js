@@ -203,6 +203,95 @@ async function main() {
     );
     assert.deepStrictEqual(emptyPub.inventoryCategories, []);
 
+    const stored = await prisma.branch.findUnique({ where: { id: branch.id } });
+    const currentProducts = Array.isArray(stored.products) ? [...stored.products] : [];
+    await prisma.branchInventoryCategory.create({
+      data: { branchId: branch.id, name: "hidden-cat", isActive: false },
+    });
+    await prisma.branch.update({
+      where: { id: branch.id },
+      data: {
+        products: [
+          ...currentProducts,
+          {
+            id: randomUUID(),
+            name: "Secret SKU",
+            category: "hidden-cat",
+            price: 9,
+            unit: "bag",
+            qualityTier: "low",
+            inStock: true,
+            quantity: 2,
+          },
+          {
+            id: randomUUID(),
+            name: "Legacy Pipe",
+            category: "orphan-legacy",
+            price: 12,
+            unit: "m",
+            qualityTier: "medium",
+            inStock: true,
+            quantity: 1,
+          },
+        ],
+      },
+    });
+    const reloaded2 = await prisma.branch.findUnique({
+      where: { id: branch.id },
+      include: branchService.INVENTORY_CATEGORIES_INCLUDE,
+    });
+    assert.ok(
+      Array.isArray(reloaded2.products) && reloaded2.products.some((p) => p.name === "Secret SKU"),
+      "stored JSON still contains inactive-category product"
+    );
+
+    const pub2 = branchService.branchToPublicApi(reloaded2, supplier, { omitInternal: true });
+    assert.ok(
+      pub2.inventoryCategories.find((c) => c.name === "tiles"),
+      "A: public sees active category"
+    );
+    assert.ok(
+      pub2.products.some((p) => p.name === "White Tile"),
+      "A: public sees product in active category"
+    );
+    assert.ok(
+      !pub2.inventoryCategories.some((c) => c.name === "hidden-cat"),
+      "B: public omits inactive category metadata"
+    );
+    assert.ok(
+      !pub2.products.some((p) => p.name === "Secret SKU"),
+      "B: public omits product in inactive category"
+    );
+    assert.ok(
+      pub2.products.some((p) => p.name === "Legacy Pipe"),
+      "C: public still receives legacy product with no category row"
+    );
+
+    const afterPublic = await prisma.branch.findUnique({ where: { id: branch.id } });
+    assert.ok(
+      Array.isArray(afterPublic.products) && afterPublic.products.some((p) => p.name === "Secret SKU"),
+      "public mapping must not mutate stored Branch.products JSON"
+    );
+
+    const internal = branchService.branchToPublicApi(reloaded2, supplier, { omitInternal: false });
+    const hiddenMeta = internal.inventoryCategories.find((c) => c.name === "hidden-cat");
+    assert.ok(hiddenMeta, "D: internal still receives inactive category");
+    assert.strictEqual(hiddenMeta.isActive, false);
+    assert.ok(
+      internal.products.some((p) => p.name === "Secret SKU"),
+      "D: internal still receives inactive-category product"
+    );
+
+    const listedInternal = await supplierService.listInventoryCategoriesForPortal(supplierActor, branch.id);
+    assert.ok(
+      listedInternal.find((c) => c.name === "hidden-cat" && c.isActive === false),
+      "D: supplier list still includes inactive category"
+    );
+
+    const storeProducts = await branchService.getBranchProductsById(branch.id);
+    assert.ok(!storeProducts.some((p) => p.name === "Secret SKU"), "public store products omit inactive category");
+    assert.ok(storeProducts.some((p) => p.name === "Legacy Pipe"), "public store products keep legacy categories");
+
     console.log("inventoryCategory.catalogue.test.js: all tests passed");
   } finally {
     await prisma.branchInventoryCategory.deleteMany({

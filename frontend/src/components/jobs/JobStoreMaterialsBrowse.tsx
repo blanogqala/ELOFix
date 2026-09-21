@@ -498,6 +498,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
         {view === 'categories' && selectedSupplier && (
           <div className="space-y-4 pb-4">
             <CatalogToolbar
+              mode="categories"
               filters={catalogFilters}
               onChange={setCatalogFilters}
               hideCategory
@@ -546,6 +547,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
               ]}
             />
             <CatalogToolbar
+              mode="products"
               filters={catalogFilters}
               onChange={setCatalogFilters}
               hideCategory

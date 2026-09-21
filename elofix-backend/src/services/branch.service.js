@@ -55,6 +55,45 @@ function branchCatalogInclude(extra = {}) {
   };
 }
 
+function normalizeInventoryCategoryKey(raw) {
+  const s = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  return s.length ? s : "general";
+}
+
+/** Persisted category keys that are explicitly inactive (isActive === false). */
+function inactivePersistedCategoryKeys(branch) {
+  const keys = new Set();
+  const rows = Array.isArray(branch?.inventoryCategories) ? branch.inventoryCategories : [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    if (r.isActive === false) keys.add(normalizeInventoryCategoryKey(r.name));
+  }
+  return keys;
+}
+
+/**
+ * Clone products for an API payload. Public reads omit products whose category
+ * matches an explicitly inactive persisted BranchInventoryCategory. Stored JSON
+ * is never mutated. Products with no matching category row stay visible.
+ */
+function productsForApi(branch, { omitInternal = true } = {}) {
+  const rawProducts = Array.isArray(branch.products) ? branch.products : [];
+  const inactiveKeys = omitInternal ? inactivePersistedCategoryKeys(branch) : null;
+  const products = [];
+  for (const p of rawProducts) {
+    if (!p || typeof p !== "object") continue;
+    if (inactiveKeys && inactiveKeys.size > 0) {
+      const key = normalizeInventoryCategoryKey(p.category);
+      if (inactiveKeys.has(key)) continue;
+    }
+    const cloned = safeJsonClone(p);
+    if (cloned && typeof cloned === "object") products.push(cloned);
+  }
+  return products;
+}
+
 function mapInventoryCategories(branch, { omitInternal = true } = {}) {
   const rows = Array.isArray(branch?.inventoryCategories) ? branch.inventoryCategories : [];
   const out = [];
@@ -78,13 +117,7 @@ function mapInventoryCategories(branch, { omitInternal = true } = {}) {
 }
 
 function branchToPublicApi(branch, supplierRow, { omitInternal = true } = {}) {
-  const rawProducts = Array.isArray(branch.products) ? branch.products : [];
-  const products = [];
-  for (const p of rawProducts) {
-    if (!p || typeof p !== "object") continue;
-    const cloned = safeJsonClone(p);
-    if (cloned && typeof cloned === "object") products.push(cloned);
-  }
+  const products = productsForApi(branch, { omitInternal });
   const latNum =
     branch.latitude !== undefined && branch.latitude !== null && String(branch.latitude) !== ""
       ? Number(branch.latitude)
@@ -257,10 +290,12 @@ async function getBranchByIdWithSupplier(branchId) {
 }
 
 async function getBranchProductsById(branchId) {
-  const row = await prisma.branch.findUnique({ where: { id: String(branchId || "") } });
+  const row = await prisma.branch.findUnique({
+    where: { id: String(branchId || "") },
+    include: INVENTORY_CATEGORIES_INCLUDE,
+  });
   if (!row) return [];
-  const products = Array.isArray(row.products) ? row.products : [];
-  return products;
+  return productsForApi(row, { omitInternal: true });
 }
 
 async function assertBranchOwnedByUser(branchId, userId) {
@@ -469,6 +504,9 @@ module.exports = {
   mapInventoryCategories,
   branchCatalogInclude,
   INVENTORY_CATEGORIES_INCLUDE,
+  normalizeInventoryCategoryKey,
+  inactivePersistedCategoryKeys,
+  productsForApi,
   listBranchesForLocation,
   getBranchByIdWithSupplier,
   getBranchProductsById,

@@ -140,6 +140,7 @@ export default function AdminSupplierBranchCatalogPage() {
         </div>
 
         <CatalogToolbar
+          mode={selectedCategory ? 'products' : 'categories'}
           filters={catalogFilters}
           onChange={setCatalogFilters}
           categoryKeys={catalogCategories.map((c) => c.key)}

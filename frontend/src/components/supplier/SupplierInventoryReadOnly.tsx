@@ -9,7 +9,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { formatCurrency } from '@/lib/formatCurrency';
 import { Building2 } from 'lucide-react';
 import { ProductCardSkeleton } from '@/components/common/loading';
 import {
@@ -176,6 +175,7 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
       />
 
       <CatalogToolbar
+        mode={expandedCategory ? 'products' : 'categories'}
         filters={catalogFilters}
         onChange={setCatalogFilters}
         categoryKeys={catalogCategories.map((c) => c.key)}
@@ -231,7 +231,6 @@ export function SupplierInventoryReadOnly({ userId }: { userId: string }) {
                   {p.unitsAddedApprox != null ? ` · Est. added: ${p.unitsAddedApprox}` : ''}
                 </p>
               }
-              actions={<p className="text-sm font-medium tabular-nums">{formatCurrency(p.price)}</p>}
             />
           ))}
         </CatalogProductGrid>

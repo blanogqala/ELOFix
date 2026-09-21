@@ -621,6 +621,7 @@ export default function OrderMaterials() {
                     ]}
                   />
                   <CatalogToolbar
+                    mode="products"
                     filters={catalogFilters}
                     onChange={setCatalogFilters}
                     hideCategory
@@ -666,6 +667,7 @@ export default function OrderMaterials() {
               ) : (
                 <>
                   <CatalogToolbar
+                    mode="categories"
                     filters={catalogFilters}
                     onChange={setCatalogFilters}
                     hideCategory

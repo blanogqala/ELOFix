@@ -6,6 +6,7 @@ import {
   getSupplierInventoryCategories,
   patchSupplierProduct,
   postSupplierInventoryCategory,
+  patchSupplierInventoryCategory,
   postSupplierProduct,
   uploadSupplierCategoryImage,
   uploadSupplierProductImage,
@@ -37,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { Plus, Trash2, Pencil, ChevronDown, Loader2 } from 'lucide-react';
 import { ProductCardSkeleton } from '@/components/common/loading';
 import axios from 'axios';
@@ -54,6 +56,7 @@ import {
   formatCategoryLabel,
   mergeCatalogCategories,
   resolveCategoryImageUrl,
+  type CatalogCategoryView,
   type CatalogProductFilters,
 } from '@/components/catalog';
 
@@ -99,6 +102,9 @@ export function SupplierInventory({ userId }: { userId: string }) {
   const [categoryImageFile, setCategoryImageFile] = useState<File | null>(null);
   const [categoryPreviewUrl, setCategoryPreviewUrl] = useState<string | null>(null);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<CatalogCategoryView | null>(null);
+  const [categoryVisible, setCategoryVisible] = useState(true);
+  const [removeCategoryImage, setRemoveCategoryImage] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -262,7 +268,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
     setFormErrors({});
     setImageFile(null);
     if (imagePreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(imagePreviewUrl);
-    setImagePreviewUrl(p.image ? p.image : null);
+    setImagePreviewUrl(p.image ? resolveUploadUrl(p.image) || null : null);
     const rawQty = p.quantity ?? (p.inStock ? 1 : 0);
     const saneQty =
       typeof rawQty === 'number' && rawQty >= 500_000 ? lastPositiveQtyRef.current.get(p.id) ?? 1 : rawQty;
@@ -422,6 +428,26 @@ export function SupplierInventory({ userId }: { userId: string }) {
     if (categoryPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(categoryPreviewUrl);
     setCategoryPreviewUrl(null);
     if (categoryFileInputRef.current) categoryFileInputRef.current.value = '';
+    setEditingCategory(null);
+    setCategoryVisible(true);
+    setRemoveCategoryImage(false);
+  };
+
+  const openAddCategory = () => {
+    resetCategoryDialog();
+    setCategoryDialogOpen(true);
+  };
+
+  const openEditCategory = (cat: CatalogCategoryView) => {
+    if (categoryPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(categoryPreviewUrl);
+    setEditingCategory(cat);
+    setNewCategoryName(formatCategoryLabel(cat.name));
+    setCategoryImageFile(null);
+    setRemoveCategoryImage(false);
+    setCategoryVisible(cat.isActive !== false);
+    setCategoryPreviewUrl(cat.imageUrl ? resolveUploadUrl(cat.imageUrl) || null : null);
+    if (categoryFileInputRef.current) categoryFileInputRef.current.value = '';
+    setCategoryDialogOpen(true);
   };
 
   const handleCreateCategory = async () => {
@@ -450,6 +476,39 @@ export function SupplierInventory({ userId }: { userId: string }) {
       toast({
         title: 'Error',
         description: e instanceof Error ? e.message : 'Could not create category',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingCategory(false);
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    if (!editingCategory?.id) return;
+    if (!selectedBranchId) {
+      toast({ title: 'Select a branch', variant: 'destructive' });
+      return;
+    }
+    setIsSavingCategory(true);
+    try {
+      const patch: { imageUrl?: string | null; isActive?: boolean } = {
+        isActive: categoryVisible,
+      };
+      if (categoryImageFile) {
+        const uploaded = await uploadSupplierCategoryImage(categoryImageFile);
+        patch.imageUrl = uploaded.url;
+      } else if (removeCategoryImage) {
+        patch.imageUrl = null;
+      }
+      await patchSupplierInventoryCategory(editingCategory.id, patch, selectedBranchId);
+      toast({ title: 'Category updated' });
+      invalidate();
+      setCategoryDialogOpen(false);
+      resetCategoryDialog();
+    } catch (e) {
+      toast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Could not update category',
         variant: 'destructive',
       });
     } finally {
@@ -525,17 +584,19 @@ export function SupplierInventory({ userId }: { userId: string }) {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <CatalogToolbar
+            mode={expandedCategory ? 'products' : 'categories'}
             filters={catalogFilters}
             onChange={setCatalogFilters}
             categoryKeys={mergedCategoryKeys}
             hideCategory={Boolean(expandedCategory)}
+            showCategory={!expandedCategory}
             searchPlaceholder={
               expandedCategory ? 'Search products in this category' : 'Search categories or products'
             }
           />
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => setCategoryDialogOpen(true)}>
+          <Button type="button" variant="outline" onClick={openAddCategory}>
             <Plus className="mr-2 h-4 w-4" />
             Add category
           </Button>
@@ -596,7 +657,16 @@ export function SupplierInventory({ userId }: { userId: string }) {
               imageUrl={resolveCategoryImageUrl(cat, branchProducts)}
               productCount={cat.productCount}
               unavailable={cat.productCount === 0}
+              hidden={cat.isActive === false}
               onSelect={() => setExpandedCategory(cat.key)}
+              actions={
+                cat.id ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => openEditCategory(cat)}>
+                    <Pencil className="mr-1 h-3 w-3" />
+                    Edit
+                  </Button>
+                ) : undefined
+              }
             />
           ))}
         </CatalogCategoryGrid>
@@ -615,7 +685,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Add category</DialogTitle>
+            <DialogTitle>{editingCategory ? 'Edit category' : 'Add category'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -625,7 +695,12 @@ export function SupplierInventory({ userId }: { userId: string }) {
                 value={newCategoryName}
                 onChange={(e) => setNewCategoryName(e.target.value)}
                 placeholder="e.g. Tiles"
+                readOnly={Boolean(editingCategory)}
+                disabled={Boolean(editingCategory)}
               />
+              {editingCategory ? (
+                <p className="mt-1 text-xs text-muted-foreground">Renaming is not supported in this phase.</p>
+              ) : null}
             </div>
             <div>
               <Label htmlFor="supplier-new-cat-image">Category image</Label>
@@ -639,6 +714,7 @@ export function SupplierInventory({ userId }: { userId: string }) {
                   const f = e.target.files?.[0];
                   if (!f) return;
                   setCategoryImageFile(f);
+                  setRemoveCategoryImage(false);
                   const blob = URL.createObjectURL(f);
                   if (categoryPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(categoryPreviewUrl);
                   setCategoryPreviewUrl(blob);
@@ -646,16 +722,51 @@ export function SupplierInventory({ userId }: { userId: string }) {
               />
               <p className="mt-1 text-xs text-muted-foreground">JPEG, PNG, WebP, or GIF · up to 8 MB.</p>
               <div className="mt-2 aspect-[4/3] max-h-48 overflow-hidden rounded-md border border-border bg-muted">
-                {categoryPreviewUrl ? (
+                {categoryPreviewUrl && !removeCategoryImage ? (
                   <img src={categoryPreviewUrl} alt="Category preview" className="h-full w-full object-cover" />
                 ) : (
                   <p className="flex h-full items-center justify-center text-xs text-muted-foreground">Preview</p>
                 )}
               </div>
+              {editingCategory && categoryPreviewUrl && !removeCategoryImage && !categoryImageFile ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => {
+                    setRemoveCategoryImage(true);
+                    if (categoryPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(categoryPreviewUrl);
+                    setCategoryPreviewUrl(null);
+                  }}
+                >
+                  Remove image
+                </Button>
+              ) : null}
             </div>
-            <Button type="button" className="btn-accent w-full" disabled={isSavingCategory} onClick={() => void handleCreateCategory()}>
-              {isSavingCategory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-              {isSavingCategory ? 'Creating…' : 'Create'}
+            {editingCategory ? (
+              <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
+                <div>
+                  <p className="text-sm font-medium">Visible to customers</p>
+                  <p className="text-xs text-muted-foreground">
+                    Off hides this category and its products from customer and provider catalogues. Inventory is not deleted.
+                  </p>
+                </div>
+                <Switch
+                  checked={categoryVisible}
+                  onCheckedChange={setCategoryVisible}
+                  aria-label="Visible to customers"
+                />
+              </div>
+            ) : null}
+            <Button
+              type="button"
+              className="btn-accent w-full"
+              disabled={isSavingCategory}
+              onClick={() => void (editingCategory ? handleSaveCategory() : handleCreateCategory())}
+            >
+              {isSavingCategory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : editingCategory ? null : <Plus className="mr-2 h-4 w-4" />}
+              {isSavingCategory ? (editingCategory ? 'Saving…' : 'Creating…') : editingCategory ? 'Save' : 'Create'}
             </Button>
           </div>
         </DialogContent>
