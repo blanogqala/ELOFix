@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
@@ -15,12 +15,28 @@ function elofixProductionConfigPlugin() {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  let apiTarget = String(env.VITE_API_ORIGIN || "http://127.0.0.1:5000").replace(/\/$/, "");
+  try {
+    const parsed = new URL(apiTarget);
+    if (parsed.hostname === "localhost") {
+      apiTarget = `${parsed.protocol}//127.0.0.1${parsed.port ? `:${parsed.port}` : ""}`;
+    }
+  } catch {
+    apiTarget = "http://127.0.0.1:5000";
+  }
+
+  return {
   server: {
     host: "::",
     port: 8080,
     hmr: {
       overlay: false,
+    },
+    proxy: {
+      "/api": { target: apiTarget, changeOrigin: true },
+      "/uploads": { target: apiTarget, changeOrigin: true },
     },
   },
   plugins: [react(), mode === "development" && componentTagger(), elofixProductionConfigPlugin()].filter(Boolean),
@@ -48,4 +64,5 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-}));
+  };
+});

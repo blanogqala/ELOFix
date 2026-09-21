@@ -272,6 +272,7 @@ async function createCustomerDisputeInTransaction(tx, params) {
       statusOverride: "DISPUTED",
       escrowFrozen: true,
       disputeId: row.id,
+      completionPaymentDue: null,
       chat,
       ...metaExtras,
     };
@@ -283,6 +284,9 @@ async function createCustomerDisputeInTransaction(tx, params) {
     });
     return patched;
   });
+
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.cancelWorkflowObligationForOpenCase(job.id, job.customerId, tx);
 
   return row;
 }
@@ -358,8 +362,12 @@ async function createCancellationDisputeInTransaction(tx, params) {
     statusOverride: "DISPUTED",
     escrowFrozen: true,
     disputeId: row.id,
+    completionPaymentDue: null,
     ...metaExtras,
   }));
+
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.cancelWorkflowObligationForOpenCase(job.id, job.customerId, tx);
 
   return row;
 }
