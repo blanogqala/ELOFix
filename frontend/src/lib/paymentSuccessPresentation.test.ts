@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isProviderRefundRepaymentReceiptForJob,
   paymentProviderDisplayName,
   paymentSuccessCopy,
   paymentSuccessDonePath,
@@ -99,6 +100,34 @@ describe('paymentSuccess navigation', () => {
         role: 'provider',
       })
     ).toBe('/provider/jobs/job-9/refund?payment=pi-rr');
+  });
+});
+
+describe('isProviderRefundRepaymentReceiptForJob', () => {
+  const paidRepayment = {
+    state: 'PAID',
+    kind: 'PROVIDER_REFUND_REPAYMENT',
+    jobId: 'job-9',
+  };
+
+  it('accepts a PAID provider refund repayment for the same job', () => {
+    expect(isProviderRefundRepaymentReceiptForJob(paidRepayment, 'job-9')).toBe(true);
+  });
+
+  it('rejects PROCESSING even when kind and job match', () => {
+    expect(
+      isProviderRefundRepaymentReceiptForJob({ ...paidRepayment, state: 'PROCESSING' }, 'job-9')
+    ).toBe(false);
+  });
+
+  it('rejects a different payment kind', () => {
+    expect(
+      isProviderRefundRepaymentReceiptForJob({ ...paidRepayment, kind: 'LABOR' }, 'job-9')
+    ).toBe(false);
+  });
+
+  it('rejects a mismatched jobId', () => {
+    expect(isProviderRefundRepaymentReceiptForJob(paidRepayment, 'job-other')).toBe(false);
   });
 });
 

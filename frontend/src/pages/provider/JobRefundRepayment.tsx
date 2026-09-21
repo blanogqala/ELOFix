@@ -11,12 +11,23 @@ import {
   submitProviderRefundRepayment,
   type ProviderJobRefundObligation,
 } from '@/lib/api/providerAccount';
-import { getPaymentProviders, isPaymentProvider, type PaymentProvider } from '@/lib/api/payments';
+import {
+  getPaymentIntent,
+  getPaymentProviders,
+  isPaymentProvider,
+  type PaymentIntent,
+  type PaymentProvider,
+} from '@/lib/api/payments';
 import { PaymentMethodSelector } from '@/components/payments/PaymentMethodSelector';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { formatPersonDisplayName } from '@/lib/displayPersonName';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import {
+  isProviderRefundRepaymentReceiptForJob,
+  paymentProviderDisplayName,
+} from '@/lib/paymentSuccessPresentation';
+import { ArrowLeft, CheckCircle, Loader2 } from 'lucide-react';
 import { resolveProviderRefundDisplay } from '@/lib/refundStatusDisplay';
+import { format, parseISO } from 'date-fns';
 
 function statusLabelFromObligation(obligation: ProviderJobRefundObligation): string {
   const display = resolveProviderRefundDisplay({
@@ -43,6 +54,76 @@ function statusLabelFromObligation(obligation: ProviderJobRefundObligation): str
     default:
       return 'Payment required';
   }
+}
+
+function formatReceiptPaidAt(iso?: string | null): string | null {
+  if (!iso) return null;
+  try {
+    return format(parseISO(iso), 'd MMM yyyy · HH:mm');
+  } catch {
+    return iso;
+  }
+}
+
+function RefundRepaymentReceiptPanel({ intent }: { intent: PaymentIntent }) {
+  const amountLabel = Number.isFinite(Number(intent.amount))
+    ? formatCurrency(Number(intent.amount), { decimals: 2 })
+    : null;
+  const paidAtLabel = formatReceiptPaidAt(intent.paidAt);
+  const methodLabel = paymentProviderDisplayName(intent.provider);
+
+  return (
+    <section
+      role="region"
+      aria-label="Refund repayment receipt"
+      className="card-elevated space-y-4 p-5 sm:p-6"
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10"
+          aria-hidden="true"
+        >
+          <CheckCircle className="h-5 w-5 text-success" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold sm:text-xl">Refund repayment</h2>
+          <p className="text-sm text-muted-foreground">Verified payment to EloFix</p>
+        </div>
+      </div>
+      <dl className="space-y-3 rounded-lg bg-muted/60 p-4 text-sm">
+        {amountLabel ? (
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <dt className="shrink-0 text-muted-foreground">Amount</dt>
+            <dd className="font-semibold tabular-nums">{amountLabel}</dd>
+          </div>
+        ) : null}
+        <div className="flex min-w-0 items-start justify-between gap-4">
+          <dt className="shrink-0 text-muted-foreground">Status</dt>
+          <dd className="font-medium text-success">Paid</dd>
+        </div>
+        {intent.merchantReference ? (
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <dt className="shrink-0 text-muted-foreground">Reference</dt>
+            <dd className="min-w-0 break-all text-right font-mono font-medium">
+              {intent.merchantReference}
+            </dd>
+          </div>
+        ) : null}
+        {paidAtLabel ? (
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <dt className="shrink-0 text-muted-foreground">Date</dt>
+            <dd className="text-right font-medium">{paidAtLabel}</dd>
+          </div>
+        ) : null}
+        {methodLabel ? (
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <dt className="shrink-0 text-muted-foreground">Paid with</dt>
+            <dd className="font-medium">{methodLabel}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
+  );
 }
 
 function lockedRepaymentGateway(
@@ -101,6 +182,7 @@ export default function ProviderJobRefundRepayment() {
   const [selectedGateway, setSelectedGateway] = useState<PaymentProvider | ''>('');
   const [providersLoading, setProvidersLoading] = useState(true);
   const [providersError, setProvidersError] = useState(false);
+  const [receipt, setReceipt] = useState<PaymentIntent | null>(null);
 
   const load = async () => {
     if (!jobId) return;
@@ -157,6 +239,45 @@ export default function ProviderJobRefundRepayment() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  useEffect(() => {
+    const paymentId = String(searchParams.get('payment') || '').trim();
+    if (!paymentId || !jobId) {
+      setReceipt(null);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const intent = await getPaymentIntent(paymentId);
+        if (cancelled) return;
+        if (isProviderRefundRepaymentReceiptForJob(intent, jobId)) {
+          setReceipt(intent);
+          return;
+        }
+        setReceipt(null);
+        toast({
+          title: 'Receipt not available',
+          description: 'This payment is not a verified refund repayment for this job.',
+          variant: 'destructive',
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setReceipt(null);
+        toast({
+          title: 'Receipt not found',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, searchParams]);
 
   useEffect(() => {
     const locked = lockedRepaymentGateway(obligation);
@@ -273,6 +394,7 @@ export default function ProviderJobRefundRepayment() {
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to earnings
             </Link>
           </Button>
+          {receipt ? <RefundRepaymentReceiptPanel intent={receipt} /> : null}
           <p className="text-muted-foreground">No refund obligation found for this job.</p>
         </div>
       </DashboardLayout>
@@ -309,6 +431,8 @@ export default function ProviderJobRefundRepayment() {
             </Link>
           </Button>
         </div>
+
+        {receipt ? <RefundRepaymentReceiptPanel intent={receipt} /> : null}
 
         <div className="card-elevated space-y-4 p-5 sm:p-6">
           <h1 className="text-xl font-semibold sm:text-2xl">Refund repayment</h1>

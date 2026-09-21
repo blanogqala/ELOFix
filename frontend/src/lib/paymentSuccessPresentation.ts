@@ -149,6 +149,26 @@ export function paymentSuccessReceiptPath(input: {
   return `/user/payments?payment=${id}`;
 }
 
+/**
+ * A JobRefundRepayment `?payment=` deep-link may only show a receipt when the
+ * verified intent is a PAID provider refund repayment for this job.
+ */
+export function isProviderRefundRepaymentReceiptForJob(
+  intent: {
+    state?: string | null;
+    kind?: string | null;
+    jobId?: string | null;
+  } | null,
+  jobId: string
+): boolean {
+  if (!intent) return false;
+  if (String(intent.state || '').toUpperCase() !== 'PAID') return false;
+  if (String(intent.kind || '').toUpperCase() !== 'PROVIDER_REFUND_REPAYMENT') return false;
+  const intentJob = intent.jobId != null ? String(intent.jobId).trim() : '';
+  const pageJob = String(jobId || '').trim();
+  return Boolean(pageJob) && intentJob === pageJob;
+}
+
 export function paymentProviderDisplayName(provider?: string | null): string | null {
   const p = norm(provider);
   if (!p) return null;
