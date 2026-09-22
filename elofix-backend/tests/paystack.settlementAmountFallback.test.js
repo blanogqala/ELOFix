@@ -180,6 +180,7 @@ async function run() {
     main: `91012${suffix.slice(0, 4)}`,
     hist: `91013${suffix.slice(0, 4)}`,
     histNew: `91014${suffix.slice(0, 4)}`,
+    stale: `91015${suffix.slice(0, 4)}`,
   };
 
   const applyOpts = (scoped) => ({ source: "reconcile_job", notify: false, scopedSubaccount: scoped });
@@ -441,6 +442,31 @@ async function run() {
     assert.strictEqual(histRow.subaccountCode, ACCT_OLD);
     await prisma.providerWithdrawalProfile.deleteMany({ where: { providerId: provider.id } }).catch(() => {});
     await prisma.provider.deleteMany({ where: { id: provider.id } }).catch(() => {});
+
+    const acctStale = acctFor("stale");
+    const stale = await seedIntent({
+      suffix: `${suffix}stale`,
+      acct: acctStale,
+      paidAt: new Date("2026-08-01T10:00:00.000Z"),
+    });
+    const recent = await seedIntent({
+      suffix: `${suffix}recent`,
+      acct: acctStale,
+      paidAt: new Date("2026-09-10T10:00:00.000Z"),
+    });
+    fixtures.push(stale, recent);
+    const staleMatch = await rec.applyPaystackSettlementRow(
+      settlementRow(ids.stale, { settlement_date: "2026-09-15T00:00:00.000Z" }),
+      applyOpts(acctStale)
+    );
+    assert.strictEqual(staleMatch.skipped, false);
+    assert.strictEqual(staleMatch.matchingStrategy, "settlement_amount_single");
+    const staleFresh = await prisma.paymentIntent.findUnique({ where: { id: stale.intent.id } });
+    const recentFresh = await prisma.paymentIntent.findUnique({ where: { id: recent.intent.id } });
+    assert.strictEqual(staleFresh.payoutSettlementStatus, "PENDING");
+    assert.strictEqual(staleFresh.payoutSettlementId, null);
+    assert.strictEqual(recentFresh.payoutSettlementStatus, "SETTLED");
+    assert.ok(recentFresh.payoutSettlementId);
 
     console.log("paystack.settlementAmountFallback.test.js: all passed");
   } finally {
