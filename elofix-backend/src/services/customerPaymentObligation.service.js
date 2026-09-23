@@ -238,13 +238,75 @@ async function cancelOpenObligationForJob(jobId, tx = prisma) {
 /**
  * Remaining labor is not payable while a dispute/cancellation case is open.
  * Cancels a workflow obligation and lifts marketplace restriction if nothing else is overdue.
+ * Re-checks the case inside the write so a resolve that landed after the caller's read
+ * cannot cancel a balance that was just restored.
  */
 async function cancelWorkflowObligationForOpenCase(jobId, customerId, tx = prisma) {
+  if (tx === prisma) {
+    return prisma.$transaction(
+      (inner) => cancelWorkflowObligationForOpenCase(jobId, customerId, inner),
+      { isolationLevel: "Serializable", maxWait: 5000, timeout: 15000 }
+    );
+  }
+  if (!(await isJobUnderOpenCase(jobId, tx))) return null;
   const cancelled = await cancelOpenObligationForJob(jobId, tx);
   if (customerId) {
     await clearCustomerMarketplaceRestrictionIfClear(customerId, tx);
   }
   return cancelled;
+}
+
+const RESTORABLE_OBLIGATION_SOURCES = new Set(["COMPLETION_WORKFLOW", "ADMIN_RELEASE"]);
+
+/**
+ * Close-case does not forgive an unpaid completion balance. Put back the workflow
+ * obligation cancelled for this open case (same amount and due date).
+ * An older cancelled balance from a previous resolution is left cancelled.
+ */
+async function reinstateLatestCancelledObligation(jobId, tx = prisma, opts = {}) {
+  const jid = String(jobId || "").trim();
+  const disputeId = String(opts.disputeId || "").trim();
+  if (!jid || !disputeId) return null;
+
+  const jobRow = await tx.job.findUnique({
+    where: { id: jid },
+    select: { paymentProgress: true },
+  });
+  if (!jobRow) return null;
+  if (String(jobRow.paymentProgress || "").toUpperCase() === "FULLY_PAID") return null;
+
+  const latest = await tx.customerPaymentObligation.findFirst({
+    where: { jobId: jid },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!latest || latest.status !== "CANCELLED") return null;
+  const source = String(latest.source || "").toUpperCase();
+  if (!RESTORABLE_OBLIGATION_SOURCES.has(source)) return null;
+  const updatedAt = latest.updatedAt ? new Date(latest.updatedAt) : null;
+  if (!updatedAt || Number.isNaN(updatedAt.getTime())) return null;
+
+  const previousLog = await tx.disputeResolutionLog.findFirst({
+    where: {
+      disputeId,
+      ...(opts.currentResolutionLogId
+        ? { id: { not: String(opts.currentResolutionLogId) } }
+        : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  if (previousLog && updatedAt.getTime() <= new Date(previousLog.createdAt).getTime()) return null;
+
+  const overdue = latest.dueAt && new Date(latest.dueAt).getTime() <= Date.now();
+  const restored = await tx.customerPaymentObligation.update({
+    where: { id: latest.id },
+    data: { status: overdue ? "OVERDUE" : "DUE" },
+  });
+  await syncCompletionPaymentDueMeta(tx, jid, restored);
+  if (overdue && restored.customerId) {
+    await applyCustomerMarketplaceRestriction(restored.customerId, MARKETPLACE_RESTRICT_REASON, tx);
+  }
+  return restored;
 }
 
 async function isJobUnderOpenCase(jobId, tx = prisma) {
@@ -419,6 +481,7 @@ module.exports = {
   markObligationPaidForJob,
   cancelOpenObligationForJob,
   cancelWorkflowObligationForOpenCase,
+  reinstateLatestCancelledObligation,
   isJobUnderOpenCase,
   reconcileCustomerMarketplaceRestriction,
   applyCustomerMarketplaceRestriction,

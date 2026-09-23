@@ -489,6 +489,11 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
         const obligationService = require("./customerPaymentObligation.service");
         await obligationService.cancelOpenObligationForJob(job.id, tx);
       } else if (action === "CLOSE_CASE") {
+        const obligationService = require("./customerPaymentObligation.service");
+        const restoredObligation = await obligationService.reinstateLatestCancelledObligation(job.id, tx, {
+          disputeId: dispute.id,
+          currentResolutionLogId: resolutionLogId,
+        });
         await mutateJobMetaInTransaction(tx, job.id, (m) => {
           const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
           const chat = Array.isArray(m.chat) ? [...m.chat] : [];
@@ -499,6 +504,14 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
             escrowFrozen: false,
             chat,
           };
+          if (restoredObligation) {
+            patched.statusOverride = "AWAITING_CONFIRMATION";
+            patched.cancellationSource = null;
+            patched.cancellationReason = null;
+            patched.cancellationDetails = null;
+            patched.cancelledBy = null;
+            patched.cancelledAt = null;
+          }
           patched = appendTimelineEventIfAbsent(patched, {
             type: "DISPUTE_CLOSED",
             at: new Date().toISOString(),
