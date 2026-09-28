@@ -4,6 +4,7 @@ import path from "path";
 import { build as buildServiceWorker } from "esbuild";
 import { componentTagger } from "lovable-tagger";
 import { assertProductionFrontendConfig } from "./scripts/productionFrontendConfig.mjs";
+import { PRECACHE_URLS } from "./scripts/pwaPrecache.mjs";
 
 function elofixServiceWorkerPlugin() {
   let outDir = "";
@@ -14,6 +15,13 @@ function elofixServiceWorkerPlugin() {
       outDir = config.build.outDir;
     },
     async closeBundle() {
+      const { createHash } = await import("node:crypto");
+      const { readFileSync } = await import("node:fs");
+      const revisions: Record<string, string> = {};
+      for (const url of PRECACHE_URLS) {
+        const file = path.resolve(outDir, url.slice(1));
+        revisions[url] = createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
+      }
       const outfile = path.resolve(outDir, "sw.js");
       await buildServiceWorker({
         entryPoints: [path.resolve(__dirname, "src/pwa/sw.ts")],
@@ -23,6 +31,9 @@ function elofixServiceWorkerPlugin() {
         platform: "browser",
         target: "es2020",
         legalComments: "none",
+        define: {
+          __ELOFIX_PRECACHE_REVISIONS__: JSON.stringify(revisions),
+        },
       });
       console.log(`[pwa] Wrote ${outfile}`);
     },

@@ -54,4 +54,10 @@ describe('service worker cache policy', () => {
     expect(swSource).toContain('isSensitiveUrl(url)');
     expect(swSource).not.toContain('/api/');
   });
+
+  it('refreshes icons, the manifest, and the offline page on the next service worker install', () => {
+    expect(swSource).toContain('updatePrecache');
+    expect(swSource).toContain('__ELOFIX_PRECACHE_REVISIONS__');
+    expect(swSource).toContain("cache: 'reload'");
+  });
 });
