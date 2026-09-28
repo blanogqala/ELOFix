@@ -30,6 +30,8 @@ describe('production HTML metadata (Block 6)', () => {
 
   it('references EloFix-owned favicon assets', () => {
     expect(indexHtml).toContain('href="/favicon.ico"');
+    expect(indexHtml).toContain('href="/apple-touch-icon.png"');
+    expect(indexHtml).toContain('apple-mobile-web-app-capable" content="yes"');
     expect(indexHtml).toContain('apple-mobile-web-app-title" content="EloFix"');
     expect(indexHtml).toContain('theme-color" content="#0A2540"');
   });
