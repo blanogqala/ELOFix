@@ -76,31 +76,32 @@ async function processCustomerPaymentObligations() {
         continue;
       }
 
-      const alreadyOverdue = row.status === "OVERDUE";
       const alreadyNotified = Boolean(row.overdueNotifiedAt);
       const alreadyRestricted = Boolean(row.restrictionAppliedAt);
+      const openStatuses = obligationService.OPEN_STATUSES;
 
+      let claimed = false;
       await prisma.$transaction(async (tx) => {
-        if (!alreadyOverdue) {
-          await tx.customerPaymentObligation.update({
-            where: { id: row.id },
-            data: { status: "OVERDUE" },
-          });
+        if (row.jobId && (await obligationService.isJobUnderOpenCase(row.jobId, tx))) {
+          await obligationService.cancelWorkflowObligationForOpenCase(row.jobId, row.customerId, tx);
+          return;
         }
-        const applied = await obligationService.applyCustomerMarketplaceRestriction(
+        // Claim only while the row is still open. A payment or dispute cancel that
+        // committed after this batch was loaded must not be overwritten with OVERDUE.
+        const claimedUpdate = await tx.customerPaymentObligation.updateMany({
+          where: { id: row.id, status: { in: openStatuses } },
+          data: {
+            status: "OVERDUE",
+            ...(!alreadyRestricted ? { restrictionAppliedAt: row.restrictionAppliedAt || now } : {}),
+          },
+        });
+        if (claimedUpdate.count !== 1) return;
+        claimed = true;
+        await obligationService.applyCustomerMarketplaceRestriction(
           row.customerId,
           obligationService.MARKETPLACE_RESTRICT_REASON,
           tx
         );
-        if (applied || !alreadyRestricted) {
-          await tx.customerPaymentObligation.update({
-            where: { id: row.id },
-            data: {
-              status: "OVERDUE",
-              restrictionAppliedAt: row.restrictionAppliedAt || now,
-            },
-          });
-        }
         await obligationService.syncCompletionPaymentDueMeta(tx, row.jobId, {
           ...row,
           status: "OVERDUE",
@@ -108,29 +109,33 @@ async function processCustomerPaymentObligations() {
         });
       });
 
+      if (!claimed) continue;
+
       if (!alreadyNotified) {
-        await notificationEvents.notifyCustomerPaymentOverdue({
-          customerId: row.customerId,
-          jobId: row.jobId,
-          amount,
-        });
-        await notificationEvents.notifyAdminCustomerPaymentOverdue({
-          customerId: row.customerId,
-          jobId: row.jobId,
-          amount,
-        });
-        await prisma.customerPaymentObligation.update({
-          where: { id: row.id },
+        const stamped = await prisma.customerPaymentObligation.updateMany({
+          where: { id: row.id, status: { in: openStatuses }, overdueNotifiedAt: null },
           data: { overdueNotifiedAt: now, status: "OVERDUE" },
         });
-        await logAudit(AUDIT_ACTIONS.PAYMENT_OBLIGATION_OVERDUE, {
-          actorType: ACTOR_TYPES.SYSTEM,
-          userId: row.customerId,
-          entityType: ENTITY_TYPES.JOB,
-          entityId: row.jobId,
-          newValue: { obligationId: row.id, amount },
-        });
-        stats.overdue++;
+        if (stamped.count === 1) {
+          await notificationEvents.notifyCustomerPaymentOverdue({
+            customerId: row.customerId,
+            jobId: row.jobId,
+            amount,
+          });
+          await notificationEvents.notifyAdminCustomerPaymentOverdue({
+            customerId: row.customerId,
+            jobId: row.jobId,
+            amount,
+          });
+          await logAudit(AUDIT_ACTIONS.PAYMENT_OBLIGATION_OVERDUE, {
+            actorType: ACTOR_TYPES.SYSTEM,
+            userId: row.customerId,
+            entityType: ENTITY_TYPES.JOB,
+            entityId: row.jobId,
+            newValue: { obligationId: row.id, amount },
+          });
+          stats.overdue++;
+        }
       }
     } catch (e) {
       stats.errors++;
