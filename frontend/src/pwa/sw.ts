@@ -1,9 +1,13 @@
 /**
  * EloFix service worker.
  * Navigations are always fetched from the network and are never written to Cache Storage.
- * Only precached icons/offline page and hashed /assets files are cached.
+ * Only precached icons, the manifest, the offline page, and hashed /assets files are cached.
+ * Those stable URLs are refreshed when their content revision changes.
  */
-import { CACHE_NAME, PRECACHE_URLS, isCacheableStaticAsset, isPrecachedAsset, isSensitiveUrl } from './cachePolicy';
+import { CACHE_NAME, isCacheableStaticAsset, isPrecachedAsset, isSensitiveUrl } from './cachePolicy';
+import { updatePrecache } from './precacheUpdate';
+
+declare const __ELOFIX_PRECACHE_REVISIONS__: Record<string, string>;
 
 interface WaitUntilEvent extends Event {
   waitUntil(promise: Promise<unknown>): void;
@@ -51,10 +55,18 @@ async function cacheFirstStatic(request: Request): Promise<Response> {
 
 worker.addEventListener('install', (event) => {
   event.waitUntil(
-    worker.caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll([...PRECACHE_URLS]))
-      .then(() => worker.skipWaiting()),
+    (async () => {
+      const cache = await worker.caches.open(CACHE_NAME);
+      await updatePrecache({
+        revisions: __ELOFIX_PRECACHE_REVISIONS__,
+        store: {
+          match: (url) => cache.match(url),
+          put: (url, response) => cache.put(url, response),
+        },
+        fetchFresh: (url) => fetch(url, { cache: 'reload' }),
+      });
+      await worker.skipWaiting();
+    })(),
   );
 });
 

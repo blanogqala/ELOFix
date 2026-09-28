@@ -1,9 +1,14 @@
-/** Cache name shared by the service worker. Bump when precached files change. */
+/**
+ * Cache name for hashed build files and the current precache.
+ * Icons, the manifest, and the offline page are updated by content revision,
+ * not by renaming this cache.
+ */
 export const CACHE_NAME = 'elofix-static-v1';
 
 /**
  * Safe static files precached so the offline screen and icons work without a network.
  * Do not add HTML shells for account, job, auth, or payment routes.
+ * Keep this list identical to scripts/pwaPrecache.mjs.
  */
 export const PRECACHE_URLS = [
   '/offline.html',
