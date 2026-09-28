@@ -5,7 +5,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { getCurrentSession } from '@/lib/api/auth';
-import { getDefaultDashboardPath } from '@/lib/postLoginRedirect';
+import { getDefaultDashboardPath, resolvePostLoginPath, splitInternalPath } from '@/lib/postLoginRedirect';
+
+function destinationFor(role: string, nextRaw: string): string {
+  const next = splitInternalPath(nextRaw);
+  return resolvePostLoginPath(role, next.pathname, getDefaultDashboardPath(role), next.search, next.hash);
+}
 
 function stripExchangeFromBrowserUrl() {
   if (typeof window === 'undefined') return;
@@ -34,7 +39,6 @@ export default function GoogleCallback() {
     async function finishGoogleAuth() {
       const error = searchParams.get('error');
       const errorDescription = searchParams.get('error_description');
-      const nextPath = searchParams.get('next') || '';
 
       if (error) {
         toast({
@@ -61,7 +65,7 @@ export default function GoogleCallback() {
 
       const existingSession = getCurrentSession();
       if (existingSession?.user && existingSession.token) {
-        navigate(getDefaultDashboardPath(existingSession.user.role), { replace: true });
+        navigate(destinationFor(existingSession.user.role, searchParams.get('next') || ''), { replace: true });
         return;
       }
 
@@ -77,11 +81,14 @@ export default function GoogleCallback() {
               : 'You have successfully signed in with Google.',
         });
 
+        const destination = destinationFor(user.role, searchParams.get('next') || '');
         const isNewProviderRegister =
           searchParams.get('mode') === 'register' && user.role === 'provider';
-        navigate(getDefaultDashboardPath(user.role), {
+        navigate(destination, {
           replace: true,
-          ...(isNewProviderRegister ? { state: { newProviderOnboarding: true } } : {}),
+          ...(isNewProviderRegister && destination === getDefaultDashboardPath('provider')
+            ? { state: { newProviderOnboarding: true } }
+            : {}),
         });
       } catch (err) {
         toast({

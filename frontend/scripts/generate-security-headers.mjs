@@ -153,6 +153,15 @@ function buildHeadersFile(env) {
   Permissions-Policy: geolocation=(self), camera=(self), microphone=(), payment=(self)
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Content-Security-Policy: ${csp}
+
+/sw.js
+  Cache-Control: no-cache
+
+/site.webmanifest
+  Cache-Control: no-cache
+
+/offline.html
+  Cache-Control: no-cache
 `;
 }
 
