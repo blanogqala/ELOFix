@@ -1175,6 +1175,8 @@ async function finalizeJob(job, meta) {
     const obligationService = require("./customerPaymentObligation.service");
     if (await obligationService.isJobUnderOpenCase(workingJob.id)) {
       await obligationService.cancelWorkflowObligationForOpenCase(workingJob.id, workingJob.customerId);
+    }
+    if (await obligationService.isJobUnderOpenCase(workingJob.id)) {
       completionPaymentDue = null;
     } else {
       const row = await obligationService.getOpenObligationForJob(workingJob.id);

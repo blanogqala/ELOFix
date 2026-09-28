@@ -368,6 +368,115 @@ async function testReturnProviderThenMarkComplete() {
   }
 }
 
+async function testCloseCaseRestoresCancelledCompletionObligation() {
+  const bundle = await createBundle();
+  try {
+    await payDeposit(bundle);
+    const job = await prisma.job.findUnique({ where: { id: bundle.job.id } });
+    const meta = await getJobMeta(bundle.job.id);
+    const obligationService = require("../src/services/customerPaymentObligation.service");
+    const created = await obligationService.ensureObligationForJobIfPaymentDue(job, meta, {
+      source: "COMPLETION_WORKFLOW",
+    });
+    assert.ok(created?.id, "mark-complete equivalent must open a completion obligation");
+    assert.strictEqual(String(created.status), "DUE");
+    const dueAtIso = new Date(created.dueAt).toISOString();
+    const amount = Number(created.amount);
+
+    const dispute = await jobDisputeService.openDispute(bundle.job.id, bundle.customer.id, {
+      comment: "Reject completion after the balance was already due.",
+      requestedResolution: "PROVIDER_RETURN_FIX",
+      images: [],
+      videos: [],
+    });
+    const paused = await prisma.customerPaymentObligation.findUnique({ where: { id: created.id } });
+    assert.strictEqual(paused.status, "CANCELLED", "open dispute pauses collection");
+    const hidden = await getJobMeta(bundle.job.id);
+    assert.ok(!hidden.completionPaymentDue);
+
+    await disputeAdminService.resolveDispute(bundle.admin.id, dispute.id, {
+      action: "CLOSE_CASE",
+      notes: "No money movement",
+    });
+
+    const restored = await prisma.customerPaymentObligation.findUnique({ where: { id: created.id } });
+    assert.strictEqual(restored.status, "DUE", "close case must restore the same unpaid balance");
+    assert.strictEqual(new Date(restored.dueAt).toISOString(), dueAtIso);
+    assert.strictEqual(Number(restored.amount), amount);
+
+    const jobAfter = await prisma.job.findUnique({ where: { id: bundle.job.id } });
+    const metaAfter = await getJobMeta(bundle.job.id);
+    assert.strictEqual(toFrontendStatus(jobAfter.status, metaAfter), "AWAITING_CONFIRMATION");
+    assert.strictEqual(jobAfter.paymentProgress, "FIRST_PAID");
+    assert.ok(metaAfter.completionPaymentDue);
+    assert.strictEqual(Number(metaAfter.completionPaymentDue.amountDue), amount);
+    assert.strictEqual(
+      paymentModeService.resolveNextLaborPaymentType(jobAfter, metaAfter),
+      "COMPLETION"
+    );
+
+    await obligationService.cancelWorkflowObligationForOpenCase(bundle.job.id, bundle.customer.id);
+    const stillDue = await prisma.customerPaymentObligation.findUnique({ where: { id: created.id } });
+    assert.strictEqual(
+      stillDue.status,
+      "DUE",
+      "a stale open-case cancel must not wipe the balance after the case is closed"
+    );
+    const metaStill = await getJobMeta(bundle.job.id);
+    assert.ok(metaStill.completionPaymentDue);
+
+    console.log("disputeEvidenceResolution: CLOSE_CASE restores cancelled completion obligation OK");
+  } finally {
+    await cleanup(bundle);
+  }
+}
+
+async function testCloseCaseDoesNotReviveEarlierObligation() {
+  const bundle = await createBundle();
+  try {
+    await payDeposit(bundle);
+    const job = await prisma.job.findUnique({ where: { id: bundle.job.id } });
+    const meta = await getJobMeta(bundle.job.id);
+    const obligationService = require("../src/services/customerPaymentObligation.service");
+    const created = await obligationService.ensureObligationForJobIfPaymentDue(job, meta, {
+      source: "COMPLETION_WORKFLOW",
+    });
+    assert.ok(created?.id);
+    const dispute = await jobDisputeService.openDispute(bundle.job.id, bundle.customer.id, {
+      comment: "First completion rejection.",
+      requestedResolution: "PROVIDER_RETURN_FIX",
+      images: [],
+      videos: [],
+    });
+    await disputeAdminService.resolveDispute(bundle.admin.id, dispute.id, {
+      action: "RETURN_PROVIDER",
+      notes: "Fix the work",
+    });
+    const afterReturn = await prisma.customerPaymentObligation.findUnique({ where: { id: created.id } });
+    assert.strictEqual(afterReturn.status, "CANCELLED");
+
+    await jobDisputeService.openDisputeFromCancellation(bundle.job.id, bundle.customer.id, {
+      reason: "changed_mind",
+      details: "Cancel after the provider was sent back",
+      actorRole: "customer",
+    });
+    const reopened = await prisma.jobDispute.findUnique({ where: { jobId: bundle.job.id } });
+    await disputeAdminService.resolveDispute(bundle.admin.id, reopened.id, {
+      action: "CLOSE_CASE",
+      notes: "No money movement",
+    });
+
+    const still = await prisma.customerPaymentObligation.findUnique({ where: { id: created.id } });
+    assert.strictEqual(still.status, "CANCELLED", "close case must not revive a balance from an earlier resolution");
+    const metaAfter = await getJobMeta(bundle.job.id);
+    assert.ok(!metaAfter.completionPaymentDue);
+    assert.notStrictEqual(String(metaAfter.statusOverride || ""), "AWAITING_CONFIRMATION");
+    console.log("disputeEvidenceResolution: CLOSE_CASE does not revive an earlier obligation OK");
+  } finally {
+    await cleanup(bundle);
+  }
+}
+
 async function testCloseCaseNoPaymentChange() {
   const bundle = await createBundle();
   try {
@@ -400,6 +509,8 @@ async function main() {
   await testReleaseFundsCompletionDue();
   await testFullRefundPaidOnly();
   await testReturnProviderThenMarkComplete();
+  await testCloseCaseRestoresCancelledCompletionObligation();
+  await testCloseCaseDoesNotReviveEarlierObligation();
   await testCloseCaseNoPaymentChange();
   console.log("disputeEvidenceResolution.test.js: all passed");
 }

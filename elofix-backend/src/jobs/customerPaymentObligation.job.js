@@ -39,7 +39,7 @@ async function processCustomerPaymentObligations() {
       if (!(amount > 0.01)) continue;
       if (row.jobId && (await obligationService.isJobUnderOpenCase(row.jobId))) {
         await obligationService.cancelWorkflowObligationForOpenCase(row.jobId, row.customerId);
-        continue;
+        if (await obligationService.isJobUnderOpenCase(row.jobId)) continue;
       }
       const dueAt = new Date(row.dueAt);
       const daysLeft = daysBetween(now, dueAt);
