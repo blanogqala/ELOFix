@@ -37,16 +37,19 @@ test.describe('iPhone install guidance', () => {
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
   });
 
-  test('explains Add to Home Screen once, then stays dismissed', async ({ page }) => {
+  test('keeps the landing install option after closing and reloading', async ({ page }) => {
     await page.goto('/');
+    const entry = page.getByRole('button', { name: 'How to add EloFix' });
+    await expect(entry).toBeVisible();
+    await entry.click();
     const guidance = page.getByRole('region', { name: 'Install EloFix' });
-    await expect(guidance).toBeVisible();
     await expect(guidance).toContainText('Add to Home Screen');
-    await expectNoHorizontalOverflow(page);
-    await page.getByRole('button', { name: 'Not now' }).click();
-    await expect(guidance).toHaveCount(0);
+    await page.getByRole('button', { name: 'Close install instructions' }).click();
+    await expect(entry).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('region', { name: 'Install EloFix' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'How to add EloFix' })).toBeVisible();
+    await page.goto('/login');
+    await expect(page.getByRole('button', { name: 'How to add EloFix' })).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
 });

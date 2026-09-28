@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
+import { PwaInstallPrompt } from '@/components/pwa/PwaInstallPrompt';
 import {
   HeroSection,
   DualPathSection,
@@ -36,6 +37,7 @@ export default function Landing() {
       <Header />
       <main>
         <HeroSection />
+        <PwaInstallPrompt />
         <DualPathSection />
         <HowItWorksSection />
         <CategoriesSection />
