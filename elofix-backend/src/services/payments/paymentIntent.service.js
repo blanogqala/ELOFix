@@ -15,6 +15,7 @@ const {
 const escrowSettlement = require("./escrowSettlement.service");
 const { assertCustomerNotBlocked } = require("../accountStatus.service");
 const webhookService = require("./webhook.service");
+const { claimReturnProcessing } = require("./returnProcessingClaim");
 const { logAudit } = require("../auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../../constants/auditActions");
 const {
@@ -737,10 +738,7 @@ async function confirmPaymentReturn(intentId, userId, role) {
 
   if (intent.provider === "PAYSTACK") {
     if (intent.state === "PENDING" || intent.state === "PROCESSING") {
-      await prisma.paymentIntent.update({
-        where: { id: intent.id },
-        data: { state: "PROCESSING" },
-      });
+      await claimReturnProcessing(prisma, intent.id);
     }
   } else if (
     intent.state !== "PAID" &&
@@ -788,10 +786,7 @@ async function confirmPaymentReturn(intentId, userId, role) {
       settleOnReturn: payfastSettleOnReturn(),
     });
   } else if (intent.state === "PENDING" || intent.state === "PROCESSING") {
-    await prisma.paymentIntent.update({
-      where: { id: intent.id },
-      data: { state: "PROCESSING" },
-    });
+    await claimReturnProcessing(prisma, intent.id);
   }
 
   const fresh = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
