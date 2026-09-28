@@ -10,7 +10,7 @@ import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { EloFixLogo } from '@/components/EloFixLogo';
 import { LegalFooterLinks } from '@/components/legal/LegalFooterLinks';
-import { getDefaultDashboardPath } from '@/lib/postLoginRedirect';
+import { getDefaultDashboardPath, resolvePostLoginPath, splitInternalPath } from '@/lib/postLoginRedirect';
 import { emailValidationMessage } from '@/lib/accountValidation';
 
 type LoginFieldErrors = {
@@ -31,9 +31,24 @@ export default function Login() {
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
 
-  const fromStatePath = location.state?.from?.pathname || '/';
-  const nextPath = searchParams.get('next') || '';
-  const from = nextPath || fromStatePath;
+  const fromState = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)
+    ?.from;
+  const nextParam = searchParams.get('next') || '';
+  const attempted = nextParam
+    ? splitInternalPath(nextParam)
+    : {
+        pathname: fromState?.pathname || '/',
+        search: fromState?.search || '',
+        hash: fromState?.hash || '',
+      };
+  const destinationFor = (role: string) =>
+    resolvePostLoginPath(
+      role,
+      attempted.pathname,
+      getDefaultDashboardPath(role),
+      attempted.search,
+      attempted.hash,
+    );
   const sessionError =
     (typeof location.state?.sessionError === 'string' ? location.state.sessionError : null) ||
     (searchParams.get('reason') === 'admin_required'
@@ -80,7 +95,7 @@ export default function Login() {
         title: 'Welcome back!',
         description: 'You have successfully logged in.',
       });
-      navigate(getDefaultDashboardPath(loggedInUser.role), { replace: true });
+      navigate(destinationFor(loggedInUser.role), { replace: true });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Please check your credentials.';
@@ -97,7 +112,10 @@ export default function Login() {
   const handleGoogleLogin = () => {
     if (isLoading || isGoogleLoading) return;
     setIsGoogleLoading(true);
-    redirectToGoogleAuth({ mode: 'login', next: from });
+    redirectToGoogleAuth({
+      mode: 'login',
+      next: `${attempted.pathname}${attempted.search}${attempted.hash}`,
+    });
   };
 
   return (

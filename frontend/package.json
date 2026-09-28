@@ -10,6 +10,7 @@
     "dev": "vite",
     "test": "vitest run && node scripts/productionFrontendConfig.test.mjs",
     "build": "node scripts/generate-security-headers.mjs && node ./node_modules/vite/bin/vite.js build",
+    "icons:pwa": "node scripts/generate-pwa-icons.mjs",
     "build:dev": "node scripts/generate-security-headers.mjs --dev && vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",

@@ -1,8 +1,33 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import { build as buildServiceWorker } from "esbuild";
 import { componentTagger } from "lovable-tagger";
 import { assertProductionFrontendConfig } from "./scripts/productionFrontendConfig.mjs";
+
+function elofixServiceWorkerPlugin() {
+  let outDir = "";
+  return {
+    name: "elofix-service-worker",
+    apply: "build" as const,
+    configResolved(config: { build: { outDir: string } }) {
+      outDir = config.build.outDir;
+    },
+    async closeBundle() {
+      const outfile = path.resolve(outDir, "sw.js");
+      await buildServiceWorker({
+        entryPoints: [path.resolve(__dirname, "src/pwa/sw.ts")],
+        outfile,
+        bundle: true,
+        format: "iife",
+        platform: "browser",
+        target: "es2020",
+        legalComments: "none",
+      });
+      console.log(`[pwa] Wrote ${outfile}`);
+    },
+  };
+}
 
 function elofixProductionConfigPlugin() {
   return {
@@ -39,7 +64,12 @@ export default defineConfig(({ mode }) => {
       "/uploads": { target: apiTarget, changeOrigin: true },
     },
   },
-  plugins: [react(), mode === "development" && componentTagger(), elofixProductionConfigPlugin()].filter(Boolean),
+  plugins: [
+    react(),
+    mode === "development" && componentTagger(),
+    elofixProductionConfigPlugin(),
+    elofixServiceWorkerPlugin(),
+  ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

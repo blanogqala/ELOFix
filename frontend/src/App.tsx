@@ -10,6 +10,8 @@ import { OverlayLockGuard } from "@/components/common/OverlayLockGuard";
 import { ScrollToTop } from "@/components/common/ScrollToTop";
 import { RouteSuspense } from "@/components/routing/RouteSuspense";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { PwaInstallPrompt } from "@/components/pwa/PwaInstallPrompt";
+import { StandaloneLaunchRedirect } from "@/components/pwa/StandaloneLaunchRedirect";
 import * as Pages from "@/routes/lazyPages";
 import { LEGAL_LEGACY_REDIRECTS, LEGAL_ROUTES } from "@/lib/legal/versions";
 
@@ -31,6 +33,8 @@ const App = () => (
         <Sonner />
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <ErrorBoundary>
+          <PwaInstallPrompt />
+          <StandaloneLaunchRedirect />
           <ScrollToTop />
           <OverlayLockGuard />
           <Routes>
