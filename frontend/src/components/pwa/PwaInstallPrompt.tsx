@@ -54,8 +54,8 @@ export function PwaInstallPrompt() {
   };
 
   return (
-    <section className="bg-background px-4 py-8 md:py-12" aria-label="EloFix phone app">
-      <div className="mx-auto flex max-w-5xl flex-col gap-5 rounded-2xl border border-border bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between md:p-8">
+    <section className="bg-accent px-4 py-8 md:py-6" aria-label="EloFix phone app">
+      <div className="mx-auto flex max-w-5xl flex-col gap-5 rounded-2xl border border-border bg-card/70 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between md:p-8">
         <div className="flex min-w-0 items-start gap-4">
           <img src="/pwa/icon-192.png" alt="" width={56} height={56} className="h-14 w-14 shrink-0 rounded-xl border border-border" />
           <div>
