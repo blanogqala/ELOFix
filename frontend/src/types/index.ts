@@ -237,7 +237,9 @@ export interface SupplierBranchProfile {
   updatedAt?: string;
   latitude?: number;
   longitude?: number;
+  websiteUrl?: string;
   inventoryCategories?: InventoryCategory[];
+  marketplaceCategories?: MarketplaceMaterialCategory[];
 }
 
 /** Supplier storefront + inventory (from GET /supplier/me or nested in /auth/me). */
@@ -256,6 +258,7 @@ export interface SupplierAccountProfile {
   latitude?: number;
   longitude?: number;
   phone?: string;
+  websiteUrl?: string;
   createdAt?: string;
   createdByAdmin?: boolean;
   userId?: string;
@@ -363,6 +366,21 @@ export interface Product {
   image?: string;
 }
 
+/** Admin marketplace taxonomy used to discover nearby branches. Not a BranchInventoryCategory. */
+export interface MarketplaceMaterialCategory {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  icon?: string;
+  imageUrl?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+  branchCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 /** Branch-scoped inventory category (not the service Category model). */
 export interface InventoryCategory {
   id: string;
@@ -411,7 +429,12 @@ export interface Supplier {
   /** Branch id — same as `id` on branch listing / stores. */
   branchId?: string;
   distanceKm?: number | null;
+  websiteUrl?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  area?: string;
   inventoryCategories?: InventoryCategory[];
+  marketplaceCategories?: MarketplaceMaterialCategory[];
 }
 
 export type MaterialFulfillmentStatus =

@@ -171,6 +171,7 @@ const App = () => (
             />
             <Route path="/admin/suppliers/:supplierId" element={<AuthGuard allowedRoles={['admin']}><RouteSuspense><Pages.AdminSupplierDetail /></RouteSuspense></AuthGuard>} />
             <Route path="/admin/categories" element={<AuthGuard allowedRoles={['admin']}><RouteSuspense><Pages.AdminCategories /></RouteSuspense></AuthGuard>} />
+            <Route path="/admin/material-categories" element={<AuthGuard allowedRoles={['admin']}><RouteSuspense><Pages.AdminMaterialCategories /></RouteSuspense></AuthGuard>} />
             <Route path="/admin/jobs" element={<AuthGuard allowedRoles={['admin']}><RouteSuspense><Pages.AdminJobs /></RouteSuspense></AuthGuard>} />
             <Route path="/admin/jobs/:id" element={<AuthGuard allowedRoles={['admin']}><RouteSuspense><Pages.AdminJobDetail /></RouteSuspense></AuthGuard>} />
             <Route path="/admin/payments" element={<AuthGuard allowedRoles={['admin']}><RouteSuspense><Pages.AdminPayments /></RouteSuspense></AuthGuard>} />

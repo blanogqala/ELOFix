@@ -1,5 +1,6 @@
 const express = require("express");
 const adminController = require("../controllers/admin.controller");
+const marketplaceCategoryAdmin = require("../controllers/marketplaceMaterialCategory.admin.controller");
 const paymentController = require("../controllers/payment.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
@@ -80,6 +81,10 @@ router.get("/jobs/:jobId/completion-evidence", asyncHandler(adminController.getA
 router.get("/jobs/:jobId/completion-evidence/export", asyncHandler(adminController.exportJobCompletionEvidence));
 router.get("/jobs/:jobId/case-summary", asyncHandler(adminController.getAdminJobCaseSummary));
 
+router.get("/marketplace-material-categories", asyncHandler(marketplaceCategoryAdmin.list));
+router.post("/marketplace-material-categories", asyncHandler(marketplaceCategoryAdmin.create));
+router.patch("/marketplace-material-categories/:id", asyncHandler(marketplaceCategoryAdmin.update));
+
 router.get("/suppliers", asyncHandler(adminController.listSuppliers));
 router.post("/suppliers", asyncHandler(adminController.createSupplier));
 router.get(
@@ -99,6 +104,10 @@ router.get(
   asyncHandler(adminController.getAdminSupplierSettlementSummary)
 );
 router.get("/suppliers/:supplierId/orders", asyncHandler(adminController.listSupplierOrders));
+router.patch(
+  "/suppliers/:supplierId/branches/:branchId/marketplace-categories",
+  asyncHandler(marketplaceCategoryAdmin.assignBranch)
+);
 router.get("/suppliers/:supplierId", asyncHandler(adminController.getAdminSupplierDetail));
 
 router.get("/fraud-center/summary", asyncHandler(adminController.getFraudCenterSummary));

@@ -106,6 +106,7 @@ export const AdminSupplierDetail = lazy(() => import('@/pages/admin/SupplierDeta
 export const AdminSupplierCatalogPage = lazy(() => import('@/pages/admin/AdminSupplierCatalogPage'));
 export const AdminSupplierBranchCatalogPage = lazy(() => import('@/pages/admin/AdminSupplierBranchCatalogPage'));
 export const AdminCategories = lazy(() => import('@/pages/admin/Categories'));
+export const AdminMaterialCategories = lazy(() => import('@/pages/admin/MaterialCategories'));
 export const AdminAnalytics = lazy(() => import('@/pages/admin/Analytics'));
 export const FraudCenter = lazy(() => import('@/pages/admin/FraudCenter'));
 export const FraudAlerts = lazy(() => import('@/pages/admin/FraudAlerts'));

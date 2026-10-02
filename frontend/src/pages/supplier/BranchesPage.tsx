@@ -5,6 +5,8 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { ProviderCardSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSupplierBranches, postSupplierBranch, getSupplierAnalyticsOverview } from '@/lib/api/supplierPortal';
+import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialCategories';
+import { MarketplaceCategoryChecklist } from '@/components/marketplace/MarketplaceCategoryChecklist';
 import type { SupplierBranchProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { MapPin, ChevronRight, Plus } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { SupplierSupportFab } from '@/components/supplier/SupplierSupportFab';
 import { formatCurrency } from '@/lib/formatCurrency';
 import {
@@ -54,6 +57,8 @@ export default function SupplierBranchesPage() {
   const [newLat, setNewLat] = useState('');
   const [newLng, setNewLng] = useState('');
   const [newActive, setNewActive] = useState(true);
+  const [newWebsite, setNewWebsite] = useState('');
+  const [newCategoryIds, setNewCategoryIds] = useState<string[]>([]);
   const [cityFilter, setCityFilter] = useState('');
   const [branchSearch, setBranchSearch] = useState('');
 
@@ -61,6 +66,12 @@ export default function SupplierBranchesPage() {
     queryKey: ['supplier', 'branches', userId],
     queryFn: () => getSupplierBranches(),
     enabled: Boolean(userId),
+  });
+
+  const { data: marketplaceCategories = [] } = useQuery({
+    queryKey: ['marketplace-material-categories'],
+    queryFn: getMarketplaceMaterialCategories,
+    enabled: createOpen,
   });
 
   const { data: analytics } = useQuery({
@@ -107,6 +118,8 @@ export default function SupplierBranchesPage() {
     setNewLat('');
     setNewLng('');
     setNewActive(true);
+    setNewWebsite('');
+    setNewCategoryIds([]);
   };
 
   const createMut = useMutation({
@@ -126,6 +139,8 @@ export default function SupplierBranchesPage() {
         latitude: latN !== null && !Number.isNaN(latN) ? latN : null,
         longitude: lngN !== null && !Number.isNaN(lngN) ? lngN : null,
         isActive: newActive,
+        websiteUrl: newWebsite.trim() || null,
+        marketplaceCategoryIds: newCategoryIds,
       });
     },
     onSuccess: (branch) => {
@@ -295,6 +310,26 @@ export default function SupplierBranchesPage() {
                   <Input id="dlg-lng" value={newLng} onChange={(e) => setNewLng(e.target.value)} placeholder="18.4" />
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="dlg-web">Website</Label>
+                <Input
+                  id="dlg-web"
+                  value={newWebsite}
+                  placeholder="https://"
+                  onChange={(e) => setNewWebsite(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Marketplace categories</Label>
+                <p className="text-xs text-muted-foreground">
+                  Choose from categories created by EloFix. This controls which customers see this branch.
+                </p>
+                <MarketplaceCategoryChecklist
+                  categories={marketplaceCategories}
+                  selectedIds={newCategoryIds}
+                  onChange={setNewCategoryIds}
+                />
+              </div>
               <div className="flex items-center gap-2">
                 <Switch checked={newActive} onCheckedChange={setNewActive} id="dlg-active" />
                 <Label htmlFor="dlg-active">Active (visible to customers)</Label>
@@ -361,6 +396,15 @@ function BranchListCard({ branch }: { branch: SupplierBranchProfile }) {
               {branch.contactPhone && branch.contactEmail && ' · '}
               {branch.contactEmail && <span>{branch.contactEmail}</span>}
             </p>
+          )}
+          {(branch.marketplaceCategories ?? []).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {(branch.marketplaceCategories ?? []).map((category) => (
+                <Badge key={category.id} variant="secondary" className="font-normal">
+                  {category.name}
+                </Badge>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

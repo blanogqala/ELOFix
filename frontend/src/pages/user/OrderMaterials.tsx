@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,11 +10,15 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
+import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialCategories';
+import { MarketplaceCategoryPicker } from '@/components/marketplace/MarketplaceCategoryPicker';
+import { BranchStorefrontHeader } from '@/components/marketplace/BranchStorefrontHeader';
+import { materialOrderBranchIdentity, shouldClearBranchCart } from '@/lib/marketplace/materialOrderIdentity';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
 import { LoadingOverlay } from '@/components/common/loading';
-import { Supplier, Product, DeliveryProvider } from '@/types';
+import { Supplier, Product, DeliveryProvider, MarketplaceMaterialCategory } from '@/types';
 import {
   ArrowLeft,
   ArrowRight,
@@ -140,12 +145,25 @@ export default function OrderMaterials() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storeSearch, setStoreSearch] = useState('');
+  const [selectedMarketplaceCategory, setSelectedMarketplaceCategory] = useState<MarketplaceMaterialCategory | null>(null);
   const [userGeo, setUserGeo] = useState<{ lat: number; lng: number } | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
 
   const geocodeCacheRef = useRef<Map<string, Awaited<ReturnType<typeof reverseGeocode>>>>(new Map());
 
+  const locationReady = Boolean(deliveryCity.trim() || userGeo);
+
+  const marketplaceCategoriesQuery = useQuery({
+    queryKey: ['marketplace-material-categories'],
+    queryFn: getMarketplaceMaterialCategories,
+    enabled: step === 1 && locationReady,
+  });
+
   const loadStores = useCallback(async () => {
+    if (!selectedMarketplaceCategory) {
+      setStores([]);
+      return;
+    }
     setStoresLoading(true);
     try {
       setError(null);
@@ -156,6 +174,7 @@ export default function OrderMaterials() {
         lat: userGeo?.lat,
         lng: userGeo?.lng,
         q: storeSearch.trim() || undefined,
+        categoryId: selectedMarketplaceCategory.id,
       });
       setStores(list);
     } catch (err) {
@@ -164,15 +183,31 @@ export default function OrderMaterials() {
     } finally {
       setStoresLoading(false);
     }
-  }, [deliveryCity, deliveryMetro, deliveryArea, userGeo, storeSearch]);
+  }, [deliveryCity, deliveryMetro, deliveryArea, userGeo, storeSearch, selectedMarketplaceCategory]);
 
   useEffect(() => {
-    if (step !== 1) return;
+    if (step !== 1 || !selectedMarketplaceCategory) return;
+    setStoresLoading(true);
+    setStores([]);
     const t = window.setTimeout(() => {
       void loadStores();
     }, 250);
     return () => window.clearTimeout(t);
-  }, [step, loadStores]);
+  }, [step, loadStores, selectedMarketplaceCategory]);
+
+  useEffect(() => {
+    if (step !== 1 || storesLoading || !selectedSupplier || !selectedMarketplaceCategory) return;
+    if (stores.some((store) => store.id === selectedSupplier.id)) return;
+    if (cart.length > 0) {
+      setCart([]);
+      toast({
+        title: 'Cart cleared',
+        description: 'That branch is no longer available for this address and category.',
+      });
+    }
+    setSelectedSupplier(null);
+    setSelectedInventoryCategory(null);
+  }, [step, stores, storesLoading, selectedSupplier, selectedMarketplaceCategory, cart.length, toast]);
 
   useEffect(() => {
     const cached = readCachedUserCoords();
@@ -339,6 +374,26 @@ export default function OrderMaterials() {
   const materialsTotal = subtotal;
   const total = materialsTotal;
 
+  const openBranch = (sup: StoreRow) => {
+    if (
+      shouldClearBranchCart({
+        cartCount: cart.length,
+        previousBranchId: selectedSupplier?.id,
+        nextBranchId: sup.id,
+      })
+    ) {
+      setCart([]);
+      toast({
+        title: 'Cart cleared',
+        description: 'Items from the previous branch were removed.',
+      });
+    }
+    setSelectedSupplier(sup);
+    setSelectedInventoryCategory(null);
+    setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
+    setStep(2);
+  };
+
   const handlePay = async () => {
     if (!user || !selectedSupplier) return;
     if (!deliveryAddress.trim()) { setError('Delivery address is required.'); return; }
@@ -349,11 +404,12 @@ export default function OrderMaterials() {
     try {
       const deliveryTypeMap = deliveryType === 'SELF' ? 'SELF' : deliveryType === 'STORE_DELIVERY' ? 'STORE' : 'PROVIDER';
       const deliveryStatus = deliveryType === 'SELF' ? 'SelfCollect' as const : 'PendingApproval' as const;
+      const branchIdentity = materialOrderBranchIdentity(selectedSupplier);
       const order = await createMaterialOrder({
         userId: user.id,
-        storeId: selectedSupplier.id,
-        branchId: selectedSupplier.id,
-        storeName: selectedSupplier.displayName || selectedSupplier.name,
+        storeId: branchIdentity.storeId,
+        branchId: branchIdentity.branchId,
+        storeName: branchIdentity.storeName,
         items: cart.map(c => ({
           productId: c.product.id,
           name: c.product.name,
@@ -398,7 +454,7 @@ export default function OrderMaterials() {
       <div className="mx-auto min-w-0 max-w-4xl animate-fade-in">
         {/* Header */}
         <div className="mb-6 flex min-w-0 items-center gap-3 sm:gap-4">
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => step > 1 ? setStep(step - 1) : navigate('/user/new-request')}>
+          <Button variant="ghost" size="icon" className="shrink-0" aria-label="Back" onClick={() => step > 1 ? setStep(step - 1) : navigate('/user/new-request')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0">
@@ -482,9 +538,57 @@ export default function OrderMaterials() {
               </div>
 
               <div className="border-t border-border pt-4">
-                <h2 className="text-xl font-semibold">Choose a store branch</h2>
+                <h2 className="text-xl font-semibold">What materials are you looking for?</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Branches are sorted by distance when your location is known. Search by store name to find your brand.
+                  Choose a category to see nearby branches that supply it. Your address stays in place if you switch category.
+                </p>
+              </div>
+
+              {!locationReady && (
+                <p className="text-sm text-muted-foreground">Enter a city or use your location to choose materials.</p>
+              )}
+
+              {locationReady && (
+                <MarketplaceCategoryPicker
+                  categories={marketplaceCategoriesQuery.data ?? []}
+                  selectedId={selectedMarketplaceCategory?.id ?? null}
+                  loading={marketplaceCategoriesQuery.isLoading}
+                  error={
+                    marketplaceCategoriesQuery.isError
+                      ? 'Could not load material categories. Try again.'
+                      : null
+                  }
+                  onSelect={(category) => {
+                    const categoryChanged = selectedMarketplaceCategory?.id !== category.id;
+                    setSelectedMarketplaceCategory(category);
+                    setStoreSearch('');
+                    if (!categoryChanged) return;
+                    if (
+                      shouldClearBranchCart({
+                        cartCount: cart.length,
+                        previousCategoryId: selectedMarketplaceCategory?.id,
+                        nextCategoryId: category.id,
+                      })
+                    ) {
+                      setCart([]);
+                      toast({
+                        title: 'Cart cleared',
+                        description: 'Changing material category removes items from the previous branch.',
+                      });
+                    }
+                    setSelectedSupplier(null);
+                    setSelectedInventoryCategory(null);
+                    setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
+                  }}
+                />
+              )}
+
+              {locationReady && selectedMarketplaceCategory && (
+              <>
+              <div className="border-t border-border pt-4">
+                <h2 className="text-xl font-semibold">Nearby branches</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Physical branches supplying {selectedMarketplaceCategory.name}, nearest first when your location is known.
                 </p>
               </div>
 
@@ -525,19 +629,11 @@ export default function OrderMaterials() {
                         key={sup.id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => {
-                          setSelectedSupplier(sup);
-                          setSelectedInventoryCategory(null);
-                          setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
-                          setStep(2);
-                        }}
+                        onClick={() => openBranch(sup)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            setSelectedSupplier(sup);
-                            setSelectedInventoryCategory(null);
-                            setCatalogFilters((prev) => ({ ...prev, search: '', category: 'all' }));
-                            setStep(2);
+                            openBranch(sup);
                           }
                         }}
                         className={cn(
@@ -583,6 +679,15 @@ export default function OrderMaterials() {
                               )}
                               <span>· {sup.products.length} products</span>
                             </div>
+                            {(sup.marketplaceCategories ?? []).length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {(sup.marketplaceCategories ?? []).slice(0, 4).map((category) => (
+                                  <Badge key={category.id} variant="outline" className="font-normal">
+                                    {category.name}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -590,18 +695,32 @@ export default function OrderMaterials() {
                   })}
                 {!storesLoading && sortedStoresStep1.length === 0 && (
                   <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                    No stores match this area or search. Try another city or clear the search.
+                    No nearby branches supply {selectedMarketplaceCategory.name} for this address. Try another category or area.
                   </p>
                 )}
               </div>
+              </>
+              )}
             </div>
           )}
 
           {/* Step 2: Browse & Add to Cart */}
           {step === 2 && selectedSupplier && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">{selectedSupplier.displayName || selectedSupplier.name}</h2>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <BranchStorefrontHeader
+                    logo={selectedSupplier.logo}
+                    displayName={selectedSupplier.displayName || selectedSupplier.name}
+                    address={selectedSupplier.address}
+                    city={selectedSupplier.city}
+                    area={selectedSupplier.area}
+                    phone={selectedSupplier.contactPhone || selectedSupplier.phone}
+                    email={selectedSupplier.contactEmail}
+                    websiteUrl={selectedSupplier.websiteUrl}
+                    hasDelivery={selectedSupplier.hasDelivery}
+                  />
+                </div>
                 {cart.length > 0 && (
                   <Badge className="bg-accent text-accent-foreground">
                     <ShoppingCart className="h-3 w-3 mr-1" />

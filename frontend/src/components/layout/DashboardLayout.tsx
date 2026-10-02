@@ -38,6 +38,7 @@ import {
   Activity,
   Wallet,
   Store,
+  Paintbrush,
   Building2,
   ChevronDown,
   UserCircle,
@@ -89,6 +90,7 @@ const adminNavStructure: AdminNavEntry[] = [
       { label: 'Customers', path: '/admin/customers' },
       { label: 'Providers', path: '/admin/providers' },
       { label: 'Suppliers', path: '/admin/suppliers' },
+      { label: 'Material categories', path: '/admin/material-categories' },
     ],
   },
   {
@@ -507,6 +509,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                               <Users className="h-4 w-4 shrink-0" />
                             ) : child.path === '/admin/suppliers' ? (
                               <Package className="h-4 w-4 shrink-0" />
+                            ) : child.path === '/admin/material-categories' ? (
+                              <Paintbrush className="h-4 w-4 shrink-0" />
                             ) : child.path === '/admin/jobs' ? (
                               <Briefcase className="h-4 w-4 shrink-0" />
                             ) : child.path === '/admin/categories' ? (
