@@ -1,6 +1,7 @@
 import type { Provider } from '@/types';
 
 export type ProviderDocType =
+  | 'workPermission'
   | 'idDoc'
   | 'companyReg'
   | 'proofOfAddress'
@@ -34,8 +35,8 @@ const ALLOWED_MIME = new Set([
 export const REQUIRED_PROVIDER_DOCUMENTS: ProviderDocumentDefinition[] = [
   {
     id: 'idDoc',
-    label: 'ID Document',
-    description: 'Government-issued photo ID (passport, national ID, or driver licence)',
+    label: 'South African ID Document or Passport',
+    description: 'Upload your South African ID document or passport',
     required: true,
   },
   {
@@ -61,12 +62,28 @@ export const OPTIONAL_PROVIDER_DOCUMENTS: ProviderDocumentDefinition[] = [
   },
 ];
 
+export const WORK_PERMISSION_DOCUMENT: ProviderDocumentDefinition = {
+  id: 'workPermission',
+  label: 'Permission to Work in South Africa',
+  description:
+    'Upload valid documentation showing permission to work in South Africa. Admin will review it.',
+  required: true,
+};
+
+export function getRequiredProviderDocuments(provider?: Pick<Provider, 'identityType'> | null) {
+  return [
+    ...REQUIRED_PROVIDER_DOCUMENTS,
+    ...(provider?.identityType === 'PASSPORT' ? [WORK_PERMISSION_DOCUMENT] : []),
+  ];
+}
+
 /** Admin review: optional uploads shown in dashboard (excludes legacy proofOfSkill). */
 export const ADMIN_OPTIONAL_PROVIDER_DOCUMENTS = OPTIONAL_PROVIDER_DOCUMENTS;
 
 export const ALL_PROVIDER_DOCUMENTS: ProviderDocumentDefinition[] = [
   ...REQUIRED_PROVIDER_DOCUMENTS,
   ...OPTIONAL_PROVIDER_DOCUMENTS,
+  WORK_PERMISSION_DOCUMENT,
 ];
 
 export function hasProviderDocUrl(
@@ -112,21 +129,25 @@ export function computeRequiredDocumentsProgress(documents: Provider['documents'
   };
 }
 
-export function requiredDocumentsComplete(documents: Provider['documents'] | undefined): boolean {
-  return computeRequiredDocumentsProgress(documents).completed ===
-    computeRequiredDocumentsProgress(documents).total;
+export function requiredDocumentsComplete(
+  documents: Provider['documents'] | undefined,
+  provider?: Pick<Provider, 'identityType'> | null
+): boolean {
+  return getRequiredProviderDocuments(provider).every((d) => hasProviderDocUrl(documents, d.id));
 }
 
 export function hasRejectedRequiredDocuments(
   documents: Provider['documents'] | undefined
 ): boolean {
-  return REQUIRED_PROVIDER_DOCUMENTS.some((d) => documents?.[d.id]?.status === 'rejected');
+  return [...REQUIRED_PROVIDER_DOCUMENTS, WORK_PERMISSION_DOCUMENT].some(
+    (d) => documents?.[d.id]?.status === 'rejected'
+  );
 }
 
 export function adminCanApproveProviderAccount(provider: Provider): boolean {
   if (provider.approved || provider.blocked) return false;
   if (provider.profileCompleted !== true) return false;
-  return REQUIRED_PROVIDER_DOCUMENTS.every(
+  return getRequiredProviderDocuments(provider).every(
     (d) => provider.documents?.[d.id]?.status === 'approved'
   );
 }

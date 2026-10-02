@@ -1,6 +1,7 @@
 /** Provider KYC / verification document types — never serve without auth or signed URL. */
 const PROTECTED_FILE_TYPES = new Set([
   "idDoc",
+  "workPermission",
   "companyReg",
   "proofOfAddress",
   "proofOfSkill",

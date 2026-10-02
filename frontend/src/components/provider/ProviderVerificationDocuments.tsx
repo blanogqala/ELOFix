@@ -18,7 +18,7 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   OPTIONAL_PROVIDER_DOCUMENTS,
   PROVIDER_DOC_ACCEPT,
-  REQUIRED_PROVIDER_DOCUMENTS,
+  getRequiredProviderDocuments,
   type ProviderDocType,
   validateProviderDocumentFile,
 } from '@/lib/providerDocuments';
@@ -87,10 +87,14 @@ function DocumentUploadCard({
     e.target.value = '';
     if (!file || !provider) return;
 
-    if (!provider.hasSaIdNumber || !provider.companyRegistrationNumber) {
+    if (
+      !(provider.identityType === 'PASSPORT' ? provider.hasPassportNumber : provider.hasSaIdNumber) ||
+      !provider.companyRegistrationNumber
+    ) {
       toast({
         title: 'Identity details required',
-        description: 'Save your SA ID number and company registration in Profile Info before uploading documents.',
+        description:
+          'Save your South African ID or passport details and company registration in Profile Info before uploading documents.',
         variant: 'destructive',
       });
       return;
@@ -257,7 +261,7 @@ export function ProviderVerificationDocuments({
               Required
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
-              {REQUIRED_PROVIDER_DOCUMENTS.map((def) => (
+              {getRequiredProviderDocuments(provider).map((def) => (
                 <DocumentUploadCard
                   key={def.id}
                   docType={def.id}

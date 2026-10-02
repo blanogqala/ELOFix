@@ -114,6 +114,9 @@ export default function ProviderProfile() {
   const [phone, setPhone] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [saIdNumber, setSaIdNumber] = useState('');
+  const [identityType, setIdentityType] = useState<'SA_ID' | 'PASSPORT'>('SA_ID');
+  const [passportNumber, setPassportNumber] = useState('');
+  const [passportCountry, setPassportCountry] = useState('');
   const [companyRegistrationNumber, setCompanyRegistrationNumber] = useState('');
   const [bio, setBio] = useState('');
   const [serviceAreas, setServiceAreas] = useState<string[]>([]);
@@ -239,6 +242,9 @@ export default function ProviderProfile() {
               : '';
           setPhone(phoneFromApi || phoneFromSession);
           setBusinessName(data.businessName || '');
+          setIdentityType(data.identityType || 'SA_ID');
+          setPassportCountry(data.passportCountry || '');
+          setPassportNumber('');
           setCompanyRegistrationNumber(data.companyRegistrationNumber || '');
           if (!data.hasSaIdNumber) setSaIdNumber('');
           setBio(data.bio || '');
@@ -360,7 +366,14 @@ export default function ProviderProfile() {
     const newErrors: ProfileInfoErrors = {};
 
     if (!phone.trim()) newErrors.phone = true;
-    if (!saIdNumber.trim() && !provider?.hasSaIdNumber) {
+    if (identityType === 'PASSPORT') {
+      const passportOnFile = provider?.identityType === 'PASSPORT' && provider.hasPassportNumber;
+      const numberMissing = !passportNumber.trim() && !passportOnFile;
+      const numberInvalid =
+        Boolean(passportNumber.trim()) && !/^[A-Z0-9]{4,20}$/i.test(passportNumber.trim());
+      const countryInvalid = !/^[A-Z]{2}$/i.test(passportCountry.trim());
+      if (numberMissing || numberInvalid || countryInvalid) newErrors.saIdNumber = true;
+    } else if (!saIdNumber.trim() && !provider?.hasSaIdNumber) {
       newErrors.saIdNumber = true;
     } else if (saIdNumber.trim() && !validateSaId(saIdNumber.trim())) {
       newErrors.saIdNumber = true;
@@ -372,7 +385,9 @@ export default function ProviderProfile() {
     setErrors(newErrors);
 
     if (Object.keys(newErrors).length > 0) {
-      const saIdChecksumInvalid = Boolean(saIdNumber.trim() && !validateSaId(saIdNumber.trim()));
+      const saIdChecksumInvalid = Boolean(
+        identityType === 'SA_ID' && saIdNumber.trim() && !validateSaId(saIdNumber.trim())
+      );
       toast({
         title: saIdChecksumInvalid ? 'Invalid SA ID number' : 'Missing required fields',
         description: saIdChecksumInvalid ? SA_ID_CHECKSUM_ERROR : 'Please complete all required fields',
@@ -388,7 +403,11 @@ export default function ProviderProfile() {
         businessName,
         bio,
         serviceAreas,
-        ...(saIdNumber.trim() ? { saIdNumber: saIdNumber.trim() } : {}),
+        identityType,
+        ...(identityType === 'SA_ID' && saIdNumber.trim() ? { saIdNumber: saIdNumber.trim() } : {}),
+        ...(identityType === 'PASSPORT' && passportNumber.trim()
+          ? { passportNumber: passportNumber.trim(), passportCountry: passportCountry.trim() }
+          : {}),
         companyRegistrationNumber: companyRegistrationNumber.trim(),
       } as Partial<Provider>);
       setProvider(updated);
@@ -609,7 +628,7 @@ export default function ProviderProfile() {
     if (!coreSections.documents) {
       toast({
         title: 'Required documents missing',
-        description: 'Upload ID, company registration, and proof of address before continuing.',
+        description: 'Upload every required verification document before continuing.',
         variant: 'destructive',
       });
       return;
@@ -1005,27 +1024,82 @@ export default function ProviderProfile() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Label>SA ID Number</Label>
+                    <Label>South African ID Number or Passport</Label>
                     <FieldRequirementBadge required />
                   </div>
-                  {provider?.hasSaIdNumber && !saIdNumber ? (
-                    <p className="text-sm text-muted-foreground">ID number on file. Enter again only to update.</p>
-                  ) : null}
-                  <Input
-                    value={saIdNumber}
+                  <select
+                    aria-label="Identity document type"
+                    className="input-field w-full"
+                    value={identityType}
                     onChange={(e) => {
                       markDirty();
-                      setSaIdNumber(e.target.value.replace(/\D/g, '').slice(0, 13));
-                      if (errors.saIdNumber) setErrors((prev) => ({ ...prev, saIdNumber: false }));
+                      setIdentityType(e.target.value as 'SA_ID' | 'PASSPORT');
+                      setErrors((prev) => ({ ...prev, saIdNumber: false }));
                     }}
-                    placeholder="13-digit South African ID"
-                    inputMode="numeric"
-                    className={errors.saIdNumber ? 'border-destructive focus-visible:ring-destructive' : ''}
-                  />
-                  <p className="text-xs text-muted-foreground">Enter all 13 digits from your ID document (numbers only).</p>
-                  {errors.saIdNumber && saIdNumber.trim() && !validateSaId(saIdNumber.trim()) ? (
-                    <p className="text-sm text-destructive">{SA_ID_CHECKSUM_ERROR}</p>
-                  ) : null}
+                  >
+                    <option value="SA_ID">South African ID</option>
+                    <option value="PASSPORT">Passport</option>
+                  </select>
+                  {identityType === 'PASSPORT' ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="passport-number">Passport number</Label>
+                      {provider?.hasPassportNumber && (
+                        <p className="text-sm text-muted-foreground">
+                          Passport number on file. Enter again only to update.
+                        </p>
+                      )}
+                      <Input
+                        id="passport-number"
+                        value={passportNumber}
+                        onChange={(e) => {
+                          markDirty();
+                          setPassportNumber(e.target.value.toUpperCase());
+                        }}
+                        placeholder="Passport number"
+                        maxLength={20}
+                      />
+                      <Label htmlFor="passport-country">Issuing country code</Label>
+                      <Input
+                        id="passport-country"
+                        value={passportCountry}
+                        onChange={(e) => {
+                          markDirty();
+                          setPassportCountry(e.target.value.toUpperCase());
+                        }}
+                        placeholder="Two-letter code, e.g. ZW"
+                        maxLength={2}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        You must also upload permission to work in South Africa for admin review.
+                      </p>
+                      {errors.saIdNumber && (
+                        <p className="text-sm text-destructive">
+                          Enter a valid passport number and two-letter issuing country code.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {provider?.hasSaIdNumber && !saIdNumber ? (
+                        <p className="text-sm text-muted-foreground">ID number on file. Enter again only to update.</p>
+                      ) : null}
+                      <Input
+                        value={saIdNumber}
+                        onChange={(e) => {
+                          markDirty();
+                          setSaIdNumber(e.target.value.replace(/\D/g, '').slice(0, 13));
+                          if (errors.saIdNumber) setErrors((prev) => ({ ...prev, saIdNumber: false }));
+                        }}
+                        placeholder="13-digit South African ID"
+                        inputMode="numeric"
+                        className={errors.saIdNumber ? 'border-destructive focus-visible:ring-destructive' : ''}
+                      />
+                      <p className="text-xs text-muted-foreground">Enter all 13 digits from your ID document (numbers only).</p>
+                      {errors.saIdNumber && saIdNumber.trim() && !validateSaId(saIdNumber.trim()) ? (
+                        <p className="text-sm text-destructive">{SA_ID_CHECKSUM_ERROR}</p>
+                      ) : null}
+                    </>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">

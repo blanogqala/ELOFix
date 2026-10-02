@@ -178,7 +178,7 @@ async function checkDocumentHashDuplicate(fileHash, providerProfileId) {
 
   for (const p of providers) {
     const docs = p.documents && typeof p.documents === "object" ? p.documents : {};
-    for (const key of ["idDoc", "companyReg", "proofOfAddress"]) {
+    for (const key of ["idDoc", "workPermission", "companyReg", "proofOfAddress"]) {
       const entry = docs[key];
       if (entry?.fileHash === fileHash && entry?.status === "approved") {
         await fraudAlert.createAlert({

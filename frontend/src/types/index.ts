@@ -72,6 +72,10 @@ export interface Provider {
   role: 'provider';
   businessName?: string;
   hasSaIdNumber?: boolean;
+  identityType?: 'SA_ID' | 'PASSPORT';
+  hasPassportNumber?: boolean;
+  passportCountry?: string;
+  passportNumber?: string;
   companyRegistrationNumber?: string;
   fraudReviewStatus?: 'NONE' | 'PENDING_REVIEW' | 'CLEARED' | 'REJECTED';
   trustScore?: number;
@@ -92,6 +96,14 @@ export interface Provider {
   skills: string[];
   laborPricing: Record<string, ProviderLaborPricingEntry>;
   documents: {
+    workPermission?: {
+      url: string;
+      fileId?: string;
+      originalName?: string;
+      type?: string;
+      status?: 'pending' | 'approved' | 'rejected';
+      feedback?: string;
+    };
     idDoc?: {
       url: string;
       fileId?: string;

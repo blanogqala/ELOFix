@@ -10,6 +10,7 @@ const { isProtectedFileType } = require("../utils/fileAccessPolicy.util");
 const FILES_URL_PREFIX = "/api/files/";
 const DOC_TYPES = new Set([
   "idDoc",
+  "workPermission",
   "companyReg",
   "proofOfAddress",
   "proofOfSkill",

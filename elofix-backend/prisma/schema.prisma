@@ -391,7 +391,7 @@ model Provider {
   businessName      String?
   serviceAreas      String[]  @default([])
   laborPricing      Json?
-  /// KYC documents JSON. Required keys: idDoc, companyReg, proofOfAddress. Optional: proofOfSkill, certifications.
+  /// KYC documents JSON. Required keys: idDoc, companyReg, proofOfAddress. Passport holders also require workPermission. Optional: proofOfSkill, certifications.
   /// Each entry: { url, fileId?, originalName?, type?, status?: pending|approved|rejected, feedback? }
   documents         Json?
   settings          Json?
@@ -409,6 +409,10 @@ model Provider {
   rejectedAt        DateTime?
   deletedAt         DateTime?
   reviewSubmittedAt DateTime?
+  identityType             String                   @default("SA_ID")
+  passportNumber           String?
+  passportNumberHash       String?                  @unique
+  passportCountry          String?
   saIdNumber               String?
   saIdNumberHash           String?                  @unique
   companyRegistrationNumber String?

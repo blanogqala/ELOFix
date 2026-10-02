@@ -7,7 +7,12 @@ const providerTrustScore = require("./providerTrustScore.service");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const { getTrustLevel } = require("../utils/trustLevel.util");
-const { sha256File } = require("../utils/identityHash.util");
+const { sha256File, hmacHash } = require("../utils/identityHash.util");
+const { encryptField } = require("../utils/bankCrypto");
+const {
+  normalizePassportIdentity,
+  shouldResetIdentityDocuments,
+} = require("../utils/passportIdentity.util");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
 const { countJobsByStatus } = require("../utils/jobStatusCounts.util");
@@ -34,7 +39,14 @@ const { normalizeMeta } = require("./jobMeta.service");
 
 const REQUIRED_DOCUMENT_TYPES = ["idDoc", "companyReg", "proofOfAddress"];
 const OPTIONAL_DOCUMENT_TYPES = ["proofOfSkill", "certifications"];
-const DOCUMENT_TYPES = [...REQUIRED_DOCUMENT_TYPES, ...OPTIONAL_DOCUMENT_TYPES];
+const DOCUMENT_TYPES = [...REQUIRED_DOCUMENT_TYPES, ...OPTIONAL_DOCUMENT_TYPES, "workPermission"];
+
+function requiredDocumentTypes(profile) {
+  return [
+    ...REQUIRED_DOCUMENT_TYPES,
+    ...(profile?.identityType === "PASSPORT" ? ["workPermission"] : []),
+  ];
+}
 
 function normalizeDocuments(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -214,7 +226,7 @@ function checkProviderProfileCompletion(profile, user, opts = {}) {
   const hasPendingSkillSuggestion = Boolean(opts.hasPendingSkillSuggestion);
 
   if (!phone) return false;
-  if (!profile.saIdNumberHash) return false;
+  if (profile.identityType === "PASSPORT" ? !profile.passportNumberHash : !profile.saIdNumberHash) return false;
   if (!profile.companyRegistrationHash) return false;
   if (bio.length < 20) return false;
   if (serviceAreas.length < 1) return false;
@@ -251,7 +263,7 @@ function checkProviderProfileCompletion(profile, user, opts = {}) {
     }
   }
 
-  for (const docType of REQUIRED_DOCUMENT_TYPES) {
+  for (const docType of requiredDocumentTypes(profile)) {
     if (!hasDocUrl(documents[docType])) return false;
   }
 
@@ -393,6 +405,9 @@ function toProviderResponse(
     bio: profile.bio || "",
     businessName: profile.businessName || "",
     hasSaIdNumber: Boolean(profile.saIdNumberHash),
+    identityType: profile.identityType || "SA_ID",
+    hasPassportNumber: Boolean(profile.passportNumberHash),
+    passportCountry: profile.passportCountry || undefined,
     companyRegistrationNumber: profile.companyRegistrationNumber || undefined,
     fraudReviewStatus: profile.fraudReviewStatus || "NONE",
     vehicleType: profile.vehicleType || undefined,
@@ -703,14 +718,98 @@ async function updateProviderForUser(requestUserId, body) {
   }
 
   const providerUpdate = {};
-  if (data.saIdNumber !== undefined) {
+  const identityType = data.identityType ?? profile.identityType ?? "SA_ID";
+  if (!["SA_ID", "PASSPORT"].includes(identityType)) {
+    throw new AppError("Invalid identity type", 400);
+  }
+
+  const nextIdentity = {
+    identityType,
+    saIdNumberHash: profile.saIdNumberHash || null,
+    passportNumberHash: profile.passportNumberHash || null,
+    passportCountry: profile.passportCountry || null,
+  };
+
+  if (identityType === "PASSPORT") {
+    const passportInputChanged =
+      data.passportNumber !== undefined ||
+      data.passportCountry !== undefined ||
+      identityType !== (profile.identityType || "SA_ID");
+    if (passportInputChanged) {
+      const { passportNumber: number, passportCountry: country } = normalizePassportIdentity(
+        data.passportNumber,
+        data.passportCountry ?? profile.passportCountry
+      );
+      const hash = hmacHash(`${country}:${number}`, "passport");
+      if (!hash) {
+        throw new AppError("Enter a passport number containing 4–20 letters or digits", 400);
+      }
+      if (hash !== profile.passportNumberHash) {
+        const duplicate = await prisma.provider.findFirst({
+          where: { passportNumberHash: hash, id: { not: profileRowId } },
+        });
+        if (duplicate) {
+          throw new AppError("This passport is already associated with an EloFix provider account", 409);
+        }
+      }
+      nextIdentity.passportNumberHash = hash;
+      nextIdentity.passportCountry = country;
+      nextIdentity.saIdNumberHash = null;
+      if (
+        hash !== profile.passportNumberHash ||
+        country !== (profile.passportCountry || null) ||
+        identityType !== (profile.identityType || "SA_ID")
+      ) {
+        providerUpdate.passportNumber = encryptField(number);
+        providerUpdate.passportNumberHash = hash;
+        providerUpdate.passportCountry = country;
+        providerUpdate.saIdNumber = null;
+        providerUpdate.saIdNumberHash = null;
+      }
+    }
+  }
+
+  if (identityType === "SA_ID" && profile.identityType === "PASSPORT" && data.saIdNumber === undefined) {
+    throw new AppError("Enter your South African ID number when changing identity type", 400);
+  }
+
+  providerUpdate.identityType = identityType;
+
+  if (identityType === "SA_ID" && data.saIdNumber !== undefined) {
     const { hash, encrypted } = await fraudDetection.assertSaIdAvailable(
       data.saIdNumber,
       profileRowId,
       profileRowId
     );
-    providerUpdate.saIdNumber = encrypted;
-    providerUpdate.saIdNumberHash = hash;
+    nextIdentity.saIdNumberHash = hash;
+    if (hash !== profile.saIdNumberHash || identityType !== (profile.identityType || "SA_ID")) {
+      nextIdentity.passportNumberHash = null;
+      nextIdentity.passportCountry = null;
+      providerUpdate.saIdNumber = encrypted;
+      providerUpdate.saIdNumberHash = hash;
+      providerUpdate.passportNumber = null;
+      providerUpdate.passportNumberHash = null;
+      providerUpdate.passportCountry = null;
+    }
+  }
+
+  if (
+    shouldResetIdentityDocuments(
+      {
+        identityType: profile.identityType,
+        saIdNumberHash: profile.saIdNumberHash,
+        passportNumberHash: profile.passportNumberHash,
+        passportCountry: profile.passportCountry,
+      },
+      nextIdentity
+    )
+  ) {
+    const docs = { ...normalizeDocuments(profile.documents) };
+    delete docs.idDoc;
+    delete docs.workPermission;
+    providerUpdate.documents = docs;
+    providerUpdate.approved = false;
+    providerUpdate.reviewSubmittedAt = null;
   }
   if (data.companyRegistrationNumber !== undefined) {
     const result = await fraudDetection.checkCompanyRegistration(
@@ -743,7 +842,10 @@ async function updateProviderForUser(requestUserId, body) {
     providerUpdate.laborPricing = sanitizeLaborPricing(data.laborPricing);
   }
   if (data.documents !== undefined) {
-    providerUpdate.documents = mergeDocuments(profile.documents, data.documents);
+    if (data.documents?.idDoc !== undefined || data.documents?.workPermission !== undefined) {
+      throw new AppError("Use the document upload endpoint for identity and work permission documents", 400);
+    }
+    providerUpdate.documents = mergeDocuments(providerUpdate.documents ?? profile.documents, data.documents);
   }
   if (data.settings !== undefined) {
     providerUpdate.settings = sanitizeSettingsPatch(profile.settings, data.settings);
@@ -838,9 +940,9 @@ async function saveDocumentFromUpload(requestUserId, docType, file) {
     throw new AppError("Provider profile not found", 404);
   }
 
-  if (!prof.saIdNumberHash || !prof.companyRegistrationHash) {
+  if (!(prof.identityType === "PASSPORT" ? prof.passportNumberHash : prof.saIdNumberHash) || !prof.companyRegistrationHash) {
     throw new AppError(
-      "SA ID number and company registration number are required before uploading documents",
+      "Save your South African ID or passport details and company registration before uploading documents",
       400
     );
   }
@@ -1283,11 +1385,12 @@ async function resolveProviderUserIdFromRouteParam(id) {
 function assertRequiredDocsForApproval(profile) {
   const documents = normalizeDocuments(profile.documents);
   const labels = {
-    idDoc: "ID document",
+    idDoc: "South African ID document or passport",
+    workPermission: "Permission to work in South Africa",
     companyReg: "Company registration",
     proofOfAddress: "Proof of address",
   };
-  for (const docType of REQUIRED_DOCUMENT_TYPES) {
+  for (const docType of requiredDocumentTypes(profile)) {
     if (!hasDocUrl(documents[docType])) {
       throw new AppError(`Cannot approve: ${labels[docType]} is required`, 400);
     }
@@ -1371,7 +1474,8 @@ async function rejectProviderDocumentByUserId(targetUserId, docType, feedback, a
   });
   await persistProfileCompleted(profile.id);
   const docLabels = {
-    idDoc: "ID document",
+    idDoc: "South African ID document or passport",
+    workPermission: "Permission to work in South Africa",
     companyReg: "Company registration",
     proofOfAddress: "Proof of address",
     proofOfSkill: "Proof of skill",

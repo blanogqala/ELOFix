@@ -49,7 +49,7 @@ import {
 import { cn } from '@/lib/utils';
 import {
   ALL_PROVIDER_DOCUMENTS,
-  REQUIRED_PROVIDER_DOCUMENTS,
+  getRequiredProviderDocuments,
   ADMIN_OPTIONAL_PROVIDER_DOCUMENTS,
   adminCanApproveProviderAccount,
   type ProviderDocType,
@@ -716,6 +716,34 @@ export default function AdminProviderDetail() {
               </div>
 
               <div className="border-b-2 border-primary/20 pb-4">
+                <h3 className="font-semibold mb-3">Identity Details</h3>
+                <dl className="space-y-2 text-sm">
+                  <div>
+                    <dt className="text-muted-foreground">Identity type</dt>
+                    <dd>{provider.identityType === 'PASSPORT' ? 'Passport' : 'South African ID'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Identity number</dt>
+                    <dd>
+                      {(provider.identityType === 'PASSPORT' ? provider.hasPassportNumber : provider.hasSaIdNumber)
+                        ? 'Saved securely'
+                        : 'Not provided'}
+                    </dd>
+                  </div>
+                  {provider.identityType === 'PASSPORT' && (
+                    <div>
+                      <dt className="text-muted-foreground">Passport issuing country</dt>
+                      <dd>
+                        {provider.passportCountry && /^[A-Z]{2}$/.test(provider.passportCountry.toUpperCase())
+                          ? `${new Intl.DisplayNames(['en'], { type: 'region' }).of(provider.passportCountry.toUpperCase()) || provider.passportCountry} (${provider.passportCountry.toUpperCase()})`
+                          : 'Not provided'}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+
+              <div className="border-b-2 border-primary/20 pb-4">
                 <h3 className="font-semibold mb-3 flex items-center gap-2">
                   <Briefcase className="h-4 w-4" />
                   Services Offered
@@ -865,7 +893,7 @@ export default function AdminProviderDetail() {
                   Required
                 </p>
                 <div className="mb-6 space-y-3">
-                  {REQUIRED_PROVIDER_DOCUMENTS.map(({ id: docId, label }) => {
+                  {getRequiredProviderDocuments(provider).map(({ id: docId, label }) => {
                     const doc = provider.documents[docId];
                     const hasUrl = Boolean(doc?.url?.trim());
                     return (

@@ -1,6 +1,6 @@
 import type { Provider, ProviderSettings } from '@/types';
 import { skillLaborPricingPassesOnboarding } from '@/lib/providerLaborPricing';
-import { requiredDocumentsComplete, hasRejectedRequiredDocuments } from '@/lib/providerDocuments';
+import { getRequiredProviderDocuments, hasRejectedRequiredDocuments } from '@/lib/providerDocuments';
 
 export type ProviderProfileSection =
   | 'profileInfo'
@@ -81,7 +81,11 @@ export function evaluateProviderCoreSections(
   const skillsAndPrices = selectedSkillsOk || hasPendingSkillSuggestion;
 
   const documents =
-    requiredDocumentsComplete(provider?.documents) &&
+    getRequiredProviderDocuments(provider).every(
+      (d) =>
+        Boolean(provider?.documents?.[d.id]?.url?.trim()) &&
+        provider?.documents?.[d.id]?.status !== 'rejected'
+    ) &&
     !hasRejectedRequiredDocuments(provider?.documents);
 
   const settingsOk = businessHoursComplete(settings);

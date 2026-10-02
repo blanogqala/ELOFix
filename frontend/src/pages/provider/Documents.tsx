@@ -116,7 +116,7 @@ export default function ProviderDocuments() {
               <div>
                 <p className="font-medium">Account pending approval</p>
                 <p className="text-sm text-muted-foreground">
-                  {requiredDocumentsComplete(provider?.documents)
+                  {requiredDocumentsComplete(provider?.documents, provider)
                     ? 'Required documents uploaded. Complete your profile and submit for admin review.'
                     : 'Upload all required documents, complete your profile, and submit for admin review.'}
                 </p>
