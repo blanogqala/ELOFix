@@ -12,6 +12,7 @@ const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const { LEGAL_VERSIONS } = require("../src/config/legalVersions");
 const paymentModeService = require("../src/services/payments/paymentMode.service");
+const { seedE2eMarketplaceFixtures } = require("./e2eMarketplaceFixture");
 
 const CUSTOMER_EMAIL = "e2e.ci.customer@elofix.test";
 const CUSTOMER_PASSWORD = "E2eCiCust#Pass1";
@@ -222,15 +223,17 @@ async function main() {
     },
   });
 
+  await seedE2eMarketplaceFixtures(prisma);
   emitEnv();
 }
 
 main()
   .then(async () => {
     await prisma.$disconnect();
+    process.exit(0);
   })
   .catch(async (error) => {
     console.error(error);
-    await prisma.$disconnect();
+    await prisma.$disconnect().catch(() => {});
     process.exit(1);
   });

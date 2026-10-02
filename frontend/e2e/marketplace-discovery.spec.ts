@@ -1,5 +1,24 @@
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { expect, test, registerCustomer, login, uniqueEmail, setupApprovedProviderForE2E } from './fixtures';
 import type { Page } from '@playwright/test';
+
+function ensureMarketplaceFixtures() {
+  const script = path.resolve(process.cwd(), '../elofix-backend/scripts/seed-e2e-marketplace.js');
+  execFileSync(process.execPath, [script], { stdio: 'inherit', env: process.env });
+}
+
+test.beforeEach(async ({ request }) => {
+  ensureMarketplaceFixtures();
+  const apiBase = process.env.ELOFIX_API_BASE_URL || 'http://localhost:5000/api';
+  const response = await request.get(`${apiBase}/marketplace-material-categories`);
+  expect(response.ok(), `GET ${apiBase}/marketplace-material-categories returned ${response.status()}`).toBeTruthy();
+  const body = (await response.json()) as { categories?: Array<{ name?: string }> };
+  const names = (body.categories || []).map((category) => category.name);
+  expect(names, 'marketplace E2E fixtures were not created').toEqual(
+    expect.arrayContaining(['Paint', 'Tiles & Flooring'])
+  );
+});
 
 async function horizontalOverflow(page: Page) {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

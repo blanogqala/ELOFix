@@ -136,7 +136,7 @@ jobs:
           npx prisma generate
           npx prisma migrate deploy
           npm run prisma:seed
-      - name: Seed CI E2E users and jobs
+      - name: Seed CI E2E users, jobs, and marketplace fixtures
         working-directory: elofix-backend
         run: node scripts/seed-e2e-ci.js
       - name: Start API in background

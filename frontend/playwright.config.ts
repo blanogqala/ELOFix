@@ -22,6 +22,7 @@ const remoteHosted = isRemotePlaywrightBase(playwrightBaseUrl);
 
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: remoteHosted ? undefined : './e2e/global-setup.ts',
   testMatch: ['**/*.{spec,test}.{js,ts,jsx,tsx}'],
   outputDir: 'test-results',
   fullyParallel: true,
