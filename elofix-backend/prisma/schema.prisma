@@ -1139,6 +1139,8 @@ model Supplier {
   hasDelivery           Boolean                      @default(true)
   deliveryFee           Decimal                      @default(0) @db.Decimal(12, 2)
   products              Json                         @default("[]")
+  /// Optional public website. Branch websiteUrl takes precedence on storefronts.
+  websiteUrl            String?
   createdByAdmin        Boolean                      @default(false)
   createdAt             DateTime                     @default(now())
   materialOrders        MaterialOrder[]
@@ -1167,11 +1169,14 @@ model Branch {
   hasDelivery  Boolean                   @default(true)
   deliveryFee  Decimal                   @default(0) @db.Decimal(12, 2)
   products     Json                      @default("[]")
+  /// Optional public website for this branch. Overrides Supplier.websiteUrl.
+  websiteUrl   String?
   isActive     Boolean                   @default(true)
   createdAt    DateTime                  @default(now())
   updatedAt    DateTime                  @updatedAt
   materialOrders        MaterialOrder[]
   inventoryCategories   BranchInventoryCategory[]
+  marketplaceCategories BranchMarketplaceCategory[]
   branchUsers           BranchUser[]
   withdrawalProfile     BranchWithdrawalProfile?
   withdrawalRequests    BranchWithdrawalRequest[]
@@ -1264,6 +1269,36 @@ model BranchStaffNotification {
   @@index([branchUserId])
   @@index([branchUserId, createdAt])
   @@index([category])
+}
+
+/// Admin-owned marketplace taxonomy: what a branch generally supplies.
+/// Distinct from BranchInventoryCategory, which organizes products inside one branch.
+model MarketplaceMaterialCategory {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  icon        String?
+  imageUrl    String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  branches    BranchMarketplaceCategory[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// Many-to-many: a branch may supply several marketplace categories.
+model BranchMarketplaceCategory {
+  branchId   String
+  categoryId String
+  branch     Branch                      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  category   MarketplaceMaterialCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime                    @default(now())
+
+  @@id([branchId, categoryId])
+  @@index([categoryId])
 }
 
 /// Per-branch catalog categories (normalized lowercase unique per branch)

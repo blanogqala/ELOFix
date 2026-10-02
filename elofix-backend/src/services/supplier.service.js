@@ -9,6 +9,7 @@ const {
   assertValidEmail,
   assertValidPassword,
 } = require("../utils/accountValidation.util");
+const { parseOptionalWebsiteUrl } = require("../utils/websiteUrl");
 
 const PLATFORM_COMMISSION_RATE = 0.07;
 const SUPPLIER_SHARE_RATE = 0.93;
@@ -285,6 +286,8 @@ function rowToPublicApi(row, { omitInternal = false } = {}) {
     businessName: row.businessName || undefined,
     address: row.address || undefined,
     phone: row.phone || undefined,
+    websiteUrl:
+      row.websiteUrl != null && String(row.websiteUrl).trim() ? String(row.websiteUrl).trim() : undefined,
     latitude: Number.isFinite(latNum) ? latNum : undefined,
     longitude: Number.isFinite(lngNum) ? lngNum : undefined,
   };
@@ -400,7 +403,7 @@ async function getSupplierById(id) {
     branches = await prisma.branch.findMany({
       where: { supplierId: id, isActive: true },
       orderBy: { name: "asc" },
-      include: branchService.INVENTORY_CATEGORIES_INCLUDE,
+      include: branchService.branchCatalogInclude(),
     });
   } catch (err) {
     console.error("[getSupplierById] branch load failed", err.message);
@@ -425,7 +428,7 @@ async function listSuppliersForAdminDashboard() {
       const allBranches = await prisma.branch.findMany({
         where: { supplierId: { in: supplierIds } },
         orderBy: { createdAt: "asc" },
-        include: branchService.INVENTORY_CATEGORIES_INCLUDE,
+        include: branchService.branchCatalogInclude(),
       });
       for (const b of allBranches) {
         if (!branchesBySupplier.has(b.supplierId)) branchesBySupplier.set(b.supplierId, []);
@@ -546,7 +549,7 @@ async function getSupplierDetailsForAdmin(id) {
     branches = await prisma.branch.findMany({
       where: { supplierId: id },
       orderBy: { createdAt: "asc" },
-      include: branchService.INVENTORY_CATEGORIES_INCLUDE,
+      include: branchService.branchCatalogInclude(),
     });
   } catch (err) {
     console.error("[getSupplierDetailsForAdmin] branch load failed", err.message);
@@ -782,6 +785,9 @@ async function updateSupplierBusinessProfile(userId, body = {}) {
       ...latitudePayload,
       ...longitudePayload,
       ...(Object.keys(logoPayload).length ? logoPayload : {}),
+      ...(body.websiteUrl !== undefined
+        ? { websiteUrl: parseOptionalWebsiteUrl(body.websiteUrl) }
+        : {}),
     },
   });
 
@@ -973,6 +979,13 @@ async function patchBranchForBranchStaff(branchUserId, body = {}) {
     }
     data.branchEmail = raw;
   }
+  if (body.marketplaceCategoryIds !== undefined) {
+    throw new AppError("Branch staff cannot change marketplace categories", 403);
+  }
+  if (body.websiteUrl !== undefined) {
+    const websiteMark = parseOptionalWebsiteUrl(body.websiteUrl);
+    if (websiteMark !== Symbol.for("omit")) data.websiteUrl = websiteMark;
+  }
 
   let hasDelivery = Boolean(br.hasDelivery);
   if (body.hasDelivery !== undefined) {
@@ -1034,7 +1047,7 @@ async function getBranchStaffPortalProfile(branchUserId) {
   }
   const branchWithCats = await prisma.branch.findUnique({
     where: { id: bu.branchId },
-    include: branchService.INVENTORY_CATEGORIES_INCLUDE,
+    include: branchService.branchCatalogInclude(),
   });
   const pub = rowToPublicApi(row, { omitInternal: false });
   pub.branches = [

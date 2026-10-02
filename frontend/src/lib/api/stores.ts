@@ -1,4 +1,4 @@
-import type { InventoryCategory, Supplier } from '@/types';
+import type { InventoryCategory, MarketplaceMaterialCategory, Supplier } from '@/types';
 import apiClient from '@/api/client';
 
 export type StoreRow = Supplier & {
@@ -10,7 +10,34 @@ export type StoreRow = Supplier & {
   branchId?: string;
   distanceKm?: number | null;
   inventoryCategories?: InventoryCategory[];
+  marketplaceCategories?: MarketplaceMaterialCategory[];
 };
+
+export type BranchesNearbyParams = {
+  lat?: number;
+  lng?: number;
+  radiusKm?: number;
+  city?: string;
+  metro?: string;
+  area?: string;
+  suburb?: string;
+  q?: string;
+  categoryId?: string;
+};
+
+export function buildBranchesNearbyParams(params?: BranchesNearbyParams) {
+  return {
+    lat: params?.lat,
+    lng: params?.lng,
+    radiusKm: params?.radiusKm,
+    city: params?.city?.trim() || undefined,
+    metro: params?.metro?.trim() || undefined,
+    area: params?.area?.trim() || undefined,
+    suburb: params?.suburb?.trim() || undefined,
+    q: params?.q?.trim() || undefined,
+    categoryId: params?.categoryId?.trim() || undefined,
+  };
+}
 
 interface BranchesNearbyResponse {
   success: boolean;
@@ -27,27 +54,9 @@ interface StoreProductsResponse {
   products: Supplier['products'];
 }
 
-export async function getBranchesNearby(params?: {
-  lat?: number;
-  lng?: number;
-  radiusKm?: number;
-  city?: string;
-  metro?: string;
-  area?: string;
-  suburb?: string;
-  q?: string;
-}): Promise<StoreRow[]> {
+export async function getBranchesNearby(params?: BranchesNearbyParams): Promise<StoreRow[]> {
   const { data } = await apiClient.get<BranchesNearbyResponse>('/branches/nearby', {
-    params: {
-      lat: params?.lat,
-      lng: params?.lng,
-      radiusKm: params?.radiusKm,
-      city: params?.city?.trim() || undefined,
-      metro: params?.metro?.trim() || undefined,
-      area: params?.area?.trim() || undefined,
-      suburb: params?.suburb?.trim() || undefined,
-      q: params?.q?.trim() || undefined,
-    },
+    params: buildBranchesNearbyParams(params),
   });
   return Array.isArray(data?.branches) ? data.branches : [];
 }

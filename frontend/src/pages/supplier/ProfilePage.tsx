@@ -45,6 +45,7 @@ export default function SupplierProfilePage() {
     deliveryFee: '',
     storeLat: '',
     storeLng: '',
+    websiteUrl: '',
   });
 
   const [gpsPinLoading, setGpsPinLoading] = useState(false);
@@ -77,6 +78,7 @@ export default function SupplierProfilePage() {
         profile.longitude !== undefined && profile.longitude !== null
           ? String(profile.longitude)
           : '',
+      websiteUrl: profile.websiteUrl ?? '',
     });
   }, [profile, user]);
 
@@ -130,6 +132,7 @@ export default function SupplierProfilePage() {
         businessName: biz.businessName.trim(),
         address: biz.address.trim(),
         phone: biz.phone.trim(),
+        websiteUrl: biz.websiteUrl.trim() || null,
         contactName: biz.contactName.trim(),
         accountPhone: biz.accountPhone.trim(),
         accountEmail: biz.accountEmail.trim(),
@@ -261,6 +264,15 @@ export default function SupplierProfilePage() {
                 id="supplier-biz-name"
                 value={biz.businessName}
                 onChange={(e) => setBiz((b) => ({ ...b, businessName: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="supplier-biz-web">Business website</Label>
+              <Input
+                id="supplier-biz-web"
+                value={biz.websiteUrl}
+                placeholder="https:// — used when a branch has no website"
+                onChange={(e) => setBiz((b) => ({ ...b, websiteUrl: e.target.value }))}
               />
             </div>
             <div>

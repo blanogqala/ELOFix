@@ -373,6 +373,8 @@ export interface SupplierBranchCreateBody {
   latitude?: number | null;
   longitude?: number | null;
   isActive?: boolean;
+  websiteUrl?: string | null;
+  marketplaceCategoryIds?: string[];
 }
 
 export async function getSupplierBranch(branchId: string): Promise<SupplierBranchProfile | null> {
@@ -467,6 +469,8 @@ export type SupplierBranchUpdateBody = Partial<
     | 'latitude'
     | 'longitude'
     | 'isActive'
+    | 'websiteUrl'
+    | 'marketplaceCategoryIds'
   >
 >;
 
@@ -495,6 +499,7 @@ export async function patchSupplierProfile(body: {
   businessName?: string;
   address?: string;
   phone?: string;
+  websiteUrl?: string | null;
   storeDisplayName?: string;
   contactName?: string;
   accountPhone?: string;
@@ -642,6 +647,7 @@ export async function patchBranchStaffProfile(body: {
   deliveryFee?: number;
   latitude?: number | null;
   longitude?: number | null;
+  websiteUrl?: string | null;
 }): Promise<SupplierAccountProfile | null> {
   const { data } = await apiClient.patch<{ success: boolean; profile: SupplierAccountProfile }>(
     '/supplier/branch/me',

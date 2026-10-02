@@ -9,6 +9,8 @@ import {
   getSupplierBranch,
   patchSupplierBranch,
 } from '@/lib/api/supplierPortal';
+import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialCategories';
+import { MarketplaceCategoryChecklist } from '@/components/marketplace/MarketplaceCategoryChecklist';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -53,6 +55,13 @@ export default function BranchDetailPage() {
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [isActive, setIsActive] = useState(true);
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [categoryIds, setCategoryIds] = useState<string[]>([]);
+
+  const { data: marketplaceCategories = [] } = useQuery({
+    queryKey: ['marketplace-material-categories'],
+    queryFn: getMarketplaceMaterialCategories,
+  });
 
   useEffect(() => {
     if (!branch) return;
@@ -67,6 +76,8 @@ export default function BranchDetailPage() {
     setLat(branch.latitude != null ? String(branch.latitude) : '');
     setLng(branch.longitude != null ? String(branch.longitude) : '');
     setIsActive(branch.isActive !== false);
+    setWebsiteUrl(branch.websiteUrl || '');
+    setCategoryIds((branch.marketplaceCategories ?? []).map((category) => category.id));
   }, [branch]);
 
   const saveMut = useMutation({
@@ -85,6 +96,8 @@ export default function BranchDetailPage() {
         latitude: latN !== null && !Number.isNaN(latN) ? latN : null,
         longitude: lngN !== null && !Number.isNaN(lngN) ? lngN : null,
         isActive,
+        websiteUrl: websiteUrl.trim() || null,
+        marketplaceCategoryIds: categoryIds,
       });
     },
     onSuccess: () => {
@@ -202,6 +215,26 @@ export default function BranchDetailPage() {
                 <Label htmlFor="bd-email">Public email</Label>
                 <Input id="bd-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="bd-web">Website</Label>
+              <Input
+                id="bd-web"
+                value={websiteUrl}
+                placeholder="https://"
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Marketplace categories</Label>
+              <p className="text-xs text-muted-foreground">
+                Only categories created by EloFix can be assigned. Customers see this branch when they pick one of these.
+              </p>
+              <MarketplaceCategoryChecklist
+                categories={marketplaceCategories}
+                selectedIds={categoryIds}
+                onChange={setCategoryIds}
+              />
             </div>
             <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
               <div>

@@ -36,6 +36,7 @@ export default function BranchStaffProfilePage() {
   const [contactEmail, setContactEmail] = useState('');
   const [hasDelivery, setHasDelivery] = useState(true);
   const [deliveryFee, setDeliveryFee] = useState('0');
+  const [websiteUrl, setWebsiteUrl] = useState('');
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
 
@@ -50,6 +51,7 @@ export default function BranchStaffProfilePage() {
     setDeliveryFee(String(branch.deliveryFee ?? 0));
     setLat(branch.latitude != null ? String(branch.latitude) : '');
     setLng(branch.longitude != null ? String(branch.longitude) : '');
+    setWebsiteUrl(branch.websiteUrl ?? '');
   }, [branch]);
 
   const saveMut = useMutation({
@@ -66,6 +68,7 @@ export default function BranchStaffProfilePage() {
         deliveryFee: Number(deliveryFee) || 0,
         latitude: latN !== null && !Number.isNaN(latN) ? latN : null,
         longitude: lngN !== null && !Number.isNaN(lngN) ? lngN : null,
+        websiteUrl: websiteUrl.trim() || null,
       });
     },
     onSuccess: () => {
@@ -154,6 +157,15 @@ export default function BranchStaffProfilePage() {
                 <Label htmlFor="bf-email">Contact email (public)</Label>
                 <Input id="bf-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="bf-web">Website</Label>
+              <Input
+                id="bf-web"
+                value={websiteUrl}
+                placeholder="https://"
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+              />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">

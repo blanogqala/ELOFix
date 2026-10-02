@@ -24,6 +24,7 @@ import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { cn } from '@/lib/utils';
 import { AdminSupplierMaterialOrdersSection } from '@/components/admin/AdminSupplierMaterialOrdersSection';
 import { AdminSupplierBranchPayoutSection } from '@/components/admin/AdminSupplierBranchPayoutSection';
+import { AdminBranchMarketplaceCategories } from '@/components/admin/AdminBranchMarketplaceCategories';
 
 export default function AdminSupplierDetail() {
   const { supplierId } = useParams<{ supplierId: string }>();
@@ -200,6 +201,8 @@ export default function AdminSupplierDetail() {
             </Button>
           </div>
         </div>
+
+        <AdminBranchMarketplaceCategories supplierId={id} branches={supplier.branches ?? []} />
 
         <AdminSupplierBranchPayoutSection supplierId={id} branches={supplier.branches ?? []} />
 

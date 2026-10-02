@@ -1,11 +1,15 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Supplier, Product, MaterialLine, JobLocation } from '@/types';
+import { Supplier, Product, MaterialLine, JobLocation, MarketplaceMaterialCategory } from '@/types';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
+import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialCategories';
+import { MarketplaceCategoryPicker } from '@/components/marketplace/MarketplaceCategoryPicker';
+import { BranchStorefrontHeader } from '@/components/marketplace/BranchStorefrontHeader';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
   ArrowLeft,
@@ -73,7 +77,8 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const existingMaterials = useMemo(() => incomingMaterials ?? [], [incomingMaterials]);
   const saveCartFn = variant === 'provider_cart' ? props.onSaveCart : undefined;
   const suggestFn = variant === 'user_suggestion' ? props.onSendSuggestion : undefined;
-  const [view, setView] = useState<'stores' | 'categories' | 'products'>('stores');
+  const [view, setView] = useState<'category' | 'stores' | 'categories' | 'products'>('category');
+  const [selectedMarketplaceCategory, setSelectedMarketplaceCategory] = useState<MarketplaceMaterialCategory | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [selectedInventoryCategory, setSelectedInventoryCategory] = useState<string | null>(null);
   const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
@@ -87,6 +92,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const [storeSearch, setStoreSearch] = useState('');
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
+  const [selectionNotice, setSelectionNotice] = useState('');
   const [cart, setCart] = useState<Record<string, { product: Product; qty: number; supplier: Supplier }>>({});
   const [message, setMessage] = useState('');
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
@@ -138,9 +144,20 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
     });
   }, [stores, resolveStoreDistanceKm]);
 
+  const marketplaceCategoriesQuery = useQuery({
+    queryKey: ['marketplace-material-categories'],
+    queryFn: getMarketplaceMaterialCategories,
+  });
+
   useEffect(() => {
+    if (!selectedMarketplaceCategory) {
+      setStores([]);
+      setStoresLoading(false);
+      return;
+    }
     let alive = true;
     setStoresLoading(true);
+    setStores([]);
     void getBranchesNearby({
       city: jobLocation?.city?.trim(),
       metro: jobLocation?.metro?.trim(),
@@ -149,6 +166,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
       lat: jobSiteCoords?.lat,
       lng: jobSiteCoords?.lng,
       q: storeSearch.trim() || undefined,
+      categoryId: selectedMarketplaceCategory.id,
     })
       .then((list) => {
         if (alive) setStores(list);
@@ -162,7 +180,17 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
     return () => {
       alive = false;
     };
-  }, [jobLocation?.city, jobLocation?.metro, jobLocation?.area, jobLocation?.suburb, jobSiteCoords?.lat, jobSiteCoords?.lng, storeSearch]);
+  }, [jobLocation?.city, jobLocation?.metro, jobLocation?.area, jobLocation?.suburb, jobSiteCoords?.lat, jobSiteCoords?.lng, storeSearch, selectedMarketplaceCategory]);
+
+  useEffect(() => {
+    if (storesLoading || !selectedSupplier || !selectedMarketplaceCategory) return;
+    if (stores.some((store) => store.id === selectedSupplier.id)) return;
+    setSelectedSupplier(null);
+    setSelectedInventoryCategory(null);
+    setSelectionNotice('That branch is no longer in the nearby list for this category.');
+    setView((current) => (current === 'categories' || current === 'products' ? 'stores' : current));
+    if (variant === 'user_suggestion') setCart({});
+  }, [stores, storesLoading, selectedSupplier, selectedMarketplaceCategory, variant]);
 
   useEffect(() => {
     if (variant !== 'provider_cart') return;
@@ -333,23 +361,27 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   };
 
   const headline =
-    variant === 'provider_cart'
+    view === 'category'
+      ? 'What materials are you looking for?'
+      : variant === 'provider_cart'
       ? view === 'stores'
-        ? 'Choose a store branch'
+        ? 'Nearby branches'
         : view === 'categories'
           ? storeTitle(selectedSupplier as StoreRow)
           : formatCategoryLabel(selectedInventoryCategory || jobCategory)
       : view === 'stores'
-        ? 'Suggest alternative materials'
+        ? 'Nearby branches'
         : view === 'categories'
           ? storeTitle(selectedSupplier as StoreRow)
           : formatCategoryLabel(selectedInventoryCategory || jobCategory);
 
   const subline =
-    view === 'stores'
-      ? variant === 'provider_cart'
-        ? 'Branches are ranked near the job site — search anywhere to widen results.'
-        : 'Pick an in-stock branch near the job. Your provider will review your suggestion.'
+    view === 'category'
+      ? `Choose a material type near ${jobSiteLabel}. The job location stays the same if you switch category.`
+      : view === 'stores'
+      ? selectedMarketplaceCategory
+        ? `Branches supplying ${selectedMarketplaceCategory.name}, nearest to the job site first.`
+        : 'Choose a material category first.'
       : view === 'categories'
         ? 'Choose a category to browse products. Other valid categories stay available for extra materials.'
         : variant === 'provider_cart'
@@ -361,7 +393,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
       <div className="relative mx-auto w-full max-w-5xl pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] sm:pb-[calc(8rem+env(safe-area-inset-bottom,0px))]">
       <header className="border-b border-border pb-4 space-y-1">
         <div className="flex items-start gap-2">
-          {view !== 'stores' ? (
+          {view !== 'category' ? (
             <Button
               type="button"
               variant="ghost"
@@ -373,11 +405,23 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                   setSelectedInventoryCategory(null);
                   return;
                 }
-                setView('stores');
+                if (view === 'categories') {
+                  setView('stores');
+                  setSelectedSupplier(null);
+                  resetProductsUi();
+                  return;
+                }
+                setView('category');
                 setSelectedSupplier(null);
                 resetProductsUi();
               }}
-              aria-label={view === 'products' ? 'Back to categories' : 'Back to branches'}
+              aria-label={
+                view === 'products'
+                  ? 'Back to categories'
+                  : view === 'categories'
+                    ? 'Back to branches'
+                    : 'Back to material categories'
+              }
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -401,8 +445,32 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
       </header>
 
       <div className="space-y-5 py-6">
+        {view === 'category' && (
+          <MarketplaceCategoryPicker
+            categories={marketplaceCategoriesQuery.data ?? []}
+            selectedId={selectedMarketplaceCategory?.id ?? null}
+            loading={marketplaceCategoriesQuery.isLoading}
+            error={marketplaceCategoriesQuery.isError ? 'Could not load material categories. Try again.' : null}
+            onSelect={(category) => {
+              const categoryChanged = selectedMarketplaceCategory?.id !== category.id;
+              setSelectedMarketplaceCategory(category);
+              setStoreSearch('');
+              if (categoryChanged) {
+                setSelectedSupplier(null);
+                setSelectedInventoryCategory(null);
+                setSelectionNotice('');
+                if (variant === 'user_suggestion') setCart({});
+              }
+              setView('stores');
+            }}
+          />
+        )}
+
         {view === 'stores' && (
           <>
+            {selectionNotice && (
+              <p className="text-sm text-muted-foreground">{selectionNotice}</p>
+            )}
             <p className="text-xs text-muted-foreground flex items-start gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
               <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>
@@ -479,6 +547,11 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                             </Badge>
                           )}
                           <span className="self-center">{supplier.products.length} products</span>
+                          {(supplier.marketplaceCategories ?? []).slice(0, 4).map((category) => (
+                            <Badge key={category.id} variant="outline" className="text-[10px] font-normal">
+                              {category.name}
+                            </Badge>
+                          ))}
                         </div>
                       </div>
                     </button>
@@ -489,7 +562,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
             )}
             {!storesLoading && sortedStores.length === 0 && (
               <p className="text-center text-sm text-muted-foreground py-16">
-                No stores match this search or area. Try another keyword or widen your search.
+                No nearby branches supply {selectedMarketplaceCategory?.name || 'this category'} for the job site.
               </p>
             )}
           </>
@@ -497,6 +570,17 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
 
         {view === 'categories' && selectedSupplier && (
           <div className="space-y-4 pb-4">
+            <BranchStorefrontHeader
+              logo={selectedSupplier.logo}
+              displayName={storeTitle(selectedSupplier as StoreRow)}
+              address={selectedSupplier.address}
+              city={selectedSupplier.city}
+              area={(selectedSupplier as StoreRow).area}
+              phone={selectedSupplier.contactPhone || selectedSupplier.phone}
+              email={selectedSupplier.contactEmail}
+              websiteUrl={selectedSupplier.websiteUrl}
+              hasDelivery={selectedSupplier.hasDelivery}
+            />
             <CatalogToolbar
               mode="categories"
               filters={catalogFilters}
@@ -529,6 +613,17 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
 
         {view === 'products' && selectedSupplier && (
           <div className="space-y-4 pb-4">
+            <BranchStorefrontHeader
+              logo={selectedSupplier.logo}
+              displayName={storeTitle(selectedSupplier as StoreRow)}
+              address={selectedSupplier.address}
+              city={selectedSupplier.city}
+              area={(selectedSupplier as StoreRow).area}
+              phone={selectedSupplier.contactPhone || selectedSupplier.phone}
+              email={selectedSupplier.contactEmail}
+              websiteUrl={selectedSupplier.websiteUrl}
+              hasDelivery={selectedSupplier.hasDelivery}
+            />
             <CatalogBreadcrumbs
               backLabel="Back to categories"
               onBack={() => {
