@@ -231,28 +231,63 @@ function normalizeCategoryIdList(categoryIds) {
 }
 
 /**
+ * Inactive ids the supplier is trying to add. Ids already on the branch are kept:
+ * admin deactivation must not make the branch form unable to save.
+ */
+function newlyAssignedInactiveCategoryIds(categoryRows, existingCategoryIds) {
+  const existing = new Set((existingCategoryIds || []).map((id) => String(id)));
+  const blocked = [];
+  for (const row of categoryRows || []) {
+    if (!row || row.isActive !== false) continue;
+    const id = String(row.id);
+    if (!existing.has(id)) blocked.push(id);
+  }
+  return blocked;
+}
+
+/**
  * Replace the branch's marketplace category set.
  * activeOnly: supplier owners may assign only active categories. Admin may assign inactive ones.
+ * An inactive category already linked to the branch may be kept.
  */
 async function replaceBranchMarketplaceCategories(branchId, categoryIds, { activeOnly = false } = {}) {
   const ids = normalizeCategoryIdList(categoryIds);
+  const branchKey = String(branchId);
+  let rows = [];
   if (ids.length) {
-    const rows = await prisma.marketplaceMaterialCategory.findMany({
+    rows = await prisma.marketplaceMaterialCategory.findMany({
       where: { id: { in: ids } },
     });
     if (rows.length !== ids.length) {
       throw new AppError("One or more marketplace categories were not found", 400);
     }
-    if (activeOnly && rows.some((row) => row.isActive === false)) {
-      throw new AppError("Suppliers can only assign active marketplace categories", 400);
+    if (activeOnly) {
+      const inactiveRows = rows.filter((row) => row.isActive === false);
+      if (inactiveRows.length) {
+        const existing = await prisma.branchMarketplaceCategory.findMany({
+          where: {
+            branchId: branchKey,
+            categoryId: { in: inactiveRows.map((row) => row.id) },
+          },
+          select: { categoryId: true },
+        });
+        if (
+          newlyAssignedInactiveCategoryIds(
+            inactiveRows,
+            existing.map((row) => row.categoryId)
+          ).length
+        ) {
+          throw new AppError("Suppliers can only assign active marketplace categories", 400);
+        }
+      }
     }
   }
   await prisma.$transaction([
-    prisma.branchMarketplaceCategory.deleteMany({ where: { branchId: String(branchId) } }),
+    prisma.branchMarketplaceCategory.deleteMany({ where: { branchId: branchKey } }),
     ...(ids.length
       ? [
           prisma.branchMarketplaceCategory.createMany({
-            data: ids.map((categoryId) => ({ branchId: String(branchId), categoryId })),
+            data: ids.map((categoryId) => ({ branchId: branchKey, categoryId })),
           }),
         ]
       : []),
@@ -293,6 +328,7 @@ module.exports = {
   createCategory,
   updateCategory,
   normalizeCategoryIdList,
+  newlyAssignedInactiveCategoryIds,
   replaceBranchMarketplaceCategories,
   assignCategoriesForAdmin,
   resolveNearbyCategoryFilter,
