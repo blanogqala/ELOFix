@@ -50,43 +50,79 @@ const INVENTORY_CATEGORIES_INCLUDE = {
   },
 };
 
-const MARKETPLACE_CATEGORIES_INCLUDE = {
-  marketplaceCategories: {
-    include: { category: true },
-  },
-};
-
 function branchCatalogInclude(extra = {}) {
+  const { supplier, ...rest } = extra;
+  let supplierInclude;
+  if (supplier === true) {
+    supplierInclude = { include: marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE };
+  } else if (supplier && typeof supplier === "object") {
+    supplierInclude = {
+      ...supplier,
+      include: {
+        ...(supplier.include || {}),
+        ...marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
+      },
+    };
+  }
   return {
-    ...extra,
+    ...rest,
+    ...(supplierInclude ? { supplier: supplierInclude } : {}),
     ...INVENTORY_CATEGORIES_INCLUDE,
-    ...MARKETPLACE_CATEGORIES_INCLUDE,
   };
 }
 
-function mapMarketplaceCategories(branch, { omitInternal = true } = {}) {
-  const links = Array.isArray(branch?.marketplaceCategories) ? branch.marketplaceCategories : [];
+function mapCategoryBadge(row, { omitInternal = true } = {}) {
+  if (!row || typeof row !== "object") return null;
+  if (omitInternal && row.isActive === false) return null;
+  const imageUrl =
+    row.imageUrl != null && String(row.imageUrl).trim() ? String(row.imageUrl).trim() : undefined;
+  const icon = row.icon != null && String(row.icon).trim() ? String(row.icon).trim() : undefined;
+  const item = {
+    id: String(row.id),
+    name: String(row.name || ""),
+    slug: String(row.slug || ""),
+    sortOrder: Number.isFinite(Number(row.sortOrder)) ? Number(row.sortOrder) : 0,
+  };
+  if (icon) item.icon = icon;
+  if (imageUrl) item.imageUrl = imageUrl;
+  if (!omitInternal) item.isActive = row.isActive !== false;
+  return item;
+}
+
+function mapMarketplaceCategories(supplierRow, { omitInternal = true, catalogCategories } = {}) {
+  const rows = supplierRow?.allMarketplaceCategories
+    ? Array.isArray(catalogCategories)
+      ? catalogCategories
+      : []
+    : (Array.isArray(supplierRow?.marketplaceCategories) ? supplierRow.marketplaceCategories : [])
+        .map((link) => link?.category)
+        .filter(Boolean);
   const out = [];
-  for (const link of links) {
-    const row = link?.category;
-    if (!row || typeof row !== "object") continue;
-    if (omitInternal && row.isActive === false) continue;
-    const imageUrl =
-      row.imageUrl != null && String(row.imageUrl).trim() ? String(row.imageUrl).trim() : undefined;
-    const icon = row.icon != null && String(row.icon).trim() ? String(row.icon).trim() : undefined;
-    const item = {
-      id: String(row.id),
-      name: String(row.name || ""),
-      slug: String(row.slug || ""),
-      sortOrder: Number.isFinite(Number(row.sortOrder)) ? Number(row.sortOrder) : 0,
-    };
-    if (icon) item.icon = icon;
-    if (imageUrl) item.imageUrl = imageUrl;
-    if (!omitInternal) item.isActive = row.isActive !== false;
-    out.push(item);
+  for (const row of rows) {
+    const item = mapCategoryBadge(row, { omitInternal });
+    if (item) out.push(item);
   }
   out.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
   return out;
+}
+
+async function marketplaceCatalogFor(supplierRow, { omitInternal = true, catalogCategories } = {}) {
+  if (catalogCategories !== undefined) return catalogCategories;
+  if (!supplierRow?.allMarketplaceCategories) return undefined;
+  return prisma.marketplaceMaterialCategory.findMany({
+    where: omitInternal ? { isActive: true } : undefined,
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  });
+}
+
+async function supplierWithMarketplace(supplierRow) {
+  if (!supplierRow?.id) return supplierRow;
+  if (Array.isArray(supplierRow.marketplaceCategories)) return supplierRow;
+  const loaded = await prisma.supplier.findUnique({
+    where: { id: supplierRow.id },
+    include: marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
+  });
+  return loaded ? { ...supplierRow, ...loaded } : supplierRow;
 }
 
 function resolvePublicWebsite(branch, supplierRow) {
@@ -161,7 +197,9 @@ function mapInventoryCategories(branch, { omitInternal = true } = {}) {
   return out;
 }
 
-function branchToPublicApi(branch, supplierRow, { omitInternal = true } = {}) {
+async function branchToPublicApi(branch, supplierRow, { omitInternal = true, catalogCategories, hydrateMarketplace = true } = {}) {
+  const supplier = hydrateMarketplace ? await supplierWithMarketplace(supplierRow) : supplierRow;
+  const catalog = await marketplaceCatalogFor(supplier, { omitInternal, catalogCategories });
   const products = productsForApi(branch, { omitInternal });
   const latNum =
     branch.latitude !== undefined && branch.latitude !== null && String(branch.latitude) !== ""
@@ -213,7 +251,7 @@ function branchToPublicApi(branch, supplierRow, { omitInternal = true } = {}) {
     latitude: Number.isFinite(latNum) ? latNum : undefined,
     longitude: Number.isFinite(lngNum) ? lngNum : undefined,
     inventoryCategories: mapInventoryCategories(branch, { omitInternal }),
-    marketplaceCategories: mapMarketplaceCategories(branch, { omitInternal }),
+    marketplaceCategories: mapMarketplaceCategories(supplier, { omitInternal, catalogCategories: catalog }),
   };
   const websiteUrl = resolvePublicWebsite(branch, supplierRow);
   if (websiteUrl) base.websiteUrl = websiteUrl;
@@ -270,29 +308,33 @@ async function listBranchesForLocation(query = {}) {
     where: {
       isActive: true,
       ...(categoryFilter.categoryId
-        ? {
-            marketplaceCategories: {
-              some: {
-                categoryId: categoryFilter.categoryId,
-                category: { isActive: true },
-              },
-            },
-          }
+        ? { supplier: marketplaceCategoryService.supplierEligibleForCategory(categoryFilter.categoryId) }
         : {}),
     },
     include: branchCatalogInclude({ supplier: true }),
     orderBy: { name: "asc" },
   });
 
-  let list = branches.map((b) => {
+  const catalogCategories = branches.some((b) => b.supplier?.allMarketplaceCategories)
+    ? await prisma.marketplaceMaterialCategory.findMany({
+        where: { isActive: true },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      })
+    : undefined;
+
+  let list = await Promise.all(branches.map(async (b) => {
     const sup = b.supplier;
-    const api = branchToPublicApi(b, sup, { omitInternal: true });
+    const api = await branchToPublicApi(b, sup, {
+      omitInternal: true,
+      hydrateMarketplace: false,
+      catalogCategories,
+    });
     let distanceKm = null;
     if (hasUserCoords && typeof api.latitude === "number" && typeof api.longitude === "number") {
       distanceKm = haversineKm(latRaw, lngRaw, api.latitude, api.longitude);
     }
     return { ...api, distanceKm };
-  });
+  }));
 
   if (hasCustomerMetro) {
     list = list.filter((s) =>
@@ -423,14 +465,22 @@ async function deleteBranchForSupplierUser(userId, branchId) {
 }
 
 async function listBranchesForSupplierUser(userId) {
-  const sup = await prisma.supplier.findFirst({ where: { userId: String(userId || "") } });
+  const sup = await prisma.supplier.findFirst({
+    where: { userId: String(userId || "") },
+    include: marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
+  });
   if (!sup) return [];
   const rows = await prisma.branch.findMany({
     where: { supplierId: sup.id },
     orderBy: { createdAt: "asc" },
     include: branchCatalogInclude(),
   });
-  return rows.map((b) => branchToPublicApi(b, sup, { omitInternal: false }));
+  const catalogCategories = await marketplaceCatalogFor(sup, { omitInternal: false });
+  return Promise.all(
+    rows.map((b) =>
+      branchToPublicApi(b, sup, { omitInternal: false, hydrateMarketplace: false, catalogCategories })
+    )
+  );
 }
 
 async function createBranchForSupplierUser(userId, body = {}) {
@@ -480,11 +530,11 @@ async function createBranchForSupplierUser(userId, body = {}) {
     }
   }
 
+  if (body.marketplaceCategoryIds !== undefined) {
+    throw new AppError("Only EloFix admin can change marketplace categories", 403);
+  }
+
   const websiteMark = parseOptionalWebsiteUrl(body.websiteUrl);
-  const categoryIds = marketplaceCategoryService.normalizeCategoryIdList(
-    body.marketplaceCategoryIds === undefined ? [] : body.marketplaceCategoryIds
-  );
-  const assignCategories = body.marketplaceCategoryIds !== undefined;
 
   const row = await prisma.branch.create({
     data: {
@@ -505,16 +555,6 @@ async function createBranchForSupplierUser(userId, body = {}) {
       ...(websiteMark !== Symbol.for("omit") ? { websiteUrl: websiteMark } : {}),
     },
   });
-  if (assignCategories) {
-    try {
-      await marketplaceCategoryService.replaceBranchMarketplaceCategories(row.id, categoryIds, {
-        activeOnly: true,
-      });
-    } catch (err) {
-      await prisma.branch.delete({ where: { id: row.id } }).catch(() => {});
-      throw err;
-    }
-  }
   const reloaded = await prisma.branch.findUnique({
     where: { id: row.id },
     include: branchCatalogInclude(),
@@ -570,19 +610,15 @@ async function updateBranchForSupplierUser(userId, branchId, body = {}) {
   }
   const websiteMark = parseOptionalWebsiteUrl(body.websiteUrl);
   if (websiteMark !== Symbol.for("omit")) data.websiteUrl = websiteMark;
+  if (body.marketplaceCategoryIds !== undefined) {
+    throw new AppError("Only EloFix admin can change marketplace categories", 403);
+  }
 
   if (Object.keys(data).length > 0) {
     await prisma.branch.update({
       where: { id: b.id },
       data,
     });
-  }
-  if (body.marketplaceCategoryIds !== undefined) {
-    await marketplaceCategoryService.replaceBranchMarketplaceCategories(
-      b.id,
-      body.marketplaceCategoryIds,
-      { activeOnly: true }
-    );
   }
   const updated = await prisma.branch.findUnique({
     where: { id: b.id },

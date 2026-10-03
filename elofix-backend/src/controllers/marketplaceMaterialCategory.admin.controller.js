@@ -1,5 +1,4 @@
 const marketplaceCategoryService = require("../services/marketplaceMaterialCategory.service");
-const branchService = require("../services/branch.service");
 
 async function list(req, res) {
   const categories = await marketplaceCategoryService.listForAdmin();
@@ -16,22 +15,33 @@ async function update(req, res) {
   res.json({ success: true, category });
 }
 
-async function assignBranch(req, res) {
-  const branchId = await marketplaceCategoryService.assignCategoriesForAdmin(
+async function assignSupplier(req, res) {
+  const assignment = await marketplaceCategoryService.assignCategoriesForAdmin(
     req.params.supplierId,
-    req.params.branchId,
-    (req.body || {}).categoryIds
+    req.body || {}
   );
-  const full = await branchService.getBranchByIdWithSupplier(branchId);
-  res.json({
-    success: true,
-    branch: branchService.branchToPublicApi(full, full.supplier, { omitInternal: false }),
-  });
+  res.json({ success: true, assignment });
+}
+
+async function remove(req, res) {
+  const confirm =
+    String(req.query.confirm || "").toLowerCase() === "true" || (req.body || {}).confirm === true;
+  const result = await marketplaceCategoryService.deleteCategory(req.params.id, { confirm });
+  if (result.requiresConfirmation) {
+    return res.status(409).json({
+      success: false,
+      code: "CATEGORY_IN_USE",
+      message: `This category is assigned to ${result.supplierCount} supplier${result.supplierCount === 1 ? "" : "s"}. Confirm to delete it. Suppliers, branches, products, and orders are not deleted.`,
+      supplierCount: result.supplierCount,
+    });
+  }
+  res.json({ success: true, deleted: true, supplierCount: result.supplierCount });
 }
 
 module.exports = {
   list,
   create,
   update,
-  assignBranch,
+  remove,
+  assignSupplier,
 };

@@ -188,7 +188,7 @@ async function main() {
       where: { id: branch.id },
       include: branchService.INVENTORY_CATEGORIES_INCLUDE,
     });
-    const pub = branchService.branchToPublicApi(reloaded, supplier, { omitInternal: true });
+    const pub = await branchService.branchToPublicApi(reloaded, supplier, { omitInternal: true });
     assert.ok(Array.isArray(pub.inventoryCategories));
     const pubTiles = pub.inventoryCategories.find((c) => c.name === "tiles");
     assert.ok(pubTiles, "public branch payload exposes inventory category metadata");
@@ -196,7 +196,7 @@ async function main() {
     assert.ok(pubTiles.id);
     assert.ok(!("isActive" in pubTiles), "public payload omits internal isActive");
 
-    const emptyPub = branchService.branchToPublicApi(
+    const emptyPub = await branchService.branchToPublicApi(
       { id: "x", products: [], latitude: null, longitude: null, hasDelivery: true, deliveryFee: 0, name: "X" },
       { id: supplier.id, name: "S", brandName: null, logo: null, phone: null, businessName: null },
       { omitInternal: true }
@@ -245,7 +245,7 @@ async function main() {
       "stored JSON still contains inactive-category product"
     );
 
-    const pub2 = branchService.branchToPublicApi(reloaded2, supplier, { omitInternal: true });
+    const pub2 = await branchService.branchToPublicApi(reloaded2, supplier, { omitInternal: true });
     assert.ok(
       pub2.inventoryCategories.find((c) => c.name === "tiles"),
       "A: public sees active category"
@@ -273,7 +273,7 @@ async function main() {
       "public mapping must not mutate stored Branch.products JSON"
     );
 
-    const internal = branchService.branchToPublicApi(reloaded2, supplier, { omitInternal: false });
+    const internal = await branchService.branchToPublicApi(reloaded2, supplier, { omitInternal: false });
     const hiddenMeta = internal.inventoryCategories.find((c) => c.name === "hidden-cat");
     assert.ok(hiddenMeta, "D: internal still receives inactive category");
     assert.strictEqual(hiddenMeta.isActive, false);

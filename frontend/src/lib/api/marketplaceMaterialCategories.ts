@@ -1,4 +1,4 @@
-import type { MarketplaceMaterialCategory, SupplierBranchProfile } from '@/types';
+import type { MarketplaceMaterialCategory } from '@/types';
 import apiClient from '@/api/client';
 
 export type MarketplaceCategoryInput = {
@@ -61,19 +61,55 @@ export async function updateAdminMarketplaceMaterialCategory(
   }
 }
 
-export async function assignAdminBranchMarketplaceCategories(
+export type SupplierMarketplaceAssignment = {
+  supplierId: string;
+  allCategories: boolean;
+  categoryIds: string[];
+  categories: MarketplaceMaterialCategory[];
+};
+
+export class CategoryInUseError extends Error {
+  supplierCount: number;
+
+  constructor(supplierCount: number, message: string) {
+    super(message);
+    this.name = 'CategoryInUseError';
+    this.supplierCount = supplierCount;
+  }
+}
+
+export async function assignAdminSupplierMarketplaceCategories(
   supplierId: string,
-  branchId: string,
-  categoryIds: string[]
-): Promise<SupplierBranchProfile> {
+  body: { categoryIds: string[]; allCategories: boolean }
+): Promise<SupplierMarketplaceAssignment> {
   try {
-    const { data } = await apiClient.patch<{ success: boolean; branch: SupplierBranchProfile }>(
-      `/admin/suppliers/${encodeURIComponent(supplierId)}/branches/${encodeURIComponent(branchId)}/marketplace-categories`,
-      { categoryIds }
+    const { data } = await apiClient.patch<{ success: boolean; assignment: SupplierMarketplaceAssignment }>(
+      `/admin/suppliers/${encodeURIComponent(supplierId)}/marketplace-categories`,
+      body
     );
-    if (!data?.branch) throw new Error('Failed to update branch categories');
-    return data.branch;
+    if (!data?.assignment) throw new Error('Failed to update supplier categories');
+    return data.assignment;
   } catch (error) {
-    throw new Error(errorMessage(error, 'Failed to update branch categories'));
+    throw new Error(errorMessage(error, 'Failed to update supplier categories'));
+  }
+}
+
+export async function deleteAdminMarketplaceMaterialCategory(id: string, confirm = false): Promise<void> {
+  try {
+    await apiClient.delete(`/admin/marketplace-material-categories/${encodeURIComponent(id)}`, {
+      params: { confirm: confirm ? 'true' : 'false' },
+    });
+  } catch (error) {
+    const ax = error as {
+      response?: { status?: number; data?: { message?: string; supplierCount?: number } };
+      message?: string;
+    };
+    if (ax.response?.status === 409) {
+      throw new CategoryInUseError(
+        Number(ax.response.data?.supplierCount ?? 0),
+        ax.response.data?.message || 'This category is assigned to suppliers.'
+      );
+    }
+    throw new Error(errorMessage(error, 'Failed to delete category'));
   }
 }

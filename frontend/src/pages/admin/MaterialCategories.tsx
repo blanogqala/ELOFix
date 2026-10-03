@@ -31,7 +31,19 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  CategoryInUseError,
   createAdminMarketplaceMaterialCategory,
+  deleteAdminMarketplaceMaterialCategory,
   getAdminMarketplaceMaterialCategories,
   updateAdminMarketplaceMaterialCategory,
 } from '@/lib/api/marketplaceMaterialCategories';
@@ -48,10 +60,12 @@ type FormState = {
   isActive: boolean;
 };
 
+const NO_ICON = '__none__';
+
 const EMPTY_FORM: FormState = {
   name: '',
   description: '',
-  icon: 'building',
+  icon: NO_ICON,
   imageUrl: '',
   sortOrder: '0',
   isActive: true,
@@ -61,7 +75,7 @@ function toForm(category: MarketplaceMaterialCategory): FormState {
   return {
     name: category.name,
     description: category.description || '',
-    icon: category.icon || 'building',
+    icon: category.icon || NO_ICON,
     imageUrl: category.imageUrl || '',
     sortOrder: String(category.sortOrder ?? 0),
     isActive: category.isActive !== false,
@@ -74,6 +88,8 @@ export default function AdminMaterialCategories() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<MarketplaceMaterialCategory | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [deleteTarget, setDeleteTarget] = useState<MarketplaceMaterialCategory | null>(null);
+  const [inUseCount, setInUseCount] = useState<number | null>(null);
 
   const { data: categories = [], isLoading, error } = useQuery({
     queryKey: ['admin', 'marketplace-material-categories'],
@@ -85,7 +101,7 @@ export default function AdminMaterialCategories() {
       const body = {
         name: form.name.trim(),
         description: form.description.trim() || null,
-        icon: form.icon || null,
+        icon: !form.icon || form.icon === NO_ICON ? null : form.icon,
         imageUrl: form.imageUrl.trim() || null,
         sortOrder: Number(form.sortOrder) || 0,
         isActive: form.isActive,
@@ -109,6 +125,24 @@ export default function AdminMaterialCategories() {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'marketplace-material-categories'] });
     },
     onError: (e: Error) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: ({ id, confirm }: { id: string; confirm: boolean }) =>
+      deleteAdminMarketplaceMaterialCategory(id, confirm),
+    onSuccess: () => {
+      toast({ title: 'Category deleted' });
+      setDeleteTarget(null);
+      setInUseCount(null);
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'marketplace-material-categories'] });
+    },
+    onError: (e: Error) => {
+      if (e instanceof CategoryInUseError) {
+        setInUseCount(e.supplierCount);
+        return;
+      }
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    },
   });
 
   const openCreate = () => {
@@ -146,7 +180,7 @@ export default function AdminMaterialCategories() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Order</TableHead>
-                <TableHead>Branches</TableHead>
+                <TableHead>Suppliers</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -180,7 +214,7 @@ export default function AdminMaterialCategories() {
                     <div className="text-xs text-muted-foreground">{category.slug}</div>
                   </TableCell>
                   <TableCell>{category.sortOrder ?? 0}</TableCell>
-                  <TableCell>{category.branchCount ?? 0}</TableCell>
+                  <TableCell>{category.supplierCount ?? 0}</TableCell>
                   <TableCell>
                     <Badge variant={category.isActive === false ? 'outline' : 'secondary'}>
                       {category.isActive === false ? 'Inactive' : 'Active'}
@@ -198,6 +232,18 @@ export default function AdminMaterialCategories() {
                         onClick={() => toggleMut.mutate(category)}
                       >
                         {category.isActive === false ? 'Activate' : 'Deactivate'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => {
+                          setInUseCount(null);
+                          setDeleteTarget(category);
+                        }}
+                      >
+                        Delete
                       </Button>
                     </div>
                   </TableCell>
@@ -234,6 +280,12 @@ export default function AdminMaterialCategories() {
                     <SelectValue placeholder="Icon" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NO_ICON}>None</SelectItem>
+                    {form.icon &&
+                    form.icon !== NO_ICON &&
+                    !MARKETPLACE_ICON_OPTIONS.some((option) => option.value === form.icon) ? (
+                      <SelectItem value={form.icon}>{form.icon}</SelectItem>
+                    ) : null}
                     {MARKETPLACE_ICON_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
@@ -276,6 +328,66 @@ export default function AdminMaterialCategories() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(deleteTarget) && inUseCount == null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the material category. Suppliers, branches, products, and orders are not deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMut.isPending || !deleteTarget}
+              onClick={(event) => {
+                event.preventDefault();
+                if (deleteTarget) deleteMut.mutate({ id: deleteTarget.id, confirm: false });
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(deleteTarget) && inUseCount != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setInUseCount(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>This category is in use</AlertDialogTitle>
+            <AlertDialogDescription>
+              Assigned to {inUseCount} supplier{inUseCount === 1 ? '' : 's'}. Deleting it removes only that
+              marketplace classification. Suppliers, branches, products, and orders stay.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMut.isPending || !deleteTarget}
+              onClick={(event) => {
+                event.preventDefault();
+                if (deleteTarget) deleteMut.mutate({ id: deleteTarget.id, confirm: true });
+              }}
+            >
+              Delete anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }

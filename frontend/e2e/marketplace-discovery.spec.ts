@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { expect, test, registerCustomer, login, uniqueEmail, setupApprovedProviderForE2E } from './fixtures';
-import type { Page } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
+
+const E2E_CATEGORY_NAME = 'E2E Timber validation';
 
 function ensureMarketplaceFixtures() {
   const script = path.resolve(process.cwd(), '../elofix-backend/scripts/seed-e2e-marketplace.js');
@@ -19,6 +21,36 @@ test.beforeEach(async ({ request }) => {
     expect.arrayContaining(['Paint', 'Tiles & Flooring'])
   );
 });
+
+async function adminApi(request: APIRequestContext) {
+  const apiBase = process.env.ELOFIX_API_BASE_URL || 'http://localhost:5000/api';
+  const response = await request.post(`${apiBase}/auth/login`, {
+    data: {
+      email: process.env.E2E_ADMIN_EMAIL || 'admin@elofix.com',
+      password: process.env.E2E_ADMIN_PASSWORD || 'Admin@123',
+    },
+  });
+  expect(response.ok(), `admin login for category cleanup failed: ${response.status()}`).toBeTruthy();
+  const body = (await response.json()) as { token?: string };
+  expect(body.token).toBeTruthy();
+  return { apiBase, token: body.token as string };
+}
+
+async function deleteDeterministicCategory(request: APIRequestContext) {
+  const { apiBase, token } = await adminApi(request);
+  const list = await request.get(`${apiBase}/admin/marketplace-material-categories`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!list.ok()) return;
+  const body = (await list.json()) as { categories?: Array<{ id?: string; name?: string }> };
+  const row = (body.categories || []).find((category) => category.name === E2E_CATEGORY_NAME);
+  if (!row?.id) return;
+  const removed = await request.delete(
+    `${apiBase}/admin/marketplace-material-categories/${encodeURIComponent(row.id)}?confirm=true`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  expect(removed.ok(), `delete ${E2E_CATEGORY_NAME} failed: ${removed.status()}`).toBeTruthy();
+}
 
 async function horizontalOverflow(page: Page) {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -71,7 +103,7 @@ test.describe('Marketplace material discovery', () => {
     await page.getByRole('button', { name: 'Tiles & Flooring', exact: true }).click();
     await expect(page.getByText('Cart cleared', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Specialist Tile Store/ })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole('button', { name: /BUCO - Brackenfell/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /BUCO - Brackenfell/ })).toBeVisible();
     await expect(page.getByText(/Subtotal/)).toHaveCount(0);
   });
 });
@@ -79,7 +111,12 @@ test.describe('Marketplace material discovery', () => {
 test.describe('Marketplace admin and supplier assignment', () => {
   test.setTimeout(180_000);
 
-  test('admin manages categories and sees branch assignment', async ({ page }) => {
+  test.afterEach(async ({ request }) => {
+    await deleteDeterministicCategory(request);
+  });
+
+  test('admin manages categories and sees branch assignment', async ({ page, request }) => {
+    await deleteDeterministicCategory(request);
     const email = process.env.E2E_ADMIN_EMAIL || 'admin@elofix.com';
     const password = process.env.E2E_ADMIN_PASSWORD || 'Admin@123';
     await login(page, email, password);
@@ -87,13 +124,41 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await expect(page.getByRole('heading', { name: 'Material categories' })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('cell', { name: /^Paint/ })).toBeVisible();
 
-    const createdName = `E2E Timber ${Date.now().toString(36)}`;
-    await page.getByRole('button', { name: 'Add category' }).click();
-    await page.getByLabel('Name').fill(createdName);
-    await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.getByRole('cell', { name: new RegExp(`^${createdName}`) })).toBeVisible({ timeout: 20_000 });
+    await page.goto('/admin/suppliers');
+    await page.getByPlaceholder('Search by store, business, or email…').fill('BUCO');
+    await page.getByRole('row', { name: /BUCO/ }).getByRole('button', { name: 'View details' }).click();
+    const section = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Marketplace categories' }),
+    });
+    await expect(section.getByRole('heading', { name: 'Marketplace categories' })).toBeVisible({ timeout: 20_000 });
+    await expect(section.getByText('These categories apply to every current and future branch for this supplier.')).toBeVisible();
+    await section.getByRole('checkbox', { name: 'All categories' }).click();
+    await section.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Categories saved', { exact: true })).toBeVisible({ timeout: 20_000 });
 
-    const row = page.getByRole('row', { name: new RegExp(createdName) });
+    await section.getByRole('button', { name: 'Create category' }).click();
+    const createDialog = page.getByRole('dialog');
+    await createDialog.getByLabel('Name').fill(E2E_CATEGORY_NAME);
+    await createDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Category created', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(section.getByRole('checkbox', { name: E2E_CATEGORY_NAME })).toBeVisible();
+
+    const apiBase = process.env.ELOFIX_API_BASE_URL || 'http://localhost:5000/api';
+    const listed = await request.get(`${apiBase}/marketplace-material-categories`);
+    const listedBody = (await listed.json()) as { categories?: Array<{ id?: string; name?: string }> };
+    const created = (listedBody.categories || []).find((category) => category.name === E2E_CATEGORY_NAME);
+    expect(created?.id).toBeTruthy();
+    const nearby = await request.get(`${apiBase}/branches/nearby`, {
+      params: { city: 'Cape Town', area: 'Bellville', categoryId: created?.id },
+    });
+    expect(nearby.ok()).toBeTruthy();
+    const nearbyBody = (await nearby.json()) as { branches?: Array<{ displayName?: string; name?: string }> };
+    const labels = (nearbyBody.branches || []).map((branch) => branch.displayName || branch.name || '');
+    expect(labels.some((label) => label.includes('BUCO - Bellville'))).toBeTruthy();
+
+    await page.goto('/admin/material-categories');
+    const row = page.getByRole('row', { name: new RegExp(E2E_CATEGORY_NAME) });
+    await expect(row).toBeVisible({ timeout: 20_000 });
     await row.getByRole('button', { name: 'Edit' }).click();
     await page.getByLabel('Description').fill('Validation edit');
     await page.getByRole('button', { name: 'Save' }).click();
@@ -104,16 +169,9 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await row.getByRole('button', { name: 'Edit' }).click();
     await expect(page.getByLabel('Description')).toHaveValue('Validation edit');
     await page.keyboard.press('Escape');
-
-    await page.goto('/admin/suppliers');
-    await page.getByPlaceholder('Search by store, business, or email…').fill('BUCO');
-    await page.getByRole('row', { name: /BUCO/ }).getByRole('button', { name: 'View details' }).click();
-    await expect(page.getByRole('heading', { name: 'Marketplace categories' })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText('BUCO - Bellville').first()).toBeVisible();
-    await expect(page.getByText('Paint').first()).toBeVisible();
   });
 
-  test('supplier sets website and an active marketplace category on a branch', async ({ page }) => {
+  test('supplier sets a branch website without marketplace category controls', async ({ page }) => {
     const adminEmail = process.env.E2E_ADMIN_EMAIL || 'admin@elofix.com';
     const adminPassword = process.env.E2E_ADMIN_PASSWORD || 'Admin@123';
     const supplierEmail = uniqueEmail('e2e.supplier');
@@ -137,12 +195,13 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await branchDialog.getByLabel('Branch name').fill('E2E Yard');
     await branchDialog.getByLabel('City').fill('Cape Town');
     await branchDialog.getByLabel('Website').fill('https://e2e-yard.example');
-    await branchDialog.getByRole('checkbox', { name: 'Paint' }).click();
+    await expect(branchDialog.getByRole('checkbox', { name: 'Paint' })).toHaveCount(0);
+    await expect(branchDialog.getByText('Marketplace categories are managed by EloFix.')).toBeVisible();
     await branchDialog.getByRole('button', { name: 'Create branch' }).click();
     await expect(page.getByRole('heading', { name: /E2E Yard/ })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByLabel('Website')).toHaveValue(/https:\/\/e2e-yard\.example\/?/);
-    await expect(page.getByRole('checkbox', { name: 'Paint' })).toBeChecked();
-    await expect(page.getByRole('checkbox', { name: 'Tiles & Flooring' })).not.toBeChecked();
+    await expect(page.getByText('Marketplace categories are managed by EloFix.')).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: 'Paint' })).toHaveCount(0);
   });
 });
 
