@@ -45,6 +45,17 @@ function testWebsiteAndRoutes() {
   );
   assert.ok(!publicSrc.includes("authenticate"));
   assert.strictEqual(marketplace.slugifyMarketplaceName("Tiles & Flooring"), "tiles-and-flooring");
+
+  const inactive = { id: "inactive-id", isActive: false };
+  const active = { id: "active-id", isActive: true };
+  assert.deepStrictEqual(
+    marketplace.newlyAssignedInactiveCategoryIds([inactive, active], []),
+    ["inactive-id"]
+  );
+  assert.deepStrictEqual(
+    marketplace.newlyAssignedInactiveCategoryIds([inactive, active], ["inactive-id"]),
+    []
+  );
 }
 
 async function main() {
@@ -202,8 +213,25 @@ async function main() {
       marketplace.replaceBranchMarketplaceCategories(near.id, [inactive.id], { activeOnly: true }),
       400
     );
+    await assertRejectsStatus(
+      branchService.updateBranchForSupplierUser(supplierUser.id, near.id, {
+        name: `Should Not Stick ${suffix}`,
+        marketplaceCategoryIds: [inactive.id],
+      }),
+      400
+    );
+    const nearAfterReject = await prisma.branch.findUnique({ where: { id: near.id } });
+    assert.strictEqual(nearAfterReject.name, `Bellville ${suffix}`);
+
     const adminAssigned = await marketplace.assignCategoriesForAdmin(supplier.id, near.id, [paint.id, plumbing.id, inactive.id]);
     assert.strictEqual(adminAssigned, near.id);
+    const keptName = `Bellville Kept ${suffix}`;
+    const kept = await branchService.updateBranchForSupplierUser(supplierUser.id, near.id, {
+      name: keptName,
+      marketplaceCategoryIds: [paint.id, plumbing.id, inactive.id],
+    });
+    assert.strictEqual(kept.name, keptName);
+    assert.ok(kept.marketplaceCategories.some((row) => row.id === inactive.id && row.isActive === false));
     await marketplace.replaceBranchMarketplaceCategories(near.id, [paint.id, plumbing.id], { activeOnly: true });
 
     const listed = await marketplace.listForAdmin();

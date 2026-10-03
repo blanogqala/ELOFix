@@ -571,18 +571,19 @@ async function updateBranchForSupplierUser(userId, branchId, body = {}) {
   const websiteMark = parseOptionalWebsiteUrl(body.websiteUrl);
   if (websiteMark !== Symbol.for("omit")) data.websiteUrl = websiteMark;
 
-  if (Object.keys(data).length > 0) {
-    await prisma.branch.update({
-      where: { id: b.id },
-      data,
-    });
-  }
+  // Category rejection must not commit the rest of the branch edit.
   if (body.marketplaceCategoryIds !== undefined) {
     await marketplaceCategoryService.replaceBranchMarketplaceCategories(
       b.id,
       body.marketplaceCategoryIds,
       { activeOnly: true }
     );
+  }
+  if (Object.keys(data).length > 0) {
+    await prisma.branch.update({
+      where: { id: b.id },
+      data,
+    });
   }
   const updated = await prisma.branch.findUnique({
     where: { id: b.id },
