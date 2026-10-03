@@ -35,10 +35,18 @@ function testWebsiteAndRoutes() {
   assert.ok(adminSrc.includes("router.use(authenticate)"));
   assert.ok(adminSrc.includes('authorizeRoles(["ADMIN"])'));
   assert.ok(adminSrc.includes("/marketplace-material-categories"));
-  assert.ok(
-    adminSrc.indexOf("/suppliers/:supplierId/branches/:branchId/marketplace-categories") <
-      adminSrc.indexOf('router.get("/suppliers/:supplierId"')
-  );
+  assert.ok(adminSrc.includes('"/suppliers/:supplierId/marketplace-categories"'));
+  assert.ok(!adminSrc.includes("/suppliers/:supplierId/branches/:branchId/marketplace-categories"));
+  assert.ok(adminSrc.includes('router.delete("/marketplace-material-categories/:id"'));
+  const serverSrc = fs.readFileSync(path.join(__dirname, "../server.js"), "utf8");
+  const seedSrc = fs.readFileSync(path.join(__dirname, "../prisma/seed.js"), "utf8");
+  assert.ok(!serverSrc.includes("cleanup-e2e-timber-categories"));
+  assert.ok(!serverSrc.includes("seed-e2e-marketplace"));
+  assert.ok(!seedSrc.includes("MarketplaceMaterialCategory"));
+  assert.ok(!seedSrc.includes("marketplace-material"));
+  const cleanupSrc = fs.readFileSync(path.join(__dirname, "../scripts/cleanup-e2e-timber-categories.js"), "utf8");
+  assert.ok(cleanupSrc.includes("assertSafeE2eDatabase"));
+  assert.ok(cleanupSrc.includes('database !== "elofix"'));
   const publicSrc = fs.readFileSync(
     path.join(__dirname, "../src/routes/marketplaceMaterialCategory.routes.js"),
     "utf8"
@@ -193,22 +201,21 @@ async function main() {
     });
     created.branchIds.push(near.id, farther.id, uncategorized.id, inactiveBranch.id, inland.id);
 
-    await marketplace.replaceBranchMarketplaceCategories(near.id, [paint.id, plumbing.id], { activeOnly: true });
-    await marketplace.replaceBranchMarketplaceCategories(farther.id, [paint.id], { activeOnly: true });
-    await marketplace.replaceBranchMarketplaceCategories(inland.id, [paint.id], { activeOnly: true });
-    await marketplace.assignCategoriesForAdmin(supplier.id, inactiveBranch.id, [paint.id, inactive.id]);
-
-    await assertRejectsStatus(
-      marketplace.replaceBranchMarketplaceCategories(near.id, [inactive.id], { activeOnly: true }),
-      400
-    );
-    const adminAssigned = await marketplace.assignCategoriesForAdmin(supplier.id, near.id, [paint.id, plumbing.id, inactive.id]);
-    assert.strictEqual(adminAssigned, near.id);
-    await marketplace.replaceBranchMarketplaceCategories(near.id, [paint.id, plumbing.id], { activeOnly: true });
+    const assigned = await marketplace.assignCategoriesForAdmin(supplier.id, {
+      categoryIds: [paint.id, plumbing.id, inactive.id],
+      allCategories: false,
+    });
+    assert.strictEqual(assigned.allCategories, false);
+    assert.ok(assigned.categoryIds.includes(paint.id));
+    assert.ok(assigned.categoryIds.includes(inactive.id));
+    await marketplace.assignCategoriesForAdmin(supplier.id, {
+      categoryIds: [paint.id, plumbing.id],
+      allCategories: false,
+    });
 
     const listed = await marketplace.listForAdmin();
     const paintRow = listed.find((row) => row.id === paint.id);
-    assert.ok(paintRow.branchCount >= 2, "category counts branches");
+    assert.ok(paintRow.supplierCount >= 1, "category counts suppliers");
 
     const publicCats = await marketplace.listActivePublic();
     assert.ok(publicCats.some((row) => row.id === paint.id));
@@ -225,12 +232,12 @@ async function main() {
 
     const filtered = await branchService.listBranchesForLocation({ ...query, categoryId: paint.id });
     const filteredIds = filtered.map((row) => row.id);
-    assert.deepStrictEqual(
-      filteredIds.filter((id) => created.branchIds.includes(id)),
-      [near.id, farther.id]
-    );
-    assert.ok(filtered[0].distanceKm <= filtered[1].distanceKm, "nearest first");
-    assert.ok(!filteredIds.includes(uncategorized.id));
+    const createdFiltered = filteredIds.filter((id) => created.branchIds.includes(id));
+    assert.deepStrictEqual(new Set(createdFiltered), new Set([near.id, farther.id, uncategorized.id]));
+    const createdRows = filtered.filter((row) => created.branchIds.includes(row.id));
+    for (let i = 1; i < createdRows.length; i += 1) {
+      assert.ok(createdRows[i - 1].distanceKm <= createdRows[i].distanceKm, "nearest first");
+    }
     assert.ok(!filteredIds.includes(inactiveBranch.id));
 
     const metroOnly = await branchService.listBranchesForLocation({ city: "Bellville", categoryId: paint.id });
@@ -245,7 +252,7 @@ async function main() {
     );
 
     const loaded = await branchService.getBranchByIdWithSupplier(near.id);
-    const pub = branchService.branchToPublicApi(loaded, loaded.supplier, { omitInternal: true });
+    const pub = await branchService.branchToPublicApi(loaded, loaded.supplier, { omitInternal: true });
     assert.ok(pub.marketplaceCategories.some((row) => row.id === paint.id));
     assert.ok(pub.marketplaceCategories.some((row) => row.id === plumbing.id));
     assert.ok(!pub.marketplaceCategories.some((row) => row.id === inactive.id));
@@ -257,7 +264,9 @@ async function main() {
     }
 
     const fartherLoaded = await branchService.getBranchByIdWithSupplier(farther.id);
-    const fartherPub = branchService.branchToPublicApi(fartherLoaded, fartherLoaded.supplier, { omitInternal: true });
+    const fartherPub = await branchService.branchToPublicApi(fartherLoaded, fartherLoaded.supplier, {
+      omitInternal: true,
+    });
     assert.strictEqual(fartherPub.websiteUrl, "https://branch.example/brackenfell");
 
     await assertRejectsStatus(
@@ -283,11 +292,72 @@ async function main() {
     });
     assert.ok(staffProfile.branches[0].websiteUrl.includes("staff.example"));
 
+    await assertRejectsStatus(
+      branchService.updateBranchForSupplierUser(supplierUser.id, near.id, { marketplaceCategoryIds: [paint.id] }),
+      403
+    );
+    await assertRejectsStatus(
+      branchService.createBranchForSupplierUser(supplierUser.id, {
+        name: `Blocked ${suffix}`,
+        marketplaceCategoryIds: [paint.id],
+      }),
+      403
+    );
+    const blockedCount = await prisma.branch.count({ where: { name: `Blocked ${suffix}` } });
+    assert.strictEqual(blockedCount, 0);
+
+    const custom = await marketplace.createCategory({ name: `Solar ${suffix}`, icon: "solar-panels" });
+    const bare = await marketplace.createCategory({ name: `Bare ${suffix}`, icon: "" });
+    created.categoryIds.push(custom.id, bare.id);
+    assert.strictEqual(custom.icon, "solar-panels");
+    assert.strictEqual(bare.icon, undefined);
+    const renamedPaint = await marketplace.updateCategory(paint.id, { name: `Coatings ${suffix}` });
+    assert.notStrictEqual(renamedPaint.slug, "paint");
+    const stillAssigned = await prisma.supplierMarketplaceCategory.findFirst({
+      where: { supplierId: supplier.id, categoryId: paint.id },
+    });
+    assert.ok(stillAssigned, "rename keeps the category id relationship");
+
+    const allOn = await marketplace.assignCategoriesForAdmin(supplier.id, {
+      categoryIds: [paint.id, plumbing.id],
+      allCategories: true,
+    });
+    assert.strictEqual(allOn.allCategories, true);
+    assert.ok(allOn.categoryIds.includes(paint.id));
+    const roofing = await marketplace.createCategory({ name: `Roofing ${suffix}`, icon: "future-roof" });
+    created.categoryIds.push(roofing.id);
+    const allHits = await branchService.listBranchesForLocation({ ...query, categoryId: roofing.id });
+    assert.ok(allHits.some((row) => row.id === near.id), "all categories includes categories created later");
+    assert.ok(allHits.some((row) => row.id === uncategorized.id));
+    const restored = await marketplace.assignCategoriesForAdmin(supplier.id, { allCategories: false });
+    assert.strictEqual(restored.allCategories, false);
+    assert.ok(restored.categoryIds.includes(paint.id), "turning all categories off restores the previous selection");
+    const roofingAfter = await branchService.listBranchesForLocation({ ...query, categoryId: roofing.id });
+    assert.ok(!roofingAfter.some((row) => row.id === near.id));
+
+    const unused = await marketplace.createCategory({ name: `Unused ${suffix}` });
+    created.categoryIds.push(unused.id);
+    const deletedUnused = await marketplace.deleteCategory(unused.id);
+    assert.strictEqual(deletedUnused.deleted, true);
+    created.categoryIds = created.categoryIds.filter((id) => id !== unused.id);
+    const blockedDelete = await marketplace.deleteCategory(plumbing.id);
+    assert.strictEqual(blockedDelete.requiresConfirmation, true);
+    assert.ok(blockedDelete.supplierCount >= 1);
+    const stillThere = await prisma.marketplaceMaterialCategory.findUnique({ where: { id: plumbing.id } });
+    assert.ok(stillThere);
+    const supplierBefore = await prisma.supplier.findUnique({ where: { id: supplier.id } });
+    const confirmed = await marketplace.deleteCategory(plumbing.id, { confirm: true });
+    assert.strictEqual(confirmed.deleted, true);
+    const supplierAfter = await prisma.supplier.findUnique({ where: { id: supplier.id } });
+    assert.strictEqual(supplierAfter.id, supplierBefore.id);
+    const branchAfter = await prisma.branch.findUnique({ where: { id: near.id } });
+    assert.ok(branchAfter);
+    created.categoryIds = created.categoryIds.filter((id) => id !== plumbing.id);
+
     console.log("marketplaceMaterialCategory.test.js: all tests passed");
   } finally {
     const prisma = require("../src/config/prisma");
     if (created.branchIds.length) {
-      await prisma.branchMarketplaceCategory.deleteMany({ where: { branchId: { in: created.branchIds } } });
       await prisma.branchUser.deleteMany({ where: { branchId: { in: created.branchIds } } });
       await prisma.branch.deleteMany({ where: { id: { in: created.branchIds } } });
     }

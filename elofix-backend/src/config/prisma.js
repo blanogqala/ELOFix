@@ -72,7 +72,7 @@ function createPrismaClient() {
 }
 
 /** Bump when Prisma schema/client changes so dev servers reload the client (nodemon keeps global). */
-const PRISMA_CLIENT_GENERATION = "20261002-marketplace-categories";
+const PRISMA_CLIENT_GENERATION = "20261003-supplier-marketplace-categories";
 
 function getPrismaClient() {
   if (

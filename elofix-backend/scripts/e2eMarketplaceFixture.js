@@ -198,6 +198,7 @@ async function seedE2eMarketplaceFixtures(prisma, env = process.env) {
       }
     }
 
+    const idsBySupplier = new Map();
     for (const spec of BRANCHES) {
       const supplier = suppliersByBranch.get(`${spec.orgEmail}|${spec.name}`);
       const sample = sampleProduct(spec);
@@ -250,7 +251,16 @@ async function seedE2eMarketplaceFixtures(prisma, env = process.env) {
         if (!row) throw new Error(`Missing marketplace fixture category ${slug}`);
         return row.id;
       });
-      await marketplace.replaceBranchMarketplaceCategories(branch.id, categoryIds, { activeOnly: true });
+      const existing = idsBySupplier.get(supplier.id) || new Set();
+      for (const categoryId of categoryIds) existing.add(categoryId);
+      idsBySupplier.set(supplier.id, existing);
+    }
+    for (const [supplierId, categoryIdSet] of idsBySupplier) {
+      await marketplace.replaceSupplierMarketplaceCategories(supplierId, [...categoryIdSet]);
+      await prisma.supplier.update({
+        where: { id: supplierId },
+        data: { allMarketplaceCategories: false },
+      });
     }
   } finally {
     await prisma.$executeRawUnsafe(`SELECT pg_advisory_unlock(${ADVISORY_LOCK_KEY})`);

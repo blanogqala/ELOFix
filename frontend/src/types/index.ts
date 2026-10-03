@@ -376,7 +376,7 @@ export interface MarketplaceMaterialCategory {
   imageUrl?: string;
   sortOrder?: number;
   isActive?: boolean;
-  branchCount?: number;
+  supplierCount?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -435,6 +435,9 @@ export interface Supplier {
   area?: string;
   inventoryCategories?: InventoryCategory[];
   marketplaceCategories?: MarketplaceMaterialCategory[];
+  /** Admin assignment mode. When true, every current and future category applies. */
+  allMarketplaceCategories?: boolean;
+  marketplaceCategoryIds?: string[];
 }
 
 export type MaterialFulfillmentStatus =

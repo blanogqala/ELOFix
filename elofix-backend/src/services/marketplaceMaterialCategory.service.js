@@ -16,8 +16,6 @@ const MARKETPLACE_ICON_KEYS = [
   "tools",
 ];
 
-const ICON_SET = new Set(MARKETPLACE_ICON_KEYS);
-
 function slugifyMarketplaceName(raw) {
   const slug = String(raw ?? "")
     .trim()
@@ -39,9 +37,9 @@ function assertSlug(slug) {
 function parseIcon(raw) {
   if (raw === undefined) return Symbol.for("omit");
   if (raw === null || String(raw).trim() === "") return null;
-  const key = String(raw).trim().toLowerCase();
-  if (!ICON_SET.has(key)) {
-    throw new AppError(`icon must be one of: ${MARKETPLACE_ICON_KEYS.join(", ")}`, 400);
+  const key = String(raw).trim().toLowerCase().slice(0, 40);
+  if (!/^[a-z0-9_-]+$/.test(key)) {
+    throw new AppError("icon may only contain letters, numbers, hyphens, and underscores", 400);
   }
   return key;
 }
@@ -94,7 +92,7 @@ function serializeCategory(row, { includeCount = false } = {}) {
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
   };
   if (includeCount) {
-    out.branchCount = Number(row._count?.branches ?? row.branchCount ?? 0);
+    out.supplierCount = Number(row._count?.suppliers ?? row.supplierCount ?? 0);
   }
   return out;
 }
@@ -129,7 +127,7 @@ function rethrowUnique(err) {
 async function listForAdmin() {
   const rows = await prisma.marketplaceMaterialCategory.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    include: { _count: { select: { branches: true } } },
+    include: { _count: { select: { suppliers: true } } },
   });
   return rows.map((row) => serializeCategory(row, { includeCount: true }));
 }
@@ -162,7 +160,7 @@ async function createCategory(body = {}) {
         sortOrder: sortOrder === Symbol.for("omit") ? 0 : sortOrder,
         isActive: body.isActive !== false,
       },
-      include: { _count: { select: { branches: true } } },
+      include: { _count: { select: { suppliers: true } } },
     });
     return serializeCategory(row, { includeCount: true });
   } catch (err) {
@@ -204,11 +202,11 @@ async function updateCategory(id, body = {}) {
         ? await prisma.marketplaceMaterialCategory.update({
             where: { id: existing.id },
             data,
-            include: { _count: { select: { branches: true } } },
+            include: { _count: { select: { suppliers: true } } },
           })
         : await prisma.marketplaceMaterialCategory.findUnique({
             where: { id: existing.id },
-            include: { _count: { select: { branches: true } } },
+            include: { _count: { select: { suppliers: true } } },
           });
     return serializeCategory(row, { includeCount: true });
   } catch (err) {
@@ -230,11 +228,15 @@ function normalizeCategoryIdList(categoryIds) {
   return [...new Set(ids)];
 }
 
+const SUPPLIER_MARKETPLACE_INCLUDE = {
+  marketplaceCategories: { include: { category: true } },
+};
+
 /**
- * Replace the branch's marketplace category set.
- * activeOnly: supplier owners may assign only active categories. Admin may assign inactive ones.
+ * Replace the supplier's explicit category set.
+ * Join rows are stored even while All categories is on, so turning the mode off restores them.
  */
-async function replaceBranchMarketplaceCategories(branchId, categoryIds, { activeOnly = false } = {}) {
+async function replaceSupplierMarketplaceCategories(supplierId, categoryIds) {
   const ids = normalizeCategoryIdList(categoryIds);
   if (ids.length) {
     const rows = await prisma.marketplaceMaterialCategory.findMany({
@@ -243,16 +245,13 @@ async function replaceBranchMarketplaceCategories(branchId, categoryIds, { activ
     if (rows.length !== ids.length) {
       throw new AppError("One or more marketplace categories were not found", 400);
     }
-    if (activeOnly && rows.some((row) => row.isActive === false)) {
-      throw new AppError("Suppliers can only assign active marketplace categories", 400);
-    }
   }
   await prisma.$transaction([
-    prisma.branchMarketplaceCategory.deleteMany({ where: { branchId: String(branchId) } }),
+    prisma.supplierMarketplaceCategory.deleteMany({ where: { supplierId: String(supplierId) } }),
     ...(ids.length
       ? [
-          prisma.branchMarketplaceCategory.createMany({
-            data: ids.map((categoryId) => ({ branchId: String(branchId), categoryId })),
+          prisma.supplierMarketplaceCategory.createMany({
+            data: ids.map((categoryId) => ({ supplierId: String(supplierId), categoryId })),
           }),
         ]
       : []),
@@ -260,13 +259,79 @@ async function replaceBranchMarketplaceCategories(branchId, categoryIds, { activ
   return ids;
 }
 
-async function assignCategoriesForAdmin(supplierId, branchId, categoryIds) {
-  const branch = await prisma.branch.findUnique({ where: { id: String(branchId || "") } });
-  if (!branch || String(branch.supplierId) !== String(supplierId || "")) {
-    throw new AppError("Branch not found", 404);
+function serializeSupplierAssignment(supplier) {
+  const links = Array.isArray(supplier?.marketplaceCategories) ? supplier.marketplaceCategories : [];
+  const categories = links
+    .map((link) => serializeCategory(link.category))
+    .filter(Boolean)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  return {
+    supplierId: supplier.id,
+    allCategories: supplier.allMarketplaceCategories === true,
+    categoryIds: categories.map((row) => row.id),
+    categories,
+  };
+}
+
+async function assignCategoriesForAdmin(supplierId, body = {}) {
+  const supplier = await prisma.supplier.findUnique({ where: { id: String(supplierId || "") } });
+  if (!supplier) throw new AppError("Supplier not found", 404);
+  if (body.categoryIds === undefined && body.allCategories === undefined) {
+    throw new AppError("categoryIds or allCategories is required", 400);
   }
-  await replaceBranchMarketplaceCategories(branch.id, categoryIds, { activeOnly: false });
-  return branch.id;
+  const allCategories = body.allCategories === undefined ? supplier.allMarketplaceCategories === true : Boolean(body.allCategories);
+  if (body.categoryIds !== undefined) {
+    await replaceSupplierMarketplaceCategories(supplier.id, body.categoryIds);
+  }
+  const updated = await prisma.supplier.update({
+    where: { id: supplier.id },
+    data: { allMarketplaceCategories: allCategories },
+    include: SUPPLIER_MARKETPLACE_INCLUDE,
+  });
+  return serializeSupplierAssignment(updated);
+}
+
+/**
+ * Delete a marketplace category. Assigned categories require confirm=true.
+ * Cascade removes only supplier join rows.
+ */
+async function deleteCategory(id, { confirm = false } = {}) {
+  const existing = await prisma.marketplaceMaterialCategory.findUnique({ where: { id: String(id || "") } });
+  if (!existing) throw new AppError("Marketplace category not found", 404);
+  const links = await prisma.supplierMarketplaceCategory.findMany({
+    where: { categoryId: existing.id },
+    select: { supplierId: true },
+  });
+  const supplierCount = new Set(links.map((link) => link.supplierId)).size;
+  if (supplierCount > 0 && !confirm) {
+    return {
+      deleted: false,
+      requiresConfirmation: true,
+      supplierCount,
+      categoryId: existing.id,
+    };
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.supplierMarketplaceCategory.deleteMany({ where: { categoryId: existing.id } });
+    await tx.marketplaceMaterialCategory.delete({ where: { id: existing.id } });
+  });
+  return { deleted: true, supplierCount, categoryId: existing.id };
+}
+
+function supplierEligibleForCategory(categoryId) {
+  return {
+    OR: [
+      { allMarketplaceCategories: true },
+      {
+        marketplaceCategories: {
+          some: {
+            categoryId,
+            category: { isActive: true },
+          },
+        },
+      },
+    ],
+  };
 }
 
 /**
@@ -293,7 +358,10 @@ module.exports = {
   createCategory,
   updateCategory,
   normalizeCategoryIdList,
-  replaceBranchMarketplaceCategories,
+  replaceSupplierMarketplaceCategories,
   assignCategoriesForAdmin,
+  deleteCategory,
+  supplierEligibleForCategory,
+  SUPPLIER_MARKETPLACE_INCLUDE,
   resolveNearbyCategoryFilter,
 };

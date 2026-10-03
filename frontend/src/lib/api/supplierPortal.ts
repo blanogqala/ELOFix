@@ -374,7 +374,6 @@ export interface SupplierBranchCreateBody {
   longitude?: number | null;
   isActive?: boolean;
   websiteUrl?: string | null;
-  marketplaceCategoryIds?: string[];
 }
 
 export async function getSupplierBranch(branchId: string): Promise<SupplierBranchProfile | null> {
@@ -470,7 +469,6 @@ export type SupplierBranchUpdateBody = Partial<
     | 'longitude'
     | 'isActive'
     | 'websiteUrl'
-    | 'marketplaceCategoryIds'
   >
 >;
 

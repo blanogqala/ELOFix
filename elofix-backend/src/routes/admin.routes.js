@@ -84,6 +84,7 @@ router.get("/jobs/:jobId/case-summary", asyncHandler(adminController.getAdminJob
 router.get("/marketplace-material-categories", asyncHandler(marketplaceCategoryAdmin.list));
 router.post("/marketplace-material-categories", asyncHandler(marketplaceCategoryAdmin.create));
 router.patch("/marketplace-material-categories/:id", asyncHandler(marketplaceCategoryAdmin.update));
+router.delete("/marketplace-material-categories/:id", asyncHandler(marketplaceCategoryAdmin.remove));
 
 router.get("/suppliers", asyncHandler(adminController.listSuppliers));
 router.post("/suppliers", asyncHandler(adminController.createSupplier));
@@ -105,8 +106,8 @@ router.get(
 );
 router.get("/suppliers/:supplierId/orders", asyncHandler(adminController.listSupplierOrders));
 router.patch(
-  "/suppliers/:supplierId/branches/:branchId/marketplace-categories",
-  asyncHandler(marketplaceCategoryAdmin.assignBranch)
+  "/suppliers/:supplierId/marketplace-categories",
+  asyncHandler(marketplaceCategoryAdmin.assignSupplier)
 );
 router.get("/suppliers/:supplierId", asyncHandler(adminController.getAdminSupplierDetail));
 

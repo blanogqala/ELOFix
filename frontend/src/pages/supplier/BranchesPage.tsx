@@ -5,8 +5,6 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { ProviderCardSkeleton } from '@/components/common/loading';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSupplierBranches, postSupplierBranch, getSupplierAnalyticsOverview } from '@/lib/api/supplierPortal';
-import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialCategories';
-import { MarketplaceCategoryChecklist } from '@/components/marketplace/MarketplaceCategoryChecklist';
 import type { SupplierBranchProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,7 +56,6 @@ export default function SupplierBranchesPage() {
   const [newLng, setNewLng] = useState('');
   const [newActive, setNewActive] = useState(true);
   const [newWebsite, setNewWebsite] = useState('');
-  const [newCategoryIds, setNewCategoryIds] = useState<string[]>([]);
   const [cityFilter, setCityFilter] = useState('');
   const [branchSearch, setBranchSearch] = useState('');
 
@@ -66,12 +63,6 @@ export default function SupplierBranchesPage() {
     queryKey: ['supplier', 'branches', userId],
     queryFn: () => getSupplierBranches(),
     enabled: Boolean(userId),
-  });
-
-  const { data: marketplaceCategories = [] } = useQuery({
-    queryKey: ['marketplace-material-categories'],
-    queryFn: getMarketplaceMaterialCategories,
-    enabled: createOpen,
   });
 
   const { data: analytics } = useQuery({
@@ -119,7 +110,6 @@ export default function SupplierBranchesPage() {
     setNewLng('');
     setNewActive(true);
     setNewWebsite('');
-    setNewCategoryIds([]);
   };
 
   const createMut = useMutation({
@@ -140,7 +130,6 @@ export default function SupplierBranchesPage() {
         longitude: lngN !== null && !Number.isNaN(lngN) ? lngN : null,
         isActive: newActive,
         websiteUrl: newWebsite.trim() || null,
-        marketplaceCategoryIds: newCategoryIds,
       });
     },
     onSuccess: (branch) => {
@@ -319,17 +308,7 @@ export default function SupplierBranchesPage() {
                   onChange={(e) => setNewWebsite(e.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Marketplace categories</Label>
-                <p className="text-xs text-muted-foreground">
-                  Choose from categories created by EloFix. This controls which customers see this branch.
-                </p>
-                <MarketplaceCategoryChecklist
-                  categories={marketplaceCategories}
-                  selectedIds={newCategoryIds}
-                  onChange={setNewCategoryIds}
-                />
-              </div>
+              <p className="text-sm text-muted-foreground">Marketplace categories are managed by EloFix.</p>
               <div className="flex items-center gap-2">
                 <Switch checked={newActive} onCheckedChange={setNewActive} id="dlg-active" />
                 <Label htmlFor="dlg-active">Active (visible to customers)</Label>

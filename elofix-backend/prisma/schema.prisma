@@ -1141,10 +1141,13 @@ model Supplier {
   products              Json                         @default("[]")
   /// Optional public website. Branch websiteUrl takes precedence on storefronts.
   websiteUrl            String?
+  /// When true, every active marketplace category applies to all branches, including categories created later.
+  allMarketplaceCategories Boolean                   @default(false)
   createdByAdmin        Boolean                      @default(false)
   createdAt             DateTime                     @default(now())
   materialOrders        MaterialOrder[]
   branches              Branch[]
+  marketplaceCategories SupplierMarketplaceCategory[]
 
   @@index([createdAt])
 }
@@ -1176,7 +1179,6 @@ model Branch {
   updatedAt    DateTime                  @updatedAt
   materialOrders        MaterialOrder[]
   inventoryCategories   BranchInventoryCategory[]
-  marketplaceCategories BranchMarketplaceCategory[]
   branchUsers           BranchUser[]
   withdrawalProfile     BranchWithdrawalProfile?
   withdrawalRequests    BranchWithdrawalRequest[]
@@ -1271,8 +1273,7 @@ model BranchStaffNotification {
   @@index([category])
 }
 
-/// Admin-owned marketplace taxonomy: what a branch generally supplies.
-/// Distinct from BranchInventoryCategory, which organizes products inside one branch.
+/// Admin-owned marketplace taxonomy. Distinct from BranchInventoryCategory.
 model MarketplaceMaterialCategory {
   id          String   @id @default(uuid())
   name        String
@@ -1284,20 +1285,20 @@ model MarketplaceMaterialCategory {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  branches    BranchMarketplaceCategory[]
+  suppliers   SupplierMarketplaceCategory[]
 
   @@index([isActive, sortOrder])
 }
 
-/// Many-to-many: a branch may supply several marketplace categories.
-model BranchMarketplaceCategory {
-  branchId   String
+/// Supplier-level marketplace classification. Every branch of the supplier inherits it.
+model SupplierMarketplaceCategory {
+  supplierId String
   categoryId String
-  branch     Branch                      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplier   Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   category   MarketplaceMaterialCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   createdAt  DateTime                    @default(now())
 
-  @@id([branchId, categoryId])
+  @@id([supplierId, categoryId])
   @@index([categoryId])
 }
 

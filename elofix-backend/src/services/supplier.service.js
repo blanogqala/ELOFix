@@ -4,6 +4,7 @@ const { Prisma } = require("@prisma/client");
 const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const branchService = require("./branch.service");
+const marketplaceCategoryService = require("./marketplaceMaterialCategory.service");
 const notificationEvents = require("./notificationEvents.service");
 const {
   assertValidEmail,
@@ -288,6 +289,10 @@ function rowToPublicApi(row, { omitInternal = false } = {}) {
     phone: row.phone || undefined,
     websiteUrl:
       row.websiteUrl != null && String(row.websiteUrl).trim() ? String(row.websiteUrl).trim() : undefined,
+    allMarketplaceCategories: row.allMarketplaceCategories === true,
+    marketplaceCategoryIds: Array.isArray(row.marketplaceCategories)
+      ? row.marketplaceCategories.map((link) => String(link.categoryId))
+      : undefined,
     latitude: Number.isFinite(latNum) ? latNum : undefined,
     longitude: Number.isFinite(lngNum) ? lngNum : undefined,
   };
@@ -303,6 +308,7 @@ function rowToPublicApi(row, { omitInternal = false } = {}) {
 async function findSupplierRecordByUserId(userId) {
   return prisma.supplier.findFirst({
     where: { userId: String(userId) },
+    include: marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
   });
 }
 
@@ -327,7 +333,9 @@ async function getSupplierProfileByUserId(userId) {
     select: { id: true, email: true, name: true, phone: true, role: true, createdAt: true },
   });
   const pub = rowToPublicApi(row, { omitInternal: false });
-  pub.branches = branches.map((b) => branchService.branchToPublicApi(b, row, { omitInternal: false }));
+  pub.branches = await Promise.all(
+    branches.map((b) => branchService.branchToPublicApi(b, row, { omitInternal: false, hydrateMarketplace: false }))
+  );
   return {
     ...pub,
     accountEmail: user?.email ?? null,
@@ -338,7 +346,10 @@ async function getSupplierProfileByUserId(userId) {
 }
 
 async function listSuppliersForPublicCatalog() {
-  const rows = await prisma.supplier.findMany({ orderBy: { name: "asc" } });
+  const rows = await prisma.supplier.findMany({
+    orderBy: { name: "asc" },
+    include: marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
+  });
   const allBranches = await prisma.branch.findMany({
     where: { isActive: true },
     orderBy: { name: "asc" },
@@ -349,10 +360,26 @@ async function listSuppliersForPublicCatalog() {
     if (!bySup.has(b.supplierId)) bySup.set(b.supplierId, []);
     bySup.get(b.supplierId).push(b);
   }
-  return rows.map((row) => ({
-    ...rowToPublicApi(row, { omitInternal: true }),
-    branches: (bySup.get(row.id) || []).map((b) => branchService.branchToPublicApi(b, row, { omitInternal: true })),
-  }));
+  const catalogCategories = rows.some((row) => row.allMarketplaceCategories)
+    ? await prisma.marketplaceMaterialCategory.findMany({
+        where: { isActive: true },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      })
+    : undefined;
+  return Promise.all(
+    rows.map(async (row) => ({
+      ...rowToPublicApi(row, { omitInternal: true }),
+      branches: await Promise.all(
+        (bySup.get(row.id) || []).map((b) =>
+          branchService.branchToPublicApi(b, row, {
+            omitInternal: true,
+            hydrateMarketplace: false,
+            catalogCategories,
+          })
+        )
+      ),
+    }))
+  );
 }
 
 /**
@@ -376,7 +403,7 @@ async function getProductsByCategory(category) {
   const out = [];
   for (const b of branches) {
     const supplierRow = b.supplier;
-    const api = branchService.branchToPublicApi(b, supplierRow, { omitInternal: true });
+    const api = await branchService.branchToPublicApi(b, supplierRow, { omitInternal: true, hydrateMarketplace: false });
     for (const product of api.products || []) {
       if (!normalized || String(product.category || "").trim().toLowerCase() === normalized) {
         out.push({
@@ -396,6 +423,7 @@ async function getProductsByCategory(category) {
 async function getSupplierById(id) {
   const row = await prisma.supplier.findUnique({
     where: { id },
+    include: marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
   });
   if (!row) return null;
   let branches = [];
@@ -410,7 +438,9 @@ async function getSupplierById(id) {
   }
   return {
     ...rowToPublicApi(row, { omitInternal: true }),
-    branches: branches.map((b) => branchService.branchToPublicApi(b, row, { omitInternal: true })),
+    branches: await Promise.all(
+      branches.map((b) => branchService.branchToPublicApi(b, row, { omitInternal: true, hydrateMarketplace: false }))
+    ),
   };
 }
 
@@ -419,6 +449,7 @@ async function listSuppliersForAdminDashboard() {
     orderBy: { name: "asc" },
     include: {
       user: { select: { id: true, email: true, name: true, phone: true, role: true, createdAt: true } },
+      ...marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
     },
   });
   const supplierIds = rows.map((r) => r.id);
@@ -438,17 +469,24 @@ async function listSuppliersForAdminDashboard() {
       console.error("[listSuppliersForAdminDashboard] branch load failed (run prisma migrations?)", err.message);
     }
   }
-  return rows.map((row) => {
-    const { user, ...rest } = row;
-    const branches = branchesBySupplier.get(row.id) || [];
-    return {
-      ...rowToPublicApi(rest, { omitInternal: false }),
-      branches: branches.map((b) => branchService.branchToPublicApi(b, rest, { omitInternal: false })),
-      linkedUserEmail: user?.email ?? null,
-      linkedUserName: user?.name ?? null,
-      linkedUserId: user?.id ?? null,
-    };
-  });
+  return Promise.all(
+    rows.map(async (row) => {
+      const { user, marketplaceCategories, ...rest } = row;
+      const supplierRow = { ...rest, marketplaceCategories };
+      const branches = branchesBySupplier.get(row.id) || [];
+      return {
+        ...rowToPublicApi(supplierRow, { omitInternal: false }),
+        branches: await Promise.all(
+          branches.map((b) =>
+            branchService.branchToPublicApi(b, supplierRow, { omitInternal: false, hydrateMarketplace: false })
+          )
+        ),
+        linkedUserEmail: user?.email ?? null,
+        linkedUserName: user?.name ?? null,
+        linkedUserId: user?.id ?? null,
+      };
+    })
+  );
 }
 
 async function provisionSupplierByAdmin(body) {
@@ -541,6 +579,7 @@ async function getSupplierDetailsForAdmin(id) {
     where: { id },
     include: {
       user: { select: { id: true, email: true, name: true, phone: true, role: true, createdAt: true } },
+      ...marketplaceCategoryService.SUPPLIER_MARKETPLACE_INCLUDE,
     },
   });
   if (!row) return null;
@@ -557,7 +596,11 @@ async function getSupplierDetailsForAdmin(id) {
   const { user, ...supRest } = row;
   return {
     ...rowToPublicApi(supRest, { omitInternal: false }),
-    branches: branches.map((b) => branchService.branchToPublicApi(b, supRest, { omitInternal: false })),
+    branches: await Promise.all(
+      branches.map((b) =>
+        branchService.branchToPublicApi(b, supRest, { omitInternal: false, hydrateMarketplace: false })
+      )
+    ),
     linkedUserEmail: user?.email ?? null,
     linkedUserName: user?.name ?? null,
     linkedUserId: user?.id ?? null,
@@ -980,7 +1023,7 @@ async function patchBranchForBranchStaff(branchUserId, body = {}) {
     data.branchEmail = raw;
   }
   if (body.marketplaceCategoryIds !== undefined) {
-    throw new AppError("Branch staff cannot change marketplace categories", 403);
+    throw new AppError("Only EloFix admin can change marketplace categories", 403);
   }
   if (body.websiteUrl !== undefined) {
     const websiteMark = parseOptionalWebsiteUrl(body.websiteUrl);
@@ -1051,7 +1094,10 @@ async function getBranchStaffPortalProfile(branchUserId) {
   });
   const pub = rowToPublicApi(row, { omitInternal: false });
   pub.branches = [
-    branchService.branchToPublicApi(branchWithCats || bu.branch, row, { omitInternal: false }),
+    await branchService.branchToPublicApi(branchWithCats || bu.branch, row, {
+      omitInternal: false,
+      hydrateMarketplace: false,
+    }),
   ];
   return {
     ...pub,

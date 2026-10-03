@@ -202,7 +202,11 @@ export default function AdminSupplierDetail() {
           </div>
         </div>
 
-        <AdminBranchMarketplaceCategories supplierId={id} branches={supplier.branches ?? []} />
+        <AdminBranchMarketplaceCategories
+          supplierId={id}
+          allCategories={supplier.allMarketplaceCategories === true}
+          categoryIds={supplier.marketplaceCategoryIds ?? []}
+        />
 
         <AdminSupplierBranchPayoutSection supplierId={id} branches={supplier.branches ?? []} />
 
