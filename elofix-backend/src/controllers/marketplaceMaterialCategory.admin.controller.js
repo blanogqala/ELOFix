@@ -1,3 +1,7 @@
+const AppError = require("../utils/AppError");
+const { filePathToPublicUrl } = require("../middleware/upload.middleware");
+const { registerUploadedFile } = require("../services/fileStorage.service");
+const { validateUploadedImageFile } = require("../utils/uploadSecurity.util");
 const marketplaceCategoryService = require("../services/marketplaceMaterialCategory.service");
 
 async function list(req, res) {
@@ -23,6 +27,19 @@ async function assignSupplier(req, res) {
   res.json({ success: true, assignment });
 }
 
+async function uploadImage(req, res) {
+  if (!req.file) {
+    throw new AppError("File is required", 400);
+  }
+  await validateUploadedImageFile(req.file);
+  const stored = await registerUploadedFile(req.file, {
+    ownerUserId: req.user.userId,
+    type: "marketplace_category",
+  });
+  const pub = req.file.path ? filePathToPublicUrl(req.file.path) : null;
+  res.json({ success: true, fileId: stored.fileId, url: pub || stored.url });
+}
+
 async function remove(req, res) {
   const confirm =
     String(req.query.confirm || "").toLowerCase() === "true" || (req.body || {}).confirm === true;
@@ -42,6 +59,7 @@ module.exports = {
   list,
   create,
   update,
+  uploadImage,
   remove,
   assignSupplier,
 };

@@ -38,6 +38,14 @@ function testWebsiteAndRoutes() {
   assert.ok(adminSrc.includes('"/suppliers/:supplierId/marketplace-categories"'));
   assert.ok(!adminSrc.includes("/suppliers/:supplierId/branches/:branchId/marketplace-categories"));
   assert.ok(adminSrc.includes('router.delete("/marketplace-material-categories/:id"'));
+  assert.ok(adminSrc.includes('"/marketplace-material-categories/upload-image"'));
+  assert.ok(adminSrc.includes("uploadMarketplaceCategoryImage"));
+  const uploadSrc = fs.readFileSync(path.join(__dirname, "../src/middleware/upload.middleware.js"), "utf8");
+  assert.ok(uploadSrc.includes('path.join(UPLOAD_ROOT, "marketplace", "category-images")'));
+  const policySrc = fs.readFileSync(path.join(__dirname, "../src/utils/fileAccessPolicy.util.js"), "utf8");
+  assert.ok(policySrc.includes('"marketplace_category"'));
+  const { isPublicFileType } = require("../src/utils/fileAccessPolicy.util");
+  assert.strictEqual(isPublicFileType("marketplace_category"), true);
   const serverSrc = fs.readFileSync(path.join(__dirname, "../server.js"), "utf8");
   const seedSrc = fs.readFileSync(path.join(__dirname, "../prisma/seed.js"), "utf8");
   assert.ok(!serverSrc.includes("cleanup-e2e-timber-categories"));
@@ -97,6 +105,12 @@ async function main() {
     const renamed = await marketplace.updateCategory(paint.id, { description: "Coatings", sortOrder: 4 });
     assert.strictEqual(renamed.description, "Coatings");
     assert.strictEqual(renamed.sortOrder, 4);
+    assert.strictEqual(inactive.sortOrder, 0);
+    assert.strictEqual(inactive.description, undefined);
+    const kept = await marketplace.updateCategory(paint.id, { name: paint.name, isActive: true });
+    assert.strictEqual(kept.description, "Coatings");
+    assert.strictEqual(kept.sortOrder, 4);
+    assert.strictEqual(kept.icon, "paint");
     const deactivated = await marketplace.updateCategory(inactive.id, { isActive: false });
     assert.strictEqual(deactivated.isActive, false);
 

@@ -2,35 +2,16 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { MarketplaceCategoryChecklist } from '@/components/marketplace/MarketplaceCategoryChecklist';
-import { MARKETPLACE_ICON_OPTIONS } from '@/components/marketplace/marketplaceCategoryIcons';
+import { MarketplaceCategoryFormDialog } from '@/components/admin/MarketplaceCategoryFormDialog';
 import {
   assignAdminSupplierMarketplaceCategories,
   createAdminMarketplaceMaterialCategory,
   getAdminMarketplaceMaterialCategories,
 } from '@/lib/api/marketplaceMaterialCategories';
+import type { MarketplaceCategorySaveBody } from '@/lib/marketplaceCategoryForm';
 import { useToast } from '@/hooks/use-toast';
 import { Plus } from 'lucide-react';
-
-const NO_ICON = '__none__';
 
 export function AdminBranchMarketplaceCategories({
   supplierId,
@@ -50,12 +31,6 @@ export function AdminBranchMarketplaceCategories({
   const [draftIds, setDraftIds] = useState<string[]>([]);
   const [allMode, setAllMode] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [icon, setIcon] = useState(NO_ICON);
-  const [imageUrl, setImageUrl] = useState('');
-  const [sortOrder, setSortOrder] = useState('0');
-  const [isActive, setIsActive] = useState(true);
 
   useEffect(() => {
     setDraftIds(categoryIds);
@@ -77,24 +52,10 @@ export function AdminBranchMarketplaceCategories({
   });
 
   const createMut = useMutation({
-    mutationFn: () =>
-      createAdminMarketplaceMaterialCategory({
-        name: name.trim(),
-        description: description.trim() || null,
-        icon: icon === NO_ICON ? null : icon,
-        imageUrl: imageUrl.trim() || null,
-        sortOrder: Number(sortOrder) || 0,
-        isActive,
-      }),
+    mutationFn: (body: MarketplaceCategorySaveBody) => createAdminMarketplaceMaterialCategory(body),
     onSuccess: () => {
       toast({ title: 'Category created' });
       setCreateOpen(false);
-      setName('');
-      setDescription('');
-      setIcon(NO_ICON);
-      setImageUrl('');
-      setSortOrder('0');
-      setIsActive(true);
       void queryClient.invalidateQueries({ queryKey: ['admin', 'marketplace-material-categories'] });
     },
     onError: (e: Error) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
@@ -146,76 +107,13 @@ export function AdminBranchMarketplaceCategories({
         Save
       </Button>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>New material category</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="supplier-mmc-name">Name</Label>
-              <Input id="supplier-mmc-name" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="supplier-mmc-desc">Description</Label>
-              <Textarea id="supplier-mmc-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Icon</Label>
-                <Select value={icon} onValueChange={setIcon}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Icon" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_ICON}>None</SelectItem>
-                    {MARKETPLACE_ICON_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="supplier-mmc-order">Display order</Label>
-                <Input
-                  id="supplier-mmc-order"
-                  inputMode="numeric"
-                  value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="supplier-mmc-image">Image URL</Label>
-              <Input
-                id="supplier-mmc-image"
-                value={imageUrl}
-                placeholder="Optional"
-                onChange={(e) => setImageUrl(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-              <Label htmlFor="supplier-mmc-active">Active</Label>
-              <Switch id="supplier-mmc-active" checked={isActive} onCheckedChange={setIsActive} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className="btn-accent"
-              disabled={createMut.isPending || !name.trim()}
-              onClick={() => createMut.mutate()}
-            >
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MarketplaceCategoryFormDialog
+        open={createOpen}
+        mode="create"
+        pending={createMut.isPending}
+        onOpenChange={setCreateOpen}
+        onSubmit={(body) => createMut.mutate(body)}
+      />
     </section>
   );
 }

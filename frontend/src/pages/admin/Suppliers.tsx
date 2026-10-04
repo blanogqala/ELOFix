@@ -9,7 +9,15 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { getAdminSuppliers, provisionAdminSupplier } from '@/lib/api/admin';
 import { Search, Plus, Eye, Store, TrendingUp, Percent, PackageCheck, GitBranch } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Table,
   TableBody,
@@ -266,11 +274,12 @@ export default function AdminSuppliers() {
       </div>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create supplier account</DialogTitle>
+        <DialogContent size="lg" className="flex flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="px-6 pr-12 pt-6">
+            <DialogTitle>Create supplier</DialogTitle>
+            <DialogDescription>Add a new materials supplier to EloFix.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 py-2">
+          <DialogBody className="grid gap-3 px-6 py-4">
             <div>
               <Label>Business name *</Label>
               <Input
@@ -311,9 +320,14 @@ export default function AdminSuppliers() {
               <Label>Address</Label>
               <Input value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
             </div>
+          </DialogBody>
+          <DialogFooter className="px-6 pb-6">
+            <Button type="button" variant="outline" disabled={provisionMut.isPending} onClick={() => setAddOpen(false)}>
+              Cancel
+            </Button>
             <Button
               type="button"
-              className="btn-accent w-full mt-2"
+              className="btn-accent"
               disabled={provisionMut.isPending}
               onClick={() => {
                 if (
@@ -336,9 +350,9 @@ export default function AdminSuppliers() {
                 provisionMut.mutate();
               }}
             >
-              Create supplier
+              {provisionMut.isPending ? 'Creating...' : 'Create supplier'}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </DashboardLayout>

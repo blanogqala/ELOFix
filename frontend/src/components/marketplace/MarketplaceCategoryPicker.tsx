@@ -1,8 +1,23 @@
+import { useEffect, useState } from 'react';
 import type { MarketplaceMaterialCategory } from '@/types';
 import { cn } from '@/lib/utils';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import { Loader2 } from 'lucide-react';
 import { MarketplaceCategoryIcon } from './marketplaceCategoryIcons';
+
+function CategoryMark({ image, icon }: { image: string; icon?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [image]);
+
+  if (image && !failed) {
+    return (
+      <img src={image} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />
+    );
+  }
+  return <MarketplaceCategoryIcon icon={icon} className="h-4 w-4" />;
+}
 
 export function MarketplaceCategoryPicker({
   categories,
@@ -55,12 +70,8 @@ export function MarketplaceCategoryPicker({
               selected ? 'border-primary ring-1 ring-primary/30' : 'border-border'
             )}
           >
-            <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg bg-primary/10 text-primary">
-              {image ? (
-                <img src={image} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <MarketplaceCategoryIcon icon={category.icon} className="h-4 w-4" />
-              )}
+            <span className="flex aspect-square h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-primary/10 text-primary">
+              <CategoryMark image={image} icon={category.icon} />
             </span>
             <span className="text-sm font-medium leading-tight">{category.name}</span>
           </button>

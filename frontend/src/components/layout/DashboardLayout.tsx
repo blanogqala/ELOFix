@@ -90,7 +90,6 @@ const adminNavStructure: AdminNavEntry[] = [
       { label: 'Customers', path: '/admin/customers' },
       { label: 'Providers', path: '/admin/providers' },
       { label: 'Suppliers', path: '/admin/suppliers' },
-      { label: 'Material categories', path: '/admin/material-categories' },
     ],
   },
   {
@@ -100,6 +99,7 @@ const adminNavStructure: AdminNavEntry[] = [
     children: [
       { label: 'Jobs', path: '/admin/jobs' },
       { label: 'Categories', path: '/admin/categories' },
+      { label: 'Material categories', path: '/admin/material-categories' },
     ],
   },
   {

@@ -45,12 +45,7 @@ import {
 import { formatCurrency } from '@/lib/formatCurrency';
 import { categoryKeysMatch } from '@/lib/categoryKey';
 import { formatDistanceKm, haversineKm } from '@/lib/geo/haversine';
-import {
-  distanceProximityBand,
-  distanceProximityBadgeClass,
-  distanceProximityCardClass,
-  distanceProximityLabel,
-} from '@/lib/geo/distanceProximity';
+import { distanceProximityBand, distanceProximityLabel } from '@/lib/geo/distanceProximity';
 
 export type JobStoreMaterialsBrowseVariant = 'provider_cart' | 'user_suggestion';
 
@@ -494,20 +489,16 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
               </div>
             )}
             {!storesLoading && (
-              <ul className="m-0 list-none space-y-3 p-0 pb-6">
+              <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 pb-6 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
                 {sortedStores.map((supplier) => {
                   const distKm = resolveStoreDistanceKm(supplier);
                   const proxBand = distanceProximityBand(distKm);
                   return (
-                  <li key={supplier.id}>
+                  <li key={supplier.id} className="min-w-0">
                     <button
                       type="button"
                       onClick={() => handleSelectSupplier(supplier)}
-                      className={cn(
-                        'w-full flex items-start gap-4 p-4 rounded-xl border-2 transition-all text-left',
-                        distanceProximityCardClass(proxBand),
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-                      )}
+                      className="flex h-full w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 text-lg leading-none">
                         {resolveUploadUrl(supplier.logo) ? (
@@ -526,12 +517,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
                         )}
                         <div className="flex flex-wrap gap-2 mt-3 text-xs text-muted-foreground">
                           {distKm != null && (
-                            <span
-                              className={cn(
-                                'inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium',
-                                distanceProximityBadgeClass(proxBand)
-                              )}
-                            >
+                            <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
                               <Navigation className="h-3 w-3" />
                               {formatDistanceKm(distKm)} · {distanceProximityLabel(proxBand)}
                             </span>

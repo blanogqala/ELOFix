@@ -23,6 +23,7 @@ const PUBLIC_FILE_TYPES = new Set([
   "supplier_product",
   "supplier_logo",
   "supplier_category",
+  "marketplace_category",
 ]);
 
 function normalizeUploadRelPath(relPath) {
