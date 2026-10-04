@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { socket, ensureSocketAuthAndConnect } from '@/lib/socket';
 import { getLatestTrackingForOrder } from '@/lib/api/tracking';
 import { ApiHttpError } from '@/api/client';
+import { nextLocationHeartbeatMs } from '@/lib/deliveryTrackingStatus';
 
 const POLL_MS = 10_000;
 /** Faster poll until the first driver ping so COLLECTING maps populate quickly. */
@@ -21,11 +22,6 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
   const pollIntervalRef = useRef<number | null>(null);
 
   orderIdRef.current = orderId;
-
-  const touchPing = useCallback(() => {
-    setLastPingAtMs(Date.now());
-    setPollFailed(false);
-  }, []);
 
   useEffect(() => {
     if (!enabled) {
@@ -47,11 +43,14 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
     setLastPingAtMs(null);
     lastPollRef.current = { lat: null, lng: null };
 
-    const applyCoords = (la: number, lo: number, fromPoll: boolean) => {
+    const applyCoords = (la: number, lo: number, fromPoll: boolean, pingAtMs: number | null) => {
       if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
       setLiveLat(la);
       setLiveLng(lo);
-      touchPing();
+      if (pingAtMs != null && Number.isFinite(pingAtMs)) {
+        setLastPingAtMs(pingAtMs);
+      }
+      setPollFailed(false);
       const becameFirstFix = !hasFixRef.current;
       if (becameFirstFix) {
         hasFixRef.current = true;
@@ -71,7 +70,16 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
       if (String(data?.orderId || '') !== oid) return;
       const la = Number(data?.lat);
       const lo = Number(data?.lng);
-      applyCoords(la, lo, false);
+      const prev = lastPollRef.current;
+      const pingAtMs = nextLocationHeartbeatMs({
+        previousLat: prev.lat,
+        previousLng: prev.lng,
+        lat: la,
+        lng: lo,
+        nowMs: Date.now(),
+        fromSocket: true,
+      });
+      applyCoords(la, lo, false, pingAtMs);
     };
 
     const joinRoom = () => {
@@ -126,10 +134,19 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
         const lo = loc.lastLng;
         if (la != null && lo != null && Number.isFinite(la) && Number.isFinite(lo)) {
           const prev = lastPollRef.current;
+          const pingAtMs = nextLocationHeartbeatMs({
+            previousLat: prev.lat,
+            previousLng: prev.lng,
+            lat: la,
+            lng: lo,
+            serverPingAt: loc.lastPingAt,
+            nowMs: Date.now(),
+            fromSocket: false,
+          });
           if (prev.lat === la && prev.lng === lo) {
-            touchPing();
+            if (pingAtMs != null) setLastPingAtMs(pingAtMs);
           } else {
-            applyCoords(la, lo, true);
+            applyCoords(la, lo, true, pingAtMs);
           }
         }
         setPollFailed(false);
@@ -158,7 +175,7 @@ export function useOrderLocationSocket(opts: { orderId: string | undefined; enab
       socket.off('connect_error', onConnectError);
       ioMgr.off('reconnect', onReconnect);
     };
-  }, [orderId, enabled, touchPing]);
+  }, [orderId, enabled]);
 
   return { liveLat, liveLng, lastPingAtMs, pollFailed, isSocketReconnecting };
 }

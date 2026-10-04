@@ -11,8 +11,8 @@ export type RouteLineString = {
 };
 
 export type RouteResponse = {
-  durationText: string;
-  durationSeconds: number;
+  durationText: string | null;
+  durationSeconds: number | null;
   distanceMeters: number;
   geometry: RouteLineString;
   bounds: RouteBounds;

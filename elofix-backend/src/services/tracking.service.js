@@ -3,6 +3,7 @@ const AppError = require("../utils/AppError");
 const prisma = require("../config/prisma");
 const supplierService = require("./supplier.service");
 const { materialOrderBelongsToSupplierStore } = require("../utils/materialOrderSupplier.util");
+const { roleMayPublishStoreGps } = require("../utils/storeTrackingAccess.util");
 
 /** ~12m — skip DB + socket if driver barely moved (reduces load). */
 const MIN_LOCATION_DELTA_METERS = 12;
@@ -234,16 +235,29 @@ async function persistAndEmitDriverLocation(orderId, lat, lng, options = {}) {
   return { skipped: false };
 }
 
-async function saveLocationByTrackingId(trackingId, lat, lng, accessToken) {
+async function saveLocationByTrackingId(trackingId, lat, lng, accessToken, actor) {
+  if (!actor?.userId) {
+    throw new AppError("Authentication required", 401);
+  }
+  if (!roleMayPublishStoreGps(actor.role)) {
+    throw new AppError("Forbidden", 403);
+  }
   const session = await prisma.trackingSession.findFirst({
     where: { trackingId: String(trackingId), isActive: true },
   });
   assertSessionUsable(session, accessToken);
+  if (!session.orderId) {
+    throw new AppError("Forbidden", 403);
+  }
+  const allowed = await canUserPostDriverLocation(actor.userId, actor.role, session.orderId);
+  if (!allowed) {
+    throw new AppError("Forbidden", 403);
+  }
   if (String(session.currentTrackingSource || "supplier") !== "supplier") {
     trackingLog("public_tracking_post_ignored_non_supplier", { orderId: session.orderId });
-    return;
+    return { skipped: true, reason: "source_mismatch" };
   }
-  await persistAndEmitDriverLocation(session.orderId, lat, lng, { source: "supplier" });
+  return persistAndEmitDriverLocation(session.orderId, lat, lng, { source: "supplier" });
 }
 
 /** Deactivate existing sessions for order, create new public tracking id. */

@@ -52,9 +52,79 @@ async function testGetDirectionsMock() {
   }
 }
 
+async function testMissingDurationIsUnavailable() {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.OPENROUTESERVICE_API_KEY;
+  process.env.OPENROUTESERVICE_API_KEY = "test-key";
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        features: [
+          {
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [18.5, -33.8],
+                [18.51, -33.81],
+              ],
+            },
+            properties: { summary: { distance: 400 } },
+          },
+        ],
+      };
+    },
+  });
+  try {
+    const missing = await routingService.getDirections(-33.8, 18.5, -33.81, 18.51);
+    assert.strictEqual(missing.durationText, null);
+    assert.strictEqual(missing.durationSeconds, null);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;
+    else process.env.OPENROUTESERVICE_API_KEY = originalKey;
+  }
+}
+
+async function testZeroDurationIsUnavailable() {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.OPENROUTESERVICE_API_KEY;
+  process.env.OPENROUTESERVICE_API_KEY = "test-key";
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        features: [
+          {
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [18.6, -33.7],
+                [18.6, -33.7],
+              ],
+            },
+            properties: { summary: { duration: 0, distance: 0 } },
+          },
+        ],
+      };
+    },
+  });
+  try {
+    const zero = await routingService.getDirections(-33.7, 18.6, -33.7, 18.6);
+    assert.strictEqual(zero.durationText, null);
+    assert.notStrictEqual(zero.durationText, "0 sec");
+  } finally {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;
+    else process.env.OPENROUTESERVICE_API_KEY = originalKey;
+  }
+}
+
 async function run() {
   testParseCoord();
   await testGetDirectionsMock();
+  await testMissingDurationIsUnavailable();
+  await testZeroDurationIsUnavailable();
   console.log("routing.service.test.js: all passed");
 }
 

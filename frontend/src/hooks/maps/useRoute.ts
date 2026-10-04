@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchDirections, type RouteResponse } from '@/lib/map/routeApi';
+import { usableEtaText } from '@/lib/deliveryTrackingStatus';
 
 const ROUTE_CACHE_PREFIX = 'elofix:route:';
 const ROUTE_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -112,7 +113,7 @@ export function useRoute(origin: LatLng | null, destination: LatLng | null) {
 
   return {
     route,
-    etaText: route?.durationText ?? null,
+    etaText: usableEtaText(route?.durationText, route?.durationSeconds),
     loading,
     error,
   };

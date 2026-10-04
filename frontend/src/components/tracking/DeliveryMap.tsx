@@ -56,6 +56,10 @@ export interface DeliveryMapProps {
   showWaitingBanner?: boolean;
   trackingEnded?: boolean;
   completedMode?: boolean;
+  /** When the last real GPS timestamp is older than the live threshold. */
+  locationStale?: boolean;
+  /** Parent status banner owns Driver arriving / on the way, so the map does not repeat it. */
+  suppressProximityBanner?: boolean;
   onProximityChange?: (v: DriverProximityPayload) => void;
   onEtaChange?: (etaText: string | null) => void;
 }
@@ -70,6 +74,8 @@ function MapBody({
   mapContainerClassName = 'h-64 w-full min-h-[220px]',
   showWaitingBanner,
   trackingEnded,
+  locationStale = false,
+  suppressProximityBanner = false,
   onProximityChange,
   onEtaChange,
 }: Omit<DeliveryMapProps, 'className'> & { className?: string }) {
@@ -272,16 +278,16 @@ function MapBody({
           <span className="font-medium text-foreground">{routePhaseSubtitle(routePhase)}</span> {destination}
         </p>
       ) : null}
-      {arrivingBanner ? (
+      {!locationStale && !suppressProximityBanner && arrivingBanner ? (
         <p className="border-b border-border bg-primary/15 px-3 py-1.5 text-xs font-semibold text-primary">
           Driver arriving
         </p>
-      ) : nearBanner ? (
+      ) : !locationStale && !suppressProximityBanner && nearBanner ? (
         <p className="border-b border-border bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
           Driver is near
         </p>
       ) : null}
-      {driverPos && destForRoute && etaText ? (
+      {!locationStale && driverPos && destForRoute && etaText ? (
         <p className="border-b border-border bg-muted/40 px-3 py-1.5 text-xs font-medium tabular-nums">
           ETA {etaText}
         </p>

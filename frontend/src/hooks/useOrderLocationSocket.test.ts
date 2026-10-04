@@ -118,6 +118,19 @@ describe('useOrderLocationSocket', () => {
     expect(mockSocket.off).toHaveBeenCalledWith('connect', expect.any(Function));
   });
 
+  it('keeps the server lastPingAt when the polled coordinate does not change', async () => {
+    const old = '2020-01-01T00:00:00.000Z';
+    mockGetLatest.mockResolvedValue({ lastLat: -26.1, lastLng: 28.1, lastPingAt: old });
+    const { result, unmount } = renderHook(() =>
+      useOrderLocationSocket({ orderId: 'order-stale', enabled: true }),
+    );
+    await waitFor(() => {
+      expect(result.current.lastPingAtMs).toBe(new Date(old).getTime());
+    });
+    expect(Math.abs((result.current.lastPingAtMs ?? 0) - Date.now())).toBeGreaterThan(60_000);
+    unmount();
+  });
+
   it('does not poll when disabled', async () => {
     renderHook(() => useOrderLocationSocket({ orderId: 'order-3', enabled: false }));
     await act(async () => {
