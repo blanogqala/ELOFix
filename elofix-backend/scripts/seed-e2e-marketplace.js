@@ -13,7 +13,9 @@ const { seedE2eMarketplaceFixtures } = require("./e2eMarketplaceFixture");
 
 async function main() {
   await seedE2eMarketplaceFixtures(prisma);
-  process.stderr.write("seed-e2e-marketplace: Paint, Tiles & Flooring, and fixture branches are ready\n");
+  process.stderr.write(
+    "seed-e2e-marketplace: Paint, Tiles & Flooring, All Materials Depot, and fixture branches are ready\n"
+  );
 }
 
 main()

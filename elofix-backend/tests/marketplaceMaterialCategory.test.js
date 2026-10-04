@@ -61,6 +61,16 @@ function testWebsiteAndRoutes() {
   );
   assert.ok(!publicSrc.includes("authenticate"));
   assert.strictEqual(marketplace.slugifyMarketplaceName("Tiles & Flooring"), "tiles-and-flooring");
+  assert.strictEqual(marketplace.ALL_MATERIALS_CATEGORY_SCOPE, "all");
+  const branchSrc = fs.readFileSync(path.join(__dirname, "../src/services/branch.service.js"), "utf8");
+  assert.ok(branchSrc.includes("supplierWhereForDiscovery"));
+  assert.ok(!branchSrc.includes("supplierEligibleForCategory"));
+  const publicListSrc = fs.readFileSync(
+    path.join(__dirname, "../src/services/marketplaceMaterialCategory.service.js"),
+    "utf8"
+  );
+  assert.ok(publicListSrc.includes('where: { isActive: true }'));
+  assert.ok(!publicListSrc.includes('name: "All Materials"'));
 }
 
 async function main() {
@@ -264,6 +274,147 @@ async function main() {
       branchService.listBranchesForLocation({ ...query, categoryId: "not-a-uuid" }),
       400
     );
+    for (const bogus of ["ALL", "All", "all-materials", "all materials", "*"]) {
+      await assertRejectsStatus(
+        branchService.listBranchesForLocation({ ...query, categoryId: bogus }),
+        400
+      );
+    }
+
+    const tiling = await marketplace.createCategory({ name: `Tiling ${suffix}`, icon: "tiles", sortOrder: 3 });
+    const paving = await marketplace.createCategory({ name: `Paving ${suffix}`, icon: "building", sortOrder: 8 });
+    const hiddenPaving = await marketplace.createCategory({
+      name: `Hidden Paving ${suffix}`,
+      icon: "tools",
+      isActive: false,
+    });
+    created.categoryIds.push(tiling.id, paving.id, hiddenPaving.id);
+
+    async function makeDiscoverySupplier(label, { allCategories, categoryIds, branches }) {
+      const user = await prisma.user.create({
+        data: {
+          email: `mmc.${label}.${suffix}@example.com`,
+          password: "x",
+          name: label,
+          role: "SUPPLIER",
+        },
+      });
+      created.userIds.push(user.id);
+      const row = await prisma.supplier.create({
+        data: { userId: user.id, name: `${label} ${suffix}`, brandName: label, businessName: `${label} ${suffix}` },
+      });
+      created.supplierIds.push(row.id);
+      const assignment = await marketplace.assignCategoriesForAdmin(row.id, { categoryIds, allCategories });
+      const createdBranches = [];
+      for (const spec of branches) {
+        const branch = await prisma.branch.create({
+          data: {
+            supplierId: row.id,
+            city: "Cape Town",
+            products: [],
+            isActive: true,
+            ...spec,
+          },
+        });
+        created.branchIds.push(branch.id);
+        createdBranches.push(branch);
+      }
+      return { supplier: row, assignment, branches: createdBranches };
+    }
+
+    const bellvillePin = { area: "Bellville", latitude: -33.893, longitude: 18.628 };
+    const allDepot = await makeDiscoverySupplier("AllDepot", {
+      allCategories: true,
+      categoryIds: [plumbing.id],
+      branches: [
+        { name: `Depot ${suffix}`, ...bellvillePin },
+        { name: `Depot Closed ${suffix}`, ...bellvillePin, isActive: false },
+        {
+          name: `Depot Inland ${suffix}`,
+          city: "Johannesburg",
+          area: "Sandton",
+          latitude: -26.107,
+          longitude: 28.056,
+        },
+      ],
+    });
+    const tileOnly = await makeDiscoverySupplier("TileOnly", {
+      allCategories: false,
+      categoryIds: [tiling.id],
+      branches: [{ name: `Tile Yard ${suffix}`, ...bellvillePin }],
+    });
+    const plumbOnly = await makeDiscoverySupplier("PlumbOnly", {
+      allCategories: false,
+      categoryIds: [plumbing.id],
+      branches: [{ name: `Plumb Yard ${suffix}`, ...bellvillePin }],
+    });
+    const [allBranch, allClosed, allInland] = allDepot.branches;
+    const [tileBranch] = tileOnly.branches;
+    const [plumbBranch] = plumbOnly.branches;
+
+    assert.strictEqual(allDepot.assignment.allCategories, true);
+    assert.ok(allDepot.assignment.categoryIds.includes(plumbing.id), "explicit selections stay saved while all categories is on");
+    assert.strictEqual(tileOnly.assignment.allCategories, false);
+    assert.deepStrictEqual(tileOnly.assignment.categoryIds, [tiling.id]);
+
+    const beforeAllMaterialsRows = await prisma.marketplaceMaterialCategory.count({
+      where: { OR: [{ name: "All Materials" }, { slug: "all" }, { slug: "all-materials" }] },
+    });
+
+    const tilingHits = await branchService.listBranchesForLocation({ ...query, categoryId: tiling.id });
+    const tilingIds = tilingHits.map((row) => row.id);
+    assert.ok(tilingIds.includes(allBranch.id), "all-categories supplier appears for Tiling");
+    assert.ok(tilingIds.includes(tileBranch.id), "explicit Tiling supplier appears for Tiling");
+    assert.ok(!tilingIds.includes(plumbBranch.id), "plumbing-only supplier does not appear for Tiling");
+    assert.ok(!tilingIds.includes(allClosed.id), "inactive branch does not appear");
+    assert.ok(!tilingIds.includes(allInland.id), "other metros stay excluded for a real category");
+
+    const pavingHits = await branchService.listBranchesForLocation({ ...query, categoryId: paving.id });
+    const pavingIds = pavingHits.map((row) => row.id);
+    assert.ok(pavingIds.includes(allBranch.id), "all-categories supplier appears for a newly created active category");
+    assert.ok(!pavingIds.includes(tileBranch.id));
+    assert.ok(!pavingIds.includes(plumbBranch.id));
+    assert.ok(!pavingIds.includes(near.id), "explicit paint/plumbing supplier does not inherit a new category");
+
+    const hiddenHits = await branchService.listBranchesForLocation({ ...query, categoryId: hiddenPaving.id });
+    assert.deepStrictEqual(hiddenHits, []);
+
+    const allMaterialsHits = await branchService.listBranchesForLocation({
+      ...query,
+      categoryId: marketplace.ALL_MATERIALS_CATEGORY_SCOPE,
+    });
+    const allMaterialsIds = allMaterialsHits.map((row) => row.id);
+    assert.ok(allMaterialsIds.includes(allBranch.id), "all-categories supplier appears for All Materials");
+    assert.ok(!allMaterialsIds.includes(tileBranch.id), "tiling-only supplier does not appear for All Materials");
+    assert.ok(!allMaterialsIds.includes(plumbBranch.id));
+    assert.ok(!allMaterialsIds.includes(near.id), "explicit-category supplier does not appear for All Materials");
+    assert.ok(!allMaterialsIds.includes(allClosed.id));
+    assert.ok(!allMaterialsIds.includes(allInland.id));
+    assert.deepStrictEqual(await branchService.listBranchesForLocation({ categoryId: "all" }), []);
+
+    const publicDuring = await marketplace.listActivePublic();
+    assert.ok(publicDuring.some((row) => row.id === tiling.id));
+    assert.ok(publicDuring.some((row) => row.id === paving.id));
+    assert.ok(!publicDuring.some((row) => row.id === inactive.id));
+    assert.ok(!publicDuring.some((row) => row.id === hiddenPaving.id));
+    assert.ok(!publicDuring.some((row) => row.name === "All Materials" || row.slug === "all" || row.id === "all"));
+    const adminDuring = await marketplace.listForAdmin();
+    assert.ok(!adminDuring.some((row) => row.name === "All Materials" || row.slug === "all"));
+    const afterAllMaterialsRows = await prisma.marketplaceMaterialCategory.count({
+      where: { OR: [{ name: "All Materials" }, { slug: "all" }, { slug: "all-materials" }] },
+    });
+    assert.strictEqual(afterAllMaterialsRows, beforeAllMaterialsRows, "All Materials is not persisted");
+
+    const allOff = await marketplace.assignCategoriesForAdmin(allDepot.supplier.id, { allCategories: false });
+    assert.strictEqual(allOff.allCategories, false);
+    assert.ok(allOff.categoryIds.includes(plumbing.id), "turning all categories off restores the explicit selection");
+    const allMaterialsAfterOff = await branchService.listBranchesForLocation({ ...query, categoryId: "all" });
+    assert.ok(!allMaterialsAfterOff.some((row) => row.id === allBranch.id));
+    const plumbingRestored = await branchService.listBranchesForLocation({ ...query, categoryId: plumbing.id });
+    assert.ok(plumbingRestored.some((row) => row.id === allBranch.id));
+    const tilingAfterOff = await branchService.listBranchesForLocation({ ...query, categoryId: tiling.id });
+    assert.ok(!tilingAfterOff.some((row) => row.id === allBranch.id));
+    assert.ok(tilingAfterOff.some((row) => row.id === tileBranch.id));
 
     const loaded = await branchService.getBranchByIdWithSupplier(near.id);
     const pub = await branchService.branchToPublicApi(loaded, loaded.supplier, { omitInternal: true });

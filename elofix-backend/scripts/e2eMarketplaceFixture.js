@@ -36,6 +36,13 @@ const ORGS = [
     websiteUrl: "https://specialist-tiles.example",
     branches: ["Specialist Tile Store"],
   },
+  {
+    email: "allmaterials.demo@elofix.local",
+    brandName: "All Materials Depot",
+    websiteUrl: "https://all-materials.example",
+    branches: ["Bellville"],
+    allMarketplaceCategories: true,
+  },
 ];
 
 const BRANCHES = [
@@ -103,6 +110,23 @@ const BRANCHES = [
     price: 180,
     unit: "box",
   },
+  {
+    orgEmail: "allmaterials.demo@elofix.local",
+    name: "Bellville",
+    area: "Bellville",
+    address: "William Dabs Street, Bellville",
+    latitude: -33.893,
+    longitude: 18.628,
+    branchPhone: "0215554001",
+    branchEmail: "depot@all-materials.example",
+    websiteUrl: "https://all-materials.example/bellville",
+    hasDelivery: true,
+    categories: [],
+    inventoryCategory: "general hardware",
+    productName: "Assorted hardware",
+    price: 99,
+    unit: "each",
+  },
 ];
 
 function sampleProduct(spec) {
@@ -120,8 +144,15 @@ function sampleProduct(spec) {
 
 function withSampleProduct(existing, sample) {
   const list = Array.isArray(existing) ? existing.filter((row) => row && typeof row === "object") : [];
-  if (list.some((row) => String(row.id) === sample.id)) return list;
-  return [...list, sample];
+  const sampleName = String(sample.name || "").trim().toLowerCase();
+  const sampleCategory = String(sample.category || "").trim().toLowerCase();
+  const kept = list.filter((row) => {
+    if (String(row.id) === sample.id) return false;
+    const sameName = String(row.name || "").trim().toLowerCase() === sampleName;
+    const sameCategory = String(row.category || "").trim().toLowerCase() === sampleCategory;
+    return !(sameName && sameCategory);
+  });
+  return [...kept, sample];
 }
 
 async function upsertCategory(prisma, input) {
@@ -157,6 +188,7 @@ async function seedE2eMarketplaceFixtures(prisma, env = process.env) {
     }
 
     const suppliersByBranch = new Map();
+    const allCategoriesBySupplierId = new Map();
     for (const org of ORGS) {
       const orgUser = await prisma.user.upsert({
         where: { email: org.email },
@@ -193,6 +225,7 @@ async function seedE2eMarketplaceFixtures(prisma, env = process.env) {
           },
         });
       }
+      allCategoriesBySupplierId.set(orgSupplier.id, org.allMarketplaceCategories === true);
       for (const branchName of org.branches) {
         suppliersByBranch.set(`${org.email}|${branchName}`, orgSupplier);
       }
@@ -259,7 +292,7 @@ async function seedE2eMarketplaceFixtures(prisma, env = process.env) {
       await marketplace.replaceSupplierMarketplaceCategories(supplierId, [...categoryIdSet]);
       await prisma.supplier.update({
         where: { id: supplierId },
-        data: { allMarketplaceCategories: false },
+        data: { allMarketplaceCategories: allCategoriesBySupplierId.get(supplierId) === true },
       });
     }
   } finally {

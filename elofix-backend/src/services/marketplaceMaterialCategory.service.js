@@ -5,6 +5,12 @@ const prisma = require("../config/prisma");
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Nearby `categoryId` for the virtual All Materials discovery option.
+ * Not a MarketplaceMaterialCategory id and never persisted.
+ */
+const ALL_MATERIALS_CATEGORY_SCOPE = "all";
+
 const MARKETPLACE_ICON_KEYS = [
   "paint",
   "electrical",
@@ -334,13 +340,32 @@ function supplierEligibleForCategory(categoryId) {
   };
 }
 
+/** Suppliers Admin marked as covering every current and future marketplace category. */
+function supplierEligibleForAllMaterials() {
+  return { allMarketplaceCategories: true };
+}
+
+/**
+ * Prisma `supplier` where-clause for nearby discovery.
+ * Real category: explicit assignment OR the supplier-level All categories flag.
+ * Virtual All Materials: the flag only.
+ */
+function supplierWhereForDiscovery(filter) {
+  if (!filter?.apply || filter.matchNone) return null;
+  if (filter.allMaterials === true) return supplierEligibleForAllMaterials();
+  if (filter.categoryId) return supplierEligibleForCategory(filter.categoryId);
+  return null;
+}
+
 /**
  * Nearby filter. Missing categoryId means no filter.
- * Malformed id throws 400. Unknown or inactive category matches nothing (does not fall through).
+ * `all` is the virtual All Materials scope, not a category id.
+ * Any other non-UUID throws 400. Unknown or inactive category matches nothing.
  */
 async function resolveNearbyCategoryFilter(categoryIdRaw) {
   const raw = categoryIdRaw != null ? String(categoryIdRaw).trim() : "";
   if (!raw) return { apply: false };
+  if (raw === ALL_MATERIALS_CATEGORY_SCOPE) return { apply: true, allMaterials: true };
   if (!UUID_RE.test(raw)) throw new AppError("Invalid categoryId", 400);
   const cat = await prisma.marketplaceMaterialCategory.findUnique({ where: { id: raw } });
   if (!cat || cat.isActive === false) return { apply: true, matchNone: true };
@@ -349,6 +374,7 @@ async function resolveNearbyCategoryFilter(categoryIdRaw) {
 
 module.exports = {
   UUID_RE,
+  ALL_MATERIALS_CATEGORY_SCOPE,
   MARKETPLACE_ICON_KEYS,
   slugifyMarketplaceName,
   serializeCategory,
@@ -362,6 +388,8 @@ module.exports = {
   assignCategoriesForAdmin,
   deleteCategory,
   supplierEligibleForCategory,
+  supplierEligibleForAllMaterials,
+  supplierWhereForDiscovery,
   SUPPLIER_MARKETPLACE_INCLUDE,
   resolveNearbyCategoryFilter,
 };

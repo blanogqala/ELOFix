@@ -106,14 +106,37 @@ test.describe('Marketplace material discovery', () => {
     await expect(page.getByRole('button', { name: /BUCO - Brackenfell/ })).toBeVisible();
     await expect(page.getByText(/Subtotal/)).toHaveCount(0);
   });
+
+  test('customer All Materials finds the all-categories supplier, and Tiles does too', async ({ page }) => {
+    await registerCustomer(page);
+    await page.goto('/user/order-materials');
+    await page.getByLabel('City').fill('Cape Town');
+    await page.getByLabel('Area / suburb (optional)').fill('Bellville');
+
+    const picker = page.getByRole('group', { name: 'Material categories' });
+    await expect(picker.getByRole('button').first()).toHaveAccessibleName('All Materials');
+    await picker.getByRole('button', { name: 'All Materials', exact: true }).click();
+    await expect(page.getByRole('button', { name: /All Materials Depot - Bellville/ })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole('button', { name: /Specialist Tile Store/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Builders - Bellville/ })).toHaveCount(0);
+
+    await picker.getByRole('button', { name: 'Tiles & Flooring', exact: true }).click();
+    await expect(page.getByRole('button', { name: /All Materials Depot - Bellville/ })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole('button', { name: /Specialist Tile Store/ })).toBeVisible();
+  });
 });
 
 test.describe('Marketplace admin and supplier assignment', () => {
   test.setTimeout(180_000);
 
-  test.afterEach(async ({ request }) => {
-    await deleteDeterministicCategory(request);
-  });
+  test.describe('admin category lifecycle', () => {
+    test.afterEach(async ({ request }) => {
+      await deleteDeterministicCategory(request);
+    });
 
   test('admin manages categories and sees branch assignment', async ({ page, request }) => {
     await deleteDeterministicCategory(request);
@@ -123,6 +146,7 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await page.goto('/admin/material-categories');
     await expect(page.getByRole('heading', { name: 'Material categories' })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('cell', { name: /^Paint/ })).toBeVisible();
+    await expect(page.getByRole('cell', { name: /All Materials/ })).toHaveCount(0);
 
     await page.goto('/admin/suppliers');
     await page.getByPlaceholder('Search by store, business, or email…').fill('BUCO');
@@ -133,8 +157,10 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await expect(section.getByRole('heading', { name: 'Marketplace categories' })).toBeVisible({ timeout: 20_000 });
     await expect(section.getByText('These categories apply to every current and future branch for this supplier.')).toBeVisible();
     await section.getByRole('checkbox', { name: 'All categories' }).click();
+    await expect(section.getByRole('checkbox', { name: 'All categories' })).toBeChecked();
     await section.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Categories saved', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(section.getByRole('checkbox', { name: 'All categories' })).toBeChecked();
 
     await section.getByRole('button', { name: 'Create category' }).click();
     const createDialog = page.getByRole('dialog');
@@ -173,10 +199,11 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await expect(page.getByText('Category updated', { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('dialog')).toBeHidden();
     await page.reload();
-    await expect(row).toBeVisible();
+    await expect(row).toBeVisible({ timeout: 20_000 });
     await row.getByRole('button', { name: 'Edit' }).click();
     await expect(page.getByLabel('Icon (optional)')).toHaveValue('hammer');
     await page.keyboard.press('Escape');
+  });
   });
 
   test('supplier sets a branch website without marketplace category controls', async ({ page }) => {
@@ -282,8 +309,22 @@ test.describe('Provider marketplace draft', () => {
       localStorage.setItem('formmate_auth', JSON.stringify(session));
     }, { token: providerAuth.token, user: providerAuth.user });
     await providerPage.goto(`/provider/jobs/${jobId}/materials/browse`);
-    await expect(providerPage.getByRole('button', { name: 'Paint', exact: true })).toBeVisible({ timeout: 30_000 });
-    await providerPage.getByRole('button', { name: 'Paint', exact: true }).click();
+    const providerPicker = providerPage.getByRole('group', { name: 'Material categories' });
+    await expect(providerPicker.getByRole('button').first()).toHaveAccessibleName('All Materials', {
+      timeout: 30_000,
+    });
+    await providerPicker.getByRole('button', { name: 'Tiles & Flooring', exact: true }).click();
+    await expect(providerPage.getByRole('button', { name: /All Materials Depot - Bellville/ })).toBeVisible({
+      timeout: 20_000,
+    });
+    await providerPage.getByRole('button', { name: 'Back to material categories' }).click();
+    await providerPicker.getByRole('button', { name: 'All Materials', exact: true }).click();
+    await expect(providerPage.getByRole('button', { name: /All Materials Depot - Bellville/ })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(providerPage.getByRole('button', { name: /Specialist Tile Store/ })).toHaveCount(0);
+    await providerPage.getByRole('button', { name: 'Back to material categories' }).click();
+    await providerPicker.getByRole('button', { name: 'Paint', exact: true }).click();
     await expect(providerPage.getByRole('button', { name: /BUCO - Bellville/ })).toBeVisible({ timeout: 20_000 });
     await expect(providerPage.getByRole('button', { name: /Specialist Tile Store/ })).toHaveCount(0);
     await providerPage.getByRole('button', { name: /BUCO - Bellville/ }).click();

@@ -22,6 +22,7 @@ export type BranchesNearbyParams = {
   area?: string;
   suburb?: string;
   q?: string;
+  /** Marketplace category UUID, or `all` for suppliers marked All categories. */
   categoryId?: string;
 };
 

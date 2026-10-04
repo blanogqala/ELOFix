@@ -303,13 +303,12 @@ async function listBranchesForLocation(query = {}) {
   if (categoryFilter.matchNone) {
     return [];
   }
+  const supplierWhere = marketplaceCategoryService.supplierWhereForDiscovery(categoryFilter);
 
   const branches = await prisma.branch.findMany({
     where: {
       isActive: true,
-      ...(categoryFilter.categoryId
-        ? { supplier: marketplaceCategoryService.supplierEligibleForCategory(categoryFilter.categoryId) }
-        : {}),
+      ...(supplierWhere ? { supplier: supplierWhere } : {}),
     },
     include: branchCatalogInclude({ supplier: true }),
     orderBy: { name: "asc" },
