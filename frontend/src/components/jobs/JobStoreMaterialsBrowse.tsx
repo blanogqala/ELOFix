@@ -5,10 +5,15 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Supplier, Product, MaterialLine, JobLocation, MarketplaceMaterialCategory } from '@/types';
+import { Supplier, Product, MaterialLine, JobLocation } from '@/types';
 import { getBranchesNearby, type StoreRow } from '@/lib/api/stores';
 import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialCategories';
 import { MarketplaceCategoryPicker } from '@/components/marketplace/MarketplaceCategoryPicker';
+import {
+  marketplaceBranchEmptyHint,
+  marketplaceBranchListHint,
+  type MarketplaceDiscoverySelection,
+} from '@/lib/marketplace/allMaterialsDiscovery';
 import { BranchStorefrontHeader } from '@/components/marketplace/BranchStorefrontHeader';
 import { resolveUploadUrl } from '@/lib/uploadUrl';
 import {
@@ -73,7 +78,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
   const saveCartFn = variant === 'provider_cart' ? props.onSaveCart : undefined;
   const suggestFn = variant === 'user_suggestion' ? props.onSendSuggestion : undefined;
   const [view, setView] = useState<'category' | 'stores' | 'categories' | 'products'>('category');
-  const [selectedMarketplaceCategory, setSelectedMarketplaceCategory] = useState<MarketplaceMaterialCategory | null>(null);
+  const [selectedMarketplaceCategory, setSelectedMarketplaceCategory] = useState<MarketplaceDiscoverySelection | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [selectedInventoryCategory, setSelectedInventoryCategory] = useState<string | null>(null);
   const [catalogFilters, setCatalogFilters] = useState<CatalogProductFilters>({
@@ -161,7 +166,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
       lat: jobSiteCoords?.lat,
       lng: jobSiteCoords?.lng,
       q: storeSearch.trim() || undefined,
-      categoryId: selectedMarketplaceCategory.id,
+      categoryId: selectedMarketplaceCategory.categoryId,
     })
       .then((list) => {
         if (alive) setStores(list);
@@ -375,7 +380,7 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
       ? `Choose a material type near ${jobSiteLabel}. The job location stays the same if you switch category.`
       : view === 'stores'
       ? selectedMarketplaceCategory
-        ? `Branches supplying ${selectedMarketplaceCategory.name}, nearest to the job site first.`
+        ? marketplaceBranchListHint(selectedMarketplaceCategory, 'provider')
         : 'Choose a material category first.'
       : view === 'categories'
         ? 'Choose a category to browse products. Other valid categories stay available for extra materials.'
@@ -443,11 +448,11 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
         {view === 'category' && (
           <MarketplaceCategoryPicker
             categories={marketplaceCategoriesQuery.data ?? []}
-            selectedId={selectedMarketplaceCategory?.id ?? null}
+            selectedId={selectedMarketplaceCategory?.categoryId ?? null}
             loading={marketplaceCategoriesQuery.isLoading}
             error={marketplaceCategoriesQuery.isError ? 'Could not load material categories. Try again.' : null}
             onSelect={(category) => {
-              const categoryChanged = selectedMarketplaceCategory?.id !== category.id;
+              const categoryChanged = selectedMarketplaceCategory?.categoryId !== category.categoryId;
               setSelectedMarketplaceCategory(category);
               setStoreSearch('');
               if (categoryChanged) {
@@ -548,7 +553,9 @@ export function JobStoreMaterialsBrowse(props: JobStoreMaterialsBrowseProps) {
             )}
             {!storesLoading && sortedStores.length === 0 && (
               <p className="text-center text-sm text-muted-foreground py-16">
-                No nearby branches supply {selectedMarketplaceCategory?.name || 'this category'} for the job site.
+                {selectedMarketplaceCategory
+                  ? marketplaceBranchEmptyHint(selectedMarketplaceCategory, 'provider')
+                  : 'No nearby branches supply this category for the job site.'}
               </p>
             )}
           </>

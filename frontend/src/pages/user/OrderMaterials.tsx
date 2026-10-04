@@ -14,11 +14,16 @@ import { getMarketplaceMaterialCategories } from '@/lib/api/marketplaceMaterialC
 import { MarketplaceCategoryPicker } from '@/components/marketplace/MarketplaceCategoryPicker';
 import { BranchStorefrontHeader } from '@/components/marketplace/BranchStorefrontHeader';
 import { materialOrderBranchIdentity, shouldClearBranchCart } from '@/lib/marketplace/materialOrderIdentity';
+import {
+  marketplaceBranchEmptyHint,
+  marketplaceBranchListHint,
+  type MarketplaceDiscoverySelection,
+} from '@/lib/marketplace/allMaterialsDiscovery';
 import { createMaterialOrder } from '@/lib/api/materialOrders';
 import { PaymentModal } from '@/components/payments/PaymentModal';
 import { OrderFinanceBreakdown } from '@/components/orders/OrderFinanceBreakdown';
 import { LoadingOverlay } from '@/components/common/loading';
-import { Supplier, Product, DeliveryProvider, MarketplaceMaterialCategory } from '@/types';
+import { Supplier, Product, DeliveryProvider } from '@/types';
 import {
   ArrowLeft,
   ArrowRight,
@@ -145,7 +150,7 @@ export default function OrderMaterials() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storeSearch, setStoreSearch] = useState('');
-  const [selectedMarketplaceCategory, setSelectedMarketplaceCategory] = useState<MarketplaceMaterialCategory | null>(null);
+  const [selectedMarketplaceCategory, setSelectedMarketplaceCategory] = useState<MarketplaceDiscoverySelection | null>(null);
   const [userGeo, setUserGeo] = useState<{ lat: number; lng: number } | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
 
@@ -174,7 +179,7 @@ export default function OrderMaterials() {
         lat: userGeo?.lat,
         lng: userGeo?.lng,
         q: storeSearch.trim() || undefined,
-        categoryId: selectedMarketplaceCategory.id,
+        categoryId: selectedMarketplaceCategory.categoryId,
       });
       setStores(list);
     } catch (err) {
@@ -551,7 +556,7 @@ export default function OrderMaterials() {
               {locationReady && (
                 <MarketplaceCategoryPicker
                   categories={marketplaceCategoriesQuery.data ?? []}
-                  selectedId={selectedMarketplaceCategory?.id ?? null}
+                  selectedId={selectedMarketplaceCategory?.categoryId ?? null}
                   loading={marketplaceCategoriesQuery.isLoading}
                   error={
                     marketplaceCategoriesQuery.isError
@@ -559,15 +564,15 @@ export default function OrderMaterials() {
                       : null
                   }
                   onSelect={(category) => {
-                    const categoryChanged = selectedMarketplaceCategory?.id !== category.id;
+                    const categoryChanged = selectedMarketplaceCategory?.categoryId !== category.categoryId;
                     setSelectedMarketplaceCategory(category);
                     setStoreSearch('');
                     if (!categoryChanged) return;
                     if (
                       shouldClearBranchCart({
                         cartCount: cart.length,
-                        previousCategoryId: selectedMarketplaceCategory?.id,
-                        nextCategoryId: category.id,
+                        previousCategoryId: selectedMarketplaceCategory?.categoryId,
+                        nextCategoryId: category.categoryId,
                       })
                     ) {
                       setCart([]);
@@ -588,7 +593,7 @@ export default function OrderMaterials() {
               <div className="border-t border-border pt-4">
                 <h2 className="text-xl font-semibold">Nearby branches</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Physical branches supplying {selectedMarketplaceCategory.name}, nearest first when your location is known.
+                  {marketplaceBranchListHint(selectedMarketplaceCategory, 'customer')}
                 </p>
               </div>
 
@@ -695,7 +700,7 @@ export default function OrderMaterials() {
                   })}
                 {!storesLoading && sortedStoresStep1.length === 0 && (
                   <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                    No nearby branches supply {selectedMarketplaceCategory.name} for this address. Try another category or area.
+                    {marketplaceBranchEmptyHint(selectedMarketplaceCategory, 'customer')}
                   </p>
                 )}
               </div>
