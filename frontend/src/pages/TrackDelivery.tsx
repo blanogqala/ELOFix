@@ -2,12 +2,10 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   getPublicTracking,
-  postTrackingLocation,
   isTrackingGoneError,
   type PublicTrackingMeta,
 } from '@/lib/api/tracking';
 import { DeliveryMap } from '@/components/tracking/DeliveryMap';
-import { createLocationSendState, markLocationSent, shouldSendLocation } from '@/lib/geolocationSendGate';
 import { ApiHttpError } from '@/api/client';
 
 export default function TrackDeliveryPage() {
@@ -53,27 +51,6 @@ export default function TrackDeliveryPage() {
     meta &&
     (!meta.isActive || Boolean(meta.expiresAt && Date.now() > new Date(meta.expiresAt).getTime()));
 
-  useEffect(() => {
-    if (!trackingId || !meta?.isActive || sessionEnded) return;
-    if (!navigator.geolocation) return;
-    const sendState = createLocationSendState();
-    const wid = navigator.geolocation.watchPosition(
-      (pos) => {
-        const now = Date.now();
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        if (!shouldSendLocation(now, lat, lng, sendState)) return;
-        markLocationSent(now, lat, lng, sendState);
-        void postTrackingLocation(trackingId, lat, lng, token).catch(() => {
-          /* session may expire mid-drive */
-        });
-      },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 8000 }
-    );
-    return () => navigator.geolocation.clearWatch(wid);
-  }, [trackingId, meta?.isActive, sessionEnded, token]);
-
   if (err) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-6">
@@ -107,7 +84,7 @@ export default function TrackDeliveryPage() {
           Order status: <span className="font-medium text-foreground">{meta.fulfillmentStatus}</span>
         </p>
         <p className="text-xs text-muted-foreground mt-2">
-          Keep this page open to share your live location with the customer.
+          This page only shows the latest shared location. It does not publish GPS from this device.
         </p>
       </header>
       <main className="p-4 max-w-lg mx-auto">

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DeliveryMap } from '@/components/tracking/DeliveryMap';
 import type { DriverProximityPayload } from '@/components/tracking/DeliveryMap';
+import { haversineMeters } from '@/lib/geolocationSendGate';
+import { liveTrackingHeadline } from '@/lib/deliveryTrackingStatus';
 import { FulfillmentPhaseTimeline } from '@/components/tracking/FulfillmentPhaseTimeline';
 import {
   Bike,
@@ -151,7 +153,8 @@ function deriveStatusBanner(
   fulfillmentStatus: string | undefined,
   proximity: { near: boolean; arriving: boolean } | null,
   awaitingCustomerConfirmation: boolean,
-  deliveryPaid = true
+  deliveryPaid = true,
+  liveHeadline: 'unavailable' | 'arriving' | 'near' | 'en_route' | null = null
 ): StatusBannerSpec | null {
   const u = fulfillmentUpper(fulfillmentStatus);
   if (
@@ -201,24 +204,31 @@ function deriveStatusBanner(
         mode === 'self_pickup' ? 'Pickup complete — thanks for confirming.' : 'Thanks for using live tracking.',
     };
   }
-  if (u === 'OUT_FOR_DELIVERY' && proximity?.arriving) {
+  if (u === 'OUT_FOR_DELIVERY' && liveHeadline === 'unavailable') {
+    return {
+      className: 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100',
+      title: 'Live location temporarily unavailable',
+      description: 'The last driver position is not updating. The map will resume when a new location arrives.',
+    };
+  }
+  if (u === 'OUT_FOR_DELIVERY' && (liveHeadline === 'arriving' || (!liveHeadline && proximity?.arriving))) {
     return {
       className: 'border-primary/35 bg-primary/12 text-primary',
-      title: 'Driver arriving soon',
+      title: 'Driver arriving',
       description:
         mode === 'store_delivery'
           ? 'Store driver is almost at your drop-off.'
           : 'Your courier is almost at the job site.',
     };
   }
-  if (u === 'OUT_FOR_DELIVERY' && proximity?.near && !proximity.arriving) {
+  if (u === 'OUT_FOR_DELIVERY' && (liveHeadline === 'near' || (!liveHeadline && proximity?.near && !proximity.arriving))) {
     return {
       className: 'border-primary/30 bg-primary/10 text-primary',
       title: 'Driver is near',
       description: 'They are within about 500m of the destination.',
     };
   }
-  if (u === 'OUT_FOR_DELIVERY') {
+  if (u === 'OUT_FOR_DELIVERY' && liveHeadline !== 'arriving') {
     return {
       className: 'border-sky-500/35 bg-sky-500/10 text-sky-950 dark:text-sky-100',
       title: 'Driver is on the way',
@@ -386,20 +396,54 @@ export function UnifiedTrackingSection({
 
   const locked = Boolean(trackingLocked) && fulfillmentU === 'COMPLETED';
   const mapActive = Boolean(showLiveMap) && !locked && variant !== 'embedded';
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const banner = deriveStatusBanner(mode, fulfillmentStatus, proximity, showConfirmDelivery, deliveryPaid);
-  const cue = !locked ? actionCueLine(mode, fulfillmentStatus, showConfirmDelivery) : null;
+  useEffect(() => {
+    if (!mapActive) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 5000);
+    return () => window.clearInterval(id);
+  }, [mapActive]);
+
+  const distanceMeters = useMemo(() => {
+    if (
+      mapLat == null ||
+      mapLng == null ||
+      !destinationCoords ||
+      !Number.isFinite(Number(mapLat)) ||
+      !Number.isFinite(Number(mapLng)) ||
+      !Number.isFinite(destinationCoords.lat) ||
+      !Number.isFinite(destinationCoords.lng)
+    ) {
+      return null;
+    }
+    return haversineMeters(Number(mapLat), Number(mapLng), destinationCoords.lat, destinationCoords.lng);
+  }, [mapLat, mapLng, destinationCoords]);
 
   const hasLiveCoords =
     mapLat != null && mapLng != null && Number.isFinite(Number(mapLat)) && Number.isFinite(Number(mapLng));
 
-  const OFFLINE_MS = 30_000;
-  const driverOffline =
-    Boolean(mapActive) && lastDriverPingMs != null && Date.now() - lastDriverPingMs > OFFLINE_MS;
-  const offlineSeconds =
-    driverOffline && lastDriverPingMs != null
-      ? Math.max(0, Math.floor((Date.now() - lastDriverPingMs) / 1000))
-      : 0;
+  const liveHeadline =
+    fulfillmentU === 'OUT_FOR_DELIVERY'
+      ? liveTrackingHeadline({
+          hasDriverFix: hasLiveCoords,
+          distanceMeters,
+          lastPingMs: lastDriverPingMs ?? null,
+          nowMs,
+          mapSaysArriving: proximity?.arriving,
+          mapSaysNear: proximity?.near,
+        })
+      : null;
+  const locationStale = liveHeadline === 'unavailable';
+
+  const banner = deriveStatusBanner(
+    mode,
+    fulfillmentStatus,
+    proximity,
+    showConfirmDelivery,
+    deliveryPaid,
+    liveHeadline
+  );
+  const cue = !locked ? actionCueLine(mode, fulfillmentStatus, showConfirmDelivery) : null;
 
   const embed = variant === 'embedded';
   const orderArea = section === 'all' || section === 'order';
@@ -668,17 +712,14 @@ export function UnifiedTrackingSection({
               Unable to refresh location. Check your connection; the tracking session may have ended.
             </p>
           ) : null}
-          {driverOffline ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              Driver offline{offlineSeconds > 0 ? ` · Last update ${offlineSeconds}s ago` : ''}
-            </p>
-          ) : null}
           <DeliveryMap
             lat={mapLat}
             lng={mapLng}
             destination={destination || materialBatch?.deliveryAddress || undefined}
             destinationCoords={destinationCoords ?? undefined}
             showWaitingBanner={mapActive && !hasLiveCoords}
+            locationStale={locationStale}
+            suppressProximityBanner
             onProximityChange={onProximity}
           />
         </div>

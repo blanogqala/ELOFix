@@ -3,6 +3,7 @@ const jobService = require("../services/job.service");
 const supplierService = require("../services/supplier.service");
 const prisma = require("../config/prisma");
 const { materialOrderBelongsToSupplierStore } = require("../utils/materialOrderSupplier.util");
+const { redactGpsWriteCredential } = require("../utils/storeTrackingAccess.util");
 
 async function listOrdersQuery(req, res) {
   const supplierIdQ = req.query.supplierId;
@@ -128,7 +129,7 @@ async function getMaterialOrder(req, res) {
   } else if (req.user.role !== "ADMIN" && String(order.userId) !== String(req.user.userId)) {
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
-  res.json({ success: true, order });
+  res.json({ success: true, order: redactGpsWriteCredential(order, req.user.role) });
 }
 
 async function createMaterialOrder(req, res) {

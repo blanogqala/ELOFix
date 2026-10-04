@@ -167,8 +167,6 @@ function mergeTrackingFields(
   const fs = String(mo.fulfillmentStatus || '').toUpperCase();
   const trackingEligible = fs === 'OUT_FOR_DELIVERY';
   const activeTrackingId = trackingEligible && typeof mo.activeTrackingId === 'string' ? mo.activeTrackingId : undefined;
-  const activeTrackingToken =
-    trackingEligible && typeof mo.activeTrackingToken === 'string' ? mo.activeTrackingToken : undefined;
   return {
     ...normalized,
     fulfillmentStatus: String(mo.fulfillmentStatus || ''),
@@ -188,7 +186,7 @@ function mergeTrackingFields(
     cancellationReason: typeof mo.cancellationReason === 'string' ? mo.cancellationReason : undefined,
     cancelledBy: typeof mo.cancelledBy === 'string' ? mo.cancelledBy : undefined,
     activeTrackingId,
-    activeTrackingToken,
+    activeTrackingToken: undefined,
     materialOrderId: typeof mo.id === 'string' ? mo.id : normalized.materialOrderId,
     jobId: typeof mo.jobId === 'string' && mo.jobId.trim() ? mo.jobId : normalized.jobId,
     destinationCoords: dest ?? undefined,

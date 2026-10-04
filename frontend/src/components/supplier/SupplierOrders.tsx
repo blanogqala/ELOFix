@@ -12,7 +12,7 @@ import {
   getSupplierAnalyticsOverview,
   type SupplierMaterialOrderLine,
 } from '@/lib/api/supplierPortal';
-import { postTrackingLocation } from '@/lib/api/tracking';
+import { isTrackingGoneError, postTrackingLocation } from '@/lib/api/tracking';
 import { createLocationSendState, markLocationSent, shouldSendLocation } from '@/lib/geolocationSendGate';
 import type { MaterialFulfillmentStatus } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,11 @@ import { settlementStatusLabel } from '@/lib/branchSettlementDisplay';
 import { resolveOrderFinance, isStoreDeliveryAwaitingBranchQuote, isStoreDeliveryQuotedUnpaid, isStoreDeliveryRejected, isStoreDeliveryType } from '@/lib/orderFinance';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { buildPublicTrackingUrl } from '@/lib/publicTrackingUrl';
+import {
+  storeShareStateFromGeolocationError,
+  storeShareStatusText,
+  type StoreShareUiState,
+} from '@/lib/deliveryTrackingStatus';
 import { cn } from '@/lib/utils';
 import {
   SUPPLIER_GROSS_EARNINGS_HINT,
@@ -881,6 +886,8 @@ function DetailPanel({
   const [deliveryFeeDraft, setDeliveryFeeDraft] = useState('');
   const [deliveryNoteDraft, setDeliveryNoteDraft] = useState('');
   const [rejectReasonDraft, setRejectReasonDraft] = useState('');
+  const [sharingLocation, setSharingLocation] = useState(false);
+  const [shareUi, setShareUi] = useState<StoreShareUiState>('idle');
 
   useEffect(() => {
     if (deliveryPendingApproval && branchFeeHint > 0) {
@@ -953,11 +960,25 @@ function DetailPanel({
   });
 
   useEffect(() => {
-    if (readOnly) return;
+    setSharingLocation(false);
+    setShareUi('idle');
+  }, [order.id]);
+
+  useEffect(() => {
+    if (!sharingLocation || readOnly) return;
     const dt = String(order.deliveryType || '').toUpperCase();
     if (dt !== 'STORE_DELIVERY' || st !== 'OUT_FOR_DELIVERY') return;
     const tid = order.activeTrackingId;
-    if (!tid || !navigator.geolocation) return;
+    if (!tid) {
+      setShareUi('expired');
+      setSharingLocation(false);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setShareUi('unavailable');
+      setSharingLocation(false);
+      return;
+    }
     const token = order.activeTrackingToken ?? null;
     const sendState = createLocationSendState();
     const wid = navigator.geolocation.watchPosition(
@@ -967,13 +988,21 @@ function DetailPanel({
         const lng = pos.coords.longitude;
         if (!shouldSendLocation(now, lat, lng, sendState)) return;
         markLocationSent(now, lat, lng, sendState);
-        void postTrackingLocation(tid, lat, lng, token);
+        void postTrackingLocation(tid, lat, lng, token)
+          .then(() => setShareUi('active'))
+          .catch((err: unknown) => {
+            setSharingLocation(false);
+            setShareUi(isTrackingGoneError(err) ? 'expired' : 'network');
+          });
       },
-      () => {},
+      (err) => {
+        setSharingLocation(false);
+        setShareUi(storeShareStateFromGeolocationError(err?.code));
+      },
       { enableHighAccuracy: true, maximumAge: 12000 }
     );
     return () => navigator.geolocation.clearWatch(wid);
-  }, [readOnly, st, order.deliveryType, order.activeTrackingId, order.activeTrackingToken]);
+  }, [sharingLocation, readOnly, st, order.deliveryType, order.activeTrackingId, order.activeTrackingToken]);
 
   return (
     <Card className="card-elevated overflow-hidden">
@@ -1168,8 +1197,8 @@ function DetailPanel({
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">Store delivery tracking</p>
             <p className="text-xs text-muted-foreground">
               {readOnly
-                ? 'Tracking link (if active). Branch staff start or manage live tracking.'
-                : 'Create or restore a public tracking session, then share the link. The driver opens it in a browser so GPS updates flow to the customer.'}
+                ? 'View-only tracking link. Branch staff share the delivery location from this order.'
+                : 'Start sharing on this device to publish GPS. The tracking link lets the customer watch; it does not let them overwrite the driver location.'}
             </p>
             <div className="flex flex-wrap gap-2">
               {!readOnly && (
@@ -1183,6 +1212,25 @@ function DetailPanel({
                 {ensureTrackMut.isPending ? 'Starting…' : 'Start delivery tracking'}
               </Button>
               )}
+              {!readOnly ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={sharingLocation ? 'secondary' : 'default'}
+                  disabled={!order.activeTrackingId || blockDispatchActions}
+                  onClick={() => {
+                    if (sharingLocation) {
+                      setSharingLocation(false);
+                      setShareUi('idle');
+                      return;
+                    }
+                    setShareUi('idle');
+                    setSharingLocation(true);
+                  }}
+                >
+                  {sharingLocation ? 'Stop sharing location' : 'Start sharing delivery location'}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 size="sm"
@@ -1213,6 +1261,17 @@ function DetailPanel({
                 </Button>
               )}
             </div>
+            {!readOnly && storeShareStatusText(shareUi) ? (
+              <p
+                className={cn(
+                  'text-xs',
+                  shareUi === 'active' ? 'text-primary font-medium' : 'text-amber-800 dark:text-amber-200'
+                )}
+                role="status"
+              >
+                {storeShareStatusText(shareUi)}
+              </p>
+            ) : null}
             {!readOnly && (
             <div className="rounded-md border border-border bg-background/80 p-3 space-y-2 text-xs">
               <p className="font-medium text-foreground flex items-center gap-1">

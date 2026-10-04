@@ -1,4 +1,5 @@
 const trackingService = require("../services/tracking.service");
+const { roleMayPublishStoreGps } = require("../utils/storeTrackingAccess.util");
 
 async function getByTrackingId(req, res) {
   const token = req.query?.token ?? req.query?.access_token;
@@ -11,7 +12,13 @@ async function postUpdate(req, res) {
   if (!trackingId) {
     return res.status(400).json({ success: false, message: "trackingId required" });
   }
-  await trackingService.saveLocationByTrackingId(trackingId, lat, lng, token);
+  if (!roleMayPublishStoreGps(req.user?.role)) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+  await trackingService.saveLocationByTrackingId(trackingId, lat, lng, token, {
+    userId: req.user.userId,
+    role: req.user.role,
+  });
   trackingService.trackingLog("tracking_http_location_update", { trackingId });
   res.json({ success: true });
 }

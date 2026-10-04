@@ -7,6 +7,6 @@ const router = express.Router();
 
 router.get("/latest/:orderId", authenticate, asyncHandler(trackingController.getLatestForOrder));
 router.get("/:trackingId", asyncHandler(trackingController.getByTrackingId));
-router.post("/update", asyncHandler(trackingController.postUpdate));
+router.post("/update", authenticate, asyncHandler(trackingController.postUpdate));
 
 module.exports = router;

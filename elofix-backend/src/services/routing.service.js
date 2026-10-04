@@ -47,13 +47,24 @@ function validateLatLng(lat, lng) {
 }
 
 function formatDuration(seconds) {
-  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const s = Math.round(n);
+  if (s < 1) return null;
   if (s < 60) return `${s} sec`;
   const mins = Math.round(s / 60);
   if (mins < 60) return `${mins} min${mins === 1 ? "" : "s"}`;
   const hrs = Math.floor(mins / 60);
   const rem = mins % 60;
   return rem > 0 ? `${hrs} hr ${rem} min` : `${hrs} hr`;
+}
+
+function readPositiveDuration(summary, props) {
+  const raw = summary && summary.duration != null ? summary.duration : props && props.duration;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
 }
 
 function boundsFromCoords(coords) {
@@ -85,7 +96,7 @@ function mapOrsResponse(data) {
   if (!coordinates?.length || geometry?.type !== "LineString") {
     throw new AppError("Route geometry missing", 502);
   }
-  const durationSeconds = Number(summary.duration ?? props.duration ?? 0);
+  const durationSeconds = readPositiveDuration(summary, props);
   const distanceMeters = Number(summary.distance ?? props.distance ?? 0);
   return {
     durationText: formatDuration(durationSeconds),
