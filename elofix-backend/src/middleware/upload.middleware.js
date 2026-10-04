@@ -280,6 +280,26 @@ const uploadSupplierCategoryImage = multer({
   fileFilter: imageFileFilter,
 });
 
+function marketplaceCategoryImageStorage() {
+  return multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(UPLOAD_ROOT, "marketplace", "category-images");
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = extensionForImageMime(file.mimetype, file.originalname);
+      cb(null, `category-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  });
+}
+
+const uploadMarketplaceCategoryImage = multer({
+  storage: marketplaceCategoryImageStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
+});
+
 const uploadSupplierLogo = multer({
   storage: supplierLogoStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
@@ -305,6 +325,7 @@ module.exports = {
   uploadJobQuotation,
   uploadSupplierProductImage,
   uploadSupplierCategoryImage,
+  uploadMarketplaceCategoryImage,
   uploadSupplierLogo,
   filePathToPublicUrl,
 };

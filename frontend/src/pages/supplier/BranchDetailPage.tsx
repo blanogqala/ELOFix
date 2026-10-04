@@ -271,7 +271,7 @@ export default function BranchDetailPage() {
         </Card>
 
         <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-          <AlertDialogContent>
+          <AlertDialogContent size="sm">
             <AlertDialogHeader>
               <AlertDialogTitle>Delete this branch?</AlertDialogTitle>
               <AlertDialogDescription>

@@ -2,25 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { MarketplaceCategoryFormDialog } from '@/components/admin/MarketplaceCategoryFormDialog';
+import type { MarketplaceCategorySaveBody } from '@/lib/marketplaceCategoryForm';
 import {
   Table,
   TableBody,
@@ -47,47 +31,14 @@ import {
   getAdminMarketplaceMaterialCategories,
   updateAdminMarketplaceMaterialCategory,
 } from '@/lib/api/marketplaceMaterialCategories';
-import { MARKETPLACE_ICON_OPTIONS } from '@/components/marketplace/marketplaceCategoryIcons';
 import type { MarketplaceMaterialCategory } from '@/types';
 import { Plus } from 'lucide-react';
-
-type FormState = {
-  name: string;
-  description: string;
-  icon: string;
-  imageUrl: string;
-  sortOrder: string;
-  isActive: boolean;
-};
-
-const NO_ICON = '__none__';
-
-const EMPTY_FORM: FormState = {
-  name: '',
-  description: '',
-  icon: NO_ICON,
-  imageUrl: '',
-  sortOrder: '0',
-  isActive: true,
-};
-
-function toForm(category: MarketplaceMaterialCategory): FormState {
-  return {
-    name: category.name,
-    description: category.description || '',
-    icon: category.icon || NO_ICON,
-    imageUrl: category.imageUrl || '',
-    sortOrder: String(category.sortOrder ?? 0),
-    isActive: category.isActive !== false,
-  };
-}
 
 export default function AdminMaterialCategories() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<MarketplaceMaterialCategory | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [deleteTarget, setDeleteTarget] = useState<MarketplaceMaterialCategory | null>(null);
   const [inUseCount, setInUseCount] = useState<number | null>(null);
 
@@ -97,19 +48,10 @@ export default function AdminMaterialCategories() {
   });
 
   const saveMut = useMutation({
-    mutationFn: () => {
-      const body = {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        icon: !form.icon || form.icon === NO_ICON ? null : form.icon,
-        imageUrl: form.imageUrl.trim() || null,
-        sortOrder: Number(form.sortOrder) || 0,
-        isActive: form.isActive,
-      };
-      return editing
+    mutationFn: (body: MarketplaceCategorySaveBody) =>
+      editing
         ? updateAdminMarketplaceMaterialCategory(editing.id, body)
-        : createAdminMarketplaceMaterialCategory(body);
-    },
+        : createAdminMarketplaceMaterialCategory(body),
     onSuccess: () => {
       toast({ title: editing ? 'Category updated' : 'Category created' });
       setOpen(false);
@@ -147,13 +89,11 @@ export default function AdminMaterialCategories() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm(EMPTY_FORM);
     setOpen(true);
   };
 
   const openEdit = (category: MarketplaceMaterialCategory) => {
     setEditing(category);
-    setForm(toForm(category));
     setOpen(true);
   };
 
@@ -254,80 +194,14 @@ export default function AdminMaterialCategories() {
         </div>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editing ? 'Edit material category' : 'New material category'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="mmc-name">Name</Label>
-              <Input id="mmc-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mmc-desc">Description</Label>
-              <Textarea
-                id="mmc-desc"
-                value={form.description}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Icon</Label>
-                <Select value={form.icon} onValueChange={(icon) => setForm((f) => ({ ...f, icon }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Icon" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_ICON}>None</SelectItem>
-                    {form.icon &&
-                    form.icon !== NO_ICON &&
-                    !MARKETPLACE_ICON_OPTIONS.some((option) => option.value === form.icon) ? (
-                      <SelectItem value={form.icon}>{form.icon}</SelectItem>
-                    ) : null}
-                    {MARKETPLACE_ICON_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mmc-order">Display order</Label>
-                <Input
-                  id="mmc-order"
-                  inputMode="numeric"
-                  value={form.sortOrder}
-                  onChange={(e) => setForm((f) => ({ ...f, sortOrder: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mmc-image">Image URL</Label>
-              <Input
-                id="mmc-image"
-                value={form.imageUrl}
-                placeholder="Optional"
-                onChange={(e) => setForm((f) => ({ ...f, imageUrl: e.target.value }))}
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-              <Label htmlFor="mmc-active">Active</Label>
-              <Switch id="mmc-active" checked={form.isActive} onCheckedChange={(isActive) => setForm((f) => ({ ...f, isActive }))} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="button" className="btn-accent" disabled={saveMut.isPending || !form.name.trim()} onClick={() => saveMut.mutate()}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MarketplaceCategoryFormDialog
+        open={open}
+        mode={editing ? 'edit' : 'create'}
+        initial={editing}
+        pending={saveMut.isPending}
+        onOpenChange={setOpen}
+        onSubmit={(body) => saveMut.mutate(body)}
+      />
 
       <AlertDialog
         open={Boolean(deleteTarget) && inUseCount == null}
@@ -335,23 +209,25 @@ export default function AdminMaterialCategories() {
           if (!open) setDeleteTarget(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete material category?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the material category. Suppliers, branches, products, and orders are not deleted.
+              Deleting &quot;{deleteTarget?.name}&quot; will remove this marketplace classification. Suppliers,
+              branches, products, and orders are not deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={deleteMut.isPending || !deleteTarget}
               onClick={(event) => {
                 event.preventDefault();
                 if (deleteTarget) deleteMut.mutate({ id: deleteTarget.id, confirm: false });
               }}
             >
-              Delete
+              {deleteMut.isPending ? 'Deleting...' : 'Delete category'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -366,7 +242,7 @@ export default function AdminMaterialCategories() {
           }
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogTitle>This category is in use</AlertDialogTitle>
             <AlertDialogDescription>
@@ -377,13 +253,14 @@ export default function AdminMaterialCategories() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={deleteMut.isPending || !deleteTarget}
               onClick={(event) => {
                 event.preventDefault();
                 if (deleteTarget) deleteMut.mutate({ id: deleteTarget.id, confirm: true });
               }}
             >
-              Delete anyway
+              {deleteMut.isPending ? 'Deleting...' : 'Delete anyway'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

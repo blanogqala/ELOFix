@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -220,12 +221,12 @@ export default function SupplierBranchesPage() {
         </div>
 
         <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) resetCreateForm(); }}>
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-            <DialogHeader>
+          <DialogContent size="lg" className="flex flex-col gap-0 overflow-hidden p-0">
+            <DialogHeader className="px-6 pr-12 pt-6">
               <DialogTitle>Add branch</DialogTitle>
               <DialogDescription>Customers pick the nearest branch when ordering materials.</DialogDescription>
             </DialogHeader>
-            <div className="space-y-3">
+            <DialogBody className="space-y-3 px-6 py-4">
               <div className="space-y-2">
                 <Label htmlFor="dlg-b-name">Branch name</Label>
                 <Input
@@ -313,8 +314,8 @@ export default function SupplierBranchesPage() {
                 <Switch checked={newActive} onCheckedChange={setNewActive} id="dlg-active" />
                 <Label htmlFor="dlg-active">Active (visible to customers)</Label>
               </div>
-            </div>
-            <DialogFooter className="gap-2 sm:gap-0">
+            </DialogBody>
+            <DialogFooter className="px-6 pb-6">
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                 Cancel
               </Button>

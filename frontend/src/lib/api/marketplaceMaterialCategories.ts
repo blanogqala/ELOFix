@@ -30,6 +30,23 @@ export async function getAdminMarketplaceMaterialCategories(): Promise<Marketpla
   return Array.isArray(data?.categories) ? data.categories : [];
 }
 
+export async function uploadAdminMarketplaceCategoryImage(
+  file: File
+): Promise<{ fileId: string; url: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const { data } = await apiClient.post<{ success: boolean; fileId: string; url: string }>(
+      '/admin/marketplace-material-categories/upload-image',
+      fd
+    );
+    if (!data?.url) throw new Error('Failed to upload category image');
+    return { fileId: data.fileId, url: data.url };
+  } catch (error) {
+    throw new Error(errorMessage(error, 'Failed to upload category image'));
+  }
+}
+
 export async function createAdminMarketplaceMaterialCategory(
   body: MarketplaceCategoryInput
 ): Promise<MarketplaceMaterialCategory> {

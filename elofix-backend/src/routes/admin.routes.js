@@ -5,6 +5,9 @@ const paymentController = require("../controllers/payment.controller");
 const asyncHandler = require("../middleware/asyncHandler");
 const { authenticate, authorizeRoles } = require("../middleware/auth.middleware");
 const financialIdem = require("../middleware/financialIdempotency.middleware");
+const { uploadMarketplaceCategoryImage } = require("../middleware/upload.middleware");
+const { uploadRateLimit } = require("../middleware/uploadRateLimit.middleware");
+const { UPLOAD_CATEGORIES } = require("../constants/uploadRateLimit.constants");
 
 const router = express.Router();
 
@@ -83,6 +86,12 @@ router.get("/jobs/:jobId/case-summary", asyncHandler(adminController.getAdminJob
 
 router.get("/marketplace-material-categories", asyncHandler(marketplaceCategoryAdmin.list));
 router.post("/marketplace-material-categories", asyncHandler(marketplaceCategoryAdmin.create));
+router.post(
+  "/marketplace-material-categories/upload-image",
+  uploadMarketplaceCategoryImage.single("file"),
+  uploadRateLimit(UPLOAD_CATEGORIES.SUPPLIER_IMAGE),
+  asyncHandler(marketplaceCategoryAdmin.uploadImage)
+);
 router.patch("/marketplace-material-categories/:id", asyncHandler(marketplaceCategoryAdmin.update));
 router.delete("/marketplace-material-categories/:id", asyncHandler(marketplaceCategoryAdmin.remove));
 

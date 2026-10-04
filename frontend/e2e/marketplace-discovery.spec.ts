@@ -138,8 +138,15 @@ test.describe('Marketplace admin and supplier assignment', () => {
 
     await section.getByRole('button', { name: 'Create category' }).click();
     const createDialog = page.getByRole('dialog');
-    await createDialog.getByLabel('Name').fill(E2E_CATEGORY_NAME);
-    await createDialog.getByRole('button', { name: 'Save' }).click();
+    await createDialog.getByLabel('Category name').fill(E2E_CATEGORY_NAME);
+    for (const width of [390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(createDialog.getByRole('button', { name: 'Create category' })).toBeVisible();
+      await expect(createDialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      expect(await horizontalOverflow(page), `category dialog overflow at ${width}px`).toBeLessThanOrEqual(8);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await createDialog.getByRole('button', { name: 'Create category' }).click();
     await expect(page.getByText('Category created', { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(section.getByRole('checkbox', { name: E2E_CATEGORY_NAME })).toBeVisible();
 
@@ -160,14 +167,15 @@ test.describe('Marketplace admin and supplier assignment', () => {
     const row = page.getByRole('row', { name: new RegExp(E2E_CATEGORY_NAME) });
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.getByRole('button', { name: 'Edit' }).click();
-    await page.getByLabel('Description').fill('Validation edit');
-    await page.getByRole('button', { name: 'Save' }).click();
+    const editDialog = page.getByRole('dialog');
+    await editDialog.getByLabel('Icon (optional)').fill('hammer');
+    await editDialog.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Category updated', { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('dialog')).toBeHidden();
     await page.reload();
     await expect(row).toBeVisible();
     await row.getByRole('button', { name: 'Edit' }).click();
-    await expect(page.getByLabel('Description')).toHaveValue('Validation edit');
+    await expect(page.getByLabel('Icon (optional)')).toHaveValue('hammer');
     await page.keyboard.press('Escape');
   });
 
@@ -180,6 +188,13 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await page.goto('/admin/suppliers');
     await page.getByRole('button', { name: 'Create supplier' }).click();
     const dialog = page.getByRole('dialog');
+    for (const width of [390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(dialog.getByRole('button', { name: 'Create supplier' })).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      expect(await horizontalOverflow(page), `supplier dialog overflow at ${width}px`).toBeLessThanOrEqual(8);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
     await dialog.getByPlaceholder('Acme Plumbing Supply').fill('E2E Hardware');
     await dialog.locator('input[type="email"]').fill(supplierEmail);
     await dialog.locator('input[type="password"]').fill(supplierPassword);
@@ -192,6 +207,13 @@ test.describe('Marketplace admin and supplier assignment', () => {
     await expect(page.getByRole('heading', { name: 'My branches' })).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: 'New branch' }).click();
     const branchDialog = page.getByRole('dialog');
+    for (const width of [390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(branchDialog.getByRole('button', { name: 'Create branch' })).toBeVisible();
+      await expect(branchDialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      expect(await horizontalOverflow(page), `branch dialog overflow at ${width}px`).toBeLessThanOrEqual(8);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
     await branchDialog.getByLabel('Branch name').fill('E2E Yard');
     await branchDialog.getByLabel('City').fill('Cape Town');
     await branchDialog.getByLabel('Website').fill('https://e2e-yard.example');
