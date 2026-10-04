@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -31,8 +31,35 @@ import {
   getAdminMarketplaceMaterialCategories,
   updateAdminMarketplaceMaterialCategory,
 } from '@/lib/api/marketplaceMaterialCategories';
+import { MarketplaceCategoryIcon } from '@/components/marketplace/marketplaceCategoryIcons';
+import { resolveUploadUrl } from '@/lib/uploadUrl';
 import type { MarketplaceMaterialCategory } from '@/types';
 import { Plus } from 'lucide-react';
+
+function CategoryPresentation({ category }: { category: MarketplaceMaterialCategory }) {
+  const image = category.imageUrl ? resolveUploadUrl(category.imageUrl) : '';
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [image]);
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-primary/10 text-primary">
+        {image && !failed ? (
+          <img src={image} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />
+        ) : (
+          <MarketplaceCategoryIcon icon={category.icon} className="h-5 w-5" />
+        )}
+      </span>
+      <div className="min-w-0">
+        <div className="font-medium">{category.name}</div>
+        {category.slug ? <div className="truncate text-xs text-muted-foreground">{category.slug}</div> : null}
+      </div>
+    </div>
+  );
+}
 
 export default function AdminMaterialCategories() {
   const { toast } = useToast();
@@ -118,8 +145,7 @@ export default function AdminMaterialCategories() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Order</TableHead>
+                <TableHead>Category</TableHead>
                 <TableHead>Suppliers</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -128,21 +154,21 @@ export default function AdminMaterialCategories() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
                     Loading categories…
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && error && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-destructive">
+                  <TableCell colSpan={4} className="py-8 text-center text-sm text-destructive">
                     Could not load material categories.
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && !error && categories.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
                     No material categories yet.
                   </TableCell>
                 </TableRow>
@@ -150,10 +176,8 @@ export default function AdminMaterialCategories() {
               {categories.map((category) => (
                 <TableRow key={category.id}>
                   <TableCell>
-                    <div className="font-medium">{category.name}</div>
-                    <div className="text-xs text-muted-foreground">{category.slug}</div>
+                    <CategoryPresentation category={category} />
                   </TableCell>
-                  <TableCell>{category.sortOrder ?? 0}</TableCell>
                   <TableCell>{category.supplierCount ?? 0}</TableCell>
                   <TableCell>
                     <Badge variant={category.isActive === false ? 'outline' : 'secondary'}>
