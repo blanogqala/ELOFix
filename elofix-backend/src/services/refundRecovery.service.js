@@ -8,7 +8,7 @@ const { attemptGatewayRefundFirst } = require("./providerRefundClawback.service"
 const notificationEvents = require("./notificationEvents.service");
 const { PLATFORM_BANK, REFUND_DEBT_DUE_DAYS, getRefundDebtDueMs } = require("../config/refundRecovery.config");
 const { generateRefundReference } = require("../utils/refundReference.util");
-const { roundMoney, EPS } = require("../utils/refundMath.util");
+const { roundMoney, EPS, applyCustomerRefundSliceToMeta } = require("../utils/refundMath.util");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ACTOR_TYPES, ENTITY_TYPES } = require("../constants/auditActions");
 
@@ -525,19 +525,10 @@ async function processStagedCustomerPayouts(payouts) {
       await prisma.$transaction(async (tx) => {
         await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
           const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
-          const prevImmediate = Number(refund.immediateRefund) || 0;
-          const prevPending = Number(refund.pendingRefund) || 0;
-          return {
-            ...m,
-            refund: {
-              ...refund,
-              status: "processed",
-              customerRefundStatus: "REFUND_COMPLETED",
-              immediateRefund: roundMoney(prevImmediate + p.amount),
-              pendingRefund: Math.max(0, roundMoney(prevPending - p.amount)),
-              completedAt: new Date().toISOString(),
-            },
-          };
+          const { refund: next } = applyCustomerRefundSliceToMeta(refund, p.amount, null, {
+            externalRefundId,
+          });
+          return { ...m, refund: next };
         });
       });
     } catch (e) {
@@ -1709,31 +1700,33 @@ async function executeCustomerRefundPayouts(adminUserId, repayment, payouts) {
       cardLast4: "0000",
       meta: { externalRefundId, source: "admin_customer_refund" },
     });
+    let businessComplete = false;
     await prisma.$transaction(async (tx) => {
       await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
         const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
-        const prevImmediate = Number(refund.immediateRefund) || 0;
-        const prevPending = Number(refund.pendingRefund) || 0;
+        const applied = applyCustomerRefundSliceToMeta(refund, p.amount, null, {
+          externalRefundId,
+          externalRefundIds: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
+        });
+        businessComplete = applied.businessComplete;
         return {
           ...m,
           refund: {
-            ...refund,
-            status: "processed",
-            customerRefundStatus: "REFUND_COMPLETED",
-            immediateRefund: roundMoney(prevImmediate + p.amount),
-            pendingRefund: Math.max(0, roundMoney(prevPending - p.amount)),
-            readyPayoutAmount: 0,
+            ...applied.refund,
             originalPaymentIntentIds: gateway.originalPaymentIntentIds || [],
-            gatewayRefundRefs: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
-            finalizedGatewayRefundRefs: (gateway.results || []).map((r) => r.externalRefundId).filter(Boolean),
-            completedAt: new Date().toISOString(),
           },
         };
       });
     });
-    await notificationEvents.notifyCustomerRefundProcessed(p.customerId, p.jobId, p.amount);
-    await notificationEvents.notifyProviderRefundCompleted(repayment.provider.userId, p.amount, p.jobId);
-    results.push({ jobId: p.jobId, status: "REFUND_COMPLETED", gateway });
+    if (businessComplete) {
+      await notificationEvents.notifyCustomerRefundProcessed(p.customerId, p.jobId, p.amount);
+      await notificationEvents.notifyProviderRefundCompleted(repayment.provider.userId, p.amount, p.jobId);
+    }
+    results.push({
+      jobId: p.jobId,
+      status: businessComplete ? "REFUND_COMPLETED" : "REFUND_PROCESSING",
+      gateway,
+    });
   }
 
   return { repaymentId: repayment.id, results };
