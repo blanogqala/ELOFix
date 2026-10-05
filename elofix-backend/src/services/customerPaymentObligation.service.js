@@ -3,11 +3,13 @@ const prisma = require("../config/prisma");
 const AppError = require("../utils/AppError");
 const { emitDomainUpdate } = require("../utils/realtimeEmitter");
 const { getPaymentDueAt, PAYMENT_DUE_DAYS } = require("../config/paymentDue.config");
+const { recoveryDueAtFrom } = require("../utils/completionDeadline.util");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES, ACTOR_TYPES } = require("../constants/auditActions");
 const { mutateJobMetaInTransaction } = require("./jobMeta.service");
 
 const OPEN_STATUSES = ["DUE", "OVERDUE"];
+const ACTIVE_OR_PAUSED_STATUSES = ["DUE", "OVERDUE", "PAUSED"];
 const MARKETPLACE_RESTRICT_REASON =
   "An outstanding service payment is overdue. New marketplace transactions are restricted until the balance is settled.";
 
@@ -24,6 +26,10 @@ function toObligationDto(row) {
     disputeId: row.disputeId || null,
     amountDue: roundMoney(row.amount),
     dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
+    restrictionStartsAt:
+      row.restrictionStartsAt instanceof Date
+        ? row.restrictionStartsAt.toISOString()
+        : row.restrictionStartsAt || null,
     status: row.status,
     source: row.source,
     paidAt: row.paidAt instanceof Date ? row.paidAt.toISOString() : row.paidAt || null,
@@ -33,7 +39,7 @@ function toObligationDto(row) {
 
 function deriveDisplayStatus(row, now = new Date()) {
   if (!row) return "NOT_DUE";
-  if (row.status === "PAID" || row.status === "CANCELLED") return row.status;
+  if (row.status === "PAID" || row.status === "CANCELLED" || row.status === "PAUSED") return row.status;
   if (row.status === "OVERDUE") return "OVERDUE";
   if (row.dueAt && new Date(row.dueAt).getTime() <= now.getTime()) return "OVERDUE";
   return "DUE";
@@ -44,6 +50,25 @@ async function getOpenObligationForJob(jobId, tx = prisma) {
     where: { jobId: String(jobId), status: { in: OPEN_STATUSES } },
     orderBy: { createdAt: "desc" },
   });
+}
+
+async function getOpenOrPausedObligationForJob(jobId, tx = prisma) {
+  return tx.customerPaymentObligation.findFirst({
+    where: { jobId: String(jobId), status: { in: ACTIVE_OR_PAUSED_STATUSES } },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+async function getPausedObligationForJob(jobId, tx = prisma) {
+  return tx.customerPaymentObligation.findFirst({
+    where: { jobId: String(jobId), status: "PAUSED" },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+function isoOrNull(value) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 async function customerHasOverdueObligation(customerId, tx = prisma) {
@@ -65,6 +90,7 @@ async function upsertOpenObligation(
     dueAt,
     source = "COMPLETION_WORKFLOW",
     disputeId = null,
+    restrictionStartsAt = null,
   },
   tx = prisma
 ) {
@@ -74,8 +100,11 @@ async function upsertOpenObligation(
   const jid = String(jobId);
   const due = dueAt instanceof Date ? dueAt : getPaymentDueAt();
 
-  const existing = await getOpenObligationForJob(jid, tx);
+  const existing = await getOpenOrPausedObligationForJob(jid, tx);
   if (existing) {
+    if (existing.status === "PAUSED") {
+      return existing;
+    }
     const updated = await tx.customerPaymentObligation.update({
       where: { id: existing.id },
       data: {
@@ -97,6 +126,7 @@ async function upsertOpenObligation(
       dueAt: due,
       status: "DUE",
       source,
+      restrictionStartsAt: restrictionStartsAt instanceof Date ? restrictionStartsAt : restrictionStartsAt || null,
     },
   });
 
@@ -113,6 +143,7 @@ async function syncCompletionPaymentDueMeta(tx, jobId, obligation) {
       completionPaymentDue: {
         amountDue: roundMoney(obligation.amount),
         dueAt: obligation.dueAt instanceof Date ? obligation.dueAt.toISOString() : obligation.dueAt,
+        restrictionStartsAt: isoOrNull(obligation.restrictionStartsAt),
         status: obligation.status,
         obligationId: obligation.id,
         source: obligation.source,
@@ -139,7 +170,20 @@ async function ensureObligationForJobIfPaymentDue(job, meta = {}, opts = {}) {
   if (!(amount > 0)) return null;
 
   const source = opts.source || "COMPLETION_WORKFLOW";
-  const dueAt = opts.dueAt || getPaymentDueAt();
+  const mode = String(job.paymentModeSnapshot || "");
+  const useCompletionWindow =
+    source === "COMPLETION_WORKFLOW" &&
+    !job.legacyEscrowV2 &&
+    mode === "TWO_PAYMENT_50_50" &&
+    Boolean(meta?.confirmationDeadlineAt);
+  let restrictionStartsAt = opts.restrictionStartsAt || null;
+  let dueAt = opts.dueAt || null;
+  if (useCompletionWindow) {
+    const deadline = new Date(meta.confirmationDeadlineAt);
+    if (!restrictionStartsAt) restrictionStartsAt = deadline;
+    if (!dueAt) dueAt = recoveryDueAtFrom(deadline);
+  }
+  if (!dueAt) dueAt = getPaymentDueAt();
   const notificationEvents = require("./notificationEvents.service");
 
   const { obligation, created } = await prisma.$transaction(async (tx) => {
@@ -152,6 +196,7 @@ async function ensureObligationForJobIfPaymentDue(job, meta = {}, opts = {}) {
         dueAt,
         source,
         disputeId: opts.disputeId || null,
+        restrictionStartsAt: restrictionStartsAt || null,
       },
       tx
     );
@@ -191,7 +236,7 @@ async function ensureObligationForJobIfPaymentDue(job, meta = {}, opts = {}) {
 }
 
 async function markObligationPaidForJob(jobId, tx = prisma) {
-  const open = await getOpenObligationForJob(jobId, tx);
+  const open = await getOpenOrPausedObligationForJob(jobId, tx);
   if (!open) {
     await mutateJobMetaInTransaction(tx, jobId, (m) => ({ ...m, completionPaymentDue: null }));
     return null;
@@ -213,7 +258,7 @@ async function markObligationPaidForJob(jobId, tx = prisma) {
 }
 
 async function cancelOpenObligationForJob(jobId, tx = prisma) {
-  const open = await getOpenObligationForJob(jobId, tx);
+  const open = await getOpenOrPausedObligationForJob(jobId, tx);
   if (!open) {
     await mutateJobMetaInTransaction(tx, jobId, (m) =>
       m?.completionPaymentDue ? { ...m, completionPaymentDue: null } : m
@@ -237,14 +282,52 @@ async function cancelOpenObligationForJob(jobId, tx = prisma) {
 
 /**
  * Remaining labor is not payable while a dispute/cancellation case is open.
- * Cancels a workflow obligation and lifts marketplace restriction if nothing else is overdue.
+ * Pauses the workflow obligation so the original restriction start and recovery due date can resume.
+ * A paused row does not count toward marketplace restriction.
  */
-async function cancelWorkflowObligationForOpenCase(jobId, customerId, tx = prisma) {
-  const cancelled = await cancelOpenObligationForJob(jobId, tx);
+async function pauseWorkflowObligationForOpenCase(jobId, customerId, tx = prisma) {
+  const open = await getOpenObligationForJob(jobId, tx);
+  let paused = null;
+  if (open) {
+    const changed = await tx.customerPaymentObligation.updateMany({
+      where: { id: open.id, status: { in: OPEN_STATUSES } },
+      data: { status: "PAUSED" },
+    });
+    paused = changed.count === 1
+      ? await tx.customerPaymentObligation.findUnique({ where: { id: open.id } })
+      : await getPausedObligationForJob(jobId, tx);
+  } else {
+    paused = await getPausedObligationForJob(jobId, tx);
+  }
+  await mutateJobMetaInTransaction(tx, jobId, (m) =>
+    m?.completionPaymentDue ? { ...m, completionPaymentDue: null } : m
+  );
   if (customerId) {
     await clearCustomerMarketplaceRestrictionIfClear(customerId, tx);
   }
-  return cancelled;
+  return paused;
+}
+
+async function cancelWorkflowObligationForOpenCase(jobId, customerId, tx = prisma) {
+  return pauseWorkflowObligationForOpenCase(jobId, customerId, tx);
+}
+
+/**
+ * Resume a paused obligation with its original timestamps.
+ * Does not revive a CANCELLED row and does not grant a fresh deadline.
+ */
+async function resumePausedObligation(jobId, tx = prisma, now = new Date()) {
+  const paused = await getPausedObligationForJob(jobId, tx);
+  if (!paused) return null;
+  const duePassed = new Date(paused.dueAt).getTime() <= now.getTime();
+  const changed = await tx.customerPaymentObligation.updateMany({
+    where: { id: paused.id, status: "PAUSED" },
+    data: { status: duePassed ? "OVERDUE" : "DUE" },
+  });
+  if (changed.count !== 1) return null;
+  const resumed = await tx.customerPaymentObligation.findUnique({ where: { id: paused.id } });
+  await syncCompletionPaymentDueMeta(tx, jobId, resumed);
+  return resumed;
 }
 
 async function isJobUnderOpenCase(jobId, tx = prisma) {
@@ -269,7 +352,7 @@ async function reconcileCustomerMarketplaceRestriction(customerId) {
   });
   for (const row of open) {
     if (await isJobUnderOpenCase(row.jobId)) {
-      await cancelWorkflowObligationForOpenCase(row.jobId, cid);
+      await pauseWorkflowObligationForOpenCase(row.jobId, cid);
     }
   }
   return clearCustomerMarketplaceRestrictionIfClear(cid);
@@ -278,25 +361,26 @@ async function reconcileCustomerMarketplaceRestriction(customerId) {
 async function applyCustomerMarketplaceRestriction(customerId, reason, tx = prisma) {
   const user = await tx.user.findUnique({
     where: { id: String(customerId) },
-    select: { id: true, marketplaceRestricted: true },
+    select: { id: true, marketplaceRestricted: true, marketplaceRestrictedReason: true },
   });
   if (!user) return false;
   if (user.marketplaceRestricted) return false;
-  await tx.user.update({
-    where: { id: user.id },
+  const applied = await tx.user.updateMany({
+    where: { id: user.id, marketplaceRestricted: false },
     data: {
       marketplaceRestricted: true,
       marketplaceRestrictedAt: new Date(),
       marketplaceRestrictedReason: reason || MARKETPLACE_RESTRICT_REASON,
     },
   });
+  if (applied.count !== 1) return false;
   await logAudit(AUDIT_ACTIONS.CUSTOMER_PAYMENT_RESTRICTION_APPLIED, {
     actorType: ACTOR_TYPES.SYSTEM,
     userId: user.id,
     entityType: ENTITY_TYPES.USER,
     entityId: user.id,
     newValue: { reason: reason || MARKETPLACE_RESTRICT_REASON },
-  });
+  }, tx);
   emitDomainUpdate({
     domain: "profile",
     action: "restricted",
@@ -307,32 +391,60 @@ async function applyCustomerMarketplaceRestriction(customerId, reason, tx = pris
   return true;
 }
 
-async function clearCustomerMarketplaceRestrictionIfClear(customerId, tx = prisma) {
-  const remaining = await tx.customerPaymentObligation.findFirst({
-    where: { customerId: String(customerId), status: "OVERDUE" },
-    select: { id: true },
+function obligationQualifiesForRestriction(row, now = new Date()) {
+  if (!row) return false;
+  if (row.status === "OVERDUE") return true;
+  if (row.status === "DUE") {
+    return new Date(row.restrictionStartsAt || row.dueAt).getTime() <= now.getTime();
+  }
+  return false;
+}
+
+async function customerHasQualifyingUnpaidObligation(customerId, tx = prisma, now = new Date()) {
+  const rows = await tx.customerPaymentObligation.findMany({
+    where: { customerId: String(customerId), status: { in: OPEN_STATUSES } },
+    select: {
+      id: true,
+      jobId: true,
+      amount: true,
+      status: true,
+      restrictionStartsAt: true,
+      dueAt: true,
+      job: { select: { status: true, paymentProgress: true } },
+    },
   });
+  for (const row of rows) {
+    if (!(Number(row.amount) > 0.01) || !obligationQualifiesForRestriction(row, now)) continue;
+    if (!row.job || row.job.paymentProgress === "FULLY_PAID" || ["COMPLETED", "CANCELLED"].includes(row.job.status)) continue;
+    if (!(await isJobUnderOpenCase(row.jobId, tx))) return true;
+  }
+  return false;
+}
+
+async function clearCustomerMarketplaceRestrictionIfClear(customerId, tx = prisma) {
+  const remaining = await customerHasQualifyingUnpaidObligation(customerId, tx);
   if (remaining) return false;
   const user = await tx.user.findUnique({
     where: { id: String(customerId) },
-    select: { id: true, marketplaceRestricted: true },
+    select: { id: true, marketplaceRestricted: true, marketplaceRestrictedReason: true },
   });
-  if (!user?.marketplaceRestricted) return false;
-  await tx.user.update({
-    where: { id: user.id },
+  if (!user?.marketplaceRestricted || user.marketplaceRestrictedReason !== MARKETPLACE_RESTRICT_REASON) return false;
+  const cleared = await tx.user.updateMany({
+    where: { id: user.id, marketplaceRestricted: true, marketplaceRestrictedReason: MARKETPLACE_RESTRICT_REASON },
     data: {
       marketplaceRestricted: false,
       marketplaceRestrictedAt: null,
       marketplaceRestrictedReason: null,
     },
   });
+  if (cleared.count !== 1) return false;
   await logAudit(AUDIT_ACTIONS.CUSTOMER_PAYMENT_RESTRICTION_CLEARED, {
     actorType: ACTOR_TYPES.SYSTEM,
     userId: user.id,
     entityType: ENTITY_TYPES.USER,
     entityId: user.id,
     newValue: { cleared: true },
-  });
+  }, tx);
   emitDomainUpdate({
     domain: "profile",
     action: "unrestricted",
@@ -359,6 +471,22 @@ function assertCustomerMarketplaceNotRestricted(user) {
   );
 }
 
+/**
+ * Marketplace restriction only. Does not change User.blocked and does not add a legal-acceptance gate.
+ */
+async function assertCustomerMarketplaceSpendAllowed(userId) {
+  await reconcileCustomerMarketplaceRestriction(userId);
+  const user = await prisma.user.findUnique({
+    where: { id: String(userId) },
+    select: { marketplaceRestricted: true, marketplaceRestrictedReason: true },
+  });
+  assertCustomerMarketplaceNotRestricted(user);
+  if (await customerHasQualifyingUnpaidObligation(userId)) {
+    throw new AppError(MARKETPLACE_RESTRICT_REASON, 403);
+  }
+  return user;
+}
+
 async function assertCustomerCanStartPaidTransaction(userId) {
   await reconcileCustomerMarketplaceRestriction(userId);
   const user = await prisma.user.findUnique({
@@ -373,6 +501,9 @@ async function assertCustomerCanStartPaidTransaction(userId) {
   const { assertCustomerNotBlocked } = require("./accountStatus.service");
   assertCustomerNotBlocked(user);
   assertCustomerMarketplaceNotRestricted(user);
+  if (await customerHasQualifyingUnpaidObligation(userId)) {
+    throw new AppError(MARKETPLACE_RESTRICT_REASON, 403);
+  }
   const { assertLegalCurrent } = require("./legalAcceptance.service");
   await assertLegalCurrent(userId, user?.role || "CUSTOMER");
   return user;
@@ -407,24 +538,32 @@ async function listOpenObligationsForAdmin({ status, overdueOnly } = {}) {
 
 module.exports = {
   OPEN_STATUSES,
+  ACTIVE_OR_PAUSED_STATUSES,
   MARKETPLACE_RESTRICT_REASON,
   PAYMENT_DUE_DAYS,
   toObligationDto,
   deriveDisplayStatus,
   getOpenObligationForJob,
+  getOpenOrPausedObligationForJob,
+  getPausedObligationForJob,
   customerHasOverdueObligation,
+  obligationQualifiesForRestriction,
+  customerHasQualifyingUnpaidObligation,
   upsertOpenObligation,
   syncCompletionPaymentDueMeta,
   ensureObligationForJobIfPaymentDue,
   markObligationPaidForJob,
   cancelOpenObligationForJob,
+  pauseWorkflowObligationForOpenCase,
   cancelWorkflowObligationForOpenCase,
+  resumePausedObligation,
   isJobUnderOpenCase,
   reconcileCustomerMarketplaceRestriction,
   applyCustomerMarketplaceRestriction,
   clearCustomerMarketplaceRestrictionIfClear,
   afterObligationPaid,
   assertCustomerMarketplaceNotRestricted,
+  assertCustomerMarketplaceSpendAllowed,
   assertCustomerCanStartPaidTransaction,
   listOpenObligationsForAdmin,
 };

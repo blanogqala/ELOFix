@@ -372,6 +372,8 @@ async function patchMarkPaidForCustomer(materialRequestId, customerUserId) {
   if (String(mr.job.customerId) !== String(customerUserId)) {
     throw new AppError("Forbidden", 403);
   }
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerMarketplaceSpendAllowed(customerUserId);
   await syncSubmittedRequestsToPaid(mr.jobId);
   const updated = await prisma.materialRequest.findUnique({ where: { id: materialRequestId } });
   return toApiMaterialRequest(updated);

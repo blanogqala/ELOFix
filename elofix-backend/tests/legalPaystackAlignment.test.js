@@ -52,9 +52,9 @@ function testFrontendBackendVersionsMatch() {
 function testLiveDocumentsBumped() {
   assert.strictEqual(LEGAL_VERSIONS.terms, process.env.LEGAL_TERMS_VERSION || LIVE);
   assert.strictEqual(LEGAL_VERSIONS.privacy, process.env.LEGAL_PRIVACY_VERSION || LIVE);
-  assert.strictEqual(LEGAL_VERSIONS.providerAgreement, process.env.LEGAL_PROVIDER_AGREEMENT_VERSION || LIVE);
-  assert.strictEqual(LEGAL_VERSIONS.refundPolicy, process.env.LEGAL_REFUND_POLICY_VERSION || LIVE);
-  assert.strictEqual(LEGAL_VERSIONS.escrowPolicy, process.env.LEGAL_ESCROW_POLICY_VERSION || LIVE);
+  assert.strictEqual(LEGAL_VERSIONS.providerAgreement, process.env.LEGAL_PROVIDER_AGREEMENT_VERSION || "2026-10-05");
+  assert.strictEqual(LEGAL_VERSIONS.refundPolicy, process.env.LEGAL_REFUND_POLICY_VERSION || "2026-10-05");
+  assert.strictEqual(LEGAL_VERSIONS.escrowPolicy, process.env.LEGAL_ESCROW_POLICY_VERSION || "2026-10-05");
   assert.strictEqual(LEGAL_VERSIONS.disputeResolution, process.env.LEGAL_DISPUTE_RESOLUTION_VERSION || LIVE);
   assert.strictEqual(LEGAL_VERSIONS.supplierAgreement, process.env.LEGAL_SUPPLIER_AGREEMENT_VERSION || LIVE);
   assert.strictEqual(LEGAL_VERSIONS.dataProcessing, process.env.LEGAL_DATA_PROCESSING_VERSION || LIVE);

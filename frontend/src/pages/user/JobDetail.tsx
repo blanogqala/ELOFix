@@ -1578,7 +1578,12 @@ export default function JobDetail() {
                           correctly? Review the work before making your final payment.
                         </p>
                       </div>
-                      <ConfirmationCountdown deadlineAt={confirmationDeadlineAt} />
+                      <ConfirmationCountdown
+                        deadlineAt={confirmationDeadlineAt}
+                        confirmationWindowExpired={Boolean(job.confirmationWindowExpired)}
+                        balanceOutstanding={hasOutstandingCompletionPayment(job)}
+                        recoveryDueAt={job.completionPaymentDue?.dueAt}
+                      />
                       {(() => {
                         const fin = buildJobCancellationFinancials(job);
                         const showProgress =

@@ -212,8 +212,10 @@ async function testOpenDisputeCancelsDueAndOverdueObligations() {
 
     const dueAfter = await prisma.customerPaymentObligation.findUnique({ where: { id: dueRow.id } });
     const overdueAfter = await prisma.customerPaymentObligation.findUnique({ where: { id: overdueRow.id } });
-    assert.strictEqual(dueAfter.status, "CANCELLED", "open dispute must cancel existing DUE obligation");
-    assert.strictEqual(overdueAfter.status, "CANCELLED", "open dispute must cancel existing OVERDUE obligation");
+    assert.strictEqual(dueAfter.status, "PAUSED", "open dispute must pause existing DUE obligation");
+    assert.strictEqual(overdueAfter.status, "PAUSED", "open dispute must pause existing OVERDUE obligation");
+    assert.strictEqual(dueAfter.dueAt.getTime(), dueAtFuture.getTime());
+    assert.ok(overdueAfter.restrictionStartsAt == null || overdueAfter.dueAt);
     assert.strictEqual(dueDto.completionPaymentDue, null);
     assert.strictEqual(overdueDto.completionPaymentDue, null);
   } finally {

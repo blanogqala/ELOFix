@@ -532,6 +532,8 @@ async function payDirectDeliveryRequest(id, customerUserId, fee) {
   const row = await prisma.deliveryRequest.findUnique({ where: { id: String(id) } });
   if (!row) throw new AppError("Delivery request not found", 404);
   if (String(row.customerId) !== String(customerUserId)) throw new AppError("Forbidden", 403);
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerMarketplaceSpendAllowed(customerUserId);
   if (String(row.status) !== "approved") throw new AppError("Delivery must be approved before payment", 400);
   const safeFee = roundMoney2(Number(fee ?? row.quotedFee ?? 0));
   const updated = await applyDeliveryPayment(row, safeFee, {

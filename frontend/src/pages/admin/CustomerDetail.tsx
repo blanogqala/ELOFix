@@ -236,9 +236,11 @@ export default function AdminCustomerDetail() {
                   {customer.paymentObligations.map((row) => (
                     <div key={row.id} className="flex flex-wrap items-center justify-between gap-2">
                       <span>
-                        {formatCurrency(row.amountDue)} due{' '}
-                        {new Date(row.dueAt).toLocaleDateString('en-ZA')} ·{' '}
-                        {row.displayStatus || row.status}
+                        {formatCurrency(row.amountDue)}{' '}
+                        {row.restrictionStartsAt
+                          ? `restriction from ${new Date(row.restrictionStartsAt).toLocaleDateString('en-ZA')} · recovery due ${new Date(row.dueAt).toLocaleDateString('en-ZA')}`
+                          : `due ${new Date(row.dueAt).toLocaleDateString('en-ZA')}`}{' '}
+                        · {row.displayStatus || row.status}
                       </span>
                       <Button
                         variant="outline"

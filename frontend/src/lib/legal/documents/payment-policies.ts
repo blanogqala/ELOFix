@@ -2,8 +2,8 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE_JOB_COMPLETION = 'August 18, 2026';
-const EFFECTIVE_PAYMENT_SCHEDULE = 'September 14, 2026';
+const EFFECTIVE_JOB_COMPLETION = 'October 5, 2026';
+const EFFECTIVE_PAYMENT_SCHEDULE = 'October 5, 2026';
 
 export const jobCompletionVerification: LegalDocument = {
   id: 'job-completion-verification',
@@ -44,8 +44,8 @@ export const jobCompletionVerification: LegalDocument = {
       id: 'manual-acceptance',
       title: '4. Manual Acceptance',
       content: [
-        'To manually accept completed work, the Customer must submit a star rating (1 to 5), at least one photo or video of the completed work, and may include a written review.',
-        'Upon acceptance: the Job is marked Completed, completion evidence is stored, a Provider review may be published, any remaining payment tranche for a staged-payment Job becomes payable to the Provider according to the Payment Schedule and Transparency Policy, and the transaction is closed.',
+        'For 50/50 service Jobs, verified payment of the final 50% confirms completion. Any rating, evidence, and review requirements shown in the completion flow still apply; legacy completion flows retain their existing requirements.',
+        'Upon verified final payment for a staged-payment service Job, the Job is marked Completed through the existing settlement flow. Completion evidence and any submitted Provider review are handled separately; payment confirmation does not guarantee immediate Provider bank settlement.',
         'Written reviews may be edited within 10 minutes of first submission.',
         'Manual acceptance cannot occur while an open dispute exists on the Job.',
       ],
@@ -55,18 +55,18 @@ export const jobCompletionVerification: LegalDocument = {
       title: '5. Dispute Option',
       content: [
         'If the Customer is not satisfied with the completed work, they may open a dispute during the 7-day verification window.',
-        'Disputes are handled under the Dispute Resolution Policy. Opening a dispute blocks automatic acceptance and may pause release of any remaining payment tranche until the dispute is resolved.',
+        'Disputes are handled under the Dispute Resolution Policy. An open dispute pauses the associated payment restriction and system completion while the case is investigated.',
       ],
     },
     {
       id: 'automatic-acceptance',
-      title: '6. Automatic Acceptance (Silence = Acceptance)',
+      title: '6. Confirmation Window Expiry',
       content: [
-        'If the Customer does not accept or dispute the completed work within 7 calendar days, the Job is automatically approved by the Platform.',
-        'Upon automatic acceptance: the Job is marked Completed, any remaining payment tranche for a staged-payment Job becomes payable to the Provider according to the Payment Schedule and Transparency Policy, and the transaction is closed.',
-        'The Customer acknowledges that failure to respond within the 7-day verification window constitutes acceptance of the work quality as completed by the Provider.',
-        'Automatic acceptance does not require the Customer to submit a rating, review, or media. No public star review is created. A neutral trust score adjustment may apply to the Provider.',
-        'Automatic acceptance does not occur if an open dispute exists or if completion evidence or final payment release has already been processed for the Job.',
+        'For new 50/50 service Jobs, an unpaid final balance after the stored 7-day confirmation deadline restricts new service requests, deliveries, material purchases, and other new paid bookings. Silence does not confirm completion or authorize a charge.',
+        'The recovery deadline is 30 calendar days after that confirmation deadline (day 37). If still unpaid, the obligation becomes overdue for administrator review. Legal proceedings are not started automatically.',
+        'Customers retain access to existing Jobs, messages, disputes, invoices, and outstanding-payment flows. Verified final payment confirms completion through the existing settlement process. Payment restrictions lift only when no other qualifying unpaid obligation remains; unrelated account restrictions remain.',
+        'Fully paid upfront Jobs may be completed by the system after the stored deadline. This does not record customer confirmation, create a rating or review, adjust provider trust, or pay out funds a second time. Legacy escrow and courier Jobs retain their existing held-funds release process.',
+        'An open dispute pauses enforcement of that obligation. Closing or releasing the case resumes its original deadlines; an approved refund or return for corrective work cancels that obligation. System completion is skipped while a dispute remains open.',
       ],
     },
     {
@@ -147,7 +147,7 @@ export const escrowPolicy: LegalDocument = {
       content: [
         'Customers see the applicable payment model (TWO_PAYMENT_50_50, SINGLE_PAYMENT_UPFRONT, or SINGLE_PAYMENT_ON_COMPLETION) before confirming payment for a Job.',
         'For TWO_PAYMENT_50_50 Jobs, Customers may dispute completed work within the 7-day verification window, which may pause the remaining customer payment pending investigation.',
-        'If an outstanding customer service balance becomes payable, the Customer must settle it within 30 calendar days. Failure to settle an outstanding amount within 30 calendar days may result in restrictions on new marketplace transactions, account suspension or blocking, referral for lawful debt recovery, and further legal action where appropriate.',
+        'For new 50/50 completion-workflow obligations, new marketplace transactions are restricted from the expired 7-day confirmation deadline while the final balance remains unpaid and no dispute is open. The recovery deadline is 30 calendar days later (day 37). Existing and administrator-release obligations retain their displayed deadlines. No charge or legal proceeding is initiated automatically.',
         'Cancellation refunds follow the Refund, Returns & Cancellation Policy. Courier en-route forfeiture, where implemented, is separate from ordinary service cancellation review.',
       ],
     },
@@ -156,7 +156,7 @@ export const escrowPolicy: LegalDocument = {
       title: '6. Provider Transparency',
       content: [
         'Providers see the mobilisation tranche (where applicable) become payable upon confirmed labor payment, according to the category payment model shown on the Job.',
-        'Any remaining tranche becomes payable upon Customer acceptance, automatic acceptance, or admin resolution in the Provider\'s favour. Payable status in EloFix is not the same as completed bank settlement.',
+        'Any remaining customer balance is collected through the applicable completion-payment or administrator-resolution flow. Silence does not confirm an unpaid service Job or charge the Customer. Payable status in EloFix is distinct from completed bank settlement.',
         'Where Paystack split-at-charge marketplace settlement is used for an eligible transaction, EloFix does not normally send a second manual transfer of the Provider\'s 93% gross share after that settlement.',
         'Final staged tranches generally do not become payable for settlement while an open dispute exists, except by administrator decision.',
       ],

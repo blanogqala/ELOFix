@@ -24,6 +24,7 @@ const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
+const { isConfirmationDeadlineReached } = require("../utils/completionDeadline.util");
 const jobDeletePolicy = require("../utils/jobDeletePolicy.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
 const { expandLaborPricingFromPaidJob, isProviderAvailable } = require("./provider.service");
@@ -1171,22 +1172,34 @@ async function finalizeJob(job, meta) {
 
   const base = enrichJob(workingJob, workingMeta);
   let completionPaymentDue = base.completionPaymentDue;
+  let confirmationWindowExpired = false;
   try {
     const obligationService = require("./customerPaymentObligation.service");
     if (await obligationService.isJobUnderOpenCase(workingJob.id)) {
-      await obligationService.cancelWorkflowObligationForOpenCase(workingJob.id, workingJob.customerId);
+      await obligationService.pauseWorkflowObligationForOpenCase(workingJob.id, workingJob.customerId);
       completionPaymentDue = null;
+      confirmationWindowExpired = false;
     } else {
       const row = await obligationService.getOpenObligationForJob(workingJob.id);
       if (row) {
         const display = obligationService.deriveDisplayStatus(row);
+        const restrictionStartsAt = row.restrictionStartsAt
+          ? row.restrictionStartsAt instanceof Date
+            ? row.restrictionStartsAt.toISOString()
+            : new Date(row.restrictionStartsAt).toISOString()
+          : null;
+        confirmationWindowExpired = Boolean(
+          restrictionStartsAt && new Date(restrictionStartsAt).getTime() <= Date.now() && Number(row.amount) > 0.01
+        );
         completionPaymentDue = {
           ...(completionPaymentDue || {}),
           amountDue: Number(row.amount),
           dueAt: row.dueAt instanceof Date ? row.dueAt.toISOString() : row.dueAt,
+          restrictionStartsAt,
           status: display,
           obligationId: row.id,
           source: row.source,
+          confirmationWindowExpired,
         };
       }
     }
@@ -1220,6 +1233,7 @@ async function finalizeJob(job, meta) {
     ...base,
     images: signedImages,
     completionPaymentDue,
+    confirmationWindowExpired,
     requiresInspection,
     requiresMaterials,
     categoryStep3Type,
@@ -1275,10 +1289,13 @@ async function updateJobStatus(jobId, status, actorUserId, actorRole) {
   const meta = await mutateJobMeta(jobId, (m) => {
     const next = withStatusAndProgress(m, status, updatedJob);
     if (String(status) === "AWAITING_CONFIRMATION") {
-      const now = new Date();
-      const deadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      next.markedCompleteAt = now.toISOString();
-      next.confirmationDeadlineAt = deadline.toISOString();
+      if (!next.confirmationDeadlineAt) {
+        const now = new Date();
+        const start = next.markedCompleteAt ? new Date(next.markedCompleteAt) : now;
+        if (!next.markedCompleteAt) next.markedCompleteAt = start.toISOString();
+        const { confirmationDeadlineFrom } = require("../utils/completionDeadline.util");
+        next.confirmationDeadlineAt = confirmationDeadlineFrom(start).toISOString();
+      }
     }
     return next;
   });
@@ -1596,6 +1613,8 @@ async function payLabor(jobId, userId, cardLast4, idempotencyKey, requestHash, r
   if (String(job.customerId) !== String(userId)) {
     throw new AppError("Only the customer can pay for labor", 403);
   }
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerMarketplaceSpendAllowed(userId);
   if (job.status === "CANCELLED" || job.status === "REJECTED") {
     throw new AppError("Cannot pay for a cancelled or rejected job", 400);
   }
@@ -2811,27 +2830,109 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
   return await finalizeJob(updated, finalMeta);
 }
 
-async function autoCompleteJobAfterDeadline(jobId) {
+function completionBalanceStillDue(job, meta) {
+  if (!job || job.legacyEscrowV2 || meta?.courierFlow) return false;
+  // Non-legacy service completion requires positive evidence of final settlement.
+  // Missing snapshots or an unpaid deposit must never be treated as no balance due.
+  return job.paymentProgress !== "FULLY_PAID";
+}
+
+/**
+ * Platform completion after the confirmation window.
+ * Does not set customer confirmation, rating, or review, and does not charge a card.
+ * Legacy escrow and courier jobs still use the existing held-funds release when it has not run.
+ */
+async function systemCompleteJobAfterDeadline(jobId) {
+  const { hasTimelineEventType } = require("../utils/jobTimeline.util");
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return null;
-  if (job.escrowSecondReleaseDone) return null;
   const meta = await getJobMeta(jobId);
-  const { toFrontendStatus } = require("./jobMeta.service");
-  if (toFrontendStatus(job.status, meta) !== "AWAITING_CONFIRMATION") return null;
-  const existing = await prisma.jobCompletionEvidence.findUnique({ where: { jobId } });
-  if (existing) return null;
+  if (!isConfirmationDeadlineReached(job, meta)) return null;
+  if (hasTimelineEventType(meta, "AUTO_ACCEPTED")) return null;
   const existingDispute = await prisma.jobDispute.findFirst({
     where: { jobId, status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
   });
   if (existingDispute) return null;
+  if (completionBalanceStillDue(job, meta)) return null;
 
-  const result = await confirmJobCompletion(jobId, null, null, job.customerId, {
-    images: [],
-    videos: [],
-    autoCompleted: true,
-  });
+  const providerRow = job.providerId
+    ? await prisma.provider.findUnique({ where: { userId: job.providerId }, select: { id: true } })
+    : null;
 
-  if (!result) return null;
+  const txResult = await prisma.$transaction(
+    async (tx) => {
+      const j0 = await tx.job.findUnique({ where: { id: jobId } });
+      if (!j0 || !["IN_PROGRESS", "ACCEPTED"].includes(String(j0.status))) return null;
+      const meta0 = normalizeMeta(j0.meta);
+      if (!isConfirmationDeadlineReached(j0, meta0)) return null;
+      if (hasTimelineEventType(meta0, "AUTO_ACCEPTED")) return null;
+      if (meta0.completionConfirmedByUser === true) return null;
+      const openCase = await tx.jobDispute.findFirst({
+        where: { jobId, status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
+        select: { id: true },
+      });
+      if (openCase) return null;
+      if (completionBalanceStillDue(j0, meta0)) return null;
+
+      const updated = await tx.job.updateMany({
+        where: { id: jobId, status: { in: ["IN_PROGRESS", "ACCEPTED"] } },
+        data: { status: "COMPLETED" },
+      });
+      if (updated.count !== 1) return null;
+
+      let releasedNow = false;
+      let stagedPayouts = [];
+      const holdRelease = Boolean(j0.legacyEscrowV2 || meta0.courierFlow);
+      const alreadySettled = Boolean(j0.escrowSecondReleaseDone && j0.paymentReleased);
+      if (holdRelease && providerRow && !alreadySettled) {
+        const releaseResult = await paymentService.runSecondTrancheInTransaction(tx, {
+          job: j0,
+          providerProfileId: providerRow.id,
+          jobId,
+        });
+        stagedPayouts = releaseResult?.stagedPayouts || [];
+        releasedNow = releaseResult?.skipped === false;
+        if (releasedNow) {
+          const escrowSettlement = require("./payments/escrowSettlement.service");
+          await escrowSettlement.markLaborEscrowFullyReleased(jobId, tx);
+        }
+      }
+
+      await mutateJobMetaInTransaction(tx, jobId, (m) => {
+        const patched = appendTimelineEventIfAbsent(
+          { ...m, statusOverride: "COMPLETED" },
+          {
+            type: "AUTO_ACCEPTED",
+            at: new Date().toISOString(),
+            source: "completion_deadline_cron",
+          }
+        );
+        patched.progressStep = jobProgressUtil.nextMonotonicProgressStep(patched, {
+          ...j0,
+          status: "COMPLETED",
+        });
+        return patched;
+      });
+
+      return { releasedNow, stagedPayouts };
+    },
+    {
+      maxWait: 5000,
+      timeout: 20000,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }
+  );
+
+  if (!txResult) return null;
+
+  if (txResult.stagedPayouts?.length) {
+    try {
+      const refundRecovery = require("./refundRecovery.service");
+      await refundRecovery.processStagedCustomerPayouts(txResult.stagedPayouts);
+    } catch (e) {
+      console.error("[job] staged refund payout failed", e?.message || e);
+    }
+  }
 
   await logAudit(AUDIT_ACTIONS.JOB_AUTO_ACCEPTED, {
     actorType: "SYSTEM",
@@ -2841,20 +2942,45 @@ async function autoCompleteJobAfterDeadline(jobId) {
       customerId: job.customerId,
       providerId: job.providerId,
       confirmationDeadlineAt: meta.confirmationDeadlineAt,
-      escrowSecondReleaseDone: true,
+      releasedNow: Boolean(txResult.releasedNow),
+      systemCompleted: true,
     },
   });
 
+  const title = job.title || "Your job";
   if (job.customerId) {
+    const message = txResult.releasedNow
+      ? `The confirmation window expired. "${title}" was completed by the platform and the held payment was released.`
+      : `The confirmation window expired. "${title}" was completed by the platform.`;
     await notificationEvents.notifyUser(job.customerId, {
       type: "job_completed",
-      title: "Job auto-completed",
-      message: `The confirmation window expired. "${job.title || "Your job"}" was marked complete and payment released.`,
+      title: "Job completed",
+      message,
       jobId,
       dedupeKey: notificationEvents.jobDedupe(jobId, "job_auto_completed_customer"),
     });
   }
-  return result;
+  if (job.providerId) {
+    await notificationEvents.notifyJobCompleted(job.providerId, jobId, job.title);
+    if (txResult.releasedNow) {
+      await notificationEvents.notifyPaymentReleased(job.providerId, jobId, job.title);
+    }
+  }
+
+  emitDomainUpdate({
+    domain: "job",
+    action: "completed",
+    jobId,
+    userIds: [job.customerId, job.providerId].filter(Boolean),
+  });
+
+  const updatedJob = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
+  const finalMeta = await getJobMeta(jobId);
+  return finalizeJob(updatedJob, finalMeta);
+}
+
+async function autoCompleteJobAfterDeadline(jobId) {
+  return systemCompleteJobAfterDeadline(jobId);
 }
 
 function ensureStoreOrder(meta, storeId, fallback) {
@@ -3267,6 +3393,8 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, customerUse
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   assertCustomerOwnsJob(job, customerUserId);
+  const obligationService = require("./customerPaymentObligation.service");
+  await obligationService.assertCustomerMarketplaceSpendAllowed(customerUserId);
   await assertJobCategoryAllowsMaterials(job);
   const meta = await mutateJobMeta(jobId, (m) => {
     const fallbackStoreName =
@@ -4115,6 +4243,8 @@ module.exports = {
   cancelJob,
   confirmJobCompletion,
   autoCompleteJobAfterDeadline,
+  systemCompleteJobAfterDeadline,
+  completionBalanceStillDue,
   setStoreDeliveryOption,
   approveStoreDeliveryRequest,
   updateStoreOrderDeliveryStatus,

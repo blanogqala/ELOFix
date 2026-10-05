@@ -54,6 +54,31 @@ export function getCompletionPaymentDueSummaryLine(job: Job): string | null {
   return `Pay ${amountText} by the due date`;
 }
 
+export const CONFIRMATION_WINDOW_EXPIRED_MESSAGE =
+  'Confirmation window expired — awaiting final payment.';
+
+export function confirmationCountdownCopy(options: {
+  expiredUnpaid: boolean;
+  balanceOutstanding: boolean;
+}): { title: string; detail: string } {
+  if (options.expiredUnpaid) {
+    return {
+      title: CONFIRMATION_WINDOW_EXPIRED_MESSAGE,
+      detail: 'Pay the outstanding balance to complete this job. Silence does not confirm the work.',
+    };
+  }
+  if (options.balanceOutstanding) {
+    return {
+      title: 'Waiting for customer confirmation',
+      detail: 'Time left to confirm or pay the final balance.',
+    };
+  }
+  return {
+    title: 'Waiting for customer confirmation',
+    detail: 'Time left to confirm completion.',
+  };
+}
+
 export function getProviderAdminPaymentWaitingTitle(): string {
   return 'Waiting for customer final payment';
 }

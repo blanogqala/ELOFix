@@ -133,7 +133,7 @@ import {
   mergeJobMeasurementPayload,
 } from '@/lib/jobSpecifications';
 import { cn } from '@/lib/utils';
-import { isAdminRequiredCompletionPayment } from '@/lib/completionPaymentDue';
+import { hasOutstandingCompletionPayment, isAdminRequiredCompletionPayment } from '@/lib/completionPaymentDue';
 
 function getMeasurementValue(values: Record<string, number> | undefined, key: 'area' | 'length' | 'width'): number | undefined {
   if (!values) return undefined;
@@ -1872,7 +1872,12 @@ export default function ProviderJobDetail() {
             <ProviderAdminPaymentWaitingCard job={job} />
           ) : (
           <div className="card-elevated p-6 space-y-4">
-            <ConfirmationCountdown deadlineAt={job.confirmationDeadlineAt} />
+            <ConfirmationCountdown
+              deadlineAt={job.confirmationDeadlineAt}
+              confirmationWindowExpired={Boolean(job.confirmationWindowExpired)}
+              balanceOutstanding={hasOutstandingCompletionPayment(job)}
+              recoveryDueAt={job.completionPaymentDue?.dueAt}
+            />
             <div className="text-center">
             <Clock className="h-12 w-12 text-amber-600 mx-auto mb-3" />
             {isCourierJob && deliveryRequest ? (
@@ -1890,10 +1895,15 @@ export default function ProviderJobDetail() {
               </>
             ) : (
               <>
-                <h3 className="font-semibold mb-1">Waiting for customer confirmation</h3>
+                <h3 className="font-semibold mb-1">
+                  {job.confirmationWindowExpired && hasOutstandingCompletionPayment(job)
+                    ? 'Confirmation window expired — awaiting final payment.'
+                    : 'Waiting for customer confirmation'}
+                </h3>
                 <p className="text-sm text-muted-foreground">
-                  The client needs to confirm the job is completed (and may pay any remaining balance)
-                  or open a dispute if they are not satisfied.
+                  {job.confirmationWindowExpired && hasOutstandingCompletionPayment(job)
+                    ? 'The customer can still pay the outstanding balance or open a dispute. The balance is not charged automatically.'
+                    : 'The client needs to confirm the job is completed or pay any remaining balance, or open a dispute if they are not satisfied.'}
                 </p>
               </>
             )}

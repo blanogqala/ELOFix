@@ -128,6 +128,7 @@ export interface AdminCustomerPaymentObligationRow {
   jobTitle?: string | null;
   amountDue: number;
   dueAt: string;
+  restrictionStartsAt?: string | null;
   status: string;
   displayStatus?: string;
   marketplaceRestricted?: boolean;

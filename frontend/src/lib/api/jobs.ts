@@ -103,7 +103,9 @@ interface BackendJob {
   refundDetails?: Job['refundDetails'];
   providerRefundDebt?: number;
   confirmationDeadlineAt?: string | null;
+  confirmationWindowExpired?: boolean;
   markedCompleteAt?: string | null;
+  completionPaymentDue?: Job['completionPaymentDue'];
   disputeId?: string | null;
   legacyEscrowV2?: boolean;
   paymentModeSnapshot?: Job['paymentModeSnapshot'];
@@ -276,6 +278,7 @@ export function toFrontendJob(job: BackendJob): Job {
     refundDetails: job.refundDetails,
     providerRefundDebt: numOrUndef(job.providerRefundDebt),
     confirmationDeadlineAt: job.confirmationDeadlineAt ?? null,
+    confirmationWindowExpired: Boolean(job.confirmationWindowExpired),
     markedCompleteAt: job.markedCompleteAt ?? null,
     disputeId: job.disputeId ?? null,
     legacyEscrowV2: Boolean(job.legacyEscrowV2),
@@ -296,6 +299,8 @@ export function toFrontendJob(job: BackendJob): Job {
       ? {
           amountDue: Number(job.completionPaymentDue.amountDue) || 0,
           dueAt: job.completionPaymentDue.dueAt ?? null,
+          restrictionStartsAt: job.completionPaymentDue.restrictionStartsAt ?? null,
+          confirmationWindowExpired: Boolean(job.completionPaymentDue.confirmationWindowExpired),
           status: job.completionPaymentDue.status ?? undefined,
           obligationId: job.completionPaymentDue.obligationId ?? null,
           source: job.completionPaymentDue.source ?? null,
