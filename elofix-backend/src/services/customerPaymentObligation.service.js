@@ -236,7 +236,7 @@ async function ensureObligationForJobIfPaymentDue(job, meta = {}, opts = {}) {
 }
 
 async function markObligationPaidForJob(jobId, tx = prisma) {
-  const open = await getOpenObligationForJob(jobId, tx);
+  const open = await getOpenOrPausedObligationForJob(jobId, tx);
   if (!open) {
     await mutateJobMetaInTransaction(tx, jobId, (m) => ({ ...m, completionPaymentDue: null }));
     return null;
@@ -289,10 +289,13 @@ async function pauseWorkflowObligationForOpenCase(jobId, customerId, tx = prisma
   const open = await getOpenObligationForJob(jobId, tx);
   let paused = null;
   if (open) {
-    paused = await tx.customerPaymentObligation.update({
-      where: { id: open.id },
+    const changed = await tx.customerPaymentObligation.updateMany({
+      where: { id: open.id, status: { in: OPEN_STATUSES } },
       data: { status: "PAUSED" },
     });
+    paused = changed.count === 1
+      ? await tx.customerPaymentObligation.findUnique({ where: { id: open.id } })
+      : await getPausedObligationForJob(jobId, tx);
   } else {
     paused = await getPausedObligationForJob(jobId, tx);
   }
@@ -317,10 +320,12 @@ async function resumePausedObligation(jobId, tx = prisma, now = new Date()) {
   const paused = await getPausedObligationForJob(jobId, tx);
   if (!paused) return null;
   const duePassed = new Date(paused.dueAt).getTime() <= now.getTime();
-  const resumed = await tx.customerPaymentObligation.update({
-    where: { id: paused.id },
+  const changed = await tx.customerPaymentObligation.updateMany({
+    where: { id: paused.id, status: "PAUSED" },
     data: { status: duePassed ? "OVERDUE" : "DUE" },
   });
+  if (changed.count !== 1) return null;
+  const resumed = await tx.customerPaymentObligation.findUnique({ where: { id: paused.id } });
   await syncCompletionPaymentDueMeta(tx, jobId, resumed);
   return resumed;
 }
@@ -356,25 +361,26 @@ async function reconcileCustomerMarketplaceRestriction(customerId) {
 async function applyCustomerMarketplaceRestriction(customerId, reason, tx = prisma) {
   const user = await tx.user.findUnique({
     where: { id: String(customerId) },
-    select: { id: true, marketplaceRestricted: true },
+    select: { id: true, marketplaceRestricted: true, marketplaceRestrictedReason: true },
   });
   if (!user) return false;
   if (user.marketplaceRestricted) return false;
-  await tx.user.update({
-    where: { id: user.id },
+  const applied = await tx.user.updateMany({
+    where: { id: user.id, marketplaceRestricted: false },
     data: {
       marketplaceRestricted: true,
       marketplaceRestrictedAt: new Date(),
       marketplaceRestrictedReason: reason || MARKETPLACE_RESTRICT_REASON,
     },
   });
+  if (applied.count !== 1) return false;
   await logAudit(AUDIT_ACTIONS.CUSTOMER_PAYMENT_RESTRICTION_APPLIED, {
     actorType: ACTOR_TYPES.SYSTEM,
     userId: user.id,
     entityType: ENTITY_TYPES.USER,
     entityId: user.id,
     newValue: { reason: reason || MARKETPLACE_RESTRICT_REASON },
-  });
+  }, tx);
   emitDomainUpdate({
     domain: "profile",
     action: "restricted",
@@ -388,8 +394,8 @@ async function applyCustomerMarketplaceRestriction(customerId, reason, tx = pris
 function obligationQualifiesForRestriction(row, now = new Date()) {
   if (!row) return false;
   if (row.status === "OVERDUE") return true;
-  if (row.status === "DUE" && row.restrictionStartsAt) {
-    return new Date(row.restrictionStartsAt).getTime() <= now.getTime();
+  if (row.status === "DUE") {
+    return new Date(row.restrictionStartsAt || row.dueAt).getTime() <= now.getTime();
   }
   return false;
 }
@@ -397,9 +403,22 @@ function obligationQualifiesForRestriction(row, now = new Date()) {
 async function customerHasQualifyingUnpaidObligation(customerId, tx = prisma, now = new Date()) {
   const rows = await tx.customerPaymentObligation.findMany({
     where: { customerId: String(customerId), status: { in: OPEN_STATUSES } },
-    select: { id: true, status: true, restrictionStartsAt: true, dueAt: true },
+    select: {
+      id: true,
+      jobId: true,
+      amount: true,
+      status: true,
+      restrictionStartsAt: true,
+      dueAt: true,
+      job: { select: { status: true, paymentProgress: true } },
+    },
   });
-  return rows.some((row) => obligationQualifiesForRestriction(row, now));
+  for (const row of rows) {
+    if (!(Number(row.amount) > 0.01) || !obligationQualifiesForRestriction(row, now)) continue;
+    if (!row.job || row.job.paymentProgress === "FULLY_PAID" || ["COMPLETED", "CANCELLED"].includes(row.job.status)) continue;
+    if (!(await isJobUnderOpenCase(row.jobId, tx))) return true;
+  }
+  return false;
 }
 
 async function clearCustomerMarketplaceRestrictionIfClear(customerId, tx = prisma) {
@@ -407,24 +426,25 @@ async function clearCustomerMarketplaceRestrictionIfClear(customerId, tx = prism
   if (remaining) return false;
   const user = await tx.user.findUnique({
     where: { id: String(customerId) },
-    select: { id: true, marketplaceRestricted: true },
+    select: { id: true, marketplaceRestricted: true, marketplaceRestrictedReason: true },
   });
-  if (!user?.marketplaceRestricted) return false;
-  await tx.user.update({
-    where: { id: user.id },
+  if (!user?.marketplaceRestricted || user.marketplaceRestrictedReason !== MARKETPLACE_RESTRICT_REASON) return false;
+  const cleared = await tx.user.updateMany({
+    where: { id: user.id, marketplaceRestricted: true, marketplaceRestrictedReason: MARKETPLACE_RESTRICT_REASON },
     data: {
       marketplaceRestricted: false,
       marketplaceRestrictedAt: null,
       marketplaceRestrictedReason: null,
     },
   });
+  if (cleared.count !== 1) return false;
   await logAudit(AUDIT_ACTIONS.CUSTOMER_PAYMENT_RESTRICTION_CLEARED, {
     actorType: ACTOR_TYPES.SYSTEM,
     userId: user.id,
     entityType: ENTITY_TYPES.USER,
     entityId: user.id,
     newValue: { cleared: true },
-  });
+  }, tx);
   emitDomainUpdate({
     domain: "profile",
     action: "unrestricted",
@@ -461,6 +481,9 @@ async function assertCustomerMarketplaceSpendAllowed(userId) {
     select: { marketplaceRestricted: true, marketplaceRestrictedReason: true },
   });
   assertCustomerMarketplaceNotRestricted(user);
+  if (await customerHasQualifyingUnpaidObligation(userId)) {
+    throw new AppError(MARKETPLACE_RESTRICT_REASON, 403);
+  }
   return user;
 }
 
@@ -478,6 +501,9 @@ async function assertCustomerCanStartPaidTransaction(userId) {
   const { assertCustomerNotBlocked } = require("./accountStatus.service");
   assertCustomerNotBlocked(user);
   assertCustomerMarketplaceNotRestricted(user);
+  if (await customerHasQualifyingUnpaidObligation(userId)) {
+    throw new AppError(MARKETPLACE_RESTRICT_REASON, 403);
+  }
   const { assertLegalCurrent } = require("./legalAcceptance.service");
   await assertLegalCurrent(userId, user?.role || "CUSTOMER");
   return user;

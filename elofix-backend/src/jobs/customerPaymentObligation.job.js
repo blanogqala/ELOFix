@@ -19,7 +19,7 @@ function daysBetween(a, b) {
   return Math.ceil((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
 }
 
-async function sendWindowExpiredNotice(row) {
+async function sendWindowExpiredNotice(row, tx) {
   const amount = Number(row.amount);
   await notificationEvents.notifyConfirmationWindowExpired({
     customerId: row.customerId,
@@ -27,63 +27,62 @@ async function sendWindowExpiredNotice(row) {
     jobId: row.jobId,
     jobTitle: row.job?.title || null,
     amount,
-  });
+  }, tx);
 }
 
-async function sendOverdueNotice(row) {
+async function sendOverdueNotice(row, tx) {
   const amount = Number(row.amount);
   await notificationEvents.notifyCustomerPaymentOverdue({
     customerId: row.customerId,
     jobId: row.jobId,
     amount,
-  });
+  }, tx);
   await notificationEvents.notifyAdminCustomerPaymentOverdue({
     customerId: row.customerId,
     jobId: row.jobId,
     amount,
-  });
+  }, tx);
   await logAudit(AUDIT_ACTIONS.PAYMENT_OBLIGATION_OVERDUE, {
     actorType: ACTOR_TYPES.SYSTEM,
     userId: row.customerId,
     entityType: ENTITY_TYPES.JOB,
     entityId: row.jobId,
     newValue: { obligationId: row.id, amount },
-  });
+  }, tx);
 }
 
 async function maybeSendReminders(row, now, stats) {
-  if (row.status !== "DUE") return;
-  const dueAt = new Date(row.dueAt);
-  if (dueAt <= now) return;
-  const amount = Number(row.amount);
-  const daysLeft = daysBetween(now, dueAt);
-  if (daysLeft <= 7 && !row.reminder7SentAt) {
-    await notificationEvents.notifyCustomerPaymentObligationReminder({
-      customerId: row.customerId,
-      jobId: row.jobId,
-      amount,
-      dueAt: row.dueAt,
-      daysLeft,
+  const sent = await prisma.$transaction(async (tx) => {
+    const fresh = await tx.customerPaymentObligation.findUnique({ where: { id: row.id } });
+    if (!fresh || fresh.status !== "DUE" || new Date(fresh.dueAt) <= now) return false;
+    if (await obligationService.isJobUnderOpenCase(fresh.jobId, tx)) return false;
+    const job = await tx.job.findUnique({
+      where: { id: fresh.jobId },
+      select: { status: true, paymentProgress: true },
     });
-    await prisma.customerPaymentObligation.updateMany({
-      where: { id: row.id, reminder7SentAt: null, status: "DUE" },
-      data: { reminder7SentAt: now },
+    if (!job || job.paymentProgress === "FULLY_PAID" || ["COMPLETED", "CANCELLED"].includes(job.status)) return false;
+    const daysLeft = daysBetween(now, new Date(fresh.dueAt));
+    const field = daysLeft <= 7 && !fresh.reminder7SentAt
+      ? "reminder7SentAt"
+      : daysLeft <= 1 && !fresh.reminder1SentAt
+        ? "reminder1SentAt"
+        : null;
+    if (!field) return false;
+    const changed = await tx.customerPaymentObligation.updateMany({
+      where: { id: fresh.id, status: "DUE", [field]: null },
+      data: { [field]: now },
     });
-    stats.reminders++;
-  } else if (daysLeft <= 1 && !row.reminder1SentAt) {
+    if (!changed.count) return false;
     await notificationEvents.notifyCustomerPaymentObligationReminder({
-      customerId: row.customerId,
-      jobId: row.jobId,
-      amount,
-      dueAt: row.dueAt,
+      customerId: fresh.customerId,
+      jobId: fresh.jobId,
+      amount: Number(fresh.amount),
+      dueAt: fresh.dueAt,
       daysLeft: Math.max(1, daysLeft),
-    });
-    await prisma.customerPaymentObligation.updateMany({
-      where: { id: row.id, reminder1SentAt: null, status: "DUE" },
-      data: { reminder1SentAt: now },
-    });
-    stats.reminders++;
-  }
+    }, tx);
+    return true;
+  }, { isolationLevel: "Serializable" });
+  if (sent) stats.reminders++;
 }
 
 async function enforceLegacyDue(row, now, stats) {
@@ -93,8 +92,7 @@ async function enforceLegacyDue(row, now, stats) {
     return;
   }
 
-  const alreadyNotified = Boolean(row.overdueNotifiedAt);
-  let becameOverdue = false;
+  let noticeSent = false;
 
   await prisma.$transaction(async (tx) => {
     const fresh = await tx.customerPaymentObligation.findUnique({ where: { id: row.id } });
@@ -118,7 +116,7 @@ async function enforceLegacyDue(row, now, stats) {
         where: { id: fresh.id, status: "DUE" },
         data: { status: "OVERDUE" },
       });
-      if (flipped.count === 1) becameOverdue = true;
+      if (flipped.count !== 1) return;
     }
     await obligationService.applyCustomerMarketplaceRestriction(
       fresh.customerId,
@@ -129,32 +127,23 @@ async function enforceLegacyDue(row, now, stats) {
       where: { id: fresh.id, status: "OVERDUE", restrictionAppliedAt: null },
       data: { restrictionAppliedAt: fresh.restrictionAppliedAt || now },
     });
+    if (!fresh.overdueNotifiedAt) {
+      const stamped = await tx.customerPaymentObligation.updateMany({
+        where: { id: fresh.id, status: "OVERDUE", overdueNotifiedAt: null },
+        data: { overdueNotifiedAt: now },
+      });
+      if (stamped.count === 1) {
+        await sendOverdueNotice(fresh, tx);
+        noticeSent = true;
+      }
+    }
     await obligationService.syncCompletionPaymentDueMeta(tx, fresh.jobId, {
       ...fresh,
       status: "OVERDUE",
       restrictionAppliedAt: fresh.restrictionAppliedAt || now,
     });
-  });
-
-  if (!alreadyNotified && becameOverdue) {
-    const stamped = await prisma.customerPaymentObligation.updateMany({
-      where: { id: row.id, status: "OVERDUE", overdueNotifiedAt: null },
-      data: { overdueNotifiedAt: now },
-    });
-    if (stamped.count === 1) {
-      await sendOverdueNotice(row);
-      stats.overdue++;
-    }
-  } else if (!alreadyNotified && row.status === "OVERDUE") {
-    const stamped = await prisma.customerPaymentObligation.updateMany({
-      where: { id: row.id, overdueNotifiedAt: null },
-      data: { overdueNotifiedAt: now },
-    });
-    if (stamped.count === 1) {
-      await sendOverdueNotice(row);
-      stats.overdue++;
-    }
-  }
+  }, { isolationLevel: "Serializable" });
+  if (noticeSent) stats.overdue++;
 }
 
 async function enforceCompletionWindow(row, now, stats) {
@@ -194,7 +183,10 @@ async function enforceCompletionWindow(row, now, stats) {
             restrictionAppliedAt: fresh.restrictionAppliedAt || now,
           },
         });
-        if (stamped.count === 1) out.windowExpired = true;
+        if (stamped.count === 1) {
+          await sendWindowExpiredNotice({ ...fresh, job }, tx);
+          out.windowExpired = true;
+        }
       } else if (!fresh.restrictionAppliedAt) {
         await tx.customerPaymentObligation.updateMany({
           where: { id: fresh.id, restrictionAppliedAt: null },
@@ -212,7 +204,10 @@ async function enforceCompletionWindow(row, now, stats) {
         },
         data: { status: "OVERDUE", overdueNotifiedAt: now },
       });
-      if (stamped.count === 1) out.overdue = true;
+      if (stamped.count === 1) {
+        await sendOverdueNotice(fresh, tx);
+        out.overdue = true;
+      }
     }
 
     if (out.windowExpired || out.overdue) {
@@ -220,15 +215,13 @@ async function enforceCompletionWindow(row, now, stats) {
       await obligationService.syncCompletionPaymentDueMeta(tx, fresh.jobId, latest);
     }
     return out;
-  });
+  }, { isolationLevel: "Serializable" });
 
   if (!actions || actions.paused) return;
   if (actions.windowExpired) {
-    await sendWindowExpiredNotice({ ...row, job: actions.job || row.job });
     stats.windowExpired++;
   }
   if (actions.overdue) {
-    await sendOverdueNotice(row);
     stats.overdue++;
   }
   if (!actions.windowExpired && !actions.overdue && new Date(row.dueAt) > now) {

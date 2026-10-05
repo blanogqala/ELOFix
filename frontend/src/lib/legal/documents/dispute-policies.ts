@@ -180,7 +180,7 @@ export const correctiveWork: LegalDocument = {
   id: 'corrective-work',
   title: 'Corrective Work Policy',
   subtitle: 'How Providers return to complete remedial work after a dispute.',
-  effectiveDate: EFFECTIVE_UNCHANGED,
+  effectiveDate: 'October 5, 2026',
   version: LEGAL_VERSIONS.correctiveWork,
   sections: [
     {
@@ -221,7 +221,7 @@ export const correctiveWork: LegalDocument = {
       content: [
         'After completing remedial work, the Provider must mark the Job as complete again.',
         'The Customer receives a new notification and a fresh 7-day verification window under the Job Completion Verification Policy.',
-        'The Customer may accept, dispute again, or allow automatic acceptance after 7 days.',
+        'The Customer may confirm through the applicable completion-payment flow or dispute again. An unpaid final balance after the new 7-day deadline follows the completion-window restriction process; silence does not confirm completion.',
       ],
     },
     {

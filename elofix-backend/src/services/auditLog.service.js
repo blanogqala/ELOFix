@@ -22,7 +22,7 @@ const { inferActorType } = require("../utils/auditContext.util");
  * @param {string} action
  * @param {AuditOpts} [opts]
  */
-async function logAudit(action, opts = {}) {
+async function logAudit(action, opts = {}, tx = prisma) {
   const userId = opts.userId != null && opts.userId !== "" ? String(opts.userId) : null;
   const actorType =
     opts.actorType ||
@@ -50,7 +50,7 @@ async function logAudit(action, opts = {}) {
       : null;
 
   try {
-    await prisma.auditLog.create({
+    await tx.auditLog.create({
       data: {
         id: randomUUID(),
         action: String(action),

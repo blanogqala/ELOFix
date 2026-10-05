@@ -1,55 +1,38 @@
-const prisma = require("../config/prisma");
-
-function isLocked(value) {
-  return value === true || value === "t";
-}
-
-/**
- * Hold a session advisory lock on one pooled connection for the whole tick.
- * Unlock runs on that same connection. A second process sees try_lock = false.
- * @param {number} lockKey
- * @param {() => Promise<any>} fn
- */
-async function withAdvisoryLock(lockKey, fn) {
-  let releaseHold;
-  const hold = new Promise((resolve) => {
-    releaseHold = resolve;
-  });
-  let report;
-  const reported = new Promise((resolve) => {
-    report = resolve;
-  });
-
-  const txPromise = prisma.$transaction(
-    async (tx) => {
-      const rows = await tx.$queryRawUnsafe(
-        "SELECT pg_try_advisory_lock($1::bigint) AS locked",
-        lockKey
-      );
-      const locked = isLocked(rows?.[0]?.locked);
-      report(locked);
-      if (!locked) return;
-      await hold;
-      await tx.$queryRawUnsafe("SELECT pg_advisory_unlock($1::bigint)", lockKey);
-    },
-    { maxWait: 10000, timeout: 180000 }
-  );
-
-  const locked = await reported;
-  if (!locked) {
-    await txPromise;
-    return { locked: false, result: null };
+/** Hold a session lock on a dedicated connection, without a transaction timeout. */
+async function withAdvisoryLock(lockKey, fn, pool) {
+  if (!pool) {
+    require("../config/prisma"); // Initializes the application's pg pool.
+    pool = globalThis.__elofixPgPool;
   }
-
+  const client = await pool.connect();
+  let locked = false;
+  let destroy = false;
+  let failure;
   try {
-    const result = await fn();
-    return { locked: true, result };
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock($1::bigint) AS locked",
+      [lockKey]
+    );
+    locked = rows?.[0]?.locked === true || rows?.[0]?.locked === "t";
+    if (!locked) return { locked: false, result: null };
+    return { locked: true, result: await fn() };
+  } catch (err) {
+    failure = err;
+    // Acquisition can fail after the server has taken the lock.
+    if (!locked) destroy = true;
+    throw err;
   } finally {
-    releaseHold();
-    await txPromise;
+    try {
+      if (locked) {
+        await client.query("SELECT pg_advisory_unlock($1::bigint)", [lockKey]);
+      }
+    } catch (err) {
+      destroy = true; // Never return a possibly locked session to the pool.
+      if (!failure) throw err;
+    } finally {
+      client.release(destroy);
+    }
   }
 }
 
-module.exports = {
-  withAdvisoryLock,
-};
+module.exports = { withAdvisoryLock };

@@ -2,7 +2,7 @@ import type { LegalDocument } from '../content';
 import { LEGAL_VERSIONS } from '../versions';
 import { COMPANY, LEGAL_OPERATOR_INTRO } from '../../company';
 
-const EFFECTIVE = 'September 14, 2026';
+const EFFECTIVE = 'October 5, 2026';
 
 export const providerAgreement: LegalDocument = {
   id: 'provider-agreement',
@@ -76,8 +76,8 @@ export const providerAgreement: LegalDocument = {
       title: '6. Job Completion and Customer Verification',
       content: [
         'When you mark a Job as complete, the Customer receives notification and has 7 calendar days to accept or dispute the work under the Job Completion Verification Policy.',
-        'If the Customer does not respond within 7 days, the Job may be automatically approved and any remaining payment tranche for a staged-payment Job may become payable according to the Payment Schedule and Transparency Policy.',
-        'Open disputes block automatic acceptance and may pause settlement of any remaining staged payment tranche until resolved.',
+        'For new 50/50 service Jobs, an unpaid final balance after the 7-day confirmation deadline restricts new marketplace transactions. The recovery deadline is 30 calendar days later. Silence does not confirm completion; verified final payment does.',
+        'Open disputes pause the associated payment restriction and system completion until resolved.',
       ],
     },
     {
@@ -285,10 +285,10 @@ export const refundPolicy: LegalDocument = {
     },
     {
       id: 'auto-acceptance',
-      title: '13. Automatic Acceptance',
+      title: '13. Confirmation Window Expiry',
       content: [
-        'If a Customer does not accept or dispute completed work within 7 calendar days, the Job may be automatically approved under the Job Completion Verification Policy.',
-        'Automatic acceptance may make any remaining customer payment tranche payable according to the Payment Schedule and Transparency Policy. Customer payment timing is not the same as provider bank settlement timing.',
+        'For new 50/50 service Jobs, an unpaid final balance after the 7-day confirmation deadline triggers payment-related restrictions under the Job Completion Verification Policy. Silence does not confirm the Job.',
+        'Fully paid Jobs may be completed by the system after the stored deadline without recording customer confirmation or paying out again. Customer payment timing is distinct from provider bank settlement timing.',
       ],
     },
     {
@@ -303,15 +303,15 @@ export const refundPolicy: LegalDocument = {
       id: 'non-refundable',
       title: '15. Non-Refundable Items',
       content: [
-        'Completed services properly delivered and accepted (including by automatic acceptance), non-returnable materials, third-party fees already incurred, and applicable platform service fees may be non-refundable except where required by the CPA or other mandatory law.',
+        'Completed services properly delivered and accepted, non-returnable materials, third-party fees already incurred, and applicable platform service fees may be non-refundable except where required by the CPA or other mandatory law.',
       ],
     },
     {
       id: 'outstanding-payments',
       title: '15A. Outstanding Customer Payments',
       content: [
-        'If an administrator resolution or normal Job workflow makes an outstanding customer service balance payable, the Customer must settle that amount within 30 calendar days of the due date shown on the Platform.',
-        'Until the due date, the Customer may continue to use the marketplace, subject to other Platform rules.',
+        'Customers must settle outstanding service balances by the due date shown on the Platform. For new 50/50 completion-workflow obligations, this is 30 calendar days after the stored 7-day confirmation deadline (day 37). Existing and administrator-release obligations retain their displayed deadlines.',
+        'For new 50/50 completion-workflow obligations, new marketplace transactions are restricted from the expired confirmation deadline while the final balance remains unpaid and no dispute is open. Existing obligations without a separate confirmation deadline are restricted when their displayed due date passes.',
         'If the amount remains unpaid after the due date, new marketplace transactions may be restricted. The Customer may still log in, view Jobs, disputes, invoices, and payment obligations, pay the outstanding amount, and contact EloFix.',
         'Failure to settle an outstanding amount within 30 calendar days may result in restrictions on new marketplace transactions, account suspension or blocking, referral for lawful debt recovery, and further legal action where appropriate.',
       ],

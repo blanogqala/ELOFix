@@ -24,6 +24,7 @@ const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
+const { isConfirmationDeadlineReached } = require("../utils/completionDeadline.util");
 const jobDeletePolicy = require("../utils/jobDeletePolicy.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
 const { expandLaborPricingFromPaidJob, isProviderAvailable } = require("./provider.service");
@@ -2831,13 +2832,9 @@ async function confirmJobCompletion(jobId, rating, review, customerUserId, optio
 
 function completionBalanceStillDue(job, meta) {
   if (!job || job.legacyEscrowV2 || meta?.courierFlow) return false;
-  const paymentModeService = require("./payments/paymentMode.service");
-  if (!job.paymentModeSnapshot) return false;
-  const due = paymentModeService.resolveNextLaborPaymentType(job, meta);
-  return (
-    due === paymentModeService.PAYMENT_TYPES.COMPLETION ||
-    due === paymentModeService.PAYMENT_TYPES.FULL_COMPLETION
-  );
+  // Non-legacy service completion requires positive evidence of final settlement.
+  // Missing snapshots or an unpaid deposit must never be treated as no balance due.
+  return job.paymentProgress !== "FULLY_PAID";
 }
 
 /**
@@ -2850,7 +2847,7 @@ async function systemCompleteJobAfterDeadline(jobId) {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return null;
   const meta = await getJobMeta(jobId);
-  if (toFrontendStatus(job.status, meta) !== "AWAITING_CONFIRMATION") return null;
+  if (!isConfirmationDeadlineReached(job, meta)) return null;
   if (hasTimelineEventType(meta, "AUTO_ACCEPTED")) return null;
   const existingDispute = await prisma.jobDispute.findFirst({
     where: { jobId, status: { in: ["OPEN", "UNDER_INVESTIGATION"] } },
@@ -2867,6 +2864,7 @@ async function systemCompleteJobAfterDeadline(jobId) {
       const j0 = await tx.job.findUnique({ where: { id: jobId } });
       if (!j0 || !["IN_PROGRESS", "ACCEPTED"].includes(String(j0.status))) return null;
       const meta0 = normalizeMeta(j0.meta);
+      if (!isConfirmationDeadlineReached(j0, meta0)) return null;
       if (hasTimelineEventType(meta0, "AUTO_ACCEPTED")) return null;
       if (meta0.completionConfirmedByUser === true) return null;
       const openCase = await tx.jobDispute.findFirst({

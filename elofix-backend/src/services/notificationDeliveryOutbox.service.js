@@ -26,8 +26,8 @@ function trySocketEmit(payload) {
   global.io.to(String(userId)).emit(event, data);
 }
 
-async function enqueueSocketDelivery({ notificationId, userId, event, payload }) {
-  return prisma.notificationDeliveryOutbox.create({
+async function enqueueSocketDelivery({ notificationId, userId, event, payload }, tx = prisma) {
+  return tx.notificationDeliveryOutbox.create({
     data: {
       id: randomUUID(),
       notificationId: notificationId || null,

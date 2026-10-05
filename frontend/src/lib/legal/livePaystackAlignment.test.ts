@@ -115,8 +115,8 @@ describe('E3 live Paystack legal alignment', () => {
     ]);
     expect(LEGAL_VERSIONS.terms).toBe('2026-09-14');
     expect(LEGAL_VERSIONS.privacy).toBe('2026-09-14');
-    expect(LEGAL_VERSIONS.providerAgreement).toBe('2026-09-14');
-    expect(LEGAL_VERSIONS.refundPolicy).toBe('2026-09-14');
+    expect(LEGAL_VERSIONS.providerAgreement).toBe('2026-10-05');
+    expect(LEGAL_VERSIONS.refundPolicy).toBe('2026-10-05');
     expect(LEGAL_VERSIONS.supplierAgreement).toBe('2026-09-14');
   });
 });

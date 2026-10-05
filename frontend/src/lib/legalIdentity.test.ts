@@ -61,7 +61,7 @@ describe('legal identity and public documents', () => {
 
   it('bumps live Paystack legal documents to 2026-09-14 and does not require delivery policy at signup', () => {
     expect(LEGAL_VERSIONS.terms).toBe('2026-09-14');
-    expect(LEGAL_VERSIONS.refundPolicy).toBe('2026-09-14');
+    expect(LEGAL_VERSIONS.refundPolicy).toBe('2026-10-05');
     expect(LEGAL_VERSIONS.deliveryPolicy).toBe('2026-09-14');
     expect(LEGAL_VERSIONS.privacy).toBe('2026-09-14');
     expect(getRequiredDocuments('user')).not.toContain('delivery-policy');

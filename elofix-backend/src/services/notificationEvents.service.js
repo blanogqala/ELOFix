@@ -867,60 +867,67 @@ async function notifyCustomerPaymentObligationCreated({ customerId, jobId, amoun
   });
 }
 
-async function notifyCustomerPaymentObligationReminder({ customerId, jobId, amount, dueAt, daysLeft }) {
+async function notifyPaymentLifecycleUser(userId, notification, tx) {
+  if (tx) {
+    return notificationService.addNotificationInTransaction(tx, { ...notification, userId });
+  }
+  return notifyUser(userId, notification);
+}
+
+async function notifyCustomerPaymentObligationReminder({ customerId, jobId, amount, dueAt, daysLeft }, tx) {
   const amt = Number(amount || 0).toFixed(2);
-  await notifyUser(customerId, {
+  await notifyPaymentLifecycleUser(customerId, {
     type: "customer_payment_reminder",
     title: daysLeft <= 1 ? "Payment due today" : "Payment reminder",
     message: `An outstanding payment of R ${amt} is due by ${formatDueDate(dueAt)} for this job.`,
     jobId,
     dedupeKey: jobDedupe(jobId, `customer_payment_reminder:${daysLeft}`),
-  });
+  }, tx);
 }
 
-async function notifyConfirmationWindowExpired({ customerId, providerId, jobId, jobTitle, amount }) {
+async function notifyConfirmationWindowExpired({ customerId, providerId, jobId, jobTitle, amount }, tx) {
   const exact = "Confirmation window expired — awaiting final payment.";
   const title = jobTitle || "your job";
   const amt = Number(amount || 0).toFixed(2);
   if (customerId) {
-    await notifyUser(customerId, {
+    await notifyPaymentLifecycleUser(customerId, {
       type: "confirmation_window_expired",
       title: "Confirmation window expired",
       message: `"${title}": ${exact}`,
       jobId,
       dedupeKey: jobDedupe(jobId, "confirmation_window_expired_customer"),
-    });
+    }, tx);
   }
   if (providerId) {
-    await notifyUser(providerId, {
+    await notifyPaymentLifecycleUser(providerId, {
       type: "confirmation_window_expired",
       title: "Confirmation window expired",
       message: `The confirmation window expired for "${title}". Awaiting the customer's final payment.`,
       jobId,
       dedupeKey: jobDedupe(jobId, "confirmation_window_expired_provider"),
-    });
+    }, tx);
   }
-  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  const admins = await (tx || prisma).user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
   for (const admin of admins) {
-    await notifyUser(admin.id, {
+    await notifyPaymentLifecycleUser(admin.id, {
       type: "admin_confirmation_window_expired",
       title: "Confirmation window expired",
       message: `Job ${jobId} (${title}): ${exact} Amount R ${amt}.`,
       jobId,
       dedupeKey: `admin_confirmation_window_expired:${jobId}:${admin.id}`,
-    });
+    }, tx);
   }
 }
 
-async function notifyCustomerPaymentOverdue({ customerId, jobId, amount }) {
+async function notifyCustomerPaymentOverdue({ customerId, jobId, amount }, tx) {
   const amt = Number(amount || 0).toFixed(2);
-  await notifyUser(customerId, {
+  await notifyPaymentLifecycleUser(customerId, {
     type: "customer_payment_overdue",
     title: "Payment overdue",
     message: `Your payment of R ${amt} is overdue. New marketplace transactions are restricted until the balance is settled.`,
     jobId,
     dedupeKey: jobDedupe(jobId, "customer_payment_overdue"),
-  });
+  }, tx);
 }
 
 async function notifyCustomerPaymentRestrictionCleared(customerId) {
@@ -932,17 +939,17 @@ async function notifyCustomerPaymentRestrictionCleared(customerId) {
   });
 }
 
-async function notifyAdminCustomerPaymentOverdue({ customerId, jobId, amount }) {
-  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+async function notifyAdminCustomerPaymentOverdue({ customerId, jobId, amount }, tx) {
+  const admins = await (tx || prisma).user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
   const amt = Number(amount || 0).toFixed(2);
   for (const admin of admins) {
-    await notifyUser(admin.id, {
+    await notifyPaymentLifecycleUser(admin.id, {
       type: "admin_customer_payment_overdue",
       title: "Customer payment overdue",
       message: `Customer ${customerId} has an overdue service payment of R ${amt} on job ${jobId}. Marketplace restriction applied.`,
       jobId,
       dedupeKey: `admin_customer_overdue:${jobId}`,
-    });
+    }, tx);
   }
 }
 

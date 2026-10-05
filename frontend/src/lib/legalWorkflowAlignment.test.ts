@@ -15,7 +15,21 @@ describe('legal/workflow correspondence', () => {
     expect(text).toContain('SINGLE_PAYMENT_ON_COMPLETION');
     expect(text).toMatch(/not a bank, deposit-taker, wallet provider, insurer, or escrow agent/i);
     expect(text).toMatch(/Successful Customer payment does not mean immediate bank credit/i);
-    expect(LEGAL_VERSIONS.escrowPolicy).toBe('2026-09-14');
+    expect(LEGAL_VERSIONS.escrowPolicy).toBe('2026-10-05');
+  });
+
+  it('describes payment-based confirmation, day-seven restrictions, and day-37 review', () => {
+    const text = documentText('job-completion-verification');
+    expect(text).toMatch(/verified payment of the final 50%/i);
+    expect(text).toMatch(/7-day confirmation deadline restricts new service requests/i);
+    expect(text).toContain('(day 37)');
+    expect(text).toMatch(/Silence does not confirm completion or authorize a charge/i);
+    expect(text).toMatch(/Legal proceedings are not started automatically/i);
+    expect(text).toMatch(/unrelated account restrictions remain/i);
+    expect(text).not.toMatch(/Silence = Acceptance|constitutes acceptance|neutral trust score/i);
+    for (const id of ['provider-agreement', 'refund-policy', 'corrective-work'] as const) {
+      expect(documentText(id)).not.toMatch(/automatically approved|allow automatic acceptance/i);
+    }
   });
 
   it('does not promise automatic R0 forfeiture for ordinary paid service cancellation', () => {

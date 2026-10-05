@@ -34,7 +34,7 @@ function isConfirmationDeadlineReached(job, meta, nowMs = Date.now()) {
   const status = toFrontendStatus(job.status, meta);
   if (status !== "AWAITING_CONFIRMATION") return false;
   const deadline = meta?.confirmationDeadlineAt ? new Date(meta.confirmationDeadlineAt).getTime() : 0;
-  if (!deadline || deadline > nowMs) return false;
+  if (!Number.isFinite(deadline) || deadline <= 0 || deadline > nowMs) return false;
   return true;
 }
 

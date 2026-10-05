@@ -85,6 +85,29 @@ function buildNotificationData(notification) {
   };
 }
 
+/** Persist a lifecycle notice and its delivery together with the obligation change.
+ * Failures propagate so the worker can retry; no socket emits before commit.
+ */
+async function addNotificationInTransaction(tx, notification) {
+  const data = buildNotificationData(notification);
+  if (!data.dedupeKey) throw new Error("Transactional notices require a dedupe key");
+  const item = await tx.notification.upsert({
+    where: { userId_dedupeKey: { userId: data.userId, dedupeKey: data.dedupeKey } },
+    create: data,
+    update: {},
+  });
+  const apiItem = toApiShape(item);
+  if (item.id === data.id) {
+    await outboxService.enqueueSocketDelivery({
+      notificationId: item.id,
+      userId: item.userId,
+      event: "notification:new",
+      payload: apiItem,
+    }, tx);
+  }
+  return apiItem;
+}
+
 async function addNotification(notification) {
   let conversationId = null;
   if (notification.senderId && notification.conversationType !== "support") {
@@ -366,6 +389,7 @@ async function notifySupplierOrgOwnerMaterialEvent(supplierOrgId, { type, title,
 module.exports = {
   getNotifications,
   addNotification,
+  addNotificationInTransaction,
   markAsRead,
   markAllAsRead,
   getUnreadCount,
