@@ -9,7 +9,7 @@ export const portfolioContentRights: LegalDocument = {
   id: 'portfolio-content-rights',
   title: 'Portfolio Content Rights',
   subtitle: 'How completion evidence, reviews, and ratings may be displayed on EloFix.',
-  effectiveDate: EFFECTIVE_UNCHANGED,
+  effectiveDate: 'October 5, 2026',
   version: LEGAL_VERSIONS.portfolioContentRights,
   sections: [
     {
@@ -35,7 +35,7 @@ export const portfolioContentRights: LegalDocument = {
       title: '3. Provider Portfolios',
       content: [
         'Provider portfolios may display verified completed projects including photographs, videos, ratings, reviews, and completion dates.',
-        'Where a Job was automatically accepted after the 7-day verification window without a Customer review, the portfolio entry may be displayed without a public star rating and may be flagged as auto-completed.',
+        'Where a Job is completed by the system after the stored confirmation deadline without a Customer review, the portfolio entry may be displayed without a public star rating. Silence does not confirm completion, and system completion does not create a rating or review.',
         'Providers may also upload curated portfolio images and work posts subject to Community Standards.',
       ],
     },
@@ -298,7 +298,7 @@ export const providerReputation: LegalDocument = {
   id: 'provider-reputation',
   title: 'Provider Reputation Policy',
   subtitle: 'How EloFix calculates and uses Provider trust scores.',
-  effectiveDate: EFFECTIVE_UNCHANGED,
+  effectiveDate: 'October 5, 2026',
   version: LEGAL_VERSIONS.providerReputation,
   sections: [
     {
@@ -343,7 +343,7 @@ export const providerReputation: LegalDocument = {
         'Partial refund: −10. Full refund: −25.',
         'Dispute lost: −15. Fraud alert: −20.',
         'Duplicate registration: −25. Fake documentation: −50. Suspicious login: −10.',
-        'Automatic acceptance after 7-day window applies a neutral trust adjustment.',
+        'System completion after a stored confirmation deadline does not adjust the Provider trust score and does not create a rating or review.',
         'EloFix may adjust scoring methodology with notice through policy updates.',
       ],
     },
@@ -369,7 +369,7 @@ export const platformActivityRecords: LegalDocument = {
   id: 'platform-activity-records',
   title: 'Platform Activity Records Policy',
   subtitle: 'How EloFix stores activity records for security, compliance, and legal defence.',
-  effectiveDate: EFFECTIVE_UNCHANGED,
+  effectiveDate: 'October 5, 2026',
   version: LEGAL_VERSIONS.platformActivityRecords,
   sections: [
     {
@@ -391,7 +391,7 @@ export const platformActivityRecords: LegalDocument = {
         'Fraud investigation and alert records.',
         'Dispute submissions, messages, and resolution actions.',
         'Administrator actions on accounts, payments, disputes, refunds, and settlement records.',
-        'Job status changes, completion events, and automatic acceptance events.',
+        'Job status changes, customer completion events, and system completion after a stored confirmation deadline.',
         'Review and rating submissions.',
         'Device session records.',
       ],

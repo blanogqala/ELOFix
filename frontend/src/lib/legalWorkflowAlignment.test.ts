@@ -32,6 +32,21 @@ describe('legal/workflow correspondence', () => {
     }
   });
 
+  it('does not describe silence as automatic acceptance or a neutral trust adjustment', () => {
+    const portfolio = documentText('portfolio-content-rights');
+    const reputation = documentText('provider-reputation');
+    const records = documentText('platform-activity-records');
+    expect(portfolio).toMatch(/without a public star rating/i);
+    expect(portfolio).toMatch(/Silence does not confirm completion/i);
+    expect(portfolio).not.toMatch(/automatically accepted|auto-completed/i);
+    expect(reputation).toMatch(/does not adjust the Provider trust score/i);
+    expect(reputation).not.toMatch(/neutral trust adjustment|Automatic acceptance/i);
+    expect(records).not.toMatch(/automatic acceptance/i);
+    expect(LEGAL_VERSIONS.portfolioContentRights).toBe('2026-10-05');
+    expect(LEGAL_VERSIONS.providerReputation).toBe('2026-10-05');
+    expect(LEGAL_VERSIONS.platformActivityRecords).toBe('2026-10-05');
+  });
+
   it('does not promise automatic R0 forfeiture for ordinary paid service cancellation', () => {
     const refund = documentText('refund-policy');
     expect(refund).toMatch(/administrator review or cancellation dispute/i);
