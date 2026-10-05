@@ -8,7 +8,14 @@ const {
   hasTimelineEventType,
   normalizeTimelineEvents,
 } = require("../src/utils/jobTimeline.util");
-const { isEligibleForAutoAccept } = require("../src/utils/completionDeadline.util");
+const {
+  isEligibleForAutoAccept,
+  isEligibleForSystemComplete,
+  confirmationDeadlineFrom,
+  recoveryDueAtFrom,
+  CONFIRMATION_WINDOW_DAYS,
+  RECOVERY_WINDOW_DAYS,
+} = require("../src/utils/completionDeadline.util");
 
 function testNormalizeTimelineEvents() {
   assert.deepStrictEqual(normalizeTimelineEvents(null), []);
@@ -101,6 +108,50 @@ function testIdempotentTimelineOnDoubleAppend() {
   assert.strictEqual(hasTimelineEventType(meta, "AUTO_ACCEPTED"), true);
 }
 
+function testCompletionWindowClocks() {
+  const marked = new Date("2026-01-01T00:00:00.000Z");
+  const deadline = confirmationDeadlineFrom(marked);
+  const recovery = recoveryDueAtFrom(deadline);
+  assert.strictEqual(deadline.toISOString(), "2026-01-08T00:00:00.000Z");
+  assert.strictEqual(recovery.toISOString(), "2026-02-07T00:00:00.000Z");
+  assert.strictEqual(CONFIRMATION_WINDOW_DAYS, 7);
+  assert.strictEqual(RECOVERY_WINDOW_DAYS, 30);
+  assert.strictEqual(
+    (recovery.getTime() - marked.getTime()) / (24 * 60 * 60 * 1000),
+    37
+  );
+}
+
+function testSystemCompleteEligibility() {
+  const past = new Date("2020-01-01T00:00:00.000Z").getTime();
+  const job = { status: "IN_PROGRESS", legacyEscrowV2: false };
+  const meta = {
+    statusOverride: "AWAITING_CONFIRMATION",
+    confirmationDeadlineAt: "2020-01-01T00:00:00.000Z",
+  };
+  assert.strictEqual(isEligibleForSystemComplete(job, meta, past + 1, { balanceDue: true }), false);
+  assert.strictEqual(isEligibleForSystemComplete(job, meta, past + 1, { balanceDue: false }), true);
+  assert.strictEqual(
+    isEligibleForSystemComplete(
+      { ...job, legacyEscrowV2: true, escrowSecondReleaseDone: true },
+      meta,
+      past + 1,
+      { balanceDue: false }
+    ),
+    true
+  );
+  assert.strictEqual(
+    isEligibleForSystemComplete(job, meta, past + 1, { balanceDue: true, courierFlow: true }),
+    true
+  );
+  assert.strictEqual(
+    isEligibleForAutoAccept(job, { ...meta, confirmationDeadlineAt: "2099-01-01T00:00:00.000Z" }, past + 1),
+    false
+  );
+}
+
+testCompletionWindowClocks();
+testSystemCompleteEligibility();
 testNormalizeTimelineEvents();
 testAppendTimelineEventIfAbsent();
 testHasTimelineEventType();

@@ -180,8 +180,14 @@ export default function AdminPayments() {
                       {row.customerName || row.customerEmail || row.customerId}
                       {row.marketplaceRestricted ? ' · restricted' : ''}
                     </span>
-                    <span className="shrink-0 tabular-nums">
+                    <span className="shrink-0 text-right tabular-nums">
                       {formatCurrency(row.amountDue)} · {row.displayStatus || row.status}
+                      {row.restrictionStartsAt ? (
+                        <span className="block text-xs text-muted-foreground">
+                          Restricts {new Date(row.restrictionStartsAt).toLocaleDateString('en-ZA')} · recovery{' '}
+                          {row.dueAt ? new Date(row.dueAt).toLocaleDateString('en-ZA') : ''}
+                        </span>
+                      ) : null}
                     </span>
                   </button>
                 ))}

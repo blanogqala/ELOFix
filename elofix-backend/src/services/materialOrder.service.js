@@ -2191,6 +2191,14 @@ async function markMaterialOrderDeliveryPaid(orderId, paymentExtras = {}) {
 }
 
 async function payMaterialOrderDelivery(orderId, cardLast4, fee) {
+  const existing = await prisma.materialOrder.findUnique({
+    where: { id: String(orderId) },
+    select: { userId: true },
+  });
+  if (existing?.userId) {
+    const obligationService = require("./customerPaymentObligation.service");
+    await obligationService.assertCustomerMarketplaceSpendAllowed(existing.userId);
+  }
   console.log(
     JSON.stringify({
       ns: "material_order",

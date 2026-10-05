@@ -333,6 +333,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
 
   let trustUpdate = null;
   let releasePaymentDue = null;
+  let resumedPaused = false;
 
   const txResult = await prisma.$transaction(
     async (tx) => {
@@ -361,17 +362,24 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
       });
 
       if (action === "RELEASE_FUNDS" && providerRow) {
+        const obligationService = require("./customerPaymentObligation.service");
+        const paused = await obligationService.getPausedObligationForJob(job.id, tx);
         const j0 = await tx.job.findUnique({ where: { id: job.id } });
-        const amountDue = Math.max(
-          0,
-          Number(j0?.secondPaymentAmount) ||
-            (Number(j0?.quotedAmount || j0?.totalPrice || 0) > 0
-              ? Number(j0?.quotedAmount || j0?.totalPrice || 0) / 2
-              : 0)
-        );
-        const dueAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const amountDue = paused
+          ? Number(paused.amount)
+          : Math.max(
+              0,
+              Number(j0?.secondPaymentAmount) ||
+                (Number(j0?.quotedAmount || j0?.totalPrice || 0) > 0
+                  ? Number(j0?.quotedAmount || j0?.totalPrice || 0) / 2
+                  : 0)
+            );
+        const dueAt = paused
+          ? new Date(paused.dueAt)
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         const notifiedAt = new Date().toISOString();
         releasePaymentDue = { amountDue, dueAt: dueAt.toISOString() };
+        if (paused) resumedPaused = true;
         await tx.job.update({
           where: { id: job.id },
           data: { status: "IN_PROGRESS" },
@@ -413,6 +421,9 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           });
           return patched;
         });
+        if (paused) {
+          await obligationService.resumePausedObligation(job.id, tx);
+        }
       } else if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
         const laborNet = refundLaborNet;
         const clawbackIdempotencyKey = `dispute-refund:${dispute.id}:${action}`;
@@ -506,6 +517,8 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           });
           return patched;
         });
+        const obligationService = require("./customerPaymentObligation.service");
+        await obligationService.resumePausedObligation(job.id, tx);
       }
 
       await disputeRoundService.closeActiveDisputeRoundInTransaction(tx, dispute.id, {
@@ -618,7 +631,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
     action,
   });
 
-  if (action === "RELEASE_FUNDS") {
+  if (action === "RELEASE_FUNDS" && !resumedPaused) {
     try {
       const obligationService = require("./customerPaymentObligation.service");
       const jobAfter = await prisma.job.findUnique({ where: { id: job.id } });

@@ -858,10 +858,13 @@ export interface Job {
     paymentRef?: string;
   } | null;
   /** After admin RELEASE_FUNDS on a completion dispute — customer must pay remaining COMPLETION. */
+  confirmationWindowExpired?: boolean;
   completionPaymentDue?: {
     amountDue: number;
     dueAt: string | null;
-    status?: 'NOT_DUE' | 'DUE' | 'PAID' | 'OVERDUE' | 'CANCELLED' | string;
+    restrictionStartsAt?: string | null;
+    confirmationWindowExpired?: boolean;
+    status?: 'NOT_DUE' | 'DUE' | 'PAID' | 'OVERDUE' | 'CANCELLED' | 'PAUSED' | string;
     obligationId?: string | null;
     source?: string | null;
     resolutionLogId?: string | null;
@@ -1488,6 +1491,7 @@ export interface AdminCustomerDetail extends AdminCustomerListItem {
     jobId: string;
     amountDue: number;
     dueAt: string;
+    restrictionStartsAt?: string | null;
     status: string;
     displayStatus?: string;
     source?: string;

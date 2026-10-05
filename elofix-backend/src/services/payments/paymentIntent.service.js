@@ -309,6 +309,21 @@ async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, 
   return serverAmount;
 }
 
+async function isOutstandingLaborBalancePayment(jobId) {
+  const job = await prisma.job.findUnique({ where: { id: String(jobId) } });
+  if (!job) return false;
+  const meta = await getJobMeta(job.id);
+  if (job.legacyEscrowV2) {
+    return Boolean(job.laborPaid || meta?.laborPaid);
+  }
+  const paymentModeService = require("./paymentMode.service");
+  const due = paymentModeService.resolveNextLaborPaymentType(job, meta);
+  return (
+    due === paymentModeService.PAYMENT_TYPES.COMPLETION ||
+    due === paymentModeService.PAYMENT_TYPES.FULL_COMPLETION
+  );
+}
+
 async function authorizeIntentAccess(intent, userId, role) {
   if (String(role) === "ADMIN") return;
   if (String(intent.userId) !== String(userId)) {
@@ -352,8 +367,13 @@ async function createPaymentIntent({
     metadata && typeof metadata === "object" && !Array.isArray(metadata) ? { ...metadata } : metadata;
 
   const customerBlockKinds = new Set(["MATERIAL_ORDER", "JOB_STORE_ORDER", "DELIVERY_FEE"]);
-  if (customerBlockKinds.has(kindNorm)) {
-    const obligationService = require("../customerPaymentObligation.service");
+  const obligationService = require("../customerPaymentObligation.service");
+  if (kindNorm === "LABOR" && jobId) {
+    const outstandingLabor = await isOutstandingLaborBalancePayment(jobId);
+    if (!outstandingLabor) {
+      await obligationService.assertCustomerMarketplaceSpendAllowed(userId);
+    }
+  } else if (customerBlockKinds.has(kindNorm)) {
     await obligationService.assertCustomerCanStartPaidTransaction(userId);
   }
 

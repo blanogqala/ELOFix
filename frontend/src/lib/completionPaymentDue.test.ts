@@ -7,6 +7,8 @@ import {
   getAdminCompletionPaymentStatusLabel,
   formatCompletionPaymentDueDate,
   getCompletionPaymentDueSummaryLine,
+  CONFIRMATION_WINDOW_EXPIRED_MESSAGE,
+  confirmationCountdownCopy,
   getProviderAdminPaymentWaitingTitle,
   getProviderAdminPaymentWaitingDescription,
   getProviderAdminPaymentTimelineInsight,
@@ -134,6 +136,15 @@ describe('completionPaymentDue', () => {
       paymentProgress: 'FIRST_PAID',
     });
     expect(getAdminCompletionPaymentStatusLabel(overdue)).toBe('Payment overdue');
+  });
+
+  it('uses the expired confirmation message and does not promise auto-completion', () => {
+    const expired = confirmationCountdownCopy({ expiredUnpaid: true, balanceOutstanding: true });
+    expect(expired.title).toBe(CONFIRMATION_WINDOW_EXPIRED_MESSAGE);
+    expect(`${expired.title} ${expired.detail}`).not.toMatch(/auto-complete|automatically/i);
+    const waiting = confirmationCountdownCopy({ expiredUnpaid: false, balanceOutstanding: true });
+    expect(waiting.detail).toMatch(/pay the final balance/i);
+    expect(waiting.detail).not.toMatch(/auto-complete/i);
   });
 
   it('returns provider admin-payment copy helpers', () => {

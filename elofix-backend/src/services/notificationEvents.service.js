@@ -878,6 +878,40 @@ async function notifyCustomerPaymentObligationReminder({ customerId, jobId, amou
   });
 }
 
+async function notifyConfirmationWindowExpired({ customerId, providerId, jobId, jobTitle, amount }) {
+  const exact = "Confirmation window expired — awaiting final payment.";
+  const title = jobTitle || "your job";
+  const amt = Number(amount || 0).toFixed(2);
+  if (customerId) {
+    await notifyUser(customerId, {
+      type: "confirmation_window_expired",
+      title: "Confirmation window expired",
+      message: `"${title}": ${exact}`,
+      jobId,
+      dedupeKey: jobDedupe(jobId, "confirmation_window_expired_customer"),
+    });
+  }
+  if (providerId) {
+    await notifyUser(providerId, {
+      type: "confirmation_window_expired",
+      title: "Confirmation window expired",
+      message: `The confirmation window expired for "${title}". Awaiting the customer's final payment.`,
+      jobId,
+      dedupeKey: jobDedupe(jobId, "confirmation_window_expired_provider"),
+    });
+  }
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+  for (const admin of admins) {
+    await notifyUser(admin.id, {
+      type: "admin_confirmation_window_expired",
+      title: "Confirmation window expired",
+      message: `Job ${jobId} (${title}): ${exact} Amount R ${amt}.`,
+      jobId,
+      dedupeKey: `admin_confirmation_window_expired:${jobId}:${admin.id}`,
+    });
+  }
+}
+
 async function notifyCustomerPaymentOverdue({ customerId, jobId, amount }) {
   const amt = Number(amount || 0).toFixed(2);
   await notifyUser(customerId, {
@@ -1112,6 +1146,7 @@ module.exports = {
   notifyCustomerRefundDebtOverdue,
   notifyCustomerPaymentObligationCreated,
   notifyCustomerPaymentObligationReminder,
+  notifyConfirmationWindowExpired,
   notifyCustomerPaymentOverdue,
   notifyCustomerPaymentRestrictionCleared,
   notifyAdminCustomerPaymentOverdue,
