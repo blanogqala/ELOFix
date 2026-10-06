@@ -500,6 +500,16 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
         const obligationService = require("./customerPaymentObligation.service");
         await obligationService.cancelOpenObligationForJob(job.id, tx);
       } else if (action === "CLOSE_CASE") {
+        const obligationService = require("./customerPaymentObligation.service");
+        const paused = await obligationService.getPausedObligationForJob(job.id, tx);
+        const dbStatus = String(job.status || "").toUpperCase();
+        // Completion disputes are opened from AWAITING_CONFIRMATION. Leaving that override
+        // as DISPUTED blocks payment and confirmation after the case is closed. A resumed
+        // balance then restricts the marketplace for a debt the customer cannot settle.
+        // Cancellation review without a completion balance keeps its own status.
+        const restoreAwaitingConfirmation =
+          !["CANCELLED", "COMPLETED", "REJECTED"].includes(dbStatus) &&
+          (Boolean(paused) || !cancellationDispute);
         await mutateJobMetaInTransaction(tx, job.id, (m) => {
           const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
           const chat = Array.isArray(m.chat) ? [...m.chat] : [];
@@ -510,6 +520,14 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
             escrowFrozen: false,
             chat,
           };
+          if (restoreAwaitingConfirmation) {
+            patched.statusOverride = "AWAITING_CONFIRMATION";
+            patched.cancellationSource = null;
+            patched.cancellationReason = null;
+            patched.cancellationDetails = null;
+            patched.cancelledBy = null;
+            patched.cancelledAt = null;
+          }
           patched = appendTimelineEventIfAbsent(patched, {
             type: "DISPUTE_CLOSED",
             at: new Date().toISOString(),
@@ -517,8 +535,9 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
           });
           return patched;
         });
-        const obligationService = require("./customerPaymentObligation.service");
-        await obligationService.resumePausedObligation(job.id, tx);
+        if (paused) {
+          await obligationService.resumePausedObligation(job.id, tx);
+        }
       }
 
       await disputeRoundService.closeActiveDisputeRoundInTransaction(tx, dispute.id, {
