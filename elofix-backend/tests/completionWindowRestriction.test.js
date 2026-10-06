@@ -539,6 +539,38 @@ async function testCloseCaseResumesAndReturnCancels() {
     assert.strictEqual(new Date(resumed.dueAt).toISOString(), dueAt.toISOString());
     const count = await prisma.customerPaymentObligation.count({ where: { jobId: job.id } });
     assert.strictEqual(count, 1);
+    const closedMeta = await getJobMeta(job.id);
+    const closedJob = await prisma.job.findUnique({ where: { id: job.id } });
+    const { toFrontendStatus } = require("../src/services/jobMeta.service");
+    assert.strictEqual(closedMeta.statusOverride, "AWAITING_CONFIRMATION");
+    assert.strictEqual(toFrontendStatus(closedJob.status, closedMeta), "AWAITING_CONFIRMATION");
+    assert.strictEqual(closedMeta.escrowFrozen, false);
+    const paymentModeService = require("../src/services/payments/paymentMode.service");
+    assert.strictEqual(
+      paymentModeService.resolveNextLaborPaymentType(closedJob, closedMeta),
+      "COMPLETION"
+    );
+    let payError = null;
+    try {
+      await paymentIntentService.createPaymentIntent({
+        userId: people.customer.id,
+        role: "CUSTOMER",
+        provider: "PAYFAST",
+        kind: "LABOR",
+        legalAcceptance: checkoutLegalAcceptance("LABOR"),
+        jobId: job.id,
+        amount: 500,
+        idempotencyKey: `cwr-close-pay-${randomUUID()}`,
+        requestHash: "cwr-close-pay",
+        route: "POST /api/payments/intents",
+      });
+    } catch (err) {
+      payError = err;
+    }
+    if (payError) {
+      assert.notStrictEqual(payError.statusCode, 403, payError.message);
+      assert.ok(!/dispute/i.test(String(payError.message || "")), payError.message);
+    }
 
     const retRow = await obligationService.upsertOpenObligation({
       customerId: people.customer.id,
