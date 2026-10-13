@@ -60,7 +60,7 @@ async function maybeSendReminders(row, now, stats) {
       where: { id: fresh.jobId },
       select: { status: true, paymentProgress: true },
     });
-    if (!job || job.paymentProgress === "FULLY_PAID" || ["COMPLETED", "CANCELLED"].includes(job.status)) return false;
+    if (!obligationService.unpaidObligationStillEnforceable(job)) return false;
     const daysLeft = daysBetween(now, new Date(fresh.dueAt));
     const field = daysLeft <= 7 && !fresh.reminder7SentAt
       ? "reminder7SentAt"
@@ -106,7 +106,7 @@ async function enforceLegacyDue(row, now, stats) {
       where: { id: fresh.jobId },
       select: { paymentProgress: true, status: true },
     });
-    if (!job || job.paymentProgress === "FULLY_PAID" || job.status === "COMPLETED" || job.status === "CANCELLED") {
+    if (!obligationService.unpaidObligationStillEnforceable(job)) {
       return;
     }
     if (new Date(fresh.dueAt) > now) return;
@@ -159,7 +159,7 @@ async function enforceCompletionWindow(row, now, stats) {
       where: { id: fresh.jobId },
       select: { paymentProgress: true, status: true, providerId: true, title: true },
     });
-    if (!job || job.paymentProgress === "FULLY_PAID" || job.status === "COMPLETED" || job.status === "CANCELLED") {
+    if (!obligationService.unpaidObligationStillEnforceable(job)) {
       return null;
     }
 
