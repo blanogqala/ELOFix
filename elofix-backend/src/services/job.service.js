@@ -1247,6 +1247,15 @@ async function finalizeJob(job, meta) {
 }
 
 async function updateJobStatus(jobId, status, actorUserId, actorRole) {
+  const requested = String(status || "").trim().toUpperCase();
+  if (requested === "COMPLETED" || requested === "CANCELLED") {
+    throw new AppError(
+      requested === "COMPLETED"
+        ? "Job completion is recorded only after the customer confirms or the remaining balance is paid."
+        : "Cancel the job from the cancel action so any refund or outstanding balance is handled.",
+      400
+    );
+  }
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
   if (!job) throw new AppError("Job not found", 404);
   if (actorUserId != null && actorRole != null) {

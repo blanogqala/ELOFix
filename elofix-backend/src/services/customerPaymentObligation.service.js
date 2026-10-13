@@ -391,6 +391,18 @@ async function applyCustomerMarketplaceRestriction(customerId, reason, tx = pris
   return true;
 }
 
+/**
+ * An open balance stays enforceable after a raw status flip to COMPLETED.
+ * FULLY_PAID is the settlement signal. CANCELLED is a real cancel outcome:
+ * unpaid pay-on-completion jobs are cancelled without capturing labor.
+ */
+function unpaidObligationStillEnforceable(job) {
+  if (!job) return false;
+  if (job.paymentProgress === "FULLY_PAID") return false;
+  if (String(job.status || "").toUpperCase() === "CANCELLED") return false;
+  return true;
+}
+
 function obligationQualifiesForRestriction(row, now = new Date()) {
   if (!row) return false;
   if (row.status === "OVERDUE") return true;
@@ -415,7 +427,7 @@ async function customerHasQualifyingUnpaidObligation(customerId, tx = prisma, no
   });
   for (const row of rows) {
     if (!(Number(row.amount) > 0.01) || !obligationQualifiesForRestriction(row, now)) continue;
-    if (!row.job || row.job.paymentProgress === "FULLY_PAID" || ["COMPLETED", "CANCELLED"].includes(row.job.status)) continue;
+    if (!unpaidObligationStillEnforceable(row.job)) continue;
     if (!(await isJobUnderOpenCase(row.jobId, tx))) return true;
   }
   return false;
@@ -547,6 +559,7 @@ module.exports = {
   getOpenOrPausedObligationForJob,
   getPausedObligationForJob,
   customerHasOverdueObligation,
+  unpaidObligationStillEnforceable,
   obligationQualifiesForRestriction,
   customerHasQualifyingUnpaidObligation,
   upsertOpenObligation,
