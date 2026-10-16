@@ -27,6 +27,7 @@ const {
   settlementMatchAmountSubunits,
   recipientNetCents,
   paidAtNotAfterSettlement,
+  paidAtTooOldForSettlement,
   decideAmountFallback,
   sortSettlementsOldestFirst,
 } = require("./paystack.settlementAmountMatch");
@@ -560,6 +561,7 @@ async function collectAmountFallbackCandidates({
   currency,
   settlementDate,
   existingSettlementId,
+  persistAccounting = true,
 } = {}) {
   const or = [
     {
@@ -584,7 +586,7 @@ async function collectAmountFallbackCandidates({
     if (!isMarketplaceSplitKind(intent.kind)) continue;
     const historical = normalizeAcct(intent.gatewayPayload);
     if (!historical || !sameAcct(historical, trustedSubaccount)) continue;
-    const prepared = await prepareSupplierAmountMatchCandidate(intent);
+    const prepared = persistAccounting ? await prepareSupplierAmountMatchCandidate(intent) : intent;
     scoped.push(prepared);
   }
 
@@ -602,6 +604,7 @@ async function collectAmountFallbackCandidates({
 
   const missingPaidAt = [];
   const afterSettlement = [];
+  const tooOld = [];
   const before = [];
   for (const intent of currencyOk) {
     if (!intent.paidAt) {
@@ -610,6 +613,10 @@ async function collectAmountFallbackCandidates({
     }
     if (!paidAtNotAfterSettlement(intent.paidAt, settlementDate)) {
       afterSettlement.push(intent);
+      continue;
+    }
+    if (paidAtTooOldForSettlement(intent.paidAt, settlementDate)) {
+      tooOld.push(intent);
       continue;
     }
     before.push(intent);
@@ -638,6 +645,7 @@ async function collectAmountFallbackCandidates({
     currencyMismatch,
     missingPaidAt,
     afterSettlement,
+    tooOld,
     missingNet,
     eligible,
   };
@@ -673,6 +681,7 @@ async function applySettlementAmountFallback(
           currencyMismatch: [],
           missingPaidAt: [],
           afterSettlement: [],
+          tooOld: [],
           missingNet: [],
           eligible: [],
         };

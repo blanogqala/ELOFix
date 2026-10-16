@@ -143,9 +143,47 @@ function row(id, netCents, paidAt) {
 }
 
 {
+  assert.strictEqual(
+    match.classifyAmountFallbackSkip({
+      scoped: [{}],
+      eligible: [],
+      missingNet: [],
+      afterSettlement: [],
+      missingPaidAt: [],
+      tooOld: [{}],
+      currencyMismatch: [],
+    }),
+    "payment_outside_settlement_window"
+  );
+}
+
+{
+  const decision = match.decideAmountFallback({
+    collected: {
+      scoped: [{}],
+      eligible: [],
+      missingNet: [],
+      afterSettlement: [],
+      missingPaidAt: [],
+      tooOld: [{}],
+      currencyMismatch: [],
+    },
+    targetCents: 4368,
+    hasSettlementDate: true,
+    hasCurrency: true,
+  });
+  assert.strictEqual(decision.matched, false);
+  assert.strictEqual(decision.skipReason, "payment_outside_settlement_window");
+}
+
+{
   assert.strictEqual(match.paidAtNotAfterSettlement("2026-09-10", "2026-09-15"), true);
   assert.strictEqual(match.paidAtNotAfterSettlement("2026-09-16", "2026-09-15"), false);
   assert.strictEqual(match.paidAtNotAfterSettlement("2026-09-15T23:00:00.000Z", "2026-09-15T00:00:00.000Z"), true);
+  assert.strictEqual(match.paidAtTooOldForSettlement("2026-08-01", "2026-09-15"), true);
+  assert.strictEqual(match.paidAtTooOldForSettlement("2026-09-01", "2026-09-15"), false);
+  assert.strictEqual(match.paidAtTooOldForSettlement("2026-09-01T23:00:00.000Z", "2026-09-15T00:00:00.000Z"), false);
+  assert.strictEqual(match.AMOUNT_FALLBACK_MAX_PAYMENT_AGE_DAYS, 14);
 }
 
 console.log("paystack.settlementAmountMatch.test.js: all passed");

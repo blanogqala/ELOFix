@@ -77,6 +77,34 @@ function paidAtNotAfterSettlement(paidAt, settlementDate) {
   return paid <= settled;
 }
 
+/**
+ * Amount fallback may only consider payments that could plausibly sit in this
+ * Paystack settlement. Unmatched backlog older than this window must not steal
+ * a newer same-net settlement (oldest-prefix matching would otherwise attach
+ * the stale intent and leave the real payment PENDING).
+ */
+const AMOUNT_FALLBACK_MAX_PAYMENT_AGE_DAYS = 14;
+
+function utcDayMs(value) {
+  const day = ymdUtc(value);
+  if (!day) return NaN;
+  return Date.parse(`${day}T00:00:00.000Z`);
+}
+
+function paidAtTooOldForSettlement(
+  paidAt,
+  settlementDate,
+  maxAgeDays = AMOUNT_FALLBACK_MAX_PAYMENT_AGE_DAYS
+) {
+  const paid = utcDayMs(paidAt);
+  const settled = utcDayMs(settlementDate);
+  if (!Number.isFinite(paid) || !Number.isFinite(settled)) return true;
+  const cap = Number(maxAgeDays);
+  const ageDays = Math.round((settled - paid) / 86400000);
+  if (!Number.isFinite(cap) || cap < 0) return ageDays > AMOUNT_FALLBACK_MAX_PAYMENT_AGE_DAYS;
+  return ageDays > cap;
+}
+
 function paidAtMs(value) {
   if (!value) return NaN;
   const date = value instanceof Date ? value : new Date(value);
@@ -167,6 +195,7 @@ function classifyAmountFallbackSkip(collected) {
   if (collected.missingNet && collected.missingNet.length > 0) return "missing_recipient_net";
   if (collected.afterSettlement && collected.afterSettlement.length > 0) return "payment_after_settlement";
   if (collected.missingPaidAt && collected.missingPaidAt.length > 0) return "payment_after_settlement";
+  if (collected.tooOld && collected.tooOld.length > 0) return "payment_outside_settlement_window";
   if (collected.currencyMismatch && collected.currencyMismatch.length > 0) return "recipient_scope_mismatch";
   return "recipient_scope_mismatch";
 }
@@ -225,6 +254,8 @@ module.exports = {
   recipientNetCents,
   ymdUtc,
   paidAtNotAfterSettlement,
+  paidAtTooOldForSettlement,
+  AMOUNT_FALLBACK_MAX_PAYMENT_AGE_DAYS,
   evaluateSettlementAmountMatch,
   decideAmountFallback,
   classifyAmountFallbackSkip,
