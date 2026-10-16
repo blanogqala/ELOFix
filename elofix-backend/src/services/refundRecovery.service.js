@@ -8,7 +8,7 @@ const { attemptGatewayRefundFirst } = require("./providerRefundClawback.service"
 const notificationEvents = require("./notificationEvents.service");
 const { PLATFORM_BANK, REFUND_DEBT_DUE_DAYS, getRefundDebtDueMs } = require("../config/refundRecovery.config");
 const { generateRefundReference } = require("../utils/refundReference.util");
-const { roundMoney, EPS } = require("../utils/refundMath.util");
+const { roundMoney, EPS, applyCustomerRefundSliceToMeta } = require("../utils/refundMath.util");
 const { logAudit } = require("./auditLog.service");
 const { AUDIT_ACTIONS, ACTOR_TYPES, ENTITY_TYPES } = require("../constants/auditActions");
 
@@ -525,19 +525,8 @@ async function processStagedCustomerPayouts(payouts) {
       await prisma.$transaction(async (tx) => {
         await mutateJobMetaInTransaction(tx, p.jobId, (m) => {
           const refund = m.refund && typeof m.refund === "object" ? m.refund : {};
-          const prevImmediate = Number(refund.immediateRefund) || 0;
-          const prevPending = Number(refund.pendingRefund) || 0;
-          return {
-            ...m,
-            refund: {
-              ...refund,
-              status: "processed",
-              customerRefundStatus: "REFUND_COMPLETED",
-              immediateRefund: roundMoney(prevImmediate + p.amount),
-              pendingRefund: Math.max(0, roundMoney(prevPending - p.amount)),
-              completedAt: new Date().toISOString(),
-            },
-          };
+          const { refund: next } = applyCustomerRefundSliceToMeta(refund, p.amount);
+          return { ...m, refund: next };
         });
       });
     } catch (e) {

@@ -108,6 +108,32 @@ function isAsyncPendingGatewayRefund(result) {
   return status === "PENDING" || status === "PROCESSING" || status === "NEEDS_ATTENTION";
 }
 
+/**
+ * Apply a successful customer-refund slice to job.meta.refund money/status fields.
+ * Only mark REFUND_COMPLETED when remaining business pending reaches zero.
+ */
+function applyCustomerRefundSliceToMeta(refund, amount, nowIso) {
+  const current = refund && typeof refund === "object" ? refund : {};
+  const prevImmediate = Number(current.immediateRefund) || 0;
+  const prevPending = Number(current.pendingRefund) || 0;
+  const slice = roundMoney(amount);
+  const newPending = Math.max(0, roundMoney(prevPending - slice));
+  const businessComplete = newPending <= EPS;
+  const now = nowIso || new Date().toISOString();
+  return {
+    businessComplete,
+    newPending,
+    refund: {
+      ...current,
+      status: businessComplete ? "processed" : "partial",
+      customerRefundStatus: businessComplete ? "REFUND_COMPLETED" : "REFUND_PROCESSING",
+      immediateRefund: roundMoney(prevImmediate + slice),
+      pendingRefund: newPending,
+      completedAt: businessComplete ? current.completedAt || now : current.completedAt || null,
+    },
+  };
+}
+
 function classifyGatewayRefundResult(result) {
   if (!result) return { manualOnly: false, success: false, failed: false, pending: false };
   const pending = isAsyncPendingGatewayRefund(result);
@@ -155,4 +181,5 @@ module.exports = {
   classifyGatewayRefundResult,
   resolveRefundStatusAfterGateway,
   isAsyncPendingGatewayRefund,
+  applyCustomerRefundSliceToMeta,
 };

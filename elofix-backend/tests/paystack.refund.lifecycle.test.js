@@ -435,6 +435,86 @@ async function testStagedPendingKeepsCustomerProcessing() {
   }
 }
 
+async function testStagedSyncOkPartialKeepsCustomerProcessing() {
+  const refundRecovery = require("../src/services/refundRecovery.service");
+  const prisma = require("../src/config/prisma");
+  const notificationEvents = require("../src/services/notificationEvents.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}sp`, {
+    jobMeta: { pendingRefund: 186 },
+  });
+  let stagedNotify = 0;
+  const originalStaged = notificationEvents.notifyCustomerStagedRefundPayout;
+  notificationEvents.notifyCustomerStagedRefundPayout = async () => {
+    stagedNotify += 1;
+  };
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      return jsonResponse({
+        status: true,
+        data: { id: 77, status: "processed", amount: 9300, currency: "ZAR" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundRecovery.processStagedCustomerPayouts([
+        { jobId: fix.job.id, customerId: fix.customer.id, amount: 93 },
+      ]);
+      const job = await prisma.job.findUnique({ where: { id: fix.job.id } });
+      assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_PROCESSING");
+      assert.strictEqual(job.meta.refund.status, "partial");
+      assert.strictEqual(Number(job.meta.refund.pendingRefund), 93);
+      assert.strictEqual(Number(job.meta.refund.immediateRefund), 93);
+      assert.strictEqual(job.meta.refund.completedAt, null);
+      assert.strictEqual(stagedNotify, 1);
+    });
+  } finally {
+    notificationEvents.notifyCustomerStagedRefundPayout = originalStaged;
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
+async function testStagedSyncOkFullMarksCustomerCompleted() {
+  const refundRecovery = require("../src/services/refundRecovery.service");
+  const prisma = require("../src/config/prisma");
+  const notificationEvents = require("../src/services/notificationEvents.service");
+  const fix = await seedPaidLabor(`${randomUUID().slice(0, 8)}sf`);
+  let stagedNotify = 0;
+  const originalStaged = notificationEvents.notifyCustomerStagedRefundPayout;
+  notificationEvents.notifyCustomerStagedRefundPayout = async () => {
+    stagedNotify += 1;
+  };
+  const fetchMock = installFetchMock((url, method) => {
+    if (url.includes("/refund") && method === "POST") {
+      return jsonResponse({
+        status: true,
+        data: { id: 78, status: "processed", amount: 9300, currency: "ZAR" },
+      });
+    }
+    throw new Error(`unexpected fetch ${method} ${url}`);
+  });
+  try {
+    await withEnv(paystackEnv(), async () => {
+      await refundRecovery.processStagedCustomerPayouts([
+        { jobId: fix.job.id, customerId: fix.customer.id, amount: 93 },
+      ]);
+      const job = await prisma.job.findUnique({ where: { id: fix.job.id } });
+      assert.strictEqual(job.meta.refund.customerRefundStatus, "REFUND_COMPLETED");
+      assert.strictEqual(job.meta.refund.status, "processed");
+      assert.strictEqual(Number(job.meta.refund.pendingRefund), 0);
+      assert.strictEqual(Number(job.meta.refund.immediateRefund), 93);
+      assert.ok(job.meta.refund.completedAt);
+      assert.strictEqual(stagedNotify, 1);
+    });
+  } finally {
+    notificationEvents.notifyCustomerStagedRefundPayout = originalStaged;
+    fetchMock.restore();
+    await cleanup(fix);
+  }
+}
+
 async function testProcessedUsesStoredPendingRefundId() {
   const prisma = require("../src/config/prisma");
   const refundService = require("../src/services/payments/refund.service");
@@ -1630,6 +1710,8 @@ async function main() {
   await testPendingDoesNotFinalize();
   await testRefundProcessingNeedsAttentionFailedProcessed();
   await testStagedPendingKeepsCustomerProcessing();
+  await testStagedSyncOkPartialKeepsCustomerProcessing();
+  await testStagedSyncOkFullMarksCustomerCompleted();
   await testFifoStopsOnPending();
   await testProcessedUsesStoredPendingRefundId();
   await testWebhookRefundIdContradictionIsRejected();
