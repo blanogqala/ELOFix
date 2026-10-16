@@ -108,6 +108,56 @@ function isAsyncPendingGatewayRefund(result) {
   return status === "PENDING" || status === "PROCESSING" || status === "NEEDS_ATTENTION";
 }
 
+/**
+ * Apply a successful customer-refund slice to job.meta.refund money/status fields.
+ * Only mark REFUND_COMPLETED when remaining business pending reaches zero.
+ * Records finalizedGatewayRefundRefs so a later refund.processed webhook cannot
+ * subtract the same slice again.
+ */
+function applyCustomerRefundSliceToMeta(refund, amount, nowIso, extras = {}) {
+  const current = refund && typeof refund === "object" ? refund : {};
+  const prevImmediate = Number(current.immediateRefund) || 0;
+  const prevPending = Number(current.pendingRefund) || 0;
+  const prevReady = Number(current.readyPayoutAmount) || 0;
+  const slice = roundMoney(amount);
+  const newPending = Math.max(0, roundMoney(prevPending - slice));
+  const businessComplete = newPending <= EPS;
+  const now = nowIso || new Date().toISOString();
+  const refs = Array.isArray(current.gatewayRefundRefs) ? current.gatewayRefundRefs.slice() : [];
+  const finalizedRefs = Array.isArray(current.finalizedGatewayRefundRefs)
+    ? current.finalizedGatewayRefundRefs.slice()
+    : [];
+  const extraIds = [];
+  if (extras.externalRefundId != null && String(extras.externalRefundId).trim()) {
+    extraIds.push(String(extras.externalRefundId));
+  }
+  if (Array.isArray(extras.externalRefundIds)) {
+    for (const id of extras.externalRefundIds) {
+      if (id != null && String(id).trim()) extraIds.push(String(id));
+    }
+  }
+  for (const id of extraIds) {
+    if (!refs.includes(id)) refs.push(id);
+    if (!finalizedRefs.includes(id)) finalizedRefs.push(id);
+  }
+
+  return {
+    businessComplete,
+    newPending,
+    refund: {
+      ...current,
+      status: businessComplete ? "processed" : "partial",
+      customerRefundStatus: businessComplete ? "REFUND_COMPLETED" : "REFUND_PROCESSING",
+      immediateRefund: roundMoney(prevImmediate + slice),
+      pendingRefund: newPending,
+      readyPayoutAmount: businessComplete ? 0 : Math.max(0, roundMoney(prevReady - slice)),
+      gatewayRefundRefs: refs,
+      finalizedGatewayRefundRefs: finalizedRefs,
+      completedAt: businessComplete ? current.completedAt || now : current.completedAt || null,
+    },
+  };
+}
+
 function classifyGatewayRefundResult(result) {
   if (!result) return { manualOnly: false, success: false, failed: false, pending: false };
   const pending = isAsyncPendingGatewayRefund(result);
@@ -155,4 +205,5 @@ module.exports = {
   classifyGatewayRefundResult,
   resolveRefundStatusAfterGateway,
   isAsyncPendingGatewayRefund,
+  applyCustomerRefundSliceToMeta,
 };
