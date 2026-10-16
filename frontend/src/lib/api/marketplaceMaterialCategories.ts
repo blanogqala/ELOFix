@@ -1,5 +1,5 @@
 import type { MarketplaceMaterialCategory } from '@/types';
-import apiClient from '@/api/client';
+import apiClient, { ApiHttpError } from '@/api/client';
 
 export type MarketplaceCategoryInput = {
   name?: string;
@@ -121,10 +121,15 @@ export async function deleteAdminMarketplaceMaterialCategory(id: string, confirm
       response?: { status?: number; data?: { message?: string; supplierCount?: number } };
       message?: string;
     };
-    if (ax.response?.status === 409) {
+    // apiClient rejects ApiHttpError (status + data). Axios's response object is not preserved.
+    const status = error instanceof ApiHttpError ? error.status : ax.response?.status;
+    const data = (error instanceof ApiHttpError ? error.data : ax.response?.data) as
+      | { message?: string; supplierCount?: number }
+      | undefined;
+    if (status === 409) {
       throw new CategoryInUseError(
-        Number(ax.response.data?.supplierCount ?? 0),
-        ax.response.data?.message || 'This category is assigned to suppliers.'
+        Number(data?.supplierCount ?? 0),
+        data?.message || 'This category is assigned to suppliers.'
       );
     }
     throw new Error(errorMessage(error, 'Failed to delete category'));
