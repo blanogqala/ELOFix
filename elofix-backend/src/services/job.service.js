@@ -25,6 +25,7 @@ const { AUDIT_ACTIONS, ENTITY_TYPES } = require("../constants/auditActions");
 const { idempotencyGate, idempotencyCommit } = require("../utils/idempotencyTransaction");
 const jobProgressUtil = require("../utils/jobProgress.util");
 const { isConfirmationDeadlineReached } = require("../utils/completionDeadline.util");
+const { assertJobStorePaymentIntent } = require("../utils/jobStorePaymentIntent.util");
 const jobDeletePolicy = require("../utils/jobDeletePolicy.util");
 const { upsertProviderReviewForJob, normalizeRating } = require("./providerReview.service");
 const { expandLaborPricingFromPaidJob, isProviderAvailable } = require("./provider.service");
@@ -3428,16 +3429,17 @@ async function payStoreOrderDelivery(jobId, storeId, cardLast4, fee, customerUse
 }
 
 async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, customerUserId) {
-  if (options.paymentIntentId) {
-    const intent = await prisma.paymentIntent.findUnique({
-      where: { id: String(options.paymentIntentId) },
-    });
-    if (!intent || intent.state !== "PAID") {
-      throw new AppError("Valid paid payment intent is required", 400);
-    }
-    if (intent.kind !== "JOB_STORE_ORDER" || String(intent.jobId) !== String(jobId)) {
-      throw new AppError("Payment intent does not match this job", 400);
-    }
+  if (!options.paymentIntentId) {
+    throw new AppError("A settled store payment is required", 400);
+  }
+  const intent = await prisma.paymentIntent.findUnique({
+    where: { id: String(options.paymentIntentId) },
+  });
+  if (!intent || String(intent.state) !== "PAID") {
+    throw new AppError("A settled store payment is required", 400);
+  }
+  if (String(intent.kind) !== "JOB_STORE_ORDER" || String(intent.jobId) !== String(jobId)) {
+    throw new AppError("Payment intent does not match this job", 400);
   }
 
   const job = await prisma.job.findUnique({ where: { id: jobId }, include: jobInclude });
@@ -3469,13 +3471,39 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, 
     throw new AppError("This materials list is no longer active for payment.", 400);
   }
 
+  const receiptCovers = (candidate) => {
+    if (!candidate || candidate.payment?.materialsPaid !== true) return false;
+    try {
+      assertJobStorePaymentIntent(intent, { job, storeId: supplierId, order: candidate });
+      return true;
+    } catch (err) {
+      if (err instanceof AppError) return false;
+      throw err;
+    }
+  };
+
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+    const applied = storeOrders.find((candidate) => receiptCovers(candidate));
+    if (applied) {
+      return finalizeJob(job, metaPeek);
+    }
     const legacyMaterials = Array.isArray(job.materials)
       ? job.materials.filter((m) => String(m.supplierId) === String(supplierId))
       : [];
     if (legacyMaterials.length === 0) {
       throw new AppError("No pending materials order found for this store.", 404);
     }
+    assertJobStorePaymentIntent(intent, {
+      job,
+      storeId: supplierId,
+      order: {
+        orderId: options.orderId || "",
+        storeId: supplierId,
+        supplierId,
+        items: legacyMaterials,
+        deliveryFee: 0,
+      },
+    });
     const legacyAmount = legacyMaterials.reduce(
       (sum, item) => sum + coerceNumber(item.qty) * coerceNumber(item.unitPrice),
       0
@@ -3596,6 +3624,8 @@ async function payForStoreMaterials(jobId, supplierId, cardLast4, options = {}, 
     qualityTier: item.qualityTier,
     imageUrl: item.imageUrl,
   }));
+
+  assertJobStorePaymentIntent(intent, { job, storeId: supplierId, order });
 
   const amount = materials.reduce((sum, item) => sum + coerceNumber(item.qty) * coerceNumber(item.unitPrice), 0);
   const paidAt = new Date().toISOString();
