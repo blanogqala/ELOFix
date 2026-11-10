@@ -688,19 +688,28 @@ async function createMaterialOrder(params) {
     await obligationService.assertCustomerCanStartPaidTransaction(prismaRow.userId);
   }
 
+  let checkoutIntent = null;
   if (clean.paymentIntentId) {
-    const intent = await prisma.paymentIntent.findUnique({
+    checkoutIntent = await prisma.paymentIntent.findUnique({
       where: { id: String(clean.paymentIntentId) },
     });
-    if (!intent || intent.state !== "PAID") {
-      throw new AppError("Valid paid payment intent is required", 400);
+    if (!checkoutIntent) {
+      throw new AppError("A settled material payment is required", 400);
     }
-    if (String(intent.userId) !== String(prismaRow.userId)) {
-      throw new AppError("Payment intent does not belong to this user", 403);
-    }
-    prismaRow.paymentStatus = "paid";
-    order.paymentStatus = "paid";
   }
+  const { resolveStoreCheckoutPayment } = require("../utils/materialOrderCreatePayment.util");
+  const checkoutPayment = resolveStoreCheckoutPayment({
+    intent: checkoutIntent,
+    userId: prismaRow.userId,
+    materialsSubtotal: Number(prismaRow.materialsSubtotal),
+  });
+  prismaRow.paymentStatus = checkoutPayment.paymentStatus;
+  order.paymentStatus = checkoutPayment.paymentStatus;
+  order.payment = {
+    ...(order.payment || {}),
+    materialsPaid: checkoutPayment.materialsPaid,
+    deliveryPaid: false,
+  };
   if (prismaRow.source === "store_checkout" && !String(order.customerLocation?.address || "").trim()) {
     throw new AppError("Delivery address is required to order materials", 400);
   }
