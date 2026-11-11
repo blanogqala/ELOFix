@@ -288,13 +288,8 @@ async function resolveAmountForKind(tx, { kind, jobId, materialOrderId, amount, 
     if (match.payment?.materialsPaid === true) {
       throw new AppError("Store order materials are already paid", 400);
     }
-    const items = Array.isArray(match.items) ? match.items : [];
-    const materialsTotal = items.reduce(
-      (sum, item) => sum + Number(item.qty || 0) * Number(item.unitPrice || item.price || 0),
-      0
-    );
-    const deliveryFee = Number(match.deliveryFee || match.delivery?.fee || 0);
-    const total = materialsTotal + (Number.isFinite(deliveryFee) ? deliveryFee : 0);
+    const { jobStoreChargeTotal } = require("../../utils/jobStoreOrderAmount.util");
+    const total = jobStoreChargeTotal(match);
     if (total <= 0) throw new AppError("Invalid store order amount", 400);
     serverAmount = toPrismaDecimal(total);
   }

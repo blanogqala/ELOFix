@@ -157,18 +157,18 @@ async function settleJobStoreOrderFromIntent(intent) {
     throw new AppError("Payment metadata missing supplierId", 400);
   }
 
-  // Reconcile intent amount against persisted store-order total.
-  const items = Array.isArray(match.items) ? match.items : [];
-  const materialsTotal = items.reduce(
-    (sum, item) => sum + Number(item.qty || 0) * Number(item.unitPrice || item.price || 0),
-    0
-  );
+  // Materials charge excludes the courier/branch delivery fee. That fee is paid later.
+  const {
+    jobStoreChargeTotal,
+    jobStorePaidAmountCoversMaterials,
+  } = require("../../utils/jobStoreOrderAmount.util");
   const deliveryFee = Number(
     match.deliveryFee != null ? match.deliveryFee : match.delivery?.fee || meta.deliveryFee || 0
   );
-  const expectedTotal = materialsTotal + (Number.isFinite(deliveryFee) ? deliveryFee : 0);
-  const paymentModeService = require("./paymentMode.service");
-  paymentModeService.assertAmountMatchesExpected(intent.amount, expectedTotal);
+  if (!jobStorePaidAmountCoversMaterials(intent.amount, match, meta.deliveryFee)) {
+    const paymentModeService = require("./paymentMode.service");
+    paymentModeService.assertAmountMatchesExpected(intent.amount, jobStoreChargeTotal(match));
+  }
 
   const jobService = require("../job.service");
   try {
