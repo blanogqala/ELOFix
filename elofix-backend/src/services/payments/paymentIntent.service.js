@@ -21,6 +21,7 @@ const {
   validateCheckoutLegalAcceptance,
   recordCheckoutLegalAcceptance,
 } = require("../legalAcceptance.service");
+const { decideInFlightIntentReuse } = require("./inFlightIntentReuse.util");
 
 function serializeIntent(row) {
   if (!row) return null;
@@ -58,6 +59,233 @@ function serializeIntent(row) {
 
 function toPrismaDecimal(v) {
   return new Prisma.Decimal(String(Number(v).toFixed(2)));
+}
+
+function inFlightPaidError(intent, verified) {
+  const err = new Error("in_flight_paid");
+  err.code = "IN_FLIGHT_PAID";
+  err.intent = intent;
+  err.verified = verified || null;
+  return err;
+}
+
+async function resolveReuseAction(intent) {
+  const state = String(intent?.state || "").toUpperCase();
+  const provider = String(intent?.provider || "").toUpperCase();
+  if ((state === "PENDING" || state === "PROCESSING") && provider === "PAYSTACK") {
+    let gw;
+    try {
+      gw = getGateway("PAYSTACK");
+    } catch (err) {
+      return { action: "abort", verified: null, error: err };
+    }
+    try {
+      const verified = await gw.verifyTransaction(intent.merchantReference);
+      return {
+        action: decideInFlightIntentReuse({
+          state,
+          provider,
+          verifyState: verified?.state,
+        }),
+        verified,
+      };
+    } catch (err) {
+      return {
+        action: decideInFlightIntentReuse({
+          state,
+          provider,
+          verifyHttpStatus: Number(err?.httpStatus) || null,
+        }),
+        verified: null,
+        error: err,
+      };
+    }
+  }
+  return {
+    action: decideInFlightIntentReuse({ state, provider }),
+    verified: null,
+  };
+}
+
+async function settleVerifiedInFlightPayment(err) {
+  const verified = err?.verified;
+  const intent = err?.intent;
+  if (!verified || String(verified.state || "").toUpperCase() !== "PAID" || !intent) return;
+  const out = await webhookService.processWebhookResult("PAYSTACK", {
+    valid: true,
+    merchantReference: verified.merchantReference || intent.merchantReference,
+    gatewayTransactionId: verified.gatewayTransactionId,
+    state: "PAID",
+    amount: verified.amount,
+    currency: verified.currency || intent.currency || "ZAR",
+    externalEventId: `inflight-verify:${intent.id}:${verified.gatewayTransactionId || Date.now()}`,
+    raw: {
+      ...(verified.raw && typeof verified.raw === "object" ? verified.raw : {}),
+      source: "in_flight_checkout_verify",
+    },
+  });
+  if (out?.httpStatus >= 400) {
+    throw new AppError(
+      "This payment was already received and is being confirmed. Do not pay again.",
+      409,
+      "PAYMENT_ALREADY_RECEIVED"
+    );
+  }
+}
+
+/**
+ * Retry checkout on an existing intent without orphaning a charge that Paystack
+ * or PayFast can still notify us about. Only failed/cancelled attempts get a
+ * new merchant reference.
+ */
+async function reuseOpenCharge(tx, {
+  reusable,
+  providerKey,
+  resolvedAmount,
+  resolvedPaymentType,
+  returnUrl,
+  cancelUrl,
+  intentMetadata,
+  gw,
+  customer,
+  defaultReturn,
+  defaultCancel,
+  jobId,
+  idempotencyKey,
+  requestHash,
+  route,
+  attachCheckoutLegal,
+}) {
+  const { action, verified } = await resolveReuseAction(reusable);
+  if (action === "abort") {
+    throw new AppError(
+      "Could not verify the existing payment. Try again shortly.",
+      409,
+      "PAYMENT_IN_FLIGHT"
+    );
+  }
+  if (action === "settle") {
+    throw inFlightPaidError(reusable, verified);
+  }
+
+  const checkoutFor = (row) =>
+    gw.createCheckout(
+      {
+        ...row,
+        amount: Number(row.amount),
+        returnUrl: row.returnUrl || `${defaultReturn}${row.id}`,
+        cancelUrl: row.cancelUrl || `${defaultCancel}${row.id}`,
+      },
+      customer
+    );
+
+  if (action === "preserve") {
+    if (String(reusable.provider || "").toUpperCase() !== String(providerKey)) {
+      throw new AppError(
+        "A payment is already in progress. Wait for it to finish before using another method.",
+        409,
+        "PAYMENT_IN_FLIGHT"
+      );
+    }
+    const expected = Number(resolvedAmount);
+    const current = Number(reusable.amount);
+    if (!Number.isFinite(expected) || !Number.isFinite(current) || Math.abs(expected - current) > 0.02) {
+      throw new AppError(
+        "A payment is already in progress for this charge. Wait for it to finish before trying again.",
+        409,
+        "PAYMENT_IN_FLIGHT"
+      );
+    }
+    const safe = {};
+    if (returnUrl) safe.returnUrl = returnUrl;
+    if (cancelUrl) safe.cancelUrl = cancelUrl;
+    if (jobId) safe.jobId = String(jobId);
+    let row = reusable;
+    if (Object.keys(safe).length) {
+      const updated = await tx.paymentIntent.updateMany({
+        where: { id: reusable.id, state: { in: ["PENDING", "PROCESSING"] } },
+        data: safe,
+      });
+      if (updated.count !== 1) throw inFlightPaidError(reusable, null);
+      row = await tx.paymentIntent.findUnique({ where: { id: reusable.id } });
+    } else {
+      const fresh = await tx.paymentIntent.findUnique({ where: { id: reusable.id } });
+      if (!fresh || !["PENDING", "PROCESSING"].includes(String(fresh.state))) {
+        throw inFlightPaidError(reusable, null);
+      }
+      row = fresh;
+    }
+    let reuseCheckout;
+    try {
+      reuseCheckout = await checkoutFor(row);
+    } catch (err) {
+      if (/duplicate/i.test(String(err?.message || ""))) {
+        throw new AppError(
+          "A payment is already in progress. Wait for it to finish before trying again.",
+          409,
+          "PAYMENT_IN_FLIGHT"
+        );
+      }
+      throw err;
+    }
+    await attachCheckoutLegal(tx, row);
+    await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
+    return {
+      replay: false,
+      payload: {
+        intentId: row.id,
+        merchantReference: row.merchantReference,
+        intent: serializeIntent(row),
+        checkout: reuseCheckout,
+        reused: true,
+      },
+    };
+  }
+
+  const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
+  const rotated = await tx.paymentIntent.updateMany({
+    where: {
+      id: reusable.id,
+      state: { not: "PAID" },
+    },
+    data: {
+      merchantReference,
+      provider: providerKey,
+      amount: resolvedAmount,
+      paymentType: resolvedPaymentType,
+      state: "PENDING",
+      failedAt: null,
+      cancelledAt: null,
+      paidAt: null,
+      refundedAt: null,
+      gatewayTransactionId: null,
+      ...(jobId ? { jobId: String(jobId) } : {}),
+      returnUrl: returnUrl || reusable.returnUrl || null,
+      cancelUrl: cancelUrl || reusable.cancelUrl || null,
+      gatewayPayload:
+        intentMetadata && typeof intentMetadata === "object"
+          ? intentMetadata
+          : reusable.gatewayPayload ?? undefined,
+      ...(String(reusable.kind) === "LABOR"
+        ? { escrowStatus: "NOT_APPLICABLE", providerPayoutStatus: "NONE" }
+        : {}),
+    },
+  });
+  if (rotated.count !== 1) throw inFlightPaidError(reusable, verified);
+  const refreshed = await tx.paymentIntent.findUnique({ where: { id: reusable.id } });
+  const reuseCheckout = await checkoutFor(refreshed);
+  await attachCheckoutLegal(tx, refreshed);
+  await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
+  return {
+    replay: false,
+    payload: {
+      intentId: refreshed.id,
+      merchantReference: refreshed.merchantReference,
+      intent: serializeIntent(refreshed),
+      checkout: reuseCheckout,
+      reused: true,
+    },
+  };
 }
 
 async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, metadata, paymentType }) {
@@ -394,7 +622,9 @@ async function createPaymentIntent({
     });
   }
 
-  const txResult = await prisma.$transaction(
+  let txResult;
+  try {
+    txResult = await prisma.$transaction(
     async (tx) => {
       const gate = await idempotencyGate(tx, { idempotencyKey, requestHash, route });
       if (gate.replay) {
@@ -555,55 +785,26 @@ async function createPaymentIntent({
           },
         });
         if (reusable) {
-          // New merchant reference so PayFast / ITN / sandbox settle are a fresh payment,
-          // not tied to a previously settled attempt on this reused row.
-          const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
-          const refreshed = await tx.paymentIntent.update({
-            where: { id: reusable.id },
-            data: {
-              merchantReference,
-              provider: providerKey,
-              amount: resolvedAmount,
-              paymentType: resolvedPaymentType,
-              state: "PENDING",
-              failedAt: null,
-              cancelledAt: null,
-              paidAt: null,
-              refundedAt: null,
-              gatewayTransactionId: null,
-              jobId: deliveryFeeJobId || reusable.jobId || null,
-              returnUrl: returnUrl || reusable.returnUrl || null,
-              cancelUrl: cancelUrl || reusable.cancelUrl || null,
-              gatewayPayload:
-                intentMetadata && typeof intentMetadata === "object"
-                  ? intentMetadata
-                  : reusable.gatewayPayload ?? undefined,
-            },
+          // A still-open charge keeps its merchant reference so the gateway
+          // webhook can settle it. Failed/cancelled rows mint a new reference.
+          return reuseOpenCharge(tx, {
+            reusable,
+            providerKey,
+            resolvedAmount,
+            resolvedPaymentType,
+            returnUrl,
+            cancelUrl,
+            intentMetadata,
+            gw,
+            customer,
+            defaultReturn,
+            defaultCancel,
+            jobId: deliveryFeeJobId || reusable.jobId || null,
+            idempotencyKey,
+            requestHash,
+            route,
+            attachCheckoutLegal,
           });
-
-          const reuseCheckout = await gw.createCheckout(
-            {
-              ...refreshed,
-              amount: Number(refreshed.amount),
-              returnUrl: refreshed.returnUrl || `${defaultReturn}${refreshed.id}`,
-              cancelUrl: refreshed.cancelUrl || `${defaultCancel}${refreshed.id}`,
-            },
-            customer
-          );
-
-          await attachCheckoutLegal(tx, refreshed);
-          await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
-
-          return {
-            replay: false,
-            payload: {
-              intentId: refreshed.id,
-              merchantReference: refreshed.merchantReference,
-              intent: serializeIntent(refreshed),
-              checkout: reuseCheckout,
-              reused: true,
-            },
-          };
         }
 
         // Fresh create below — use the same resolved courier job id.
@@ -622,59 +823,32 @@ async function createPaymentIntent({
           orderBy: { createdAt: "desc" },
         });
         if (reusableLabor) {
-          const merchantReference = `EF-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
-          const refreshed = await tx.paymentIntent.update({
-            where: { id: reusableLabor.id },
-            data: {
-              merchantReference,
-              provider: providerKey,
-              amount: resolvedAmount,
-              paymentType: resolvedPaymentType,
-              state: "PENDING",
-              failedAt: null,
-              cancelledAt: null,
-              paidAt: null,
-              refundedAt: null,
-              gatewayTransactionId: null,
-              returnUrl: returnUrl || reusableLabor.returnUrl || null,
-              cancelUrl: cancelUrl || reusableLabor.cancelUrl || null,
-              gatewayPayload:
-                intentMetadata && typeof intentMetadata === "object"
-                  ? intentMetadata
-                  : reusableLabor.gatewayPayload ?? undefined,
-              escrowStatus: "NOT_APPLICABLE",
-              providerPayoutStatus: "NONE",
-            },
+          const reused = await reuseOpenCharge(tx, {
+            reusable: reusableLabor,
+            providerKey,
+            resolvedAmount,
+            resolvedPaymentType,
+            returnUrl,
+            cancelUrl,
+            intentMetadata,
+            gw,
+            customer,
+            defaultReturn,
+            defaultCancel,
+            idempotencyKey,
+            requestHash,
+            route,
+            attachCheckoutLegal,
           });
           console.log("[createPaymentIntent] LABOR reuse same-stage intent", {
             jobId,
-            intentId: refreshed.id,
+            intentId: reused.payload.intentId,
             paymentType: resolvedPaymentType,
-            amount: Number(refreshed.amount),
-            merchantReference: refreshed.merchantReference,
+            amount: Number(reused.payload.intent?.amount),
+            merchantReference: reused.payload.merchantReference,
             provider: providerKey,
           });
-          const reuseCheckout = await gw.createCheckout(
-            {
-              ...refreshed,
-              amount: Number(refreshed.amount),
-              returnUrl: refreshed.returnUrl || `${defaultReturn}${refreshed.id}`,
-              cancelUrl: refreshed.cancelUrl || `${defaultCancel}${refreshed.id}`,
-            },
-            customer
-          );
-          await attachCheckoutLegal(tx, refreshed);
-          await idempotencyCommit(tx, { idempotencyKey, requestHash, route });
-          return {
-            replay: false,
-            payload: {
-              intentId: refreshed.id,
-              merchantReference: refreshed.merchantReference,
-              intent: serializeIntent(refreshed),
-              checkout: reuseCheckout,
-              reused: true,
-            },
-          };
+          return reused;
         }
       }
 
@@ -730,7 +904,21 @@ async function createPaymentIntent({
       timeout: 20000,
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }
-  );
+    );
+  } catch (err) {
+    if (err && err.code === "IN_FLIGHT_PAID") {
+      await settleVerifiedInFlightPayment(err);
+      const kind = String(err.intent?.kind || "").toUpperCase();
+      throw new AppError(
+        kind === "DELIVERY_FEE"
+          ? "Delivery fee already paid. Refresh to continue."
+          : "This payment stage is already completed. Refresh to continue.",
+        400,
+        "PAYMENT_ALREADY_RECEIVED"
+      );
+    }
+    throw err;
+  }
 
   return txResult.payload;
 }
