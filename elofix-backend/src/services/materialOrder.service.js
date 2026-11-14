@@ -21,6 +21,10 @@ const {
   pickAuthoritativeMaterialsIntent,
   resolveSupplierOrderSettlement,
 } = require("../utils/supplierSettlementPresentation.util");
+const {
+  allocateMaterialCancelRefunds,
+  intentPaysForMaterialOrder,
+} = require("../utils/materialOrderCancelRefund.util");
 
 async function assertOrderOwnedBySupplierOrgTx(tx, row, supplierOrgId) {
   const org = String(supplierOrgId || "").trim();
@@ -2289,6 +2293,25 @@ function assertCanCancel({ actor, currentStatus }) {
   }
 }
 
+async function findPaidIntentsForMaterialCancel(tx, orderId, jobId) {
+  const target = String(orderId || "");
+  const direct = target
+    ? await tx.paymentIntent.findMany({
+        where: { materialOrderId: target, state: "PAID" },
+      })
+    : [];
+  const byId = new Map(direct.map((intent) => [intent.id, intent]));
+  if (jobId) {
+    const jobStore = await tx.paymentIntent.findMany({
+      where: { jobId: String(jobId), kind: "JOB_STORE_ORDER", state: "PAID" },
+    });
+    for (const intent of jobStore) {
+      if (intentPaysForMaterialOrder(intent, target)) byId.set(intent.id, intent);
+    }
+  }
+  return [...byId.values()];
+}
+
 async function cancelMaterialOrderInTransaction(tx, { orderId, actor, actorUserId, reason, expectedSupplierId, branchScopeId }) {
   let row = await tx.materialOrder.findUnique({ where: { id: orderId } });
   if (!row) throw new AppError("Material order not found", 404);
@@ -2367,14 +2390,16 @@ async function cancelMaterialOrderInTransaction(tx, { orderId, actor, actorUserI
   try {
     const escrowSettlement = require("./payments/escrowSettlement.service");
     const partial = outcome.refundAmount > 0 && outcome.refundAmount < Number(row.materialsSubtotal || 0);
-    await escrowSettlement.markMaterialIntentRefunded(orderId, partial);
-    const intent = await tx.paymentIntent.findFirst({
-      where: { materialOrderId: orderId, state: "PAID" },
-    });
-    if (intent && outcome.refundAmount > 0) {
+    if (outcome.refundAmount > 0) {
       const refundService = require("./payments/refund.service");
-      await refundService.requestGatewayRefund(intent.id, outcome.refundAmount);
+      const paidIntents = await findPaidIntentsForMaterialCancel(tx, orderId, row.jobId);
+      // Ask the gateway while the charge is still PAID. markMaterialIntentRefunded
+      // commits REFUNDED on another connection, and requestGatewayRefund ignores that state.
+      for (const slice of allocateMaterialCancelRefunds(paidIntents, outcome.refundAmount)) {
+        await refundService.requestGatewayRefund(slice.intentId, slice.amount);
+      }
     }
+    await escrowSettlement.markMaterialIntentRefunded(orderId, partial);
   } catch (e) {
     console.error("material refund gateway", e);
   }
