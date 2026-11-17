@@ -334,6 +334,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
   let trustUpdate = null;
   let releasePaymentDue = null;
   let resumedPaused = false;
+  let billCompletionBalance = false;
 
   const txResult = await prisma.$transaction(
     async (tx) => {
@@ -363,23 +364,21 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
 
       if (action === "RELEASE_FUNDS" && providerRow) {
         const obligationService = require("./customerPaymentObligation.service");
+        const { resolveReleaseFundsDecision } = require("../utils/releaseFundsDecision.util");
         const paused = await obligationService.getPausedObligationForJob(job.id, tx);
         const j0 = await tx.job.findUnique({ where: { id: job.id } });
-        const amountDue = paused
-          ? Number(paused.amount)
-          : Math.max(
-              0,
-              Number(j0?.secondPaymentAmount) ||
-                (Number(j0?.quotedAmount || j0?.totalPrice || 0) > 0
-                  ? Number(j0?.quotedAmount || j0?.totalPrice || 0) / 2
-                  : 0)
-            );
-        const dueAt = paused
-          ? new Date(paused.dueAt)
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const decision = resolveReleaseFundsDecision(j0, normalizeMeta(j0?.meta), paused);
+        const amountDue = decision.amountDue;
+        const dueAt =
+          paused && decision.owesCompletion
+            ? new Date(paused.dueAt)
+            : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         const notifiedAt = new Date().toISOString();
-        releasePaymentDue = { amountDue, dueAt: dueAt.toISOString() };
-        if (paused) resumedPaused = true;
+        releasePaymentDue = decision.owesCompletion
+          ? { amountDue, dueAt: dueAt.toISOString() }
+          : null;
+        billCompletionBalance = decision.owesCompletion;
+        if (paused && decision.owesCompletion) resumedPaused = true;
         await tx.job.update({
           where: { id: job.id },
           data: { status: "IN_PROGRESS" },
@@ -387,12 +386,12 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
         await mutateJobMetaInTransaction(tx, job.id, (m) => {
           const systemAuthor = { userId: "system", role: "ADMIN", name: "EloFix" };
           const chat = Array.isArray(m.chat) ? [...m.chat] : [];
-          chat.push(
-            createChat(
-              systemAuthor,
-              "Admin released the remaining balance for payment. The customer must settle the outstanding completion amount."
-            )
-          );
+          const chatMessage = decision.owesCompletion
+            ? "Admin released the remaining balance for payment. The customer must settle the outstanding completion amount."
+            : decision.releaseHeldEscrow
+              ? "Admin released the held payment to the provider. No additional customer payment is due."
+              : "Admin resolved the case. No additional customer payment is due.";
+          chat.push(createChat(systemAuthor, chatMessage));
           let patched = {
             ...m,
             statusOverride: "AWAITING_CONFIRMATION",
@@ -403,26 +402,41 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
             cancellationDetails: null,
             cancelledBy: null,
             cancelledAt: null,
-            completionPaymentDue: {
-              amountDue,
-              dueAt: dueAt.toISOString(),
-              resolutionLogId,
-              createdAt: notifiedAt,
-              notifiedAt,
-            },
+            completionPaymentDue: decision.owesCompletion
+              ? {
+                  amountDue,
+                  dueAt: dueAt.toISOString(),
+                  resolutionLogId,
+                  createdAt: notifiedAt,
+                  notifiedAt,
+                }
+              : null,
             chat,
           };
-          patched = appendTimelineEventIfAbsent(patched, {
-            type: "ADMIN_RELEASE_COMPLETION_DUE",
-            at: notifiedAt,
-            source: "admin_resolve",
-            amountDue,
-            dueAt: dueAt.toISOString(),
-          });
+          if (decision.owesCompletion) {
+            patched = appendTimelineEventIfAbsent(patched, {
+              type: "ADMIN_RELEASE_COMPLETION_DUE",
+              at: notifiedAt,
+              source: "admin_resolve",
+              amountDue,
+              dueAt: dueAt.toISOString(),
+            });
+          } else if (decision.releaseHeldEscrow) {
+            patched = appendTimelineEventIfAbsent(patched, {
+              type: "ADMIN_RELEASE_HELD_ESCROW",
+              at: notifiedAt,
+              source: "admin_resolve",
+            });
+          }
           return patched;
         });
-        if (paused) {
+        if (decision.releaseHeldEscrow) {
+          await releaseHeldEscrowToProviderInTransaction(tx, job.id, providerRow.id);
+        }
+        if (paused && decision.owesCompletion) {
           await obligationService.resumePausedObligation(job.id, tx);
+        } else if (paused) {
+          await obligationService.cancelOpenObligationForJob(job.id, tx);
         }
       } else if (action === "PARTIAL_REFUND" || action === "FULL_REFUND") {
         const laborNet = refundLaborNet;
@@ -631,7 +645,7 @@ async function resolveDispute(adminUserId, disputeId, payload, idempotencyOpts =
     action,
   });
 
-  if (action === "RELEASE_FUNDS" && !resumedPaused) {
+  if (action === "RELEASE_FUNDS" && billCompletionBalance && !resumedPaused) {
     try {
       const obligationService = require("./customerPaymentObligation.service");
       const jobAfter = await prisma.job.findUnique({ where: { id: job.id } });
