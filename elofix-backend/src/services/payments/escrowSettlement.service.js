@@ -5,6 +5,10 @@ const AppError = require("../../utils/AppError");
 const paymentService = require("../payment.service");
 const { getJobMeta } = require("../jobMeta.service");
 const { paymentCurrency } = require("./paymentConfig");
+const {
+  materialOrderAcceptsCapturedPayment,
+  jobStorePayErrorDisposition,
+} = require("./capturedChargeOnCancelledOrder");
 
 function toAmountDecimal(amount) {
   return new Prisma.Decimal(String(Number(amount).toFixed(2)));
@@ -34,6 +38,11 @@ async function settleMaterialOrderFromIntent(tx, intent) {
   if (!order) {
     throw new AppError("Material order not found", 404);
   }
+  // Cancelled before this capture landed: do not mark the order paid or pay the branch.
+  if (!materialOrderAcceptsCapturedPayment(order)) {
+    return { refundCapturedCharge: true, order };
+  }
+
   if (order.paymentStatus === "paid") {
     const accounting = require("./supplierPayoutAccounting.util");
     await accounting.repairSupplierMarketplacePayoutAccounting({ ...intent, materialOrder: order }, { client: tx });
@@ -188,8 +197,11 @@ async function settleJobStoreOrderFromIntent(intent) {
       String(intent.userId || "")
     );
   } catch (e) {
-    const msg = String(e?.message || "");
-    if (e?.statusCode === 400 && /already|paid|no longer active/i.test(msg)) {
+    const disposition = jobStorePayErrorDisposition(e);
+    if (disposition === "refund_captured_charge") {
+      return { refundCapturedCharge: true };
+    }
+    if (disposition === "already_applied") {
       await persistJobStoreMarketplaceAccounting(intent, {
         orderIdHint: match.orderId ? String(match.orderId) : orderIdHint,
       });
@@ -271,7 +283,29 @@ async function markIntentDisputed(intentId) {
 /**
  * Settle delivery fee after gateway confirmation (courier / material delivery).
  */
+async function capturedMaterialChargeNeedsRefund(db, intent) {
+  const materialOrderId = intent?.materialOrderId ? String(intent.materialOrderId) : "";
+  if (!materialOrderId) return false;
+  const kind = String(intent?.kind || "");
+  if (kind !== "MATERIAL_ORDER" && kind !== "JOB_STORE_ORDER" && kind !== "DELIVERY_FEE") {
+    return false;
+  }
+  const client = db || prisma;
+  const order = await client.materialOrder.findUnique({
+    where: { id: materialOrderId },
+    select: { fulfillmentStatus: true, paymentStatus: true },
+  });
+  return Boolean(order) && !materialOrderAcceptsCapturedPayment(order);
+}
+
 async function settleDeliveryFeeFromIntent(intent) {
+  if (await capturedMaterialChargeNeedsRefund(prisma, intent)) {
+    return {
+      refundCapturedCharge: true,
+      materialOrderId: intent.materialOrderId || undefined,
+    };
+  }
+
   const meta =
     intent.gatewayPayload && typeof intent.gatewayPayload === "object" && !Array.isArray(intent.gatewayPayload)
       ? intent.gatewayPayload
@@ -311,6 +345,7 @@ module.exports = {
   settleMaterialOrderFromIntent,
   settleJobStoreOrderFromIntent,
   settleDeliveryFeeFromIntent,
+  capturedMaterialChargeNeedsRefund,
   markLaborEscrowFullyReleased,
   markLaborIntentRefunded,
   markMaterialIntentRefunded,
