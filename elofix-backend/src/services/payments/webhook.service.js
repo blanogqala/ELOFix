@@ -15,6 +15,7 @@ const {
   sanitizePaystackRefundRaw,
   safePaystackSubaccountCode,
 } = require("./paystack.payload");
+const { capturedRefundRetrySucceeded } = require("./capturedChargeOnCancelledOrder");
 
 const POST_SETTLEMENT_PENDING = "post_settlement_pending";
 
@@ -109,20 +110,37 @@ async function markEventPostSettlementPending(db, providerKey, externalEventId, 
   });
 }
 
+async function refundCapturedChargeAfterCancel(intentId) {
+  const refundService = require("./refund.service");
+  const result = await refundService.requestGatewayRefund(intentId, undefined, {
+    idempotencyKey: `cancelled-order-capture:${intentId}`,
+  });
+  if (capturedRefundRetrySucceeded(result)) return result;
+  const err = new Error(result?.message || "Captured charge refund failed");
+  err.refundResult = result;
+  throw err;
+}
+
 async function runCriticalPostSettlement(flags, intentId) {
   const intent = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
   if (!intent) {
     throw new Error("Payment intent missing after webhook commit");
   }
+  let refundCapturedCharge = Boolean(flags.refundCapturedCharge);
   if (flags.postSettleJobStore) {
-    await escrowSettlement.settleJobStoreOrderFromIntent(intent);
+    const jobStore = await escrowSettlement.settleJobStoreOrderFromIntent(intent);
+    if (jobStore?.refundCapturedCharge) refundCapturedCharge = true;
   }
   if (flags.postSettleDeliveryFee) {
-    await escrowSettlement.settleDeliveryFeeFromIntent(intent);
+    const delivery = await escrowSettlement.settleDeliveryFeeFromIntent(intent);
+    if (delivery?.refundCapturedCharge) refundCapturedCharge = true;
   }
   if (flags.postSettleProviderRepayment) {
     const refundRecovery = require("../refundRecovery.service");
     await refundRecovery.markGatewayRepaymentPaidFromIntent(intent);
+  }
+  if (refundCapturedCharge) {
+    await refundCapturedChargeAfterCancel(intentId);
   }
 }
 
@@ -250,8 +268,20 @@ async function processWebhookResult(providerKey, verifyResult) {
             };
           }
 
+          if (intent.state === "REFUNDED" || intent.state === "PARTIALLY_REFUNDED") {
+            await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+            return {
+              duplicate: true,
+              processed: true,
+              fullyProcessed: true,
+              preservedRefund: true,
+              intentId: intent.id,
+            };
+          }
+
           if (intent.state === "PAID") {
-            if (flags.needsPostSettlement) {
+            const refundCapturedCharge = await escrowSettlement.capturedMaterialChargeNeedsRefund(tx, intent);
+            if (flags.needsPostSettlement || refundCapturedCharge) {
               await markEventPostSettlementPending(tx, providerKey, externalEventId, intent.id);
               return {
                 duplicate: true,
@@ -259,6 +289,8 @@ async function processWebhookResult(providerKey, verifyResult) {
                 resumePostSettlement: true,
                 intentId: intent.id,
                 ...flags,
+                refundCapturedCharge,
+                needsPostSettlement: true,
               };
             }
             await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
@@ -295,17 +327,22 @@ async function processWebhookResult(providerKey, verifyResult) {
 
           let settledAudit = null;
           let laborSettleExtra = null;
+          let materialSettle = null;
           if (fresh.kind === "LABOR") {
             const laborResult = await escrowSettlement.settleLaborFromIntent(tx, fresh, verifyResult.raw);
             settledAudit = laborResult.settledAudit || null;
             laborSettleExtra = laborResult;
           } else if (fresh.kind === "MATERIAL_ORDER") {
-            await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
+            materialSettle = await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
           } else if (fresh.kind === "JOB_STORE_ORDER" && fresh.materialOrderId) {
-            await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
+            materialSettle = await escrowSettlement.settleMaterialOrderFromIntent(tx, fresh);
           }
 
           const paidFlags = postSettlementFlags(fresh);
+          if (materialSettle?.refundCapturedCharge) {
+            paidFlags.refundCapturedCharge = true;
+            paidFlags.needsPostSettlement = true;
+          }
           if (paidFlags.needsPostSettlement) {
             await markEventPostSettlementPending(tx, providerKey, externalEventId, intent.id);
           } else {
