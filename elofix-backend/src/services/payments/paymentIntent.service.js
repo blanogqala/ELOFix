@@ -21,6 +21,7 @@ const {
   validateCheckoutLegalAcceptance,
   recordCheckoutLegalAcceptance,
 } = require("../legalAcceptance.service");
+const { planDeliveryFeeIntentRelease } = require("./deliveryFeeRefundPreserve");
 
 function serializeIntent(row) {
   if (!row) return null;
@@ -139,15 +140,39 @@ async function assertNoDuplicatePaidIntent(tx, { kind, jobId, materialOrderId, m
 }
 
 /**
- * After courier delivery cancel, MO.deliveryPaid is cleared but a PAID DELIVERY_FEE
+ * After courier delivery cancel, MO.deliveryPaid is cleared but a DELIVERY_FEE
  * PaymentIntent may remain and block re-pay via @@unique([materialOrderId, kind]).
- * Cancel any such intents so the customer can pay for a new delivery option.
+ * Forfeit cancels the row. A refund review detaches a captured charge instead,
+ * leaving it PAID on the courier job so the dispute refund can reach the gateway.
  */
 async function cancelDeliveryFeeIntentsForMaterialOrder(materialOrderId, options = {}) {
   const mid = String(materialOrderId || "").trim();
-  if (!mid) return { cancelled: 0 };
+  if (!mid) return { cancelled: 0, preserved: 0 };
   const db = options.tx || prisma;
   const now = new Date();
+  if (options.preserveCaptured) {
+    const intents = await db.paymentIntent.findMany({
+      where: {
+        materialOrderId: mid,
+        kind: "DELIVERY_FEE",
+        state: { not: "CANCELLED" },
+      },
+    });
+    const actions = planDeliveryFeeIntentRelease(intents, {
+      preserveCaptured: true,
+      jobId: options.jobId,
+      materialOrderId: mid,
+      now,
+    });
+    let cancelled = 0;
+    let preserved = 0;
+    for (const action of actions) {
+      await db.paymentIntent.update({ where: { id: action.id }, data: action.data });
+      if (action.type === "detach") preserved += 1;
+      else cancelled += 1;
+    }
+    return { cancelled, preserved };
+  }
   const result = await db.paymentIntent.updateMany({
     where: {
       materialOrderId: mid,
@@ -159,10 +184,14 @@ async function cancelDeliveryFeeIntentsForMaterialOrder(materialOrderId, options
       cancelledAt: now,
     },
   });
-  return { cancelled: Number(result.count) || 0 };
+  return { cancelled: Number(result.count) || 0, preserved: 0 };
 }
 
-/** In-tx: if PAID DELIVERY_FEE exists but MO deliveryPaid is false, cancel it for reuse. */
+/**
+ * In-tx: deliveryPaid is false but a PAID DELIVERY_FEE still holds the unique slot.
+ * Captured charges are detached and left refundable. Rows with no gateway
+ * transaction are cancelled so checkout can reuse them.
+ */
 async function cancelStalePaidDeliveryFeeIntent(tx, materialOrderId) {
   const mid = String(materialOrderId || "").trim();
   if (!mid) return null;
@@ -175,9 +204,16 @@ async function cancelStalePaidDeliveryFeeIntent(tx, materialOrderId) {
   });
   if (!paidIntent) return null;
 
+  // A real capture must stay refundable. Only a row with no gateway transaction
+  // (sandbox / unpaid placeholder) is cancelled so the unique slot can be reused.
+  const [action] = planDeliveryFeeIntentRelease([paidIntent], {
+    preserveCaptured: true,
+    materialOrderId: mid,
+    now: new Date(),
+  });
   return tx.paymentIntent.update({
     where: { id: paidIntent.id },
-    data: { state: "CANCELLED", cancelledAt: new Date() },
+    data: action.data,
   });
 }
 

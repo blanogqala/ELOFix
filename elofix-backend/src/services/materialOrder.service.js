@@ -1649,16 +1649,25 @@ async function clearDeliveryAfterCourierJobCancel(materialOrderId, options = {})
     delete nextPayload.deliveryCancellationReview;
   }
 
+  const paymentIntentService = require("./payments/paymentIntent.service");
+  if (options.keepRefundReviewOpen) {
+    await paymentIntentService.cancelDeliveryFeeIntentsForMaterialOrder(mid, {
+      preserveCaptured: true,
+      jobId: options.courierJobId ? String(options.courierJobId) : undefined,
+    });
+  }
+
   const updated = await prisma.materialOrder.update({
     where: { id: mid },
     data: { payload: nextPayload },
   });
 
-  try {
-    const paymentIntentService = require("./payments/paymentIntent.service");
-    await paymentIntentService.cancelDeliveryFeeIntentsForMaterialOrder(mid);
-  } catch (e) {
-    console.error("clearDeliveryAfterCourierJobCancel cancelDeliveryFeeIntents", mid, e);
+  if (!options.keepRefundReviewOpen) {
+    try {
+      await paymentIntentService.cancelDeliveryFeeIntentsForMaterialOrder(mid);
+    } catch (e) {
+      console.error("clearDeliveryAfterCourierJobCancel cancelDeliveryFeeIntents", mid, e);
+    }
   }
 
   const deliveryRequestService = require("./deliveryRequest.service");

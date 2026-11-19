@@ -703,18 +703,30 @@ async function finalizeCustomerGatewayRefund(intent, { amount, externalRefundId,
   return { ...money, ...artifacts, amount: appliedAmt, intentId: intent.id };
 }
 
-/**
- * Paid LABOR intents for a job, oldest first (deposit before completion).
- */
-async function findRefundableLaborIntents(jobId) {
+const REFUNDABLE_INTENT_STATES = ["PAID", "PARTIALLY_REFUNDED", "DISPUTED"];
+
+async function findRefundableIntentsByKind(jobId, kind) {
   return prisma.paymentIntent.findMany({
     where: {
       jobId: String(jobId),
-      kind: "LABOR",
-      state: { in: ["PAID", "PARTIALLY_REFUNDED", "DISPUTED"] },
+      kind,
+      state: { in: REFUNDABLE_INTENT_STATES },
     },
     orderBy: [{ paidAt: "asc" }, { createdAt: "asc" }],
   });
+}
+
+/**
+ * Paid LABOR intents for a job, oldest first (deposit before completion).
+ * Courier delivery is captured as DELIVERY_FEE on that job. Use it when the
+ * job has no labor charge, so a cancellation refund can reach Paystack.
+ */
+async function findRefundableLaborIntents(jobId) {
+  const { supplementalRefundKind } = require("./deliveryFeeRefundPreserve");
+  const labor = await findRefundableIntentsByKind(jobId, "LABOR");
+  const extraKind = supplementalRefundKind(labor.length);
+  if (!extraKind) return labor;
+  return findRefundableIntentsByKind(jobId, extraKind);
 }
 
 function finiteMoneyOrNull(value) {
