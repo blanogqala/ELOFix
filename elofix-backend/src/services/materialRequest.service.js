@@ -116,6 +116,8 @@ async function createDraft(providerUserId, body) {
 
   const items = normalizeMaterialLines(body?.items);
   if (items.length === 0) throw new AppError("items must be a non-empty array", 400);
+  const { assertMaterialLinesMatchCatalog } = require("../utils/catalogPrice.util");
+  await assertMaterialLinesMatchCatalog(items);
 
   const job = await findJobForProvider(jobId, providerUserId);
 
@@ -187,6 +189,8 @@ async function resolveSubmitItems(jobId, providerUserId, body) {
 async function finalizeProviderMaterialsSubmit(jobId, materials, providerUserId, options = {}) {
   const nextMaterials = normalizeMaterialLines(materials);
   if (nextMaterials.length === 0) throw new AppError("Materials are required", 400);
+  const { assertMaterialLinesMatchCatalog } = require("../utils/catalogPrice.util");
+  await assertMaterialLinesMatchCatalog(nextMaterials);
 
   const job = await findJobForProvider(jobId, providerUserId);
   const customerId = String(job.customerId);

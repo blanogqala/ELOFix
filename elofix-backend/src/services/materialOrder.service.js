@@ -712,10 +712,18 @@ async function createMaterialOrder(params) {
 
   const branch = await prisma.branch.findUnique({
     where: { id: branchId },
-    include: { supplier: true },
+    include: branchService.branchCatalogInclude({ supplier: true }),
   });
   if (!branch || !branch.isActive) {
     throw new AppError("Invalid store — branch not found", 400);
+  }
+
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    const { assertLinesMatchProductList } = require("../utils/catalogPrice.util");
+    const products = branchService.productsForApi(branch, { omitInternal: true });
+    assertLinesMatchProductList(products, order.items, {
+      materialsTotal: order.materialsSubtotal,
+    });
   }
 
   const orgId = branch.supplierId;

@@ -1377,6 +1377,10 @@ async function addMaterials(jobId, newMaterials = [], actorUserId) {
   if (!job) throw new AppError("Job not found", 404);
   assertCustomerOwnsJob(job, actorUserId);
   await assertJobCategoryAllowsMaterials(job);
+  if (Array.isArray(newMaterials) && newMaterials.length > 0) {
+    const { assertMaterialLinesMatchCatalog } = require("../utils/catalogPrice.util");
+    await assertMaterialLinesMatchCatalog(newMaterials);
+  }
   const existing = Array.isArray(job.materials) ? job.materials : [];
   const next = [...existing, ...newMaterials];
   const updated = await prisma.job.update({
@@ -2016,6 +2020,8 @@ async function addUserMaterialSuggestion(jobId, suggestedItems, message, actorUs
   if (items.length === 0) {
     throw new AppError("At least one material is required", 400);
   }
+  const { assertMaterialLinesMatchCatalog } = require("../utils/catalogPrice.util");
+  await assertMaterialLinesMatchCatalog(items);
   const suggestion = {
     id: randomUUID(),
     productId: items[0].productId,
