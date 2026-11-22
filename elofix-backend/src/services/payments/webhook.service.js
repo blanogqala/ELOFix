@@ -109,6 +109,19 @@ async function markEventPostSettlementPending(db, providerKey, externalEventId, 
   });
 }
 
+async function refundCapturedLaborCharge(intentId) {
+  const refundService = require("./refund.service");
+  const { capturedRefundRetrySucceeded } = require("./laborCaptureOnCancelledJob");
+  const result = await refundService.requestGatewayRefund(intentId, undefined, {
+    idempotencyKey: `cancelled-job-labor-capture:${intentId}`,
+    refundCapturedGross: true,
+  });
+  if (capturedRefundRetrySucceeded(result)) return result;
+  const err = new Error(result?.message || "Captured labor charge refund failed");
+  err.refundResult = result;
+  throw err;
+}
+
 async function runCriticalPostSettlement(flags, intentId) {
   const intent = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
   if (!intent) {
@@ -123,6 +136,9 @@ async function runCriticalPostSettlement(flags, intentId) {
   if (flags.postSettleProviderRepayment) {
     const refundRecovery = require("../refundRecovery.service");
     await refundRecovery.markGatewayRepaymentPaidFromIntent(intent);
+  }
+  if (flags.refundCapturedCharge) {
+    await refundCapturedLaborCharge(intentId);
   }
 }
 
@@ -250,8 +266,22 @@ async function processWebhookResult(providerKey, verifyResult) {
             };
           }
 
+          if (intent.state === "REFUNDED" || intent.state === "PARTIALLY_REFUNDED") {
+            await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
+            return {
+              duplicate: true,
+              processed: true,
+              fullyProcessed: true,
+              preservedRefund: true,
+              intentId: intent.id,
+            };
+          }
+
           if (intent.state === "PAID") {
-            if (flags.needsPostSettlement) {
+            const refundCapturedCharge =
+              String(intent.kind || "") === "LABOR" &&
+              (await escrowSettlement.capturedLaborChargeNeedsRefund(tx, intent));
+            if (flags.needsPostSettlement || refundCapturedCharge) {
               await markEventPostSettlementPending(tx, providerKey, externalEventId, intent.id);
               return {
                 duplicate: true,
@@ -259,6 +289,8 @@ async function processWebhookResult(providerKey, verifyResult) {
                 resumePostSettlement: true,
                 intentId: intent.id,
                 ...flags,
+                refundCapturedCharge,
+                needsPostSettlement: true,
               };
             }
             await markEventFullyProcessed(tx, providerKey, externalEventId, intent.id);
@@ -306,6 +338,10 @@ async function processWebhookResult(providerKey, verifyResult) {
           }
 
           const paidFlags = postSettlementFlags(fresh);
+          if (laborSettleExtra?.refundCapturedCharge) {
+            paidFlags.refundCapturedCharge = true;
+            paidFlags.needsPostSettlement = true;
+          }
           if (paidFlags.needsPostSettlement) {
             await markEventPostSettlementPending(tx, providerKey, externalEventId, intent.id);
           } else {

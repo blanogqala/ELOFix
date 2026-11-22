@@ -5,6 +5,7 @@ const { mutateJobMetaInTransaction, getJobMeta, normalizeMeta } = require("../jo
 const { splitCommission } = require("./money.util");
 const paymentModeService = require("./paymentMode.service");
 const { paymentCurrency } = require("./paymentConfig");
+const { unpaidCancelledLaborJob } = require("./laborCaptureOnCancelledJob");
 
 const { PAYMENT_TYPES, PAYMENT_MODES } = paymentModeService;
 
@@ -212,11 +213,17 @@ async function settleLaborFromIntent(tx, intent, gatewayPayload) {
   if (!job) {
     throw new AppError("Job not found", 404);
   }
+
+  const rowMeta = job.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta : {};
+  const metaForGate = await getJobMeta(jobId);
+  // Cancelled before this capture landed: do not mark the job paid or credit the provider.
+  if (unpaidCancelledLaborJob(job, [rowMeta, metaForGate])) {
+    return { refundCapturedCharge: true, job };
+  }
+
   if (!job.providerId) {
     throw new AppError("Job has no provider", 400);
   }
-
-  const metaForGate = await getJobMeta(jobId);
   const disputedOrFrozen =
     metaForGate.statusOverride === "DISPUTED" || metaForGate.escrowFrozen === true;
   const intentPaymentType = String(intent.paymentType || "").toUpperCase();

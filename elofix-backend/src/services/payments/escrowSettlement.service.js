@@ -5,6 +5,7 @@ const AppError = require("../../utils/AppError");
 const paymentService = require("../payment.service");
 const { getJobMeta } = require("../jobMeta.service");
 const { paymentCurrency } = require("./paymentConfig");
+const { unpaidCancelledLaborJob } = require("./laborCaptureOnCancelledJob");
 
 function toAmountDecimal(amount) {
   return new Prisma.Decimal(String(Number(amount).toFixed(2)));
@@ -269,6 +270,19 @@ async function markIntentDisputed(intentId) {
 }
 
 /**
+ * Labor capture that arrived after the job was cancelled and was never applied.
+ * Used when a paid-intent webhook is retried before the gateway refund finishes.
+ */
+async function capturedLaborChargeNeedsRefund(db, intent) {
+  if (String(intent?.kind || "") !== "LABOR" || !intent?.jobId) return false;
+  const client = db || prisma;
+  const job = await client.job.findUnique({ where: { id: String(intent.jobId) } });
+  if (!job) return false;
+  const rowMeta = job.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta : {};
+  return unpaidCancelledLaborJob(job, rowMeta);
+}
+
+/**
  * Settle delivery fee after gateway confirmation (courier / material delivery).
  */
 async function settleDeliveryFeeFromIntent(intent) {
@@ -308,6 +322,7 @@ async function settleDeliveryFeeFromIntent(intent) {
 
 module.exports = {
   settleLaborFromIntent,
+  capturedLaborChargeNeedsRefund,
   settleMaterialOrderFromIntent,
   settleJobStoreOrderFromIntent,
   settleDeliveryFeeFromIntent,

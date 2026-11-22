@@ -85,9 +85,10 @@ function buildPendingRefundRecord(result, amount, idempotencyKey, previous) {
   };
 }
 
-async function persistPendingRefund(intent, result, amount, idempotencyKey) {
+async function persistPendingRefund(intent, result, amount, idempotencyKey, opts = {}) {
   const payload = intentPayload(intent);
   payload.pendingRefund = buildPendingRefundRecord(result, amount, idempotencyKey, payload.pendingRefund);
+  if (opts.refundCapturedGross) payload.pendingRefund.refundCapturedGross = true;
   await prisma.paymentIntent.update({
     where: { id: intent.id },
     data: { gatewayPayload: payload },
@@ -383,13 +384,13 @@ function refundWebhookEventId(effectiveRefundId, event) {
   return `paystack-refund:${String(effectiveRefundId)}:${String(event || "event")}`;
 }
 
-async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey) {
+async function applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey, opts = {}) {
   const externalRefundId = result?.externalRefundId || null;
   if (isRefundAlreadyFinalized(intent, { externalRefundId, idempotencyKey })) {
     return { alreadyFinalized: true, refundAmt, intent };
   }
   const requestedAmt = roundMoney(Number(refundAmt) || 0);
-  const remainingCap = remainingRefundableOnIntent(intent);
+  const remainingCap = remainingRefundableOnIntent(intent, opts);
   const appliedAmt = roundMoney(Math.min(requestedAmt, remainingCap));
   if (appliedAmt <= EPS) {
     return {
@@ -693,7 +694,15 @@ async function finalizeCustomerGatewayRefund(intent, { amount, externalRefundId,
     };
   }
   const result = { externalRefundId, ok: true, status: "COMPLETED" };
-  const money = await applyIntentRefundMoney(intent, refundAmt, result, idempotencyKey || recovered?.idempotencyKey);
+  const pending = readPendingRefund(intent);
+  const capOpts = pending?.refundCapturedGross ? { refundCapturedGross: true } : {};
+  const money = await applyIntentRefundMoney(
+    intent,
+    refundAmt,
+    result,
+    idempotencyKey || recovered?.idempotencyKey,
+    capOpts
+  );
   const appliedAmt = money.refundAmt != null ? roundMoney(Number(money.refundAmt) || 0) : refundAmt;
   let artifacts = { invoiceCreated: false, notified: false, continuation: null };
   if (finalizeCustomerArtifacts && appliedAmt > EPS) {
@@ -736,12 +745,17 @@ function laborCustomerRefundCeiling(intent) {
   return netCourierCancelRefundFromGross(gross);
 }
 
-function remainingRefundableOnIntent(intent) {
+function remainingRefundableOnIntent(intent, opts = {}) {
   const already = Math.max(0, finiteMoneyOrNull(intent?.refundedAmount) || 0);
+  const gross = Math.max(0, finiteMoneyOrNull(intent?.amount) || 0);
+  // An unapplied capture on a cancelled job was never a labor sale, so the
+  // customer is owed the full charge. Settled labor refunds still keep the 7%.
+  if (opts && opts.refundCapturedGross) {
+    return roundMoney(Math.max(0, gross - already));
+  }
   if (String(intent?.kind || "") === "LABOR") {
     return roundMoney(Math.max(0, laborCustomerRefundCeiling(intent) - already));
   }
-  const gross = Math.max(0, finiteMoneyOrNull(intent?.amount) || 0);
   return roundMoney(Math.max(0, gross - already));
 }
 
@@ -751,7 +765,7 @@ function remainingRefundableOnIntent(intent) {
  *
  * @param {string} intentId
  * @param {number} [amount]
- * @param {{ idempotencyKey?: string }} [opts]
+ * @param {{ idempotencyKey?: string, refundCapturedGross?: boolean }} [opts]
  */
 async function requestGatewayRefund(intentId, amount, opts = {}) {
   const intent = await prisma.paymentIntent.findUnique({ where: { id: intentId } });
@@ -765,7 +779,8 @@ async function requestGatewayRefund(intentId, amount, opts = {}) {
     });
   }
 
-  const remaining = remainingRefundableOnIntent(intent);
+  const capOpts = opts.refundCapturedGross ? { refundCapturedGross: true } : {};
+  const remaining = remainingRefundableOnIntent(intent, capOpts);
   const refundAmt =
     amount != null && Number.isFinite(Number(amount))
       ? roundMoney(Math.min(Number(amount), remaining))
@@ -825,9 +840,9 @@ async function requestGatewayRefund(intentId, amount, opts = {}) {
     const result = normalizeGatewayRefundResult(raw);
 
     if (result.supported && result.ok) {
-      await applyIntentRefundMoney(intent, refundAmt, result, opts.idempotencyKey);
+      await applyIntentRefundMoney(intent, refundAmt, result, opts.idempotencyKey, capOpts);
     } else if (result.supported && result.pending) {
-      await persistPendingRefund(intent, result, refundAmt, opts.idempotencyKey);
+      await persistPendingRefund(intent, result, refundAmt, opts.idempotencyKey, capOpts);
     }
 
     return { ...result, amount: refundAmt, intentId: intent.id };
