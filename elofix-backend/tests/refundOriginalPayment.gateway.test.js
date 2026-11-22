@@ -70,6 +70,20 @@ function testLaborRefundCeilingExcludesCommission() {
     232.5
   );
   assert.strictEqual(
+    remainingRefundableOnIntent(
+      { kind: "LABOR", amount: 250, refundedAmount: 0 },
+      { refundCapturedGross: true }
+    ),
+    250
+  );
+  assert.strictEqual(
+    remainingRefundableOnIntent(
+      { kind: "LABOR", amount: 250, refundedAmount: 40 },
+      { refundCapturedGross: true }
+    ),
+    210
+  );
+  assert.strictEqual(
     remainingRefundableOnIntent({
       kind: "MATERIAL_ORDER",
       amount: 250,
